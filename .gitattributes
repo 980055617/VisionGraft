@@ -1,0 +1,54 @@
+# Normalize line endings
+* text=auto
+
+# Use UnityYAMLMerge for Unity YAML assets
+*.unity merge=unityyamlmerge
+*.prefab merge=unityyamlmerge
+*.asset merge=unityyamlmerge
+*.mat merge=unityyamlmerge
+*.anim merge=unityyamlmerge
+*.controller merge=unityyamlmerge
+*.overrideController merge=unityyamlmerge
+*.playable merge=unityyamlmerge
+*.lighting merge=unityyamlmerge
+*.meta merge=unityyamlmerge
+
+# Treat common binary assets as binary (no EOL or text diffs)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.tga binary
+*.psd binary
+*.tif binary
+*.tiff binary
+*.bmp binary
+*.exr binary
+*.hdr binary
+*.ico binary
+*.mp3 binary
+*.ogg binary
+*.wav binary
+*.aif binary
+*.aiff binary
+*.fbx binary
+*.obj binary
+*.3ds binary
+*.dae binary
+*.blend binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.lib binary
+*.a binary
+*.jar binary
+*.aar binary
+*.pdb binary
+*.mdb binary
+*.ttf binary
+*.otf binary
+*.unitypackage binary
+
+# Improve diffs for C#
+*.cs diff=csharp
+

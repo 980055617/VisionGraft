@@ -1,0 +1,77 @@
+# Unity (including MR/UWP) standard ignores
+
+# Unity generated local caches
+/[Ll]ibrary/
+/[Tt]emp/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emory[Cc]aptures/
+/[Rr]ecordings/
+
+# Build outputs (keep sources, ignore artifacts)
+/[Bb]uild/
+/[Bb]uilds/
+/[Aa]pp/
+/[Bb]in/
+/[Oo]bj/
+/[Ii]l2CppOutputProject/
+**/il2cpp_cache/
+
+# Addressables generated content
+Assets/AddressableAssetsData/*/*.bin*
+Assets/AddressableAssetsData/link.xml
+Assets/StreamingAssets/aa/
+
+# Visual Studio / Rider / IDE
+.vs/
+.idea/
+.vscode/
+*.sln
+*.csproj
+*.unityproj
+*.user
+*.userprefs
+*.suo
+*.tmp
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+*.sln.iml
+
+# UWP / HoloLens export artifacts
+AppPackages/
+BundleArtifacts/
+GeneratedProjects/
+*.appx
+*.appxsym
+*.appxupload
+*.appxbundle
+*.msix
+*.msixbundle
+*.msixupload
+*.msixsym
+*.pri
+*.winmd
+*.vcxproj*
+*.vcproj
+*.filters
+*.csproj.user
+
+# Android/Gradle (if used)
+.gradle/
+gradle/
+*.apk
+*.aab
+
+# OS files
+.DS_Store
+Thumbs.db
+*.lnk
+
+# Asset Store tools
+Assets/AssetStoreTools*
+

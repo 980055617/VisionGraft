@@ -1,0 +1,5 @@
+C:/Users/y9800/Unity_project/VisionGraft/.utmp/RelWithDebInfo/1q2z6v3b/arm64-v8a/CMakeFiles/edit_cache.dir
+C:/Users/y9800/Unity_project/VisionGraft/.utmp/RelWithDebInfo/1q2z6v3b/arm64-v8a/CMakeFiles/rebuild_cache.dir
+C:/Users/y9800/Unity_project/VisionGraft/.utmp/RelWithDebInfo/1q2z6v3b/arm64-v8a/GameActivity/CMakeFiles/game.dir
+C:/Users/y9800/Unity_project/VisionGraft/.utmp/RelWithDebInfo/1q2z6v3b/arm64-v8a/GameActivity/CMakeFiles/edit_cache.dir
+C:/Users/y9800/Unity_project/VisionGraft/.utmp/RelWithDebInfo/1q2z6v3b/arm64-v8a/GameActivity/CMakeFiles/rebuild_cache.dir

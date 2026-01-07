@@ -570,6 +570,11 @@ MonoBehaviour:
     m_MipBias: 0
     m_VarianceClampScale: 0.9
     m_ContrastAdaptiveSharpening: 0
+--- !u!4 &773190241 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 400002, guid: 126d619cf4daa52469682f85c1378b4a, type: 3}
+  m_PrefabInstance: {fileID: 773190229}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &832575517
 GameObject:
   m_ObjectHideFlags: 0
@@ -1142,9 +1147,31 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a7a7d80f1bb79764cb9887a7df33b3c3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  fileName: sample.mp4
+  bundleFileName: bundle.svb
+  bundleVideoEntryName: video.mp4
+  bundleManifestEntryName: manifest.json
+  bundleMetaEntryName: meta.bin
+  reExtractAlways: 1
+  extractedVideoFileName: video.mp4
+  extractedManifestFileName: manifest.json
+  extractedMetaFileName: meta.bin
   leftScreen: {fileID: 1279353384}
   rightScreen: {fileID: 911806757}
+  debugMarkerPrefab: {fileID: 0}
+  debugMarkerScale: 0.03
+  debugPixel: {x: -1, y: -1}
+  markerOffset: 0.02
+  spawnMarkerOnPrepared: 1
+  headTransform: {fileID: 773190241}
+  screenDistanceMeters: 2
+  screenOffsetMeters: {x: 0, y: 0, z: 0}
+  testModelPrefab: {fileID: 0}
+  testPixel: {x: -1, y: -1}
+  testDepthMeters: 0.5
+  spawnTestModelOnPrepared: 1
+  destroyPreviousTestModel: 1
+  testModelSizeMeters: 0.05
+  testModelOffsetMeters: {x: 0.1, y: 0}
   sideBySide: 1
   baseHeight: 1
 --- !u!328 &1964602099

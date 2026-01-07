@@ -1,0 +1,436 @@
+using UnityEngine;
+using UnityEngine.Video;
+
+public partial class StreamingStereoVideoPlayer : MonoBehaviour
+{
+    private void EnsureScreensExist()
+    {
+        if (leftScreen == null)
+        {
+            var leftObj = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            leftObj.name = "LeftScreen_Runtime";
+            leftObj.transform.SetParent(transform, false);
+            leftScreen = leftObj.transform;
+        }
+
+        if (rightScreen == null)
+        {
+            var rightObj = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            rightObj.name = "RightScreen_Runtime";
+            rightObj.transform.SetParent(transform, false);
+            rightScreen = rightObj.transform;
+        }
+
+        EnsureScreenRenderer(leftScreen, "leftScreen");
+        EnsureScreenRenderer(rightScreen, "rightScreen");
+        EnsureScreenCollider(leftScreen, "leftScreen");
+        EnsureScreenCollider(rightScreen, "rightScreen");
+    }
+
+    private Renderer EnsureScreenRenderer(Transform screen, string label)
+    {
+        if (screen == null)
+        {
+            return null;
+        }
+
+        var meshFilter = screen.GetComponent<MeshFilter>();
+        if (meshFilter == null)
+        {
+            meshFilter = screen.gameObject.AddComponent<MeshFilter>();
+        }
+
+        if (meshFilter.sharedMesh == null)
+        {
+            if (quadMesh == null)
+            {
+                quadMesh = Resources.GetBuiltinResource<Mesh>("Quad.fbx");
+            }
+
+            if (quadMesh != null)
+            {
+                meshFilter.sharedMesh = quadMesh;
+            }
+            else
+            {
+                Debug.LogWarning($"Quad mesh not found for {label}.");
+            }
+        }
+
+        var renderer = screen.GetComponent<MeshRenderer>();
+        if (renderer == null)
+        {
+            renderer = screen.gameObject.AddComponent<MeshRenderer>();
+        }
+
+        renderer.enabled = true;
+        EnsureUnlitMaterial(renderer, label);
+        return renderer;
+    }
+
+    private void EnsureScreenCollider(Transform screen, string label)
+    {
+        if (screen == null)
+        {
+            return;
+        }
+
+        var collider = screen.GetComponent<Collider>();
+        if (collider == null)
+        {
+            var meshCollider = screen.gameObject.AddComponent<MeshCollider>();
+            var meshFilter = screen.GetComponent<MeshFilter>();
+            if (meshFilter != null && meshFilter.sharedMesh != null)
+            {
+                meshCollider.sharedMesh = meshFilter.sharedMesh;
+            }
+            else
+            {
+                Debug.LogWarning($"EnsureScreenCollider: mesh missing for {label}.");
+            }
+        }
+    }
+
+    private void EnsureUnlitMaterial(Renderer renderer, string label)
+    {
+        if (renderer == null)
+        {
+            return;
+        }
+
+        var mat = renderer.material;
+        if (mat != null)
+        {
+            return;
+        }
+
+        var shader = Shader.Find("Custom/PerEyeStereoVideoURP");
+        if (shader == null)
+        {
+            shader = Shader.Find("pereyestereovideoURP");
+        }
+
+        if (shader == null)
+        {
+            shader = Shader.Find("Universal Render Pipeline/Unlit");
+        }
+
+        if (shader == null)
+        {
+            shader = Shader.Find("Unlit/Texture");
+        }
+
+        if (shader != null)
+        {
+            mat = new Material(shader);
+            renderer.material = mat;
+        }
+        else
+        {
+            Debug.LogWarning($"Fallback shader not found for {label}.");
+        }
+    }
+
+    private void SetupScreensAndMaterials()
+    {
+        Renderer leftRenderer = EnsureScreenRenderer(leftScreen, "leftScreen");
+        Renderer rightRenderer = EnsureScreenRenderer(rightScreen, "rightScreen");
+
+        leftMat = CreateUniqueMaterial(leftRenderer, "left");
+        rightMat = CreateUniqueMaterial(rightRenderer, "right");
+
+        leftTexProp = ResolveTexProp(leftMat, "left");
+        rightTexProp = ResolveTexProp(rightMat, "right");
+
+        ApplyStereoUvSettings(leftMat, 1, "left");
+        ApplyStereoUvSettings(rightMat, 2, "right");
+    }
+
+    private Material CreateUniqueMaterial(Renderer renderer, string label)
+    {
+        if (renderer == null)
+        {
+            return null;
+        }
+
+        Material baseMat = renderer.sharedMaterial;
+        if (baseMat == null)
+        {
+            var fallbackShader = Shader.Find("Custom/PerEyeStereoVideoURP");
+            if (fallbackShader == null)
+            {
+                fallbackShader = Shader.Find("Universal Render Pipeline/Unlit");
+            }
+
+            if (fallbackShader == null)
+            {
+                Debug.LogWarning($"CreateUniqueMaterial: no shader for {label}.");
+                return null;
+            }
+
+            baseMat = new Material(fallbackShader);
+        }
+
+        var uniqueMat = new Material(baseMat);
+        renderer.material = uniqueMat;
+        return uniqueMat;
+    }
+
+    private string ResolveTexProp(Material mat, string label)
+    {
+        if (mat == null)
+        {
+            return "_MainTex";
+        }
+
+        if (mat.HasProperty("_MainTex"))
+        {
+            return "_MainTex";
+        }
+
+        if (mat.HasProperty("_BaseMap"))
+        {
+            return "_BaseMap";
+        }
+
+        Debug.LogWarning($"ResolveTexProp: no known property on {label} material.");
+        return "_MainTex";
+    }
+
+    private void ApplyVideoFrameTexture(VideoPlayer player)
+    {
+        if (player == null || player.texture == null)
+        {
+            return;
+        }
+
+        if (leftMat != null && leftMat.HasProperty(leftTexProp))
+        {
+            leftMat.SetTexture(leftTexProp, player.texture);
+        }
+
+        if (rightMat != null && rightMat.HasProperty(rightTexProp))
+        {
+            rightMat.SetTexture(rightTexProp, player.texture);
+        }
+    }
+
+    private void ApplyStereoUvSettings(Material mat, int eyeMode, string label)
+    {
+        if (mat == null)
+        {
+            return;
+        }
+
+        if (mat.HasProperty("_EyeMode"))
+        {
+            mat.SetInt("_EyeMode", eyeMode);
+        }
+
+        if (mat.HasProperty("_UVScale"))
+        {
+            mat.SetVector("_UVScale", new Vector4(0.5f, 1f, 0f, 0f));
+        }
+
+        if (mat.HasProperty("_UVOffset"))
+        {
+            float uOffset = eyeMode == 2 ? 0.5f : 0f;
+            mat.SetVector("_UVOffset", new Vector4(uOffset, 0f, 0f, 0f));
+        }
+    }
+
+    private void PlaceScreens()
+    {
+        Camera viewCam = GetViewCamera();
+        Transform head = viewCam != null ? viewCam.transform : GetHeadTransform();
+        Vector3 headPos = head.position;
+        Vector3 headFwd = head.forward;
+        Vector3 center = headPos + headFwd * screenDistanceMeters + head.TransformVector(screenOffsetMeters);
+        Vector3 toHead = (headPos - center).normalized;
+        Quaternion rotation = Quaternion.LookRotation(toHead, head.up);
+
+        VLog($"HeadSource: {(headTransform != null ? "headTransform" : (Camera.main != null ? "Camera.main" : "self"))} headPos={headPos} headFwd={headFwd}");
+        VLog($"PlaceScreens: viewCamera={(viewCam != null ? viewCam.name : "null")} center={center} toHead={toHead}");
+
+        Vector3 rightOffset = head.right * 0.001f;
+        if (leftScreen != null)
+        {
+            leftScreen.position = center - rightOffset;
+            leftScreen.rotation = rotation;
+            VLog($"PlaceScreens: leftScreenFwd={leftScreen.forward}");
+        }
+
+        if (rightScreen != null)
+        {
+            rightScreen.position = center + rightOffset;
+            rightScreen.rotation = rotation;
+        }
+
+        FixFacingIfNeeded(leftScreen, head, "left");
+        FixFacingIfNeeded(rightScreen, head, "right");
+    }
+
+    private void FixFacingIfNeeded(Transform screen, Transform head, string label)
+    {
+        if (screen == null || head == null)
+        {
+            return;
+        }
+
+        Vector3 normalLocal = GetAverageNormalLocal(screen);
+        Vector3 normalWorld = screen.TransformDirection(normalLocal).normalized;
+        Vector3 toHead = (head.position - screen.position).normalized;
+        float dotBefore = Vector3.Dot(normalWorld, toHead);
+        VLog($"ScreenFacingMeshNormal[{label}]: normalLocal={normalLocal} normalWorld={normalWorld} toHead={toHead} dotBefore={dotBefore:F3}");
+
+        if (dotBefore < 0f)
+        {
+            screen.Rotate(0f, 180f, 0f, Space.Self);
+            Vector3 normalWorldAfter = screen.TransformDirection(normalLocal).normalized;
+            float dotAfter = Vector3.Dot(normalWorldAfter, toHead);
+            VLog($"ScreenFacingMeshNormalFix[{label}]: dotAfter={dotAfter:F3} newNormalWorld={normalWorldAfter}");
+        }
+    }
+
+    private Vector3 GetAverageNormalLocal(Transform screen)
+    {
+        var meshFilter = screen.GetComponent<MeshFilter>();
+        if (meshFilter == null || meshFilter.sharedMesh == null)
+        {
+            return Vector3.forward;
+        }
+
+        Vector3[] normals = meshFilter.sharedMesh.normals;
+        if (normals == null || normals.Length == 0)
+        {
+            return Vector3.forward;
+        }
+
+        Vector3 sum = Vector3.zero;
+        for (int i = 0; i < normals.Length; i++)
+        {
+            sum += normals[i];
+        }
+
+        if (sum == Vector3.zero)
+        {
+            return Vector3.forward;
+        }
+
+        return sum.normalized;
+    }
+
+    private Vector3 GetScreenFrontDirection(Transform screen)
+    {
+        Vector3 normalLocal = GetAverageNormalLocal(screen);
+        Vector3 normalWorld = screen.TransformDirection(normalLocal).normalized;
+        if (normalWorld == Vector3.zero)
+        {
+            normalWorld = screen.forward;
+        }
+
+        return normalWorld;
+    }
+
+    private void ApplyScreenFallbackMagenta()
+    {
+        if (fallbackApplied)
+        {
+            return;
+        }
+
+        fallbackApplied = true;
+        ApplyFallbackToScreen(leftScreen, "left");
+        ApplyFallbackToScreen(rightScreen, "right");
+    }
+
+    private void ApplyFallbackToScreen(Transform screen, string label)
+    {
+        if (screen == null)
+        {
+            Debug.LogWarning($"Fallback skipped: {label} screen is null.");
+            return;
+        }
+
+        var renderer = screen.GetComponent<Renderer>();
+        if (renderer == null || renderer.material == null)
+        {
+            Debug.LogWarning($"Fallback skipped: {label} renderer/material missing.");
+            return;
+        }
+
+        var mat = renderer.material;
+        if (mat.HasProperty("_BaseColor"))
+        {
+            mat.SetColor("_BaseColor", Color.magenta);
+        }
+
+        if (mat.HasProperty("_BaseMap"))
+        {
+            mat.SetTexture("_BaseMap", null);
+        }
+
+        VLog($"Fallback applied: {label} screen set to magenta.");
+    }
+
+    private void TrySpawnDebugMarker()
+    {
+        if (leftScreen == null)
+        {
+            Debug.LogWarning("Debug marker skipped: leftScreen is null.");
+            return;
+        }
+
+        if (manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
+        {
+            Debug.LogWarning("Debug marker skipped: manifest eye_w/eye_h invalid or not loaded.");
+            return;
+        }
+
+        Vector2Int finalPixel = debugPixel;
+        if (finalPixel.x < 0 || finalPixel.y < 0)
+        {
+            finalPixel = new Vector2Int(manifest.eye_w / 2, manifest.eye_h / 2);
+        }
+
+        Vector3 world = EyePixelToWorldOnScreen(finalPixel.x, finalPixel.y, leftScreen, manifest.eye_w, manifest.eye_h, markerOffset);
+
+        VLog(
+            $"SpawnDebugMarker: eye_w={manifest.eye_w} eye_h={manifest.eye_h} " +
+            $"debugPixel=({finalPixel.x},{finalPixel.y}) " +
+            $"leftScreen scale={leftScreen.localScale} pos={leftScreen.position} rot={leftScreen.rotation.eulerAngles} " +
+            $"world={world}");
+
+        GameObject marker = debugMarkerPrefab != null
+            ? Instantiate(debugMarkerPrefab, world, leftScreen.rotation)
+            : GameObject.CreatePrimitive(PrimitiveType.Sphere);
+
+        if (debugMarkerPrefab == null)
+        {
+            marker.name = "DebugMarker(auto)";
+            var collider = marker.GetComponent<Collider>();
+            if (collider != null)
+            {
+                Destroy(collider);
+            }
+        }
+
+        marker.transform.position = world;
+        marker.transform.rotation = leftScreen.rotation;
+        marker.transform.localScale = Vector3.one * debugMarkerScale;
+    }
+
+    private Vector3 EyePixelToWorldOnScreen(int u, int v, Transform screen, float eyeW, float eyeH, float offsetMeters)
+    {
+        float screenW = screen.localScale.x;
+        float screenH = screen.localScale.y;
+
+        float xLocal = (u / eyeW - 0.5f) * screenW;
+        float yLocal = (0.5f - v / eyeH) * screenH;
+        Vector3 worldOnPlane = screen.TransformPoint(new Vector3(xLocal, yLocal, 0f));
+        Vector3 world = worldOnPlane + screen.forward * offsetMeters;
+
+        VLog($"EyePixelToWorldOnScreen: u={u} v={v} eyeW={eyeW} eyeH={eyeH} screenW={screenW} screenH={screenH} xLocal={xLocal} yLocal={yLocal} worldOnPlane={worldOnPlane} world={world}");
+        return world;
+    }
+}

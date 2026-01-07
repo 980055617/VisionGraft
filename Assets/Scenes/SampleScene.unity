@@ -1127,7 +1127,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1964602100}
   - component: {fileID: 1964602099}
-  - component: {fileID: 1964602098}
+  - component: {fileID: 1964602101}
   m_Layer: 0
   m_Name: VideoPlayerRoot
   m_TagString: Untagged
@@ -1135,45 +1135,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &1964602098
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1964602097}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a7a7d80f1bb79764cb9887a7df33b3c3, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  bundleFileName: bundle.svb
-  bundleVideoEntryName: video.mp4
-  bundleManifestEntryName: manifest.json
-  bundleMetaEntryName: meta.bin
-  reExtractAlways: 1
-  extractedVideoFileName: video.mp4
-  extractedManifestFileName: manifest.json
-  extractedMetaFileName: meta.bin
-  leftScreen: {fileID: 1279353384}
-  rightScreen: {fileID: 911806757}
-  debugMarkerPrefab: {fileID: 0}
-  debugMarkerScale: 0.03
-  debugPixel: {x: -1, y: -1}
-  markerOffset: 0.02
-  spawnMarkerOnPrepared: 1
-  headTransform: {fileID: 773190241}
-  screenDistanceMeters: 2
-  screenOffsetMeters: {x: 0, y: 0, z: 0}
-  testModelPrefab: {fileID: 0}
-  testPixel: {x: -1, y: -1}
-  testDepthMeters: 0.5
-  spawnTestModelOnPrepared: 1
-  destroyPreviousTestModel: 1
-  testModelSizeMeters: 0.05
-  testModelOffsetMeters: {x: 0.1, y: 0}
-  sideBySide: 1
-  baseHeight: 1
 --- !u!328 &1964602099
 VideoPlayer:
   m_ObjectHideFlags: 0
@@ -1225,6 +1186,47 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1964602101
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1964602097}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a7a7d80f1bb79764cb9887a7df33b3c3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  bundleFileName: bundle.svb
+  bundleVideoEntryName: video.mp4
+  bundleManifestEntryName: manifest.json
+  bundleMetaEntryName: meta.bin
+  reExtractAlways: 0
+  extractedVideoFileName: video.mp4
+  extractedManifestFileName: manifest.json
+  extractedMetaFileName: meta.bin
+  leftScreen: {fileID: 1279353384}
+  rightScreen: {fileID: 911806757}
+  debugMarkerPrefab: {fileID: 0}
+  debugMarkerScale: 0.03
+  debugPixel: {x: -1, y: -1}
+  markerOffset: 0.02
+  spawnMarkerOnPrepared: 0
+  headTransform: {fileID: 773190241}
+  screenDistanceMeters: 2
+  screenOffsetMeters: {x: 0, y: 0, z: 0}
+  testModelPrefab: {fileID: 0}
+  testPixel: {x: -1, y: -1}
+  testDepthMeters: 0.5
+  spawnTestModelOnPrepared: 0
+  destroyPreviousTestModel: 1
+  testModelSizeMeters: 0.05
+  testModelOffsetMeters: {x: 0.1, y: 0}
+  sideBySide: 1
+  baseHeight: 1
+  forceScreensInFrontOfViewCamera: 0
+  verboseLog: 1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

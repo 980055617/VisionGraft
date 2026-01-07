@@ -205,7 +205,8 @@ public class StreamingStereoVideoPlayer : MonoBehaviour
         float h = source.height;
 
         EnsureScreensExist();
-        CacheMats();
+        SetupScreensAndMaterials();
+        LogStereoSetup("OnPrepared");
         LogVideoPlayerState("OnPrepared(start)");
 
         if (w <= 0 || h <= 0)
@@ -350,7 +351,7 @@ public class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 headFwd = head.forward;
         Vector3 center = headPos + headFwd * screenDistanceMeters + head.TransformVector(screenOffsetMeters);
         Vector3 toHead = (headPos - center).normalized;
-        Quaternion rotation = Quaternion.LookRotation(toHead, head.up) * Quaternion.Euler(0f, 180f, 0f);
+        Quaternion rotation = Quaternion.LookRotation(toHead, head.up);
 
 
         Debug.Log($"HeadSource: {(headTransform != null ? "headTransform" : (Camera.main != null ? "Camera.main" : "self"))} headPos={headPos} headFwd={headFwd}");
@@ -369,6 +370,59 @@ public class StreamingStereoVideoPlayer : MonoBehaviour
             rightScreen.position = center + rightOffset;
             rightScreen.rotation = rotation;
         }
+
+        FixFacingIfNeeded(leftScreen, head, "left");
+        FixFacingIfNeeded(rightScreen, head, "right");
+    }
+
+    private void FixFacingIfNeeded(Transform screen, Transform head, string label)
+    {
+        if (screen == null || head == null)
+        {
+            return;
+        }
+
+        Vector3 normalLocal = GetAverageNormalLocal(screen);
+        Vector3 normalWorld = screen.TransformDirection(normalLocal).normalized;
+        Vector3 toHead = (head.position - screen.position).normalized;
+        float dotBefore = Vector3.Dot(normalWorld, toHead);
+        Debug.Log($"ScreenFacingMeshNormal[{label}]: normalLocal={normalLocal} normalWorld={normalWorld} toHead={toHead} dotBefore={dotBefore:F3}");
+
+        if (dotBefore < 0f)
+        {
+            screen.Rotate(0f, 180f, 0f, Space.Self);
+            Vector3 normalWorldAfter = screen.TransformDirection(normalLocal).normalized;
+            float dotAfter = Vector3.Dot(normalWorldAfter, toHead);
+            Debug.Log($"ScreenFacingMeshNormalFix[{label}]: dotAfter={dotAfter:F3} newNormalWorld={normalWorldAfter}");
+        }
+    }
+
+    private Vector3 GetAverageNormalLocal(Transform screen)
+    {
+        var meshFilter = screen.GetComponent<MeshFilter>();
+        if (meshFilter == null || meshFilter.sharedMesh == null)
+        {
+            return Vector3.forward;
+        }
+
+        Vector3[] normals = meshFilter.sharedMesh.normals;
+        if (normals == null || normals.Length == 0)
+        {
+            return Vector3.forward;
+        }
+
+        Vector3 sum = Vector3.zero;
+        for (int i = 0; i < normals.Length; i++)
+        {
+            sum += normals[i];
+        }
+
+        if (sum == Vector3.zero)
+        {
+            return Vector3.forward;
+        }
+
+        return sum.normalized;
     }
 
     private void EnsureScreensExist()
@@ -393,11 +447,11 @@ public class StreamingStereoVideoPlayer : MonoBehaviour
         EnsureScreenRenderer(rightScreen, "rightScreen");
     }
 
-    private void EnsureScreenRenderer(Transform screen, string label)
+    private Renderer EnsureScreenRenderer(Transform screen, string label)
     {
         if (screen == null)
         {
-            return;
+            return null;
         }
 
         var meshFilter = screen.GetComponent<MeshFilter>();
@@ -431,6 +485,7 @@ public class StreamingStereoVideoPlayer : MonoBehaviour
 
         renderer.enabled = true;
         EnsureUnlitMaterial(renderer, label);
+        return renderer;
     }
 
     private void EnsureUnlitMaterial(Renderer renderer, string label)
@@ -476,30 +531,49 @@ public class StreamingStereoVideoPlayer : MonoBehaviour
         }
     }
 
-    private void CacheMats()
+    private void SetupScreensAndMaterials()
     {
-        leftMat = GetScreenMaterial(leftScreen, "left");
-        rightMat = GetScreenMaterial(rightScreen, "right");
+        Renderer leftRenderer = EnsureScreenRenderer(leftScreen, "leftScreen");
+        Renderer rightRenderer = EnsureScreenRenderer(rightScreen, "rightScreen");
+
+        leftMat = CreateUniqueMaterial(leftRenderer, "left");
+        rightMat = CreateUniqueMaterial(rightRenderer, "right");
+
         leftTexProp = ResolveTexProp(leftMat, "left");
         rightTexProp = ResolveTexProp(rightMat, "right");
-        Debug.Log($"CacheMats: leftMat={(leftMat != null ? leftMat.shader.name : "null")} leftProp={leftTexProp} rightMat={(rightMat != null ? rightMat.shader.name : "null")} rightProp={rightTexProp}");
+
+        ApplyStereoUvSettings(leftMat, 1, "left");
+        ApplyStereoUvSettings(rightMat, 2, "right");
     }
 
-    private Material GetScreenMaterial(Transform screen, string label)
+    private Material CreateUniqueMaterial(Renderer renderer, string label)
     {
-        if (screen == null)
-        {
-            return null;
-        }
-
-        var renderer = screen.GetComponent<Renderer>();
         if (renderer == null)
         {
-            Debug.LogWarning($"CacheMats: {label} renderer missing.");
             return null;
         }
 
-        return renderer.material;
+        Material baseMat = renderer.sharedMaterial;
+        if (baseMat == null)
+        {
+            var fallbackShader = Shader.Find("Custom/PerEyeStereoVideoURP");
+            if (fallbackShader == null)
+            {
+                fallbackShader = Shader.Find("Universal Render Pipeline/Unlit");
+            }
+
+            if (fallbackShader == null)
+            {
+                Debug.LogWarning($"CreateUniqueMaterial: no shader for {label}.");
+                return null;
+            }
+
+            baseMat = new Material(fallbackShader);
+        }
+
+        var uniqueMat = new Material(baseMat);
+        renderer.material = uniqueMat;
+        return uniqueMat;
     }
 
     private string ResolveTexProp(Material mat, string label)
@@ -538,6 +612,72 @@ public class StreamingStereoVideoPlayer : MonoBehaviour
         if (rightMat != null && rightMat.HasProperty(rightTexProp))
         {
             rightMat.SetTexture(rightTexProp, player.texture);
+        }
+    }
+
+    private void ApplyStereoUvSettings(Material mat, int eyeMode, string label)
+    {
+        if (mat == null)
+        {
+            return;
+        }
+
+        if (mat.HasProperty("_EyeMode"))
+        {
+            mat.SetInt("_EyeMode", eyeMode);
+        }
+
+        if (mat.HasProperty("_UVScale"))
+        {
+            mat.SetVector("_UVScale", new Vector4(0.5f, 1f, 0f, 0f));
+        }
+
+        if (mat.HasProperty("_UVOffset"))
+        {
+            float uOffset = eyeMode == 2 ? 0.5f : 0f;
+            mat.SetVector("_UVOffset", new Vector4(uOffset, 0f, 0f, 0f));
+        }
+    }
+
+    private void LogStereoSetup(string tag)
+    {
+        LogOneScreenSetup(tag, "left", leftScreen, leftMat, leftTexProp);
+        LogOneScreenSetup(tag, "right", rightScreen, rightMat, rightTexProp);
+        bool sameInstance = leftMat != null && rightMat != null && ReferenceEquals(leftMat, rightMat);
+        Debug.Log($"LogStereoSetup({tag}): leftMatId={(leftMat != null ? leftMat.GetInstanceID().ToString() : "null")} rightMatId={(rightMat != null ? rightMat.GetInstanceID().ToString() : "null")} sameInstance={sameInstance}");
+    }
+
+    private void LogOneScreenSetup(string tag, string label, Transform screen, Material mat, string texProp)
+    {
+        if (screen == null)
+        {
+            Debug.LogWarning($"LogStereoSetup({tag}) {label}: screen is null.");
+            return;
+        }
+
+        var renderer = screen.GetComponent<Renderer>();
+        string rendererEnabled = renderer != null ? renderer.enabled.ToString() : "no renderer";
+        string shaderName = mat != null && mat.shader != null ? mat.shader.name : "null";
+        Debug.Log(
+            $"LogStereoSetup({tag}) {label}: name={screen.name} active={screen.gameObject.activeInHierarchy} layer={screen.gameObject.layer} " +
+            $"renderer={rendererEnabled} shader={shaderName} texProp={texProp}");
+
+        if (mat != null)
+        {
+            if (mat.HasProperty("_EyeMode"))
+            {
+                Debug.Log($"LogStereoSetup({tag}) {label}: _EyeMode={mat.GetInt("_EyeMode")}");
+            }
+
+            if (mat.HasProperty("_UVScale"))
+            {
+                Debug.Log($"LogStereoSetup({tag}) {label}: _UVScale={mat.GetVector("_UVScale")}");
+            }
+
+            if (mat.HasProperty("_UVOffset"))
+            {
+                Debug.Log($"LogStereoSetup({tag}) {label}: _UVOffset={mat.GetVector("_UVOffset")}");
+            }
         }
     }
 
@@ -584,7 +724,7 @@ public class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void LogActiveCameras()
     {
-        var cams = FindObjectsOfType<Camera>();
+        var cams = GetActiveCameras();
         foreach (var cam in cams)
         {
             if (cam == null || !cam.enabled || !cam.gameObject.activeInHierarchy)
@@ -600,7 +740,7 @@ public class StreamingStereoVideoPlayer : MonoBehaviour
 
     private Camera GetViewCamera()
     {
-        var cams = FindObjectsOfType<Camera>();
+        var cams = GetActiveCameras();
         Camera firstEnabled = null;
         Camera stereoEnabled = null;
 
@@ -633,6 +773,15 @@ public class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         return firstEnabled;
+    }
+
+    private Camera[] GetActiveCameras()
+    {
+#if UNITY_2023_1_OR_NEWER
+        return FindObjectsByType<Camera>(FindObjectsSortMode.None);
+#else
+        return FindObjectsOfType<Camera>();
+#endif
     }
 
     private void LogVideoPlayerState(string tag)
@@ -807,11 +956,12 @@ public class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         Vector3 worldOnPlane = EyePixelToWorldOnScreen(finalPixel.x, finalPixel.y, leftScreen, manifest.eye_w, manifest.eye_h, 0f);
+        Vector3 frontDir = GetScreenFrontDirection(leftScreen);
         Vector3 world = worldOnPlane
             + leftScreen.right * testModelOffsetMeters.x
             + leftScreen.up * testModelOffsetMeters.y
-            + leftScreen.forward * testDepthMeters;
-        Quaternion rotation = Quaternion.LookRotation(-leftScreen.forward, leftScreen.up);
+            + frontDir * testDepthMeters;
+        Quaternion rotation = Quaternion.LookRotation(-frontDir, leftScreen.up);
 
         if (destroyPreviousTestModel)
         {
@@ -837,6 +987,18 @@ public class StreamingStereoVideoPlayer : MonoBehaviour
 
         Debug.Log($"SpawnTestModel: eye_w={manifest.eye_w} eye_h={manifest.eye_h} testPixel=({finalPixel.x},{finalPixel.y}) worldOnPlane={worldOnPlane} world={world} depth={testDepthMeters}");
         Debug.Log($"SpawnTestModel: size={testModelSizeMeters} depth={testDepthMeters} offset={testModelOffsetMeters}");
+    }
+
+    private Vector3 GetScreenFrontDirection(Transform screen)
+    {
+        Vector3 normalLocal = GetAverageNormalLocal(screen);
+        Vector3 normalWorld = screen.TransformDirection(normalLocal).normalized;
+        if (normalWorld == Vector3.zero)
+        {
+            normalWorld = screen.forward;
+        }
+
+        return normalWorld;
     }
 
     [System.Serializable]

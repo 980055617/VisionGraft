@@ -271,72 +271,6 @@ MonoBehaviour:
   m_LightCookieSize: {x: 1, y: 1}
   m_LightCookieOffset: {x: 0, y: 0}
   m_SoftShadowQuality: 1
---- !u!1001 &654804932
-PrefabInstance:
-  m_ObjectHideFlags: 0
-  serializedVersion: 2
-  m_Modification:
-    serializedVersion: 3
-    m_TransformParent: {fileID: 0}
-    m_Modifications:
-    - target: {fileID: 1730793091930572074, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
-      propertyPath: m_LocalPosition.x
-      value: -0.54822993
-      objectReference: {fileID: 0}
-    - target: {fileID: 1730793091930572074, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
-      propertyPath: m_LocalPosition.y
-      value: -0.39853472
-      objectReference: {fileID: 0}
-    - target: {fileID: 1730793091930572074, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
-      propertyPath: m_LocalPosition.z
-      value: 2.0495064
-      objectReference: {fileID: 0}
-    - target: {fileID: 1730793091930572074, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
-      propertyPath: m_LocalRotation.w
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 1730793091930572074, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
-      propertyPath: m_LocalRotation.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 1730793091930572074, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
-      propertyPath: m_LocalRotation.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 1730793091930572074, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
-      propertyPath: m_LocalRotation.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 1730793091930572074, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 1730793091930572074, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 1730793091930572074, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3348292547451869151, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
-      propertyPath: m_Name
-      value: CharacterRoot
-      objectReference: {fileID: 0}
-    - target: {fileID: 7548241783251001178, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
-      propertyPath: anchor
-      value: 
-      objectReference: {fileID: 654804933}
-    m_RemovedComponents: []
-    m_RemovedGameObjects: []
-    m_AddedGameObjects: []
-    m_AddedComponents: []
-  m_SourcePrefab: {fileID: 100100000, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
---- !u!4 &654804933 stripped
-Transform:
-  m_CorrespondingSourceObject: {fileID: 3627485880478349057, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
-  m_PrefabInstance: {fileID: 654804932}
-  m_PrefabAsset: {fileID: 0}
 --- !u!1 &730769970
 GameObject:
   m_ObjectHideFlags: 0
@@ -1282,6 +1216,7 @@ MonoBehaviour:
   headTransform: {fileID: 773190241}
   screenDistanceMeters: 2
   screenOffsetMeters: {x: 0, y: 0, z: 0}
+  fitScreenToFov: 1
   testModelPrefab: {fileID: 3348292547451869151, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
   replacePrefab: {fileID: 0}
   testPixel: {x: -1, y: -1}
@@ -1299,16 +1234,29 @@ MonoBehaviour:
   followSpeed: 1
   sideBySide: 1
   baseHeight: 1
+  enableBoneApply: 1
+  boneApplyAlpha: 1
+  boneRootRelThreshold: 0.2
+  boneAxisSign: {x: 1, y: 1, z: 1}
+  fallbackQuantJointScale: 1
   forceScreensInFrontOfViewCamera: 0
   verboseLog: 1
   logGeneral: 0
   logBundle: 0
   logMeta: 1
-  logPicking: 1
+  logPicking: 0
   logFollow: 1
   logScreens: 1
   logVideo: 0
   logModel: 0
+  debugLog:
+    enableLogs: 1
+    enabled: 03000000
+    onlyFrame: -1
+    onlyTrack: 0
+    logEveryNFrames: -1
+    maxLines: 50
+    dedup: 1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
@@ -1320,4 +1268,3 @@ SceneRoots:
   - {fileID: 911806757}
   - {fileID: 773190229}
   - {fileID: 1964602100}
-  - {fileID: 654804932}

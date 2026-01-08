@@ -29,6 +29,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public Transform headTransform;
     public float screenDistanceMeters = 2.0f;
     public Vector3 screenOffsetMeters = Vector3.zero;
+    public bool fitScreenToFov = false;
 
     [Header("Test Model")]
     public GameObject testModelPrefab;
@@ -54,6 +55,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool sideBySide = true;
     public float baseHeight = 1f;
 
+    [Header("Bones")]
+    public bool enableBoneApply = true;
+    public float boneApplyAlpha = 1f;
+    public float boneRootRelThreshold = 0.2f;
+    public Vector3 boneAxisSign = Vector3.one;
+    public float fallbackQuantJointScale = 1f;
+
     [Header("Debug")]
     public bool forceScreensInFrontOfViewCamera = false;
     [SerializeField] private bool verboseLog = true;
@@ -70,6 +78,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private ManifestData manifest;
     private bool loggedFirstFrame;
     private bool fallbackApplied;
+    private bool loggedFovSource;
+    private bool loggedQuantSource;
+    private bool loggedManifestResolved;
     private string leftTexProp = "_MainTex";
     private string rightTexProp = "_MainTex";
     private Material leftMat;
@@ -227,9 +238,185 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     [System.Serializable]
     private class ManifestData
     {
+        public int width;
+        public int height;
         public int eye_w;
         public int eye_h;
+        public int meta_w;
+        public int meta_h;
         public int num_frames;
         public float fps;
+        public float fovx_deg;
+        public float fovx;
+        public float fovxDeg;
+        public float quant_pos_scale;
+        public float quantScale;
+        public float quantPosScale;
+        public float quant;
+        public float quant_pos;
+        public int crop_x;
+        public int crop_y;
+        public int crop_x0;
+        public int crop_y0;
+        public int crop_w;
+        public int crop_h;
+        public bool has_crop;
+    }
+
+    private int GetCropX()
+    {
+        if (manifest == null)
+        {
+            return 0;
+        }
+
+        return manifest.crop_x > 0 ? manifest.crop_x : manifest.crop_x0;
+    }
+
+    private int GetCropY()
+    {
+        if (manifest == null)
+        {
+            return 0;
+        }
+
+        return manifest.crop_y > 0 ? manifest.crop_y : manifest.crop_y0;
+    }
+
+    private int GetCropW()
+    {
+        if (manifest == null)
+        {
+            return 0;
+        }
+
+        return manifest.crop_w > 0 ? manifest.crop_w : 0;
+    }
+
+    private int GetCropH()
+    {
+        if (manifest == null)
+        {
+            return 0;
+        }
+
+        return manifest.crop_h > 0 ? manifest.crop_h : 0;
+    }
+
+    private int GetFullWidth()
+    {
+        if (manifest != null && manifest.width > 0)
+        {
+            return manifest.width;
+        }
+
+        return metaHeader.width;
+    }
+
+    private int GetFullHeight()
+    {
+        if (manifest != null && manifest.height > 0)
+        {
+            return manifest.height;
+        }
+
+        return metaHeader.height;
+    }
+
+    private int GetMetaW()
+    {
+        if (manifest != null && manifest.meta_w > 0)
+        {
+            return manifest.meta_w;
+        }
+
+        return manifest != null ? manifest.eye_w : 0;
+    }
+
+    private int GetMetaH()
+    {
+        if (manifest != null && manifest.meta_h > 0)
+        {
+            return manifest.meta_h;
+        }
+
+        return manifest != null ? manifest.eye_h : 0;
+    }
+
+    private float GetManifestFovxDeg()
+    {
+        if (manifest == null)
+        {
+            return 0f;
+        }
+
+        if (manifest.fovx_deg > 0f)
+        {
+            return manifest.fovx_deg;
+        }
+
+        if (manifest.fovx > 0f)
+        {
+            return manifest.fovx;
+        }
+
+        if (manifest.fovxDeg > 0f)
+        {
+            return manifest.fovxDeg;
+        }
+
+        return 0f;
+    }
+
+    private float GetManifestQuantPosScale()
+    {
+        if (manifest == null)
+        {
+            return 0f;
+        }
+
+        if (manifest.quant_pos_scale > 0f)
+        {
+            return manifest.quant_pos_scale;
+        }
+
+        if (manifest.quantScale > 0f)
+        {
+            return manifest.quantScale;
+        }
+
+        if (manifest.quantPosScale > 0f)
+        {
+            return manifest.quantPosScale;
+        }
+
+        if (manifest.quant_pos > 0f)
+        {
+            return manifest.quant_pos;
+        }
+
+        if (manifest.quant > 0f)
+        {
+            return manifest.quant;
+        }
+
+        return 0f;
+    }
+
+    private void LogResolvedManifestOnce()
+    {
+        if (!verboseLog || !logMeta || loggedManifestResolved || manifest == null)
+        {
+            return;
+        }
+
+        loggedManifestResolved = true;
+        // Intentional: manifest logs are disabled in the new category-only logger.
+        float metaW = GetMetaW();
+        float metaH = GetMetaH();
+        float sx = metaW > 0 ? manifest.eye_w / metaW : 0f;
+        float sy = metaH > 0 ? manifest.eye_h / metaH : 0f;
+        _ = sx;
+        _ = sy;
     }
 }

@@ -249,21 +249,34 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 toHead = (headPos - center).normalized;
         Quaternion rotation = Quaternion.LookRotation(toHead, head.up);
 
-        LogScreens($"HeadSource: {(headTransform != null ? "headTransform" : (Camera.main != null ? "Camera.main" : "self"))} headPos={headPos} headFwd={headFwd}");
-        LogScreens($"PlaceScreens: viewCamera={(viewCam != null ? viewCam.name : "null")} center={center} toHead={toHead}");
+        if (fitScreenToFov && manifest != null && manifest.eye_w > 0 && manifest.eye_h > 0 && TryGetFovxDeg(out float fovxDeg))
+        {
+            float distance = Mathf.Max(0.0001f, screenDistanceMeters);
+            float fovxRad = fovxDeg * Mathf.Deg2Rad;
+            float width = 2f * distance * Mathf.Tan(fovxRad * 0.5f);
+            float height = width * (manifest.eye_h / (float)manifest.eye_w);
+            ApplyScreenScaleToFitFov(leftScreen, width, height);
+            ApplyScreenScaleToFitFov(rightScreen, width, height);
+            // Intentional: PlaceScreens logs are disabled in the category-only logger.
+        }
 
         Vector3 rightOffset = head.right * 0.001f;
         if (leftScreen != null)
         {
             leftScreen.position = center - rightOffset;
             leftScreen.rotation = rotation;
-            LogScreens($"PlaceScreens: leftScreenFwd={leftScreen.forward}");
         }
 
         if (rightScreen != null)
         {
             rightScreen.position = center + rightOffset;
             rightScreen.rotation = rotation;
+        }
+
+        if (!fitScreenToFov && leftScreen != null)
+        {
+            GetScreenSizeMeters(leftScreen, out float width, out float height, out _);
+            // Intentional: PlaceScreens logs are disabled in the category-only logger.
         }
 
         FixFacingIfNeeded(leftScreen, head, "left");
@@ -330,6 +343,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         return normalWorld;
+    }
+
+    private void ApplyScreenScaleToFitFov(Transform screen, float targetWidth, float targetHeight)
+    {
+        if (screen == null)
+        {
+            return;
+        }
+
+        GetScreenSizeMeters(screen, out float currentWidth, out float currentHeight, out _);
+        float meshWidth = Mathf.Abs(screen.localScale.x) > 0f ? currentWidth / screen.localScale.x : 0f;
+        float meshHeight = Mathf.Abs(screen.localScale.y) > 0f ? currentHeight / screen.localScale.y : 0f;
+        if (meshWidth <= 0f || meshHeight <= 0f)
+        {
+            return;
+        }
+
+        Vector3 scale = screen.localScale;
+        scale.x = targetWidth / meshWidth;
+        scale.y = targetHeight / meshHeight;
+        screen.localScale = scale;
     }
 
     private void ApplyScreenFallbackMagenta()
@@ -421,30 +455,97 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
     private Vector3 EyePixelToWorldOnScreen(int u, int v, Transform screen, float eyeW, float eyeH, float offsetMeters)
-    {
-        float screenW = screen.localScale.x;
-        float screenH = screen.localScale.y;
+        => EyePixelToWorldOnScreen((float)u, (float)v, screen, eyeW, eyeH, offsetMeters);
 
-        float xLocal = (u / eyeW - 0.5f) * screenW;
-        float yLocal = (0.5f - v / eyeH) * screenH;
-        Vector3 worldOnPlane = screen.TransformPoint(new Vector3(xLocal, yLocal, 0f));
+    private Vector3 EyePixelToWorldOnScreen(float u, float v, Transform screen, float eyeW, float eyeH, float offsetMeters)
+    {
+        float xN = (u / eyeW) - 0.5f;
+        float yN = 0.5f - (v / eyeH);
+        Vector3 local = new Vector3(xN, yN, 0f);
+        Vector3 worldOnPlane = screen.TransformPoint(local);
         Vector3 world = worldOnPlane + screen.forward * offsetMeters;
 
-        LogScreens($"EyePixelToWorldOnScreen: u={u} v={v} eyeW={eyeW} eyeH={eyeH} screenW={screenW} screenH={screenH} xLocal={xLocal} yLocal={yLocal} worldOnPlane={worldOnPlane} world={world}");
+        if (verboseLog)
+        {
+            Vector3 s = screen.lossyScale;
+            LogScreens(
+                $"EyePixelToWorldOnScreenF: u={u:F2} v={v:F2} eyeW={eyeW} eyeH={eyeH} " +
+                $"lossy=({s.x:F3},{s.y:F3},{s.z:F3}) xN={xN:F4} yN={yN:F4} world={world}");
+        }
         return world;
+    }
+
+    private void GetScreenMeshLocalBounds(Transform screen, out Vector3 center, out Vector3 size)
+    {
+        center = Vector3.zero;
+        size = Vector3.one;
+        if (screen == null)
+        {
+            return;
+        }
+
+        MeshFilter meshFilter = screen.GetComponent<MeshFilter>();
+        if (meshFilter != null && meshFilter.sharedMesh != null)
+        {
+            Bounds bounds = meshFilter.sharedMesh.bounds;
+            center = bounds.center;
+            size = bounds.size;
+            return;
+        }
+
+        Renderer renderer = screen.GetComponent<Renderer>();
+        if (renderer != null)
+        {
+            Bounds bounds = renderer.localBounds;
+            center = bounds.center;
+            size = bounds.size;
+        }
+    }
+
+    private void GetScreenSizeMeters(Transform screen, out float width, out float height, out Vector3 localCenterOffset)
+    {
+        width = 1f;
+        height = 1f;
+        localCenterOffset = Vector3.zero;
+        if (screen == null)
+        {
+            return;
+        }
+
+        GetScreenMeshLocalBounds(screen, out Vector3 center, out Vector3 size);
+        width = size.x * screen.localScale.x;
+        height = size.y * screen.localScale.y;
+        localCenterOffset = Vector3.Scale(center, screen.localScale);
     }
 
     private bool TryGetFovxDeg(out float fovxDeg)
     {
-        fovxDeg = metaHeader.fovxDeg;
-        if (fovxDeg > 0f)
+        fovxDeg = 0f;
+        float manifestFovx = GetManifestFovxDeg();
+        if (manifestFovx > 0f)
         {
+            fovxDeg = manifestFovx;
+            if (verboseLog && !loggedFovSource)
+            {
+                LogMeta($"FOVx source=manifest fovx_deg={fovxDeg}");
+                loggedFovSource = true;
+            }
             return true;
         }
 
-        Debug.LogWarning("FOVx not available; using 60 degrees fallback.");
-        fovxDeg = 60f;
-        return true;
+        if (metaHeader.fovxDeg > 0f)
+        {
+            fovxDeg = metaHeader.fovxDeg;
+            if (verboseLog && !loggedFovSource)
+            {
+                LogMeta($"FOVx source=metaHeader fovx_deg={fovxDeg}");
+                loggedFovSource = true;
+            }
+            return true;
+        }
+
+        Debug.LogWarning("FOVx not available; no fallback value.");
+        return false;
     }
 
     private bool TryGetFocalLengths(out float fx, out float fy)
@@ -491,5 +592,41 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         Vector3 world = origin + screen.right * x + screen.up * y + screen.forward * z;
         return world;
+    }
+
+    private Vector3 ReconstructCamLocalFromEyePixel(float uEye, float vEye, float zMeters, float fx, float fy, int eyeW, int eyeH)
+    {
+        float xNdc = (uEye / (float)eyeW - 0.5f) * 2f;
+        float yNdc = (0.5f - vEye / (float)eyeH) * 2f;
+        return new Vector3(xNdc * zMeters / fx, yNdc * zMeters / fy, zMeters);
+    }
+
+    private Vector3 AnchorUvZToWorldPinhole(float uEye, float vEye, float zMeters)
+    {
+        if (manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
+        {
+            return Vector3.zero;
+        }
+
+        if (!TryGetFocalLengths(out float fx, out float fy))
+        {
+            return Vector3.zero;
+        }
+
+        Camera viewCam = GetViewCamera() ?? Camera.main;
+        Transform basis = viewCam != null ? viewCam.transform : GetHeadTransform();
+        if (viewCam == null && basis != null)
+        {
+            Debug.LogWarning("AnchorUvZToWorldPinhole: viewCam missing; using head transform.");
+        }
+
+        if (basis == null)
+        {
+            Debug.LogWarning("AnchorUvZToWorldPinhole: no camera or head transform.");
+            return Vector3.zero;
+        }
+
+        Vector3 camLocal = ReconstructCamLocalFromEyePixel(uEye, vEye, zMeters, fx, fy, manifest.eye_w, manifest.eye_h);
+        return basis.TransformPoint(camLocal);
     }
 }

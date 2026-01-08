@@ -1,70 +1,140 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Video;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
+    public enum LogCategory
+    {
+        // META_RANGE: meta anchor(u,v) min/max over 30-60 frames to verify crop-space.
+        META_RANGE,
+        // FOLLOW: per-track follow updates (frame/track/u,v/z/world).
+        FOLLOW,
+        // SCALE: bbox->world size and applied scale.
+        SCALE,
+        // BONE: skeleton decode/apply status and pose debug.
+        BONE,
+        // PINHOLE_ERR: screen-plane vs pinhole error.
+        PINHOLE_ERR
+    }
+
+    [System.Serializable]
+    public class DebugLogConfig
+    {
+        // Master switch for all debug logs.
+        public bool enableLogs = true;
+        // Enable specific categories to get one-line logs for that topic.
+        public List<LogCategory> enabled = new List<LogCategory>();
+        // If set, only emit logs for this frame (matching current meta frame).
+        public int onlyFrame = -1;
+        // If set, only emit logs for this track id.
+        public int onlyTrack = -1;
+        // Emit logs every N frames (1 = every frame).
+        public int logEveryNFrames = 1;
+        // Stop after this many log lines (0 = no limit).
+        public int maxLines = 50;
+        public bool dedup = true;
+    }
+
+    [SerializeField] private DebugLogConfig debugLog = new DebugLogConfig();
+    private readonly Dictionary<(LogCategory, int, int), string> lastLogCache = new Dictionary<(LogCategory, int, int), string>();
+    private int logCount;
+
+    private bool ShouldLog(LogCategory cat, int frame, int track)
+    {
+        if (!verboseLog || debugLog == null || !debugLog.enableLogs)
+        {
+            return false;
+        }
+
+        if (debugLog.enabled != null && debugLog.enabled.Count > 0 && !debugLog.enabled.Contains(cat))
+        {
+            return false;
+        }
+
+        if (debugLog.onlyFrame >= 0 && frame >= 0 && frame != debugLog.onlyFrame)
+        {
+            return false;
+        }
+
+        if (debugLog.onlyTrack >= 0 && track >= 0 && track != debugLog.onlyTrack)
+        {
+            return false;
+        }
+
+        if (debugLog.logEveryNFrames > 1 && frame >= 0 && (frame % debugLog.logEveryNFrames) != 0)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private void Log(LogCategory cat, string msg, int frame = -1, int track = -1, float? metric = null)
+    {
+        if (!ShouldLog(cat, frame, track))
+        {
+            return;
+        }
+
+        if (debugLog.dedup)
+        {
+            var key = (cat, frame, track);
+            if (lastLogCache.TryGetValue(key, out string last) && last == msg)
+            {
+                return;
+            }
+
+            lastLogCache[key] = msg;
+        }
+
+        if (debugLog.maxLines > 0 && logCount >= debugLog.maxLines)
+        {
+            return;
+        }
+
+        logCount++;
+        Debug.Log($"{cat} {msg}");
+    }
+
     private void LogGeneral(string msg)
     {
-        if (verboseLog && logGeneral)
-        {
-            Debug.Log(msg);
-        }
+        return;
     }
 
     private void LogBundle(string msg)
     {
-        if (verboseLog && logBundle)
-        {
-            Debug.Log(msg);
-        }
+        return;
     }
 
     private void LogMeta(string msg)
     {
-        if (verboseLog && logMeta)
-        {
-            Debug.Log(msg);
-        }
+        return;
     }
 
     private void LogPicking(string msg)
     {
-        if (verboseLog && logPicking)
-        {
-            Debug.Log(msg);
-        }
+        return;
     }
 
     private void LogFollow(string msg)
     {
-        if (verboseLog && logFollow)
-        {
-            Debug.Log(msg);
-        }
+        return;
     }
 
     private void LogScreens(string msg)
     {
-        if (verboseLog && logScreens)
-        {
-            Debug.Log(msg);
-        }
+        return;
     }
 
     private void LogVideo(string msg)
     {
-        if (verboseLog && logVideo)
-        {
-            Debug.Log(msg);
-        }
+        return;
     }
 
     private void LogModel(string msg)
     {
-        if (verboseLog && logModel)
-        {
-            Debug.Log(msg);
-        }
+        return;
     }
 
     private void LogActiveCameras()
@@ -161,44 +231,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void LogStereoSetup(string tag)
     {
-        LogOneScreenSetup(tag, "left", leftScreen, leftMat, leftTexProp);
-        LogOneScreenSetup(tag, "right", rightScreen, rightMat, rightTexProp);
-        bool sameInstance = leftMat != null && rightMat != null && ReferenceEquals(leftMat, rightMat);
-        LogScreens($"LogStereoSetup({tag}): leftMatId={(leftMat != null ? leftMat.GetInstanceID().ToString() : "null")} rightMatId={(rightMat != null ? rightMat.GetInstanceID().ToString() : "null")} sameInstance={sameInstance}");
+        return;
     }
 
     private void LogOneScreenSetup(string tag, string label, Transform screen, Material mat, string texProp)
     {
-        if (screen == null)
-        {
-            Debug.LogWarning($"LogStereoSetup({tag}) {label}: screen is null.");
-            return;
-        }
-
-        var renderer = screen.GetComponent<Renderer>();
-        string rendererEnabled = renderer != null ? renderer.enabled.ToString() : "no renderer";
-        string shaderName = mat != null && mat.shader != null ? mat.shader.name : "null";
-        LogScreens(
-            $"LogStereoSetup({tag}) {label}: name={screen.name} active={screen.gameObject.activeInHierarchy} layer={screen.gameObject.layer} " +
-            $"renderer={rendererEnabled} shader={shaderName} texProp={texProp}");
-
-        if (mat != null)
-        {
-            if (mat.HasProperty("_EyeMode"))
-            {
-                LogScreens($"LogStereoSetup({tag}) {label}: _EyeMode={mat.GetInt("_EyeMode")}");
-            }
-
-            if (mat.HasProperty("_UVScale"))
-            {
-                LogScreens($"LogStereoSetup({tag}) {label}: _UVScale={mat.GetVector("_UVScale")}");
-            }
-
-            if (mat.HasProperty("_UVOffset"))
-            {
-                LogScreens($"LogStereoSetup({tag}) {label}: _UVOffset={mat.GetVector("_UVOffset")}");
-            }
-        }
+        return;
     }
 
     private void DumpScreenState(string tag)

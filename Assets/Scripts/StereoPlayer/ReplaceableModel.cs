@@ -5,18 +5,24 @@ public class ReplaceableModel : MonoBehaviour
     public Transform anchor;
     public float referenceHeightMeters = 0f;
     public float userScale = 1f;
+    public Vector3 baseLocalScale;
+    public float baseHeightMeters;
+    public Vector2 baseBoundsSize;
 
-    public float GetModelHeightMeters()
+    private void Awake()
     {
+        baseLocalScale = transform.localScale;
         if (referenceHeightMeters > 0f)
         {
-            return referenceHeightMeters;
+            baseHeightMeters = referenceHeightMeters;
+            return;
         }
 
         var renderers = GetComponentsInChildren<Renderer>();
         if (renderers == null || renderers.Length == 0)
         {
-            return 0f;
+            baseHeightMeters = 0f;
+            return;
         }
 
         Bounds bounds = renderers[0].bounds;
@@ -25,12 +31,16 @@ public class ReplaceableModel : MonoBehaviour
             bounds.Encapsulate(renderers[i].bounds);
         }
 
-        float lossyY = transform.lossyScale.y;
-        if (lossyY > 0f)
-        {
-            return bounds.size.y / lossyY;
-        }
+        Vector3 lossy = transform.lossyScale;
+        float lossyY = lossy.y;
+        baseHeightMeters = lossyY > 0f ? bounds.size.y / lossyY : bounds.size.y;
+        float lossyX = lossy.x;
+        float baseW = lossyX > 0f ? bounds.size.x / lossyX : bounds.size.x;
+        baseBoundsSize = new Vector2(baseW, baseHeightMeters);
+    }
 
-        return bounds.size.y;
+    public float GetModelHeightMeters()
+    {
+        return baseHeightMeters;
     }
 }

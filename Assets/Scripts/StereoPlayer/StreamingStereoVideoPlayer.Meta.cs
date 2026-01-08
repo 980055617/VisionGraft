@@ -39,6 +39,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public ushort anchorV;
         public float anchorZ;
         public bool hasSkeleton;
+        public ushort skeletonKpCount;
+        public Vector3[] jointsCam;
+        public byte[] jointsVis;
     }
 
     private bool metaLoaded;
@@ -47,6 +50,47 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private ulong[] frameOffsets;
     private string metaFilePath;
     private readonly List<MetaObj> metaFrameObjects = new List<MetaObj>(64);
+    private float GetQuantPosScale()
+    {
+        float manifestScale = GetManifestQuantPosScale();
+        if (manifestScale > 0f)
+        {
+            if (verboseLog && !loggedQuantSource)
+            {
+                LogMeta($"QuantPosScale source=manifest quant_pos_scale={manifestScale}");
+                loggedQuantSource = true;
+            }
+            return manifestScale;
+        }
+
+        if (metaHeader.quantPosScale > 0f)
+        {
+            if (verboseLog && !loggedQuantSource)
+            {
+                LogMeta($"QuantPosScale source=metaHeader quant_pos_scale={metaHeader.quantPosScale}");
+                loggedQuantSource = true;
+            }
+            return metaHeader.quantPosScale;
+        }
+
+        Debug.LogWarning("QuantPosScale not available; anchorZ will be zero.");
+        return 0f;
+    }
+
+    private float GetQuantJointScale()
+    {
+        if (metaHeader.quantJointScale > 0f)
+        {
+            return metaHeader.quantJointScale;
+        }
+
+        if (fallbackQuantJointScale > 0f)
+        {
+            return fallbackQuantJointScale;
+        }
+
+        return 0f;
+    }
 
     private void LoadMeta(string metaPath)
     {
@@ -222,9 +266,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                         pr.ReadInt16(); // rot_q3
 
                         bool hasSkeleton = (flags & 0x1) != 0;
+                        ushort kpCount = 0;
+                        Vector3[] jointsCam = null;
+                        byte[] jointsVis = null;
                         if (hasSkeleton)
                         {
-                            ushort kpCount = 0;
                             if (categoryKpCounts.TryGetValue(categoryId, out ushort count))
                             {
                                 kpCount = count;
@@ -233,16 +279,32 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                             int posBytes = kpCount * 3 * sizeof(short);
                             if (posBytes > 0)
                             {
-                                pr.ReadBytes(posBytes);
+                                float quantScale = GetQuantJointScale();
+                                if (quantScale > 0f)
+                                {
+                                    jointsCam = new Vector3[kpCount];
+                                    float inv = 1f / quantScale;
+                                    for (int p = 0; p < kpCount; p++)
+                                    {
+                                        short xq = pr.ReadInt16();
+                                        short yq = pr.ReadInt16();
+                                        short zq = pr.ReadInt16();
+                                        jointsCam[p] = new Vector3(xq * inv, yq * inv, zq * inv);
+                                    }
+                                }
+                                else
+                                {
+                                    pr.BaseStream.Seek(posBytes, SeekOrigin.Current);
+                                }
                             }
 
                             if (kpCount > 0)
                             {
-                                pr.ReadBytes(kpCount);
+                                jointsVis = pr.ReadBytes(kpCount);
                             }
                         }
 
-                        float anchorZ = anchorZq * metaHeader.quantPosScale;
+                        float anchorZ = anchorZq * GetQuantPosScale();
                         outObjs.Add(new MetaObj
                         {
                             trackId = trackId,
@@ -254,7 +316,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                             anchorU = anchorU,
                             anchorV = anchorV,
                             anchorZ = anchorZ,
-                            hasSkeleton = hasSkeleton
+                            hasSkeleton = hasSkeleton,
+                            skeletonKpCount = kpCount,
+                            jointsCam = jointsCam,
+                            jointsVis = jointsVis
                         });
                     }
                 }

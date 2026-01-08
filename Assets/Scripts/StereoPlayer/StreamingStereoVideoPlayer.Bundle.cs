@@ -163,6 +163,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         try
         {
             string json = File.ReadAllText(manifestPath);
+            // Intentional: manifest logs are disabled in the category-only logger.
             manifest = JsonUtility.FromJson<ManifestData>(json);
             if (manifest == null)
             {
@@ -171,6 +172,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
 
             LogBundle($"Manifest parsed. eye_w={manifest.eye_w} eye_h={manifest.eye_h} num_frames={manifest.num_frames} fps={manifest.fps}");
+            LogMeta($"Manifest extras: fovx_deg={manifest.fovx_deg} quant_pos_scale={manifest.quant_pos_scale} crop=({manifest.crop_x},{manifest.crop_y},{manifest.crop_w},{manifest.crop_h}) crop0=({manifest.crop_x0},{manifest.crop_y0}) has_crop={manifest.has_crop}");
         }
         catch (System.Exception ex)
         {

@@ -23,6 +23,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private int metaRangeMinV = int.MaxValue;
     private int metaRangeMaxV = int.MinValue;
     private readonly HashSet<uint> outOfCropLoggedTracks = new HashSet<uint>();
+    private GameObject anchorPinholeCube;
+    private GameObject anchorScreenCube;
     private readonly Dictionary<Animator, HumanoidRigCache> humanoidCaches = new Dictionary<Animator, HumanoidRigCache>();
     private static readonly int[] CocoEdges = new[]
     {
@@ -214,6 +216,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             float targetHeight = ComputeTargetHeightMeters(bboxHAdjusted, target.anchorZ);
             ApplyReplaceableModelTransform(instance, worldPinhole, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxWAdjusted, bboxHAdjusted, frame);
             TryApplySkeleton(instance, target, worldPinhole, viewCam, frame);
+            float bboxWorldH = 0f;
+            if (TryGetFocalLengths(out _, out float fy))
+            {
+                bboxWorldH = (2f * bboxHAdjusted / manifest.eye_h) * (target.anchorZ / fy);
+            }
+            UpdateAnchorDebugCubes(screen, uEyeF, vEyeF, worldPinhole, viewCam, bboxWorldH);
             LogReprojectionError(target.trackId, uEyeF, vEyeF, target.anchorZ, worldPinhole, viewCam, frame);
             // Intentional: camera detail logs suppressed in category-only logger.
 
@@ -230,6 +238,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         spawnedTestModel.transform.SetPositionAndRotation(world, rotation);
         spawnedTestModel.transform.localScale = Vector3.one * testModelSizeMeters;
         AttachTransformLock(spawnedTestModel, world, rotation);
+        float bboxWorldHTest = 0f;
+        if (TryGetFocalLengths(out _, out float fyTest))
+        {
+            bboxWorldHTest = (2f * bboxHAdjusted / manifest.eye_h) * (target.anchorZ / fyTest);
+        }
+        UpdateAnchorDebugCubes(screen, uEyeF, vEyeF, world, viewCamFallback, bboxWorldHTest);
         LogReprojectionError(target.trackId, uEyeF, vEyeF, target.anchorZ, world, viewCamFallback, frame);
         // Intentional: camera detail logs suppressed in category-only logger.
 
@@ -390,6 +404,26 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             instance.transform.localScale = baseScale * uniformScale;
             Vector3 lossy = instance.transform.lossyScale;
             string pivotInfo = model != null && model.anchor != null ? $" pivotOffset={pivotOffset}" : string.Empty;
+            if (model != null && model.anchor == null && model.alignToGround)
+            {
+                float offsetWorld = model.baseBottomOffsetLocal * lossy.y;
+                instance.transform.position += instance.transform.up * offsetWorld;
+                pivotInfo += $" groundOffset={offsetWorld:F3}";
+            }
+
+            if (alignModelToBBoxBottom && model != null)
+            {
+                Camera cam = GetViewCamera() ?? Camera.main;
+                Vector3 up = cam != null ? cam.transform.up : Vector3.up;
+                float vBottom = vEye + bboxHAdjusted * bboxAnchorVToBottom;
+                vBottom = Mathf.Clamp(vBottom, 0f, manifest.eye_h - 1f);
+                Vector3 bottomWorld = AnchorUvZToWorldPinhole(uEye, vBottom, obj.anchorZ);
+                float modelBottomOffset = model.baseBottomOffsetLocal * lossy.y;
+                Vector3 modelBottomWorld = instance.transform.position - up * modelBottomOffset;
+                Vector3 delta = bottomWorld - modelBottomWorld;
+                instance.transform.position += delta;
+            }
+
             Log(LogCategory.SCALE,
                 $"f={frame} t={obj.trackId} bboxPx=({bboxWAdjusted:F1},{bboxHAdjusted:F1}) bboxWorld=({bboxWorldW:F3},{bboxWorldH:F3}) " +
                 $"baseBounds=({baseBounds.x:F3},{baseBounds.y:F3}) appliedScale=({instance.transform.localScale.x:F3},{instance.transform.localScale.y:F3},{instance.transform.localScale.z:F3}){pivotInfo}",
@@ -398,6 +432,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         instance.transform.localScale = baseScale * targetUniform;
+        if (model != null && model.anchor == null && model.alignToGround)
+        {
+            float offsetWorld = model.baseBottomOffsetLocal * instance.transform.lossyScale.y;
+            instance.transform.position += instance.transform.up * offsetWorld;
+        }
     }
 
     private void TryApplySkeleton(GameObject instance, MetaObj obj, Vector3 rootWorld, Camera viewCam, int frame)
@@ -464,6 +503,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         bool applied = ApplyHumanoidLimbs(cache, jointsWorld, obj.jointsVis);
+        if (alignFeetToAnkles)
+        {
+            AlignFeetToAnkles(cache, jointsWorld, obj.jointsVis, instance.transform);
+        }
+
         if (applied && !boneAppliedLogged)
         {
             boneAppliedLogged = true;
@@ -568,6 +612,40 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return appliedAny;
     }
 
+    private void AlignFeetToAnkles(HumanoidRigCache cache, Vector3[] jointsWorld, byte[] vis, Transform root)
+    {
+        if (cache == null || jointsWorld == null || vis == null || root == null)
+        {
+            return;
+        }
+
+        if (vis.Length <= 16 || jointsWorld.Length <= 16)
+        {
+            return;
+        }
+
+        if (vis[15] == 0 || vis[16] == 0)
+        {
+            return;
+        }
+
+        if (!cache.bones.TryGetValue(HumanBodyBones.LeftFoot, out Transform leftFoot) ||
+            !cache.bones.TryGetValue(HumanBodyBones.RightFoot, out Transform rightFoot))
+        {
+            return;
+        }
+
+        Vector3 targetMid = (jointsWorld[15] + jointsWorld[16]) * 0.5f;
+        Vector3 currentMid = (leftFoot.position + rightFoot.position) * 0.5f;
+        Vector3 delta = targetMid - currentMid;
+        if (delta == Vector3.zero)
+        {
+            return;
+        }
+
+        root.position += delta * Mathf.Clamp01(footAlignAlpha);
+    }
+
     private IEnumerable<BoneMap> GetBoneMaps()
     {
         yield return new BoneMap { bone = HumanBodyBones.LeftUpperArm, jointA = 5, jointB = 7 };
@@ -578,6 +656,71 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         yield return new BoneMap { bone = HumanBodyBones.LeftLowerLeg, jointA = 13, jointB = 15 };
         yield return new BoneMap { bone = HumanBodyBones.RightUpperLeg, jointA = 12, jointB = 14 };
         yield return new BoneMap { bone = HumanBodyBones.RightLowerLeg, jointA = 14, jointB = 16 };
+    }
+
+    private void UpdateAnchorDebugCubes(Transform screen, float uEye, float vEye, Vector3 worldPinhole, Camera viewCam, float bboxWorldH)
+    {
+        if (!showAnchorDebugCubes)
+        {
+            return;
+        }
+
+        if (screen == null || manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
+        {
+            return;
+        }
+
+        if (anchorPinholeCube == null)
+        {
+            anchorPinholeCube = CreateAnchorCube("AnchorPinholeCube", Color.cyan);
+        }
+
+        if (anchorScreenCube == null)
+        {
+            anchorScreenCube = CreateAnchorCube("AnchorScreenCube", Color.yellow);
+        }
+
+        Vector3 worldOnPlane = EyePixelToWorldOnScreen(uEye, vEye, screen, manifest.eye_w, manifest.eye_h, 0f);
+        Vector3 pinholePos = worldPinhole;
+        Vector3 screenPos = worldOnPlane;
+        if (anchorDebugAlignBottom && bboxWorldH > 0f)
+        {
+            Vector3 upCam = viewCam != null ? viewCam.transform.up : screen.up;
+            pinholePos -= upCam * (bboxWorldH * 0.5f);
+            screenPos -= screen.up * (bboxWorldH * 0.5f);
+        }
+
+        anchorPinholeCube.transform.position = pinholePos;
+        anchorScreenCube.transform.position = screenPos;
+    }
+
+    private GameObject CreateAnchorCube(string name, Color color)
+    {
+        GameObject cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        cube.name = name;
+        cube.transform.localScale = Vector3.one * anchorDebugCubeSize;
+        var collider = cube.GetComponent<Collider>();
+        if (collider != null)
+        {
+            Destroy(collider);
+        }
+
+        var renderer = cube.GetComponent<Renderer>();
+        if (renderer != null)
+        {
+            var mat = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+            if (mat == null)
+            {
+                mat = new Material(Shader.Find("Unlit/Color"));
+            }
+            if (mat != null)
+            {
+                mat.color = color;
+                renderer.material = mat;
+            }
+        }
+
+        return cube;
     }
 
     private void UpdateMetaRange(int frame)

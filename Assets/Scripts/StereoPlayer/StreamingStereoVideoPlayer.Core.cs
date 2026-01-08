@@ -61,6 +61,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public float boneRootRelThreshold = 0.2f;
     public Vector3 boneAxisSign = Vector3.one;
     public float fallbackQuantJointScale = 1f;
+    public bool alignFeetToAnkles = true;
+    public float footAlignAlpha = 1f;
 
     [Header("Debug")]
     public bool forceScreensInFrontOfViewCamera = false;
@@ -73,6 +75,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool logScreens = true;
     public bool logVideo = true;
     public bool logModel = true;
+    public bool showAnchorDebugCubes = false;
+    public float anchorDebugCubeSize = 0.03f;
+    public bool anchorDebugAlignBottom = true;
+    public bool alignModelToBBoxBottom = true;
+    public float bboxAnchorVToBottom = 0.5f;
 
     private VideoPlayer vp;
     private ManifestData manifest;

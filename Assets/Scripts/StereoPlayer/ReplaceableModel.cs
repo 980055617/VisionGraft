@@ -5,9 +5,11 @@ public class ReplaceableModel : MonoBehaviour
     public Transform anchor;
     public float referenceHeightMeters = 0f;
     public float userScale = 1f;
+    public bool alignToGround = true;
     public Vector3 baseLocalScale;
     public float baseHeightMeters;
     public Vector2 baseBoundsSize;
+    public float baseBottomOffsetLocal;
 
     private void Awake()
     {
@@ -37,6 +39,7 @@ public class ReplaceableModel : MonoBehaviour
         float lossyX = lossy.x;
         float baseW = lossyX > 0f ? bounds.size.x / lossyX : bounds.size.x;
         baseBoundsSize = new Vector2(baseW, baseHeightMeters);
+        baseBottomOffsetLocal = lossyY > 0f ? (transform.position.y - bounds.min.y) / lossyY : 0f;
     }
 
     public float GetModelHeightMeters()

@@ -1218,7 +1218,7 @@ MonoBehaviour:
   screenOffsetMeters: {x: 0, y: 0, z: 0}
   fitScreenToFov: 1
   testModelPrefab: {fileID: 3348292547451869151, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
-  replacePrefab: {fileID: 0}
+  replacePrefab: {fileID: 3348292547451869151, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
   testPixel: {x: -1, y: -1}
   testDepthMeters: 0.5
   spawnTestModelOnPrepared: 1
@@ -1239,6 +1239,8 @@ MonoBehaviour:
   boneRootRelThreshold: 0.2
   boneAxisSign: {x: 1, y: 1, z: 1}
   fallbackQuantJointScale: 1
+  alignFeetToAnkles: 1
+  footAlignAlpha: 1
   forceScreensInFrontOfViewCamera: 0
   verboseLog: 1
   logGeneral: 0
@@ -1249,9 +1251,14 @@ MonoBehaviour:
   logScreens: 1
   logVideo: 0
   logModel: 0
+  showAnchorDebugCubes: 1
+  anchorDebugCubeSize: 0.03
+  anchorDebugAlignBottom: 1
+  alignModelToBBoxBottom: 1
+  bboxAnchorVToBottom: 0.5
   debugLog:
     enableLogs: 1
-    enabled: 03000000
+    enabled: 03000000000000000100000002000000
     onlyFrame: -1
     onlyTrack: 0
     logEveryNFrames: -1

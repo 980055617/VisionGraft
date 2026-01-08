@@ -17,8 +17,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         string streamingBundleUrl = Path.Combine(Application.streamingAssetsPath, bundleFileName);
         streamingBundleUrl = streamingBundleUrl.Replace("\\", "/");
         string persistentBundlePath = Path.Combine(Application.persistentDataPath, bundleFileName);
-        VLog($"Streaming bundle url: {streamingBundleUrl}");
-        VLog($"Persistent bundle path: {persistentBundlePath}");
+        LogBundle($"Streaming bundle url: {streamingBundleUrl}");
+        LogBundle($"Persistent bundle path: {persistentBundlePath}");
         bool needsBundleCopy = reExtractAlways || !File.Exists(persistentBundlePath);
 
         if (needsBundleCopy)
@@ -66,9 +66,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         bool needsExtractMeta = reExtractAlways || !File.Exists(extractedMetaPath);
         bool needsExtractAny = needsExtractVideo || needsExtractManifest || needsExtractMeta;
 
-        VLog($"Extracted paths: video={extractedVideoPath} exists={File.Exists(extractedVideoPath)} needsExtract={needsExtractVideo}");
-        VLog($"Extracted paths: manifest={extractedManifestPath} exists={File.Exists(extractedManifestPath)} needsExtract={needsExtractManifest}");
-        VLog($"Extracted paths: meta={extractedMetaPath} exists={File.Exists(extractedMetaPath)} needsExtract={needsExtractMeta}");
+        LogBundle($"Extracted paths: video={extractedVideoPath} exists={File.Exists(extractedVideoPath)} needsExtract={needsExtractVideo}");
+        LogBundle($"Extracted paths: manifest={extractedManifestPath} exists={File.Exists(extractedManifestPath)} needsExtract={needsExtractManifest}");
+        LogBundle($"Extracted paths: meta={extractedMetaPath} exists={File.Exists(extractedMetaPath)} needsExtract={needsExtractMeta}");
 
         if (needsExtractAny)
         {
@@ -112,8 +112,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         TryLoadManifest(extractedManifestPath);
+        LoadMeta(extractedMetaPath);
 
-        VLog($"Extracted video path: {extractedVideoPath}");
+        LogBundle($"Extracted video path: {extractedVideoPath}");
         string normalizedVideoPath = extractedVideoPath.Replace("\\", "/");
         vp.url = normalizedVideoPath;
 
@@ -135,7 +136,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             entryStream.CopyTo(outStream);
         }
 
-        VLog($"Extracted entry. entry={entryName} outPath={outPath} size={new FileInfo(outPath).Length} bytes");
+        LogBundle($"Extracted entry. entry={entryName} outPath={outPath} size={new FileInfo(outPath).Length} bytes");
         return true;
     }
 
@@ -148,7 +149,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         long size = new FileInfo(path).Length;
-        VLog($"Extracted file exists. label={label} size={size} bytes path={path}");
+        LogBundle($"Extracted file exists. label={label} size={size} bytes path={path}");
     }
 
     private void TryLoadManifest(string manifestPath)
@@ -169,7 +170,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 return;
             }
 
-            VLog($"Manifest parsed. eye_w={manifest.eye_w} eye_h={manifest.eye_h} num_frames={manifest.num_frames} fps={manifest.fps}");
+            LogBundle($"Manifest parsed. eye_w={manifest.eye_w} eye_h={manifest.eye_h} num_frames={manifest.num_frames} fps={manifest.fps}");
         }
         catch (System.Exception ex)
         {

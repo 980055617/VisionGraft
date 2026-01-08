@@ -3,9 +3,65 @@ using UnityEngine.Video;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
-    private void VLog(string msg)
+    private void LogGeneral(string msg)
     {
-        if (verboseLog)
+        if (verboseLog && logGeneral)
+        {
+            Debug.Log(msg);
+        }
+    }
+
+    private void LogBundle(string msg)
+    {
+        if (verboseLog && logBundle)
+        {
+            Debug.Log(msg);
+        }
+    }
+
+    private void LogMeta(string msg)
+    {
+        if (verboseLog && logMeta)
+        {
+            Debug.Log(msg);
+        }
+    }
+
+    private void LogPicking(string msg)
+    {
+        if (verboseLog && logPicking)
+        {
+            Debug.Log(msg);
+        }
+    }
+
+    private void LogFollow(string msg)
+    {
+        if (verboseLog && logFollow)
+        {
+            Debug.Log(msg);
+        }
+    }
+
+    private void LogScreens(string msg)
+    {
+        if (verboseLog && logScreens)
+        {
+            Debug.Log(msg);
+        }
+    }
+
+    private void LogVideo(string msg)
+    {
+        if (verboseLog && logVideo)
+        {
+            Debug.Log(msg);
+        }
+    }
+
+    private void LogModel(string msg)
+    {
+        if (verboseLog && logModel)
         {
             Debug.Log(msg);
         }
@@ -21,7 +77,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 continue;
             }
 
-            VLog(
+            LogGeneral(
                 $"ActiveCamera: name={cam.name} tag={cam.tag} pos={cam.transform.position} fwd={cam.transform.forward} " +
                 $"near={cam.nearClipPlane} far={cam.farClipPlane} cullingMask={cam.cullingMask} stereoTargetEye={cam.stereoTargetEye}");
         }
@@ -98,7 +154,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         bool textureNull = vp.texture == null;
         bool targetTextureNull = vp.targetTexture == null;
-        VLog(
+        LogVideo(
             $"VideoPlayerState({tag}): prepared={vp.isPrepared} playing={vp.isPlaying} frame={vp.frame} " +
             $"textureNull={textureNull} targetTextureNull={targetTextureNull} url={vp.url}");
     }
@@ -108,7 +164,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         LogOneScreenSetup(tag, "left", leftScreen, leftMat, leftTexProp);
         LogOneScreenSetup(tag, "right", rightScreen, rightMat, rightTexProp);
         bool sameInstance = leftMat != null && rightMat != null && ReferenceEquals(leftMat, rightMat);
-        VLog($"LogStereoSetup({tag}): leftMatId={(leftMat != null ? leftMat.GetInstanceID().ToString() : "null")} rightMatId={(rightMat != null ? rightMat.GetInstanceID().ToString() : "null")} sameInstance={sameInstance}");
+        LogScreens($"LogStereoSetup({tag}): leftMatId={(leftMat != null ? leftMat.GetInstanceID().ToString() : "null")} rightMatId={(rightMat != null ? rightMat.GetInstanceID().ToString() : "null")} sameInstance={sameInstance}");
     }
 
     private void LogOneScreenSetup(string tag, string label, Transform screen, Material mat, string texProp)
@@ -122,7 +178,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         var renderer = screen.GetComponent<Renderer>();
         string rendererEnabled = renderer != null ? renderer.enabled.ToString() : "no renderer";
         string shaderName = mat != null && mat.shader != null ? mat.shader.name : "null";
-        VLog(
+        LogScreens(
             $"LogStereoSetup({tag}) {label}: name={screen.name} active={screen.gameObject.activeInHierarchy} layer={screen.gameObject.layer} " +
             $"renderer={rendererEnabled} shader={shaderName} texProp={texProp}");
 
@@ -130,17 +186,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             if (mat.HasProperty("_EyeMode"))
             {
-                VLog($"LogStereoSetup({tag}) {label}: _EyeMode={mat.GetInt("_EyeMode")}");
+                LogScreens($"LogStereoSetup({tag}) {label}: _EyeMode={mat.GetInt("_EyeMode")}");
             }
 
             if (mat.HasProperty("_UVScale"))
             {
-                VLog($"LogStereoSetup({tag}) {label}: _UVScale={mat.GetVector("_UVScale")}");
+                LogScreens($"LogStereoSetup({tag}) {label}: _UVScale={mat.GetVector("_UVScale")}");
             }
 
             if (mat.HasProperty("_UVOffset"))
             {
-                VLog($"LogStereoSetup({tag}) {label}: _UVOffset={mat.GetVector("_UVOffset")}");
+                LogScreens($"LogStereoSetup({tag}) {label}: _UVOffset={mat.GetVector("_UVOffset")}");
             }
         }
     }
@@ -165,7 +221,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             ? renderer.sharedMaterial.shader.name
             : "null";
         bool textureNull = renderer == null || renderer.sharedMaterial == null || renderer.sharedMaterial.mainTexture == null;
-        VLog(
+        LogScreens(
             $"DumpScreenState({tag}) {label}: active={screen.gameObject.activeInHierarchy} " +
             $"pos={screen.position} rot={screen.rotation.eulerAngles} scale={screen.localScale} lossyScale={screen.lossyScale} " +
             $"renderer={rendererEnabled} shader={shaderName} texNull={textureNull} layer={screen.gameObject.layer}");

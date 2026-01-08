@@ -18,6 +18,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public Vector2 uv;
         public Vector2Int pixel;
         public string hitName;
+        public Ray ray;
+        public float hitDistance;
+        public Vector3 hitPoint;
+        public bool hasHitDistance;
     }
 
     private bool TryPick(out PickResult pick)
@@ -46,9 +50,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         Ray ray = cam.ScreenPointToRay(mousePos);
-        if (!TryPickScreenByRay(ray, out Transform pickedScreen, out Vector2 uv, out string hitName))
+        if (!TryPickScreenByRay(ray, out Transform pickedScreen, out Vector2 uv, out string hitName, out float hitDistance, out Vector3 hitPoint, out bool hasHitDistance))
         {
-            VLog("ClickPick: no hit.");
+            LogPicking("ClickPick: no hit.");
             return false;
         }
 
@@ -56,7 +60,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         bool isRight = rightScreen != null && (pickedScreen == rightScreen || pickedScreen.IsChildOf(rightScreen));
         if (!isLeft && !isRight)
         {
-            VLog($"ClickPick: hit other object {hitName}");
+            LogPicking($"ClickPick: hit other object {hitName}");
             return false;
         }
 
@@ -69,10 +73,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             screen = isLeft ? leftScreen : rightScreen,
             uv = uv,
             pixel = new Vector2Int(u, v),
-            hitName = hitName
+            hitName = hitName,
+            ray = ray,
+            hitDistance = hitDistance,
+            hitPoint = hitPoint,
+            hasHitDistance = hasHitDistance
         };
 
-        VLog($"ClickPick: screen={(isLeft ? "left" : "right")} uv={uv} pixel=({u},{v}) hit={hitName}");
+        LogPicking($"ClickPick: screen={(isLeft ? "left" : "right")} uv={uv} pixel=({u},{v}) hit={hitName}");
         return true;
     }
 
@@ -98,28 +106,37 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 #endif
     }
 
-    private bool TryPickScreenByRay(Ray ray, out Transform screen, out Vector2 uv, out string hitName)
+    private bool TryPickScreenByRay(Ray ray, out Transform screen, out Vector2 uv, out string hitName, out float hitDistance, out Vector3 hitPoint, out bool hasHitDistance)
     {
         screen = null;
         uv = Vector2.zero;
         hitName = "none";
+        hitDistance = 0f;
+        hitPoint = Vector3.zero;
+        hasHitDistance = false;
 
         if (Physics.Raycast(ray, out RaycastHit hit, 20f, Physics.AllLayers, QueryTriggerInteraction.Collide))
         {
             screen = hit.transform;
             uv = hit.textureCoord;
             hitName = hit.transform.name;
+            hitDistance = hit.distance;
+            hitPoint = hit.point;
+            hasHitDistance = true;
             return true;
         }
 
-        bool leftHit = TryRaycastScreenPlane(leftScreen, ray, out Vector2 leftUv, out float leftDist);
-        bool rightHit = TryRaycastScreenPlane(rightScreen, ray, out Vector2 rightUv, out float rightDist);
+        bool leftHit = TryRaycastScreenPlane(leftScreen, ray, out Vector2 leftUv, out float leftDist, out Vector3 leftPoint);
+        bool rightHit = TryRaycastScreenPlane(rightScreen, ray, out Vector2 rightUv, out float rightDist, out Vector3 rightPoint);
         if (leftHit && (!rightHit || leftDist <= rightDist))
         {
             screen = leftScreen;
             uv = leftUv;
             hitName = leftScreen != null ? leftScreen.name : "leftScreen";
-            VLog("ClickPick: plane fallback hit leftScreen.");
+            hitDistance = leftDist;
+            hitPoint = leftPoint;
+            hasHitDistance = true;
+            LogPicking("ClickPick: plane fallback hit leftScreen.");
             return true;
         }
 
@@ -128,17 +145,21 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             screen = rightScreen;
             uv = rightUv;
             hitName = rightScreen != null ? rightScreen.name : "rightScreen";
-            VLog("ClickPick: plane fallback hit rightScreen.");
+            hitDistance = rightDist;
+            hitPoint = rightPoint;
+            hasHitDistance = true;
+            LogPicking("ClickPick: plane fallback hit rightScreen.");
             return true;
         }
 
         return false;
     }
 
-    private bool TryRaycastScreenPlane(Transform screen, Ray ray, out Vector2 uv, out float distance)
+    private bool TryRaycastScreenPlane(Transform screen, Ray ray, out Vector2 uv, out float distance, out Vector3 point)
     {
         uv = Vector2.zero;
         distance = 0f;
+        point = Vector3.zero;
         if (screen == null)
         {
             return false;
@@ -150,7 +171,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        Vector3 point = ray.GetPoint(distance);
+        point = ray.GetPoint(distance);
         Vector3 local = screen.InverseTransformPoint(point);
         float halfW = screen.localScale.x * 0.5f;
         float halfH = screen.localScale.y * 0.5f;

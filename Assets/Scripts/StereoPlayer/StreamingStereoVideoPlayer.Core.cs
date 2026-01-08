@@ -32,12 +32,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     [Header("Test Model")]
     public GameObject testModelPrefab;
+    public GameObject replacePrefab;
     public Vector2Int testPixel = new Vector2Int(-1, -1);
     public float testDepthMeters = 0.5f;
     public bool spawnTestModelOnPrepared = false;
     public bool destroyPreviousTestModel = true; // Step2追従を考えるならfalse推奨
     public float testModelSizeMeters = 0.05f; // 5cm
     public Vector2 testModelOffsetMeters = new Vector2(0.10f, 0.0f); // screen右へ10cm
+    [Header("Follow (Meta)")]
+    public bool useMetaFollow = true;
+    public int followTrackId = -1; // -1 = auto
+    public bool followNearestToClick = true;
+    public float followSelectThresholdPixels = 80f;
+
+    [Header("Follow (Debug Sin)")]
+    public bool enableFollow = true;
+    public float followAmplitudePixels = 30f;
+    public float followSpeed = 1f;
 
     [Header("Video Layout")]
     public bool sideBySide = true;
@@ -46,11 +57,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     [Header("Debug")]
     public bool forceScreensInFrontOfViewCamera = false;
     [SerializeField] private bool verboseLog = true;
+    public bool logGeneral = true;
+    public bool logBundle = true;
+    public bool logMeta = true;
+    public bool logPicking = true;
+    public bool logFollow = true;
+    public bool logScreens = true;
+    public bool logVideo = true;
+    public bool logModel = true;
 
     private VideoPlayer vp;
     private ManifestData manifest;
     private bool loggedFirstFrame;
-    private Coroutine watchdogCoroutine;
     private bool fallbackApplied;
     private string leftTexProp = "_MainTex";
     private string rightTexProp = "_MainTex";
@@ -58,22 +76,25 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private Material rightMat;
     private Mesh quadMesh;
     private GameObject spawnedTestModel;
+    private Vector2Int pickedPixel;
+    private bool hasPickedPixel;
+    private Transform pickedScreen;
 
     private void Awake()
     {
-        VLog("StreamingStereoVideoPlayer Awake");
+        LogGeneral("StreamingStereoVideoPlayer Awake");
     }
 
     private void OnEnable()
     {
-        VLog("StreamingStereoVideoPlayer OnEnable");
+        LogGeneral("StreamingStereoVideoPlayer OnEnable");
     }
 
     private IEnumerator Start()
     {
-        VLog("StreamingStereoVideoPlayer Start");
+        LogGeneral("StreamingStereoVideoPlayer Start");
         LogActiveCameras();
-        VLog($"Screen refs at Start: leftScreen={(leftScreen != null ? leftScreen.name : "null")} rightScreen={(rightScreen != null ? rightScreen.name : "null")}");
+        LogGeneral($"Screen refs at Start: leftScreen={(leftScreen != null ? leftScreen.name : "null")} rightScreen={(rightScreen != null ? rightScreen.name : "null")}");
         if (leftScreen == null || rightScreen == null)
         {
             Debug.LogWarning("One or more screen references are null at Start.");
@@ -97,7 +118,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (!loggedFirstFrame && frame >= 0)
             {
                 loggedFirstFrame = true;
-                VLog($"FirstFrameReady: {frame}");
+                LogVideo($"FirstFrameReady: {frame}");
             }
             ApplyVideoFrameTexture(player);
         };
@@ -155,11 +176,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         vp.Play();
         LogVideoPlayerState("after Play");
-        if (watchdogCoroutine != null)
-        {
-            StopCoroutine(watchdogCoroutine);
-        }
-        watchdogCoroutine = StartCoroutine(PlaybackWatchdog());
         vp.prepareCompleted -= OnPrepared;
     }
 
@@ -196,46 +212,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void Update()
     {
-        if (!TryPick(out PickResult pick))
+        if (TryPick(out PickResult pick))
         {
-            return;
+            pickedPixel = pick.pixel;
+            hasPickedPixel = true;
+            pickedScreen = pick.screen;
+            TrySelectFollowTrackFromPick(pick);
+            PlaceOrMoveTestModel(pick);
         }
 
-        PlaceOrMoveTestModel(pick);
-    }
-
-    private IEnumerator PlaybackWatchdog()
-    {
-        float elapsed = 0f;
-        float interval = 0.2f;
-        bool sawFrame = false;
-
-        while (elapsed < 5.0f)
-        {
-            if (vp == null)
-            {
-                yield break;
-            }
-
-            long frame = vp.frame;
-            float time = (float)vp.time;
-            bool textureNull = vp.texture == null;
-            VLog($"PlaybackWatchdog: t={elapsed:F1}s frame={frame} time={time:F3} playing={vp.isPlaying} textureNull={textureNull}");
-
-            if (frame >= 0)
-            {
-                sawFrame = true;
-            }
-
-            yield return new WaitForSeconds(interval);
-            elapsed += interval;
-        }
-
-        if (!sawFrame)
-        {
-            Debug.LogWarning("PlaybackWatchdog: no frames decoded after 5s. Applying fallback.");
-            ApplyScreenFallbackMagenta();
-        }
+        FollowTick();
     }
 
     [System.Serializable]

@@ -249,15 +249,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 toHead = (headPos - center).normalized;
         Quaternion rotation = Quaternion.LookRotation(toHead, head.up);
 
-        VLog($"HeadSource: {(headTransform != null ? "headTransform" : (Camera.main != null ? "Camera.main" : "self"))} headPos={headPos} headFwd={headFwd}");
-        VLog($"PlaceScreens: viewCamera={(viewCam != null ? viewCam.name : "null")} center={center} toHead={toHead}");
+        LogScreens($"HeadSource: {(headTransform != null ? "headTransform" : (Camera.main != null ? "Camera.main" : "self"))} headPos={headPos} headFwd={headFwd}");
+        LogScreens($"PlaceScreens: viewCamera={(viewCam != null ? viewCam.name : "null")} center={center} toHead={toHead}");
 
         Vector3 rightOffset = head.right * 0.001f;
         if (leftScreen != null)
         {
             leftScreen.position = center - rightOffset;
             leftScreen.rotation = rotation;
-            VLog($"PlaceScreens: leftScreenFwd={leftScreen.forward}");
+            LogScreens($"PlaceScreens: leftScreenFwd={leftScreen.forward}");
         }
 
         if (rightScreen != null)
@@ -281,14 +281,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 normalWorld = screen.TransformDirection(normalLocal).normalized;
         Vector3 toHead = (head.position - screen.position).normalized;
         float dotBefore = Vector3.Dot(normalWorld, toHead);
-        VLog($"ScreenFacingMeshNormal[{label}]: normalLocal={normalLocal} normalWorld={normalWorld} toHead={toHead} dotBefore={dotBefore:F3}");
+        LogScreens($"ScreenFacingMeshNormal[{label}]: normalLocal={normalLocal} normalWorld={normalWorld} toHead={toHead} dotBefore={dotBefore:F3}");
 
         if (dotBefore < 0f)
         {
             screen.Rotate(0f, 180f, 0f, Space.Self);
             Vector3 normalWorldAfter = screen.TransformDirection(normalLocal).normalized;
             float dotAfter = Vector3.Dot(normalWorldAfter, toHead);
-            VLog($"ScreenFacingMeshNormalFix[{label}]: dotAfter={dotAfter:F3} newNormalWorld={normalWorldAfter}");
+            LogScreens($"ScreenFacingMeshNormalFix[{label}]: dotAfter={dotAfter:F3} newNormalWorld={normalWorldAfter}");
         }
     }
 
@@ -370,7 +370,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             mat.SetTexture("_BaseMap", null);
         }
 
-        VLog($"Fallback applied: {label} screen set to magenta.");
+        LogScreens($"Fallback applied: {label} screen set to magenta.");
     }
 
     private void TrySpawnDebugMarker()
@@ -395,7 +395,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         Vector3 world = EyePixelToWorldOnScreen(finalPixel.x, finalPixel.y, leftScreen, manifest.eye_w, manifest.eye_h, markerOffset);
 
-        VLog(
+        LogScreens(
             $"SpawnDebugMarker: eye_w={manifest.eye_w} eye_h={manifest.eye_h} " +
             $"debugPixel=({finalPixel.x},{finalPixel.y}) " +
             $"leftScreen scale={leftScreen.localScale} pos={leftScreen.position} rot={leftScreen.rotation.eulerAngles} " +
@@ -430,7 +430,66 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 worldOnPlane = screen.TransformPoint(new Vector3(xLocal, yLocal, 0f));
         Vector3 world = worldOnPlane + screen.forward * offsetMeters;
 
-        VLog($"EyePixelToWorldOnScreen: u={u} v={v} eyeW={eyeW} eyeH={eyeH} screenW={screenW} screenH={screenH} xLocal={xLocal} yLocal={yLocal} worldOnPlane={worldOnPlane} world={world}");
+        LogScreens($"EyePixelToWorldOnScreen: u={u} v={v} eyeW={eyeW} eyeH={eyeH} screenW={screenW} screenH={screenH} xLocal={xLocal} yLocal={yLocal} worldOnPlane={worldOnPlane} world={world}");
+        return world;
+    }
+
+    private bool TryGetFovxDeg(out float fovxDeg)
+    {
+        fovxDeg = metaHeader.fovxDeg;
+        if (fovxDeg > 0f)
+        {
+            return true;
+        }
+
+        Debug.LogWarning("FOVx not available; using 60 degrees fallback.");
+        fovxDeg = 60f;
+        return true;
+    }
+
+    private bool TryGetFocalLengths(out float fx, out float fy)
+    {
+        fx = 0f;
+        fy = 0f;
+        if (manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
+        {
+            return false;
+        }
+
+        if (!TryGetFovxDeg(out float fovxDeg))
+        {
+            return false;
+        }
+
+        float fovxRad = fovxDeg * Mathf.Deg2Rad;
+        fx = 1f / Mathf.Tan(fovxRad * 0.5f);
+        fy = fx * (manifest.eye_w / (float)manifest.eye_h);
+        return fx > 0f && fy > 0f;
+    }
+
+    private Vector3 AnchorUvZToWorld(Transform screen, float u, float v, float zMeters)
+    {
+        if (screen == null || manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
+        {
+            return Vector3.zero;
+        }
+
+        if (!TryGetFocalLengths(out float fx, out float fy))
+        {
+            return Vector3.zero;
+        }
+
+        float xNdc = (u / manifest.eye_w - 0.5f) * 2f;
+        float yNdc = (0.5f - v / manifest.eye_h) * 2f;
+
+        float x = xNdc * zMeters / fx;
+        float y = yNdc * zMeters / fy;
+        float z = zMeters;
+
+        Transform head = GetViewCamera() != null ? GetViewCamera().transform : GetHeadTransform();
+        Vector3 origin = head != null ? head.position : Vector3.zero;
+
+        Vector3 world = origin + screen.right * x + screen.up * y + screen.forward * z;
         return world;
     }
 }

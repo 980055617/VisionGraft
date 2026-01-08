@@ -1242,7 +1242,7 @@ MonoBehaviour:
   alignFeetToAnkles: 1
   footAlignAlpha: 1
   forceScreensInFrontOfViewCamera: 0
-  verboseLog: 1
+  verboseLog: 0
   logGeneral: 0
   logBundle: 0
   logMeta: 1
@@ -1251,7 +1251,7 @@ MonoBehaviour:
   logScreens: 1
   logVideo: 0
   logModel: 0
-  showAnchorDebugCubes: 1
+  showAnchorDebugCubes: 0
   anchorDebugCubeSize: 0.03
   anchorDebugAlignBottom: 1
   alignModelToBBoxBottom: 1

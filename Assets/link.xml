@@ -1,0 +1,9 @@
+<linker>
+  <assembly fullname="K4os.Compression.LZ4" preserve="all"/>
+  <assembly fullname="K4os.Compression.LZ4.Streams" preserve="all"/>
+  <assembly fullname="K4os.Hash.xxHash" preserve="all"/>
+  <assembly fullname="System.IO.Pipelines" preserve="all"/>
+  <assembly fullname="System.Memory" preserve="all"/>
+  <assembly fullname="System.Runtime.CompilerServices.Unsafe" preserve="all"/>
+  <assembly fullname="System.Buffers" preserve="all"/>
+</linker>

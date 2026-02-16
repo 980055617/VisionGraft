@@ -83,6 +83,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool alignModelToBBoxBottom = true;
     public float bboxAnchorVToBottom = 0.5f;
 
+    [Header("Runtime Controls")]
+    public bool enableRuntimeControls = true;
+    public Vector2 controlsBarOffsetMeters = Vector2.zero;
+    public float controlsBarGapMeters = 0.06f;
+    public float controlsBarForwardOffsetMeters = 0.01f;
+    public Vector2 controlsBarSizeMeters = new Vector2(0.6f, 0.1f);
+    public bool enablePauseHotkey = true;
+
     private VideoPlayer vp;
     private ManifestData manifest;
     private bool loggedFirstFrame;
@@ -106,6 +114,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private bool headPosePrimed;
     private Vector3 lastHeadPos;
     private Quaternion lastHeadRot = Quaternion.identity;
+    private bool prevPrimaryButtonPressed;
 
     private void Awake()
     {
@@ -199,6 +208,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         PlaceScreens();
+        EnsureRuntimeControls();
         DumpScreenState("after PlaceScreens");
         LogVideoPlayerState("OnPrepared");
 
@@ -261,6 +271,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         FollowTick();
         DetectRuntimeRecenterFallback();
+        HandleRuntimePauseInput();
     }
 
     private void SubscribeRecenterEvents()

@@ -282,6 +282,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         FixFacingIfNeeded(leftScreen, head, "left");
         FixFacingIfNeeded(rightScreen, head, "right");
+        UpdateRuntimeControlsPlacement();
     }
 
     private void FixFacingIfNeeded(Transform screen, Transform head, string label)

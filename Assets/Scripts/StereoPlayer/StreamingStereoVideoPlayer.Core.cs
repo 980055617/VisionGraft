@@ -85,6 +85,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     [Header("Runtime Controls")]
     public bool enableRuntimeControls = true;
+    public GameObject runtimeControlsPrefab;
     public Vector2 controlsBarOffsetMeters = Vector2.zero;
     public float controlsBarGapMeters = 0.06f;
     public float controlsBarForwardOffsetMeters = 0.01f;

@@ -224,6 +224,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         vp.Play();
+        UpdatePauseButtonLabel();
         LogVideoPlayerState("after Play");
         vp.prepareCompleted -= OnPrepared;
     }

@@ -11,7 +11,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const float RuntimeControlsDefaultCanvasHeight = 200f;
     private GameObject runtimeControlsRoot;
     private Text runtimePauseButtonText;
-    private bool pausedByUser;
     private readonly List<InputDevice> xrInputDevices = new List<InputDevice>();
 
     private void EnsureRuntimeControls()
@@ -369,12 +368,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (vp.isPlaying)
         {
             vp.Pause();
-            pausedByUser = true;
         }
         else
         {
             vp.Play();
-            pausedByUser = false;
         }
 
         UpdatePauseButtonLabel();
@@ -387,6 +384,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        runtimePauseButtonText.text = (vp != null && vp.isPlaying && !pausedByUser) ? "Pause" : "Resume";
+        runtimePauseButtonText.text = (vp != null && vp.isPlaying) ? "Pause" : "Resume";
     }
 }

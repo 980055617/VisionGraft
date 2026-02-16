@@ -1,6 +1,8 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Video;
+using UnityEngine.XR;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
@@ -97,6 +99,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private Vector2Int pickedPixel;
     private bool hasPickedPixel;
     private Transform pickedScreen;
+    private bool hasLockedPinholeBasis;
+    private Vector3 lockedPinholeOrigin;
+    private Quaternion lockedPinholeRotation = Quaternion.identity;
+    private readonly List<XRInputSubsystem> xrInputSubsystems = new List<XRInputSubsystem>();
+    private bool headPosePrimed;
+    private Vector3 lastHeadPos;
+    private Quaternion lastHeadRot = Quaternion.identity;
 
     private void Awake()
     {
@@ -106,6 +115,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private void OnEnable()
     {
         LogGeneral("StreamingStereoVideoPlayer OnEnable");
+        SubscribeRecenterEvents();
+    }
+
+    private void OnDisable()
+    {
+        UnsubscribeRecenterEvents();
+    }
+
+    private void OnDestroy()
+    {
+        UnsubscribeRecenterEvents();
     }
 
     private IEnumerator Start()
@@ -240,6 +260,93 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         FollowTick();
+        DetectRuntimeRecenterFallback();
+    }
+
+    private void SubscribeRecenterEvents()
+    {
+        UnsubscribeRecenterEvents();
+        SubsystemManager.GetSubsystems(xrInputSubsystems);
+        for (int i = 0; i < xrInputSubsystems.Count; i++)
+        {
+            XRInputSubsystem xr = xrInputSubsystems[i];
+            if (xr == null)
+            {
+                continue;
+            }
+
+            xr.trackingOriginUpdated += OnTrackingOriginUpdated;
+        }
+    }
+
+    private void UnsubscribeRecenterEvents()
+    {
+        for (int i = 0; i < xrInputSubsystems.Count; i++)
+        {
+            XRInputSubsystem xr = xrInputSubsystems[i];
+            if (xr == null)
+            {
+                continue;
+            }
+
+            xr.trackingOriginUpdated -= OnTrackingOriginUpdated;
+        }
+
+        xrInputSubsystems.Clear();
+    }
+
+    private void OnTrackingOriginUpdated(XRInputSubsystem subsystem)
+    {
+        RecenterScreensToCurrentFacing();
+    }
+
+    private void DetectRuntimeRecenterFallback()
+    {
+        if (forceScreensInFrontOfViewCamera)
+        {
+            headPosePrimed = false;
+            return;
+        }
+
+        Transform head = GetViewCamera() != null ? GetViewCamera().transform : GetHeadTransform();
+        if (head == null)
+        {
+            headPosePrimed = false;
+            return;
+        }
+
+        if (!headPosePrimed)
+        {
+            headPosePrimed = true;
+            lastHeadPos = head.position;
+            lastHeadRot = head.rotation;
+            return;
+        }
+
+        float deltaPos = Vector3.Distance(lastHeadPos, head.position);
+        float deltaRotDeg = Quaternion.Angle(lastHeadRot, head.rotation);
+        if (deltaPos > 0.35f || deltaRotDeg > 35f)
+        {
+            RecenterScreensToCurrentFacing();
+        }
+
+        lastHeadPos = head.position;
+        lastHeadRot = head.rotation;
+    }
+
+    private void RecenterScreensToCurrentFacing()
+    {
+        if (forceScreensInFrontOfViewCamera)
+        {
+            return;
+        }
+
+        if (leftScreen == null && rightScreen == null)
+        {
+            return;
+        }
+
+        PlaceScreens();
     }
 
     [System.Serializable]

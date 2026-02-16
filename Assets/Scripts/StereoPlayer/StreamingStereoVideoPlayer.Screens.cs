@@ -243,6 +243,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         Camera viewCam = GetViewCamera();
         Transform head = viewCam != null ? viewCam.transform : GetHeadTransform();
+        LockPinholeBasis(head);
         Vector3 headPos = head.position;
         Vector3 headFwd = head.forward;
         Vector3 center = headPos + headFwd * screenDistanceMeters + head.TransformVector(screenOffsetMeters);
@@ -601,7 +602,64 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return new Vector3(xNdc * zMeters / fx, yNdc * zMeters / fy, zMeters);
     }
 
-    private Vector3 AnchorUvZToWorldPinhole(float uEye, float vEye, float zMeters)
+    private void LockPinholeBasis(Transform head)
+    {
+        if (head == null)
+        {
+            return;
+        }
+
+        hasLockedPinholeBasis = true;
+        lockedPinholeOrigin = head.position + head.TransformVector(screenOffsetMeters);
+        lockedPinholeRotation = head.rotation;
+    }
+
+    private bool TryGetPinholeBasis(Transform screen, out Vector3 camOrigin, out Quaternion camRotation)
+    {
+        camOrigin = Vector3.zero;
+        camRotation = Quaternion.identity;
+        if (hasLockedPinholeBasis)
+        {
+            camOrigin = lockedPinholeOrigin;
+            camRotation = lockedPinholeRotation;
+            return true;
+        }
+
+        if (screen == null)
+        {
+            return false;
+        }
+
+        Vector3 camForward = -screen.forward;
+        if (camForward.sqrMagnitude < 0.000001f)
+        {
+            camForward = Vector3.forward;
+        }
+        camForward.Normalize();
+
+        Vector3 camUp = screen.up;
+        if (camUp.sqrMagnitude < 0.000001f)
+        {
+            camUp = Vector3.up;
+        }
+        camUp.Normalize();
+
+        camRotation = Quaternion.LookRotation(camForward, camUp);
+        camOrigin = screen.position + screen.forward * screenDistanceMeters;
+        return true;
+    }
+
+    private Quaternion GetPinholeBasisRotation(Transform screen)
+    {
+        if (TryGetPinholeBasis(screen, out _, out Quaternion rotation))
+        {
+            return rotation;
+        }
+
+        return screen != null ? screen.rotation : Quaternion.identity;
+    }
+
+    private Vector3 AnchorUvZToWorldPinhole(Transform screen, float uEye, float vEye, float zMeters)
     {
         if (manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
         {
@@ -613,20 +671,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return Vector3.zero;
         }
 
-        Camera viewCam = GetViewCamera() ?? Camera.main;
-        Transform basis = viewCam != null ? viewCam.transform : GetHeadTransform();
-        if (viewCam == null && basis != null)
+        if (!TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
         {
-            Debug.LogWarning("AnchorUvZToWorldPinhole: viewCam missing; using head transform.");
-        }
-
-        if (basis == null)
-        {
-            Debug.LogWarning("AnchorUvZToWorldPinhole: no camera or head transform.");
+            Debug.LogWarning("AnchorUvZToWorldPinhole: screen missing.");
             return Vector3.zero;
         }
 
         Vector3 camLocal = ReconstructCamLocalFromEyePixel(uEye, vEye, zMeters, fx, fy, manifest.eye_w, manifest.eye_h);
-        return basis.TransformPoint(camLocal);
+        return camOrigin + (camRotation * camLocal);
     }
 }

@@ -211,11 +211,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
 
             Camera viewCam = GetViewCamera() ?? Camera.main;
-            Vector3 worldPinhole = AnchorUvZToWorldPinhole(uEyeF, vEyeF, target.anchorZ);
-            Quaternion rotationPinhole = viewCam != null ? viewCam.transform.rotation : (screen != null ? screen.rotation : Quaternion.identity);
+            Vector3 worldPinhole = AnchorUvZToWorldPinhole(screen, uEyeF, vEyeF, target.anchorZ);
+            Quaternion rotationPinhole = GetPinholeBasisRotation(screen);
             float targetHeight = ComputeTargetHeightMeters(bboxHAdjusted, target.anchorZ);
-            ApplyReplaceableModelTransform(instance, worldPinhole, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxWAdjusted, bboxHAdjusted, frame);
-            TryApplySkeleton(instance, target, worldPinhole, viewCam, frame);
+            ApplyReplaceableModelTransform(instance, worldPinhole, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxWAdjusted, bboxHAdjusted, screen, frame);
+            TryApplySkeleton(instance, target, worldPinhole, screen, frame);
             float bboxWorldH = 0f;
             if (TryGetFocalLengths(out _, out float fy))
             {
@@ -232,8 +232,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         Camera viewCamFallback = GetViewCamera() ?? Camera.main;
-        Vector3 world = AnchorUvZToWorldPinhole(uEyeF, vEyeF, target.anchorZ);
-        Quaternion rotation = viewCamFallback != null ? viewCamFallback.transform.rotation : (screen != null ? screen.rotation : Quaternion.identity);
+        Vector3 world = AnchorUvZToWorldPinhole(screen, uEyeF, vEyeF, target.anchorZ);
+        Quaternion rotation = GetPinholeBasisRotation(screen);
 
         spawnedTestModel.transform.SetPositionAndRotation(world, rotation);
         spawnedTestModel.transform.localScale = Vector3.one * testModelSizeMeters;
@@ -352,7 +352,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return (2f * bboxH / (float)manifest.eye_h) * (zMeters / fy);
     }
 
-    private void ApplyReplaceableModelTransform(GameObject instance, Vector3 world, Quaternion rotation, float targetHeightMeters, MetaObj obj, float uEye, float vEye, float bboxWAdjusted, float bboxHAdjusted, int frame)
+    private void ApplyReplaceableModelTransform(GameObject instance, Vector3 world, Quaternion rotation, float targetHeightMeters, MetaObj obj, float uEye, float vEye, float bboxWAdjusted, float bboxHAdjusted, Transform screen, int frame)
     {
         if (instance == null)
         {
@@ -413,11 +413,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
             if (alignModelToBBoxBottom && model != null)
             {
-                Camera cam = GetViewCamera() ?? Camera.main;
-                Vector3 up = cam != null ? cam.transform.up : Vector3.up;
+                Vector3 up = screen != null ? screen.up : Vector3.up;
                 float vBottom = vEye + bboxHAdjusted * bboxAnchorVToBottom;
                 vBottom = Mathf.Clamp(vBottom, 0f, manifest.eye_h - 1f);
-                Vector3 bottomWorld = AnchorUvZToWorldPinhole(uEye, vBottom, obj.anchorZ);
+                Vector3 bottomWorld = AnchorUvZToWorldPinhole(screen, uEye, vBottom, obj.anchorZ);
                 float modelBottomOffset = model.baseBottomOffsetLocal * lossy.y;
                 Vector3 modelBottomWorld = instance.transform.position - up * modelBottomOffset;
                 Vector3 delta = bottomWorld - modelBottomWorld;
@@ -439,7 +438,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
     }
 
-    private void TryApplySkeleton(GameObject instance, MetaObj obj, Vector3 rootWorld, Camera viewCam, int frame)
+    private void TryApplySkeleton(GameObject instance, MetaObj obj, Vector3 rootWorld, Transform screen, int frame)
     {
         if (instance == null || !obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
         {
@@ -452,8 +451,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        Transform camXform = viewCam != null ? viewCam.transform : GetHeadTransform();
-        if (camXform == null)
+        if (!TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
         {
             return;
         }
@@ -472,8 +470,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Vector3 joint = obj.jointsCam[i];
             joint = new Vector3(joint.x * boneAxisSign.x, joint.y * boneAxisSign.y, joint.z * boneAxisSign.z);
             jointsWorld[i] = rootRel
-                ? rootWorld + camXform.TransformVector(joint)
-                : camXform.TransformPoint(joint);
+                ? rootWorld + (camRotation * joint)
+                : camOrigin + (camRotation * joint);
         }
 
         Log(LogCategory.BONE,

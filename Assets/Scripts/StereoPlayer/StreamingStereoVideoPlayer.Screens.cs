@@ -523,6 +523,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private bool TryGetFovxDeg(out float fovxDeg)
     {
         fovxDeg = 0f;
+        if (useRuntimeFovxOverride)
+        {
+            float min = Mathf.Min(runtimeFovxMinDeg, runtimeFovxMaxDeg);
+            float max = Mathf.Max(runtimeFovxMinDeg, runtimeFovxMaxDeg);
+            fovxDeg = Mathf.Clamp(runtimeFovxDeg, min, max);
+            if (verboseLog && !loggedFovSource)
+            {
+                LogMeta($"FOVx source=runtimeOverride fovx_deg={fovxDeg}");
+                loggedFovSource = true;
+            }
+            return true;
+        }
+
         float manifestFovx = GetManifestFovxDeg();
         if (manifestFovx > 0f)
         {

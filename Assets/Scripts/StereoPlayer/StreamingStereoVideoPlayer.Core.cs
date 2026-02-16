@@ -92,6 +92,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public Vector2 controlsBarSizeMeters = new Vector2(0.6f, 0.1f);
     public bool enablePauseHotkey = true;
 
+    [Header("Runtime FOVx Tuning")]
+    public bool useRuntimeFovxOverride = false;
+    public float runtimeFovxDeg = 90f;
+    public float runtimeFovxMinDeg = 40f;
+    public float runtimeFovxMaxDeg = 140f;
+    public float runtimeFovxDefaultDeg = 90f;
+    public Vector2 settingsPanelSizeMeters = new Vector2(0.42f, 0.26f);
+    public Vector2 settingsPanelOffsetMeters = Vector2.zero;
+    public float settingsPanelGapMeters = 0.08f;
+    public float settingsPanelForwardOffsetMeters = 0.01f;
+
     private VideoPlayer vp;
     private ManifestData manifest;
     private bool loggedFirstFrame;

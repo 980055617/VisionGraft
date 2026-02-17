@@ -368,7 +368,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Quaternion rotationPinhole = GetPinholeBasisRotation(screen);
             float targetHeight = ComputeTargetHeightMeters(bboxHAdjusted, target.anchorZ);
             ApplyReplaceableModelTransform(instance, worldPinhole, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxWAdjusted, bboxHAdjusted, screen, frame);
-            TryApplySkeleton(instance, target, worldPinhole, screen, frame);
+            TryApplySkeleton(instance, target, instance.transform.position, screen, frame);
             float bboxWorldH = 0f;
             if (TryGetFocalLengths(out _, out float fy))
             {
@@ -567,7 +567,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Vector2 baseBounds = model != null ? model.baseBoundsSize : Vector2.zero;
             float scaleW = baseBounds.x > 0f ? bboxWorldW / baseBounds.x : targetUniform;
             float scaleH = baseBounds.y > 0f ? bboxWorldH / baseBounds.y : targetUniform;
-            float uniformScale = Mathf.Min(scaleW, scaleH);
+            float uniformScale = obj.categoryId == 2 ? Mathf.Min(scaleW, scaleH) : scaleH;
             instance.transform.localScale = baseScale * uniformScale;
             Vector3 lossy = instance.transform.lossyScale;
             string pivotInfo = model != null && model.anchor != null ? $" pivotOffset={pivotOffset}" : string.Empty;
@@ -599,6 +599,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 }
             }
 
+            if (enableHeadHeightScaleCorrection && model != null && obj.categoryId != 2)
+            {
+                TryApplyHumanoidHeadHeightScaleCorrection(instance.transform, model, obj, rootWorld: instance.transform.position, screen: screen, baseScale: baseScale, uniformScale: uniformScale);
+            }
+
             Log(LogCategory.SCALE,
                 $"f={frame} t={obj.trackId} bboxPx=({bboxWAdjusted:F1},{bboxHAdjusted:F1}) bboxWorld=({bboxWorldW:F3},{bboxWorldH:F3}) " +
                 $"baseBounds=({baseBounds.x:F3},{baseBounds.y:F3}) appliedScale=({instance.transform.localScale.x:F3},{instance.transform.localScale.y:F3},{instance.transform.localScale.z:F3}){pivotInfo}",
@@ -612,6 +617,106 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             float offsetWorld = model.baseBottomOffsetLocal * instance.transform.lossyScale.y;
             instance.transform.position += instance.transform.up * offsetWorld;
         }
+
+        if (enableHeadHeightScaleCorrection && model != null && obj.categoryId != 2)
+        {
+            TryApplyHumanoidHeadHeightScaleCorrection(instance.transform, model, obj, rootWorld: instance.transform.position, screen: screen, baseScale: baseScale, uniformScale: targetUniform);
+        }
+    }
+
+    private void TryApplyHumanoidHeadHeightScaleCorrection(Transform root, ReplaceableModel model, MetaObj obj, Vector3 rootWorld, Transform screen, Vector3 baseScale, float uniformScale)
+    {
+        if (root == null || model == null || !obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
+        {
+            return;
+        }
+
+        if (!TryGetHeadTargetWorld(obj, rootWorld, screen, out Vector3 headTargetWorld))
+        {
+            return;
+        }
+
+        Vector3 up = screen != null ? screen.up : root.up;
+        if (up.sqrMagnitude < 0.000001f)
+        {
+            up = Vector3.up;
+        }
+        up.Normalize();
+
+        float bottomOffsetWorld = model.baseBottomOffsetLocal * root.lossyScale.y;
+        Vector3 footWorld = root.position - up * bottomOffsetWorld;
+        float currentHeadFromFoot = (model.baseHeightMeters * root.lossyScale.y);
+        float targetHeadFromFoot = Vector3.Dot(headTargetWorld - footWorld, up);
+        if (currentHeadFromFoot <= 0.0001f || targetHeadFromFoot <= 0.0001f)
+        {
+            return;
+        }
+
+        float ratio = targetHeadFromFoot / currentHeadFromFoot;
+        float clampedRatio = Mathf.Clamp(ratio, headHeightScaleMin, headHeightScaleMax);
+        float blendedRatio = Mathf.Lerp(1f, clampedRatio, Mathf.Clamp01(headHeightScaleAlpha));
+        float correctedUniformScale = uniformScale * blendedRatio;
+        root.localScale = baseScale * correctedUniformScale;
+
+        // Keep feet fixed while applying height correction.
+        float correctedBottomOffsetWorld = model.baseBottomOffsetLocal * root.lossyScale.y;
+        root.position = footWorld + up * correctedBottomOffsetWorld;
+    }
+
+    private bool TryGetHeadTargetWorld(MetaObj obj, Vector3 rootWorld, Transform screen, out Vector3 headTargetWorld)
+    {
+        headTargetWorld = Vector3.zero;
+        if (!obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
+        {
+            return false;
+        }
+
+        int jointCount = obj.skeletonKpCount;
+        if (jointCount <= 0 || obj.jointsCam.Length < jointCount || obj.jointsVis.Length < jointCount)
+        {
+            return false;
+        }
+
+        SkeletonIndices idx = ResolveSkeletonIndices(jointCount);
+        if (!TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
+        {
+            return false;
+        }
+
+        Vector3 hipMid = Vector3.zero;
+        if (idx.leftHip >= 0 && idx.rightHip >= 0 &&
+            idx.leftHip < obj.jointsCam.Length && idx.rightHip < obj.jointsCam.Length)
+        {
+            hipMid = (obj.jointsCam[idx.leftHip] + obj.jointsCam[idx.rightHip]) * 0.5f;
+        }
+        bool rootRel = hipMid.magnitude < boneRootRelThreshold;
+
+        Vector3[] jointsWorld = new Vector3[jointCount];
+        for (int i = 0; i < jointCount; i++)
+        {
+            Vector3 joint = obj.jointsCam[i];
+            joint = new Vector3(joint.x * boneAxisSign.x, joint.y * boneAxisSign.y, joint.z * boneAxisSign.z);
+            jointsWorld[i] = rootRel
+                ? rootWorld + (camRotation * joint)
+                : camOrigin + (camRotation * joint);
+        }
+
+        if (idx.leftShoulder < 0 || idx.rightShoulder < 0 ||
+            idx.leftShoulder >= jointCount || idx.rightShoulder >= jointCount ||
+            idx.leftShoulder >= obj.jointsVis.Length || idx.rightShoulder >= obj.jointsVis.Length ||
+            obj.jointsVis[idx.leftShoulder] == 0 || obj.jointsVis[idx.rightShoulder] == 0)
+        {
+            return false;
+        }
+
+        Vector3 shouldersMid = (jointsWorld[idx.leftShoulder] + jointsWorld[idx.rightShoulder]) * 0.5f;
+        if (!TryGetHeadTarget(jointsWorld, obj.jointsVis, shouldersMid, idx, out Vector3 head))
+        {
+            return false;
+        }
+
+        headTargetWorld = head;
+        return true;
     }
 
     private void TryApplySkeleton(GameObject instance, MetaObj obj, Vector3 rootWorld, Transform screen, int frame)

@@ -101,6 +101,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public float bboxAnchorVToBottom = 0.5f;
     public float modelBottomExtraOffsetMeters = 0f;
     public bool bottomAlignVerticalOnly = true;
+    [Header("Humanoid Height Fit")]
+    public bool enableHeadHeightScaleCorrection = true;
+    [Range(0f, 1f)] public float headHeightScaleAlpha = 0.35f;
+    public float headHeightScaleMin = 0.75f;
+    public float headHeightScaleMax = 1.35f;
 
     [Header("Runtime Controls")]
     public bool enableRuntimeControls = true;

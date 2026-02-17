@@ -36,6 +36,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     [Header("Test Model")]
     public GameObject testModelPrefab;
     public GameObject replacePrefab;
+    [Header("Track Prefab Overrides")]
+    public bool useTrackPrefabOverrides = true;
+    public GameObject track0Prefab;
+    public GameObject track1Prefab;
     public Vector2Int testPixel = new Vector2Int(-1, -1);
     public float testDepthMeters = 0.5f;
     public bool spawnTestModelOnPrepared = false;
@@ -60,11 +64,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     [Header("Bones")]
     public bool enableBoneApply = true;
     public float boneApplyAlpha = 1f;
+    public bool useExtendedBoneMap = true;
+    public float torsoBoneApplyAlpha = 0.35f;
+    public float headBoneApplyAlpha = 0.35f;
+    public float shoulderBoneApplyAlpha = 0.45f;
+    public bool enableJointSmoothing = true;
+    [Range(0f, 1f)] public float jointSmoothingAlpha = 0.35f;
     public float boneRootRelThreshold = 0.2f;
     public Vector3 boneAxisSign = Vector3.one;
     public float fallbackQuantJointScale = 1f;
     public bool alignFeetToAnkles = true;
     public float footAlignAlpha = 1f;
+    public bool enableFootRootCorrection = false;
+    [Header("Animal Bones")]
+    public bool enableAnimalLimbApply = false;
+    public bool enableAnimalSpineApply = false;
+    [Range(0f, 1f)] public float animalRootRotateAlpha = 0.6f;
+    public Vector3 animalModelForwardLocal = Vector3.right;
+    public Vector3 animalModelUpLocal = Vector3.up;
 
     [Header("Debug")]
     public bool forceScreensInFrontOfViewCamera = false;
@@ -82,6 +99,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool anchorDebugAlignBottom = true;
     public bool alignModelToBBoxBottom = true;
     public float bboxAnchorVToBottom = 0.5f;
+    public float modelBottomExtraOffsetMeters = 0f;
+    public bool bottomAlignVerticalOnly = true;
 
     [Header("Runtime Controls")]
     public bool enableRuntimeControls = true;

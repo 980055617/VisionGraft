@@ -632,24 +632,26 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         camOrigin = Vector3.zero;
         camRotation = Quaternion.identity;
-        if (hasLockedPinholeBasis)
-        {
-            camOrigin = lockedPinholeOrigin;
-            camRotation = lockedPinholeRotation;
-            return true;
-        }
 
         if (screen == null)
         {
+            if (hasLockedPinholeBasis)
+            {
+                camOrigin = lockedPinholeOrigin;
+                camRotation = lockedPinholeRotation;
+                return true;
+            }
             return false;
         }
 
-        Vector3 camForward = -screen.forward;
-        if (camForward.sqrMagnitude < 0.000001f)
+        Vector3 screenFront = GetScreenFrontDirection(screen);
+        if (screenFront.sqrMagnitude < 0.000001f)
         {
-            camForward = Vector3.forward;
+            screenFront = screen.forward;
         }
-        camForward.Normalize();
+        screenFront.Normalize();
+
+        Vector3 camForward = -screenFront;
 
         Vector3 camUp = screen.up;
         if (camUp.sqrMagnitude < 0.000001f)
@@ -659,7 +661,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         camUp.Normalize();
 
         camRotation = Quaternion.LookRotation(camForward, camUp);
-        camOrigin = screen.position + screen.forward * screenDistanceMeters;
+        camOrigin = screen.position + screenFront * screenDistanceMeters;
         return true;
     }
 

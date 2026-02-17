@@ -1273,6 +1273,9 @@ MonoBehaviour:
   fitScreenToFov: 1
   testModelPrefab: {fileID: 3348292547451869151, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
   replacePrefab: {fileID: 3348292547451869151, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
+  useTrackPrefabOverrides: 1
+  track0Prefab: {fileID: 3348292547451869151, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
+  track1Prefab: {fileID: 100100000, guid: f16b989626bf5c74186144184e683f81, type: 3}
   testPixel: {x: -1, y: -1}
   testDepthMeters: 0.5
   spawnTestModelOnPrepared: 1

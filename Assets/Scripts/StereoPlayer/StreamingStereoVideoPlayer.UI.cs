@@ -297,28 +297,28 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         EnsureEventSystem();
         InitializeRuntimeFovxIfNeeded();
 
-        GameObject root;
+        GameObject settingsRootObj;
         if (runtimeControlsPrefab != null)
         {
-            root = Instantiate(runtimeControlsPrefab);
-            root.name = "RuntimeSettingsPanel";
+            settingsRootObj = Instantiate(runtimeControlsPrefab);
+            settingsRootObj.name = "RuntimeSettingsPanel";
         }
         else
         {
-            root = new GameObject("RuntimeSettingsPanel");
-            Canvas canvas = root.AddComponent<Canvas>();
+            settingsRootObj = new GameObject("RuntimeSettingsPanel");
+            Canvas canvas = settingsRootObj.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
             canvas.worldCamera = GetViewCamera();
-            root.AddComponent<GraphicRaycaster>();
+            settingsRootObj.AddComponent<GraphicRaycaster>();
         }
 
-        Canvas rootCanvas = root.GetComponent<Canvas>();
+        Canvas rootCanvas = settingsRootObj.GetComponent<Canvas>();
         if (rootCanvas == null)
         {
-            rootCanvas = root.GetComponentInChildren<Canvas>(true);
+            rootCanvas = settingsRootObj.GetComponentInChildren<Canvas>(true);
         }
 
-        Transform uiRoot = rootCanvas != null ? rootCanvas.transform : root.transform;
+        Transform uiRoot = rootCanvas != null ? rootCanvas.transform : settingsRootObj.transform;
 
         RectTransform uiRect = uiRoot as RectTransform;
         if (uiRect != null)
@@ -354,7 +354,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         UpdateRuntimeFovxText(runtimeFovxDeg);
 
-        return root;
+        return settingsRootObj;
     }
 
     private Text CreateLabel(Transform parent, string name, string initialText, float anchorX, float anchorY, int fontSize, TextAnchor anchor)

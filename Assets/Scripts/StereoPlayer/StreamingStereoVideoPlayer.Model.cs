@@ -722,7 +722,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        TryApplyAnimalRootOrientation(instanceRoot, jointsWorld, vis, screen);
+        // Root orientation:
+        // - dog: yaw-only style using world-up (screen tilt is ignored)
+        // - others: previous behavior using screen-up
+        if (categoryId == 2)
+        {
+            TryApplyAnimalRootOrientation(instanceRoot, jointsWorld, vis, null);
+        }
+        else
+        {
+            TryApplyAnimalRootOrientation(instanceRoot, jointsWorld, vis, screen);
+        }
 
         Transform rigRoot = animator != null ? animator.transform : instanceRoot;
         AnimalRigCache cache = GetOrBuildAnimalRigCache(rigRoot);
@@ -732,10 +742,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         float alpha = Mathf.Clamp01(boneApplyAlpha);
-        // Fixed dog mapping from user-provided semantics (0..19).
+        // Dog is handled in a reduced-drive mode:
+        // root heading + head + limbs (no spine drive).
         if (categoryId == 2)
         {
-            // Head/torso (tail bones intentionally untouched).
+            // Head only.
             if (TryBuildDogHeadDirection(jointsWorld, vis, out Vector3 neckRoot, out Vector3 headTarget))
             {
                 ApplyAnimalBoneFromPoints(cache, cache.neck, neckRoot, headTarget, alpha * 0.65f);
@@ -745,10 +756,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             {
                 ApplyAnimalBoneFromJoints(cache, cache.neck, jointsWorld, vis, 5, 4, alpha * 0.65f); // Throat -> Nose
                 ApplyAnimalBoneFromJoints(cache, cache.head, jointsWorld, vis, 5, 4, alpha * 0.65f); // Throat -> Nose
-            }
-            if (enableAnimalSpineApply)
-            {
-                ApplyAnimalBoneFromJoints(cache, cache.spine, jointsWorld, vis, 6, 7, alpha * 0.5f); // TailBase(hip) -> Withers
             }
 
             if (!enableAnimalLimbApply)
@@ -1296,18 +1303,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         Vector3 upperRoot = upper.position;
-        ApplyAnimalBoneFromPoints(cache, upper, upperRoot, solvedMid, alpha * 0.95f);
-        ApplyAnimalBoneFromPoints(cache, lower, lower.position, ikTarget, alpha * 0.85f);
+        ApplyAnimalBoneFromPointsLocalOnly(cache, upper, upperRoot, solvedMid, alpha * 0.95f);
+        ApplyAnimalBoneFromPointsLocalOnly(cache, lower, lower.position, ikTarget, alpha * 0.85f);
 
         if (paw != null && chain.Length >= 4)
         {
             if (TryGetJointPoint(jointsWorld, vis, pawIdx, out Vector3 pawTarget))
             {
-                ApplyAnimalBoneFromPoints(cache, paw, paw.position, pawTarget, alpha * 0.35f);
+                ApplyAnimalBoneFromPointsLocalOnly(cache, paw, paw.position, pawTarget, alpha * 0.35f);
             }
             else
             {
-                ApplyAnimalBoneFromJoints(cache, paw, jointsWorld, vis, chain[2], chain[3], alpha * 0.25f);
+                ApplyAnimalBoneFromJointsLocalOnly(cache, paw, jointsWorld, vis, chain[2], chain[3], alpha * 0.25f);
             }
         }
     }
@@ -1320,12 +1327,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         // Joint-centric mapping: each bone uses the segment between adjacent meta joints.
-        ApplyAnimalBoneFromJoints(cache, upper, jointsWorld, vis, chain[0], chain[1], alpha * 0.9f);
-        ApplyAnimalBoneFromJoints(cache, lower, jointsWorld, vis, chain[1], chain[2], alpha * 0.85f);
+        ApplyAnimalBoneFromJointsLocalOnly(cache, upper, jointsWorld, vis, chain[0], chain[1], alpha * 0.9f);
+        ApplyAnimalBoneFromJointsLocalOnly(cache, lower, jointsWorld, vis, chain[1], chain[2], alpha * 0.85f);
         if (paw != null)
         {
-            ApplyAnimalBoneFromJoints(cache, paw, jointsWorld, vis, chain[2], chain[3], alpha * 0.7f);
+            ApplyAnimalBoneFromJointsLocalOnly(cache, paw, jointsWorld, vis, chain[2], chain[3], alpha * 0.7f);
         }
+    }
+
+    private bool ApplyAnimalBoneFromJointsLocalOnly(AnimalRigCache cache, Transform bone, Vector3[] jointsWorld, byte[] vis, int idxA, int idxB, float alpha)
+    {
+        if (bone == null)
+        {
+            return false;
+        }
+
+        if (!TryGetJointPoint(jointsWorld, vis, idxA, out Vector3 a) || !TryGetJointPoint(jointsWorld, vis, idxB, out Vector3 b))
+        {
+            return false;
+        }
+
+        return ApplyAnimalBoneFromPointsLocalOnly(cache, bone, a, b, alpha);
     }
 
     private bool TrySolveTwoBoneIkMidPoint(
@@ -1436,27 +1458,83 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         cache.root = root;
         Transform[] bones = root.GetComponentsInChildren<Transform>(true);
 
-        cache.neck = FindBoneByTokens(bones, "neck");
-        cache.head = FindBoneByTokens(bones, "head");
-        cache.leftEar = FindBoneByTokens(bones, "er.l");
-        cache.rightEar = FindBoneByTokens(bones, "er.r");
-        cache.spine = FindBoneByTokens(bones, "body", "spine", "chest", "back");
+        // DogRoot concrete parent bones (derived from mesh-node parents):
+        // body->Bone, neck->Bone.007, head.001->Bone.009,
+        // er.L/R->Bone.009_L/R.001,
+        // arm.001/002/003.L/R->Bone_L/R.001/002/003,
+        // foot.001/002/003.L/R->Bone.001_L/R.001/002/003.
+        cache.neck =
+            FindBoneByExactNames(bones, "\u30DC\u30FC\u30F3.007") ??
+            FindRigBoneFromMeshNodeName(bones, "neck") ??
+            FindBoneByTokens(bones, "neck");
+        cache.head =
+            FindBoneByExactNames(bones, "\u30DC\u30FC\u30F3.009") ??
+            FindRigBoneFromMeshNodeName(bones, "head.001") ??
+            FindBoneByTokens(bones, "head");
+        cache.leftEar =
+            FindBoneByExactNames(bones, "\u30DC\u30FC\u30F3.009_L.001") ??
+            FindRigBoneFromMeshNodeName(bones, "er.L") ??
+            FindBoneByTokens(bones, "er.l");
+        cache.rightEar =
+            FindBoneByExactNames(bones, "\u30DC\u30FC\u30F3.009_R.001") ??
+            FindRigBoneFromMeshNodeName(bones, "er.R") ??
+            FindBoneByTokens(bones, "er.r");
+        cache.spine =
+            FindBoneByExactNames(bones, "\u30DC\u30FC\u30F3") ??
+            FindRigBoneFromMeshNodeName(bones, "body") ??
+            FindBoneByTokens(bones, "body", "spine", "chest", "back");
         cache.tailBase = FindBoneByTokens(bones, "tail.002", "tail");
         cache.tailMid = FindBoneByTokens(bones, "tail.003", "tail");
         cache.tailTip = FindBoneByTokens(bones, "tail.004", "tail");
 
-        cache.leftFrontUpper = FindBoneByTokens(bones, "arm.001.l");
-        cache.leftFrontLower = FindBoneByTokens(bones, "arm.002.l");
-        cache.leftFrontPaw = FindBoneByTokens(bones, "arm.003.l");
-        cache.rightFrontUpper = FindBoneByTokens(bones, "arm.001.r");
-        cache.rightFrontLower = FindBoneByTokens(bones, "arm.002.r");
-        cache.rightFrontPaw = FindBoneByTokens(bones, "arm.003.r");
-        cache.leftRearUpper = FindBoneByTokens(bones, "foot.001.l", "foot.002.l");
-        cache.leftRearLower = FindBoneByTokens(bones, "foot.002.l", "foot.003.l");
-        cache.leftRearPaw = FindBoneByTokens(bones, "foot.003.l", "foot.004.l");
-        cache.rightRearUpper = FindBoneByTokens(bones, "foot.001.r", "foot.002.r");
-        cache.rightRearLower = FindBoneByTokens(bones, "foot.002.r", "foot.003.r");
-        cache.rightRearPaw = FindBoneByTokens(bones, "foot.003.r", "foot.004.r");
+        cache.leftFrontUpper =
+            FindBoneByExactNames(bones, "\u30DC\u30FC\u30F3_L.001") ??
+            FindRigBoneFromMeshNodeName(bones, "arm.001.L") ??
+            FindBoneByTokens(bones, "arm.001.l");
+        cache.leftFrontLower =
+            FindBoneByExactNames(bones, "\u30DC\u30FC\u30F3_L.002") ??
+            FindRigBoneFromMeshNodeName(bones, "arm.002.L") ??
+            FindBoneByTokens(bones, "arm.002.l");
+        cache.leftFrontPaw =
+            FindBoneByExactNames(bones, "\u30DC\u30FC\u30F3_L.003") ??
+            FindRigBoneFromMeshNodeName(bones, "arm.003.L") ??
+            FindBoneByTokens(bones, "arm.003.l");
+        cache.rightFrontUpper =
+            FindBoneByExactNames(bones, "\u30DC\u30FC\u30F3_R.001") ??
+            FindRigBoneFromMeshNodeName(bones, "arm.001.R") ??
+            FindBoneByTokens(bones, "arm.001.r");
+        cache.rightFrontLower =
+            FindBoneByExactNames(bones, "\u30DC\u30FC\u30F3_R.002") ??
+            FindRigBoneFromMeshNodeName(bones, "arm.002.R") ??
+            FindBoneByTokens(bones, "arm.002.r");
+        cache.rightFrontPaw =
+            FindBoneByExactNames(bones, "\u30DC\u30FC\u30F3_R.003") ??
+            FindRigBoneFromMeshNodeName(bones, "arm.003.R") ??
+            FindBoneByTokens(bones, "arm.003.r");
+        cache.leftRearUpper =
+            FindBoneByExactNames(bones, "\u30DC\u30FC\u30F3.001_L.001") ??
+            FindRigBoneFromMeshNodeName(bones, "foot.001.L") ??
+            FindBoneByTokens(bones, "foot.001.l", "foot.002.l");
+        cache.leftRearLower =
+            FindBoneByExactNames(bones, "\u30DC\u30FC\u30F3.001_L.002") ??
+            FindRigBoneFromMeshNodeName(bones, "foot.002.L") ??
+            FindBoneByTokens(bones, "foot.002.l", "foot.003.l");
+        cache.leftRearPaw =
+            FindBoneByExactNames(bones, "\u30DC\u30FC\u30F3.001_L.003") ??
+            FindRigBoneFromMeshNodeName(bones, "foot.003.L") ??
+            FindBoneByTokens(bones, "foot.003.l", "foot.004.l");
+        cache.rightRearUpper =
+            FindBoneByExactNames(bones, "\u30DC\u30FC\u30F3.001_R.001") ??
+            FindRigBoneFromMeshNodeName(bones, "foot.001.R") ??
+            FindBoneByTokens(bones, "foot.001.r", "foot.002.r");
+        cache.rightRearLower =
+            FindBoneByExactNames(bones, "\u30DC\u30FC\u30F3.001_R.002") ??
+            FindRigBoneFromMeshNodeName(bones, "foot.002.R") ??
+            FindBoneByTokens(bones, "foot.002.r", "foot.003.r");
+        cache.rightRearPaw =
+            FindBoneByExactNames(bones, "\u30DC\u30FC\u30F3.001_R.003") ??
+            FindRigBoneFromMeshNodeName(bones, "foot.003.R") ??
+            FindBoneByTokens(bones, "foot.003.r", "foot.004.r");
 
         PrimeAnimalBind(cache, cache.neck);
         PrimeAnimalBind(cache, cache.head);
@@ -1561,6 +1639,60 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return ResolveLikelyRigBone(best);
     }
 
+    private Transform FindBoneByExactNames(Transform[] bones, params string[] exactNames)
+    {
+        if (bones == null || exactNames == null || exactNames.Length == 0)
+        {
+            return null;
+        }
+
+        for (int i = 0; i < exactNames.Length; i++)
+        {
+            string exact = exactNames[i];
+            if (string.IsNullOrEmpty(exact))
+            {
+                continue;
+            }
+
+            for (int j = 0; j < bones.Length; j++)
+            {
+                Transform bone = bones[j];
+                if (bone == null)
+                {
+                    continue;
+                }
+
+                if (bone.name == exact)
+                {
+                    return ResolveLikelyRigBone(bone);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private Transform FindRigBoneFromMeshNodeName(Transform[] bones, string exactName)
+    {
+        if (bones == null || string.IsNullOrEmpty(exactName))
+        {
+            return null;
+        }
+
+        for (int i = 0; i < bones.Length; i++)
+        {
+            Transform t = bones[i];
+            if (t == null || t.name != exactName)
+            {
+                continue;
+            }
+
+            return ResolveLikelyRigBone(t);
+        }
+
+        return null;
+    }
+
     private Transform ResolveLikelyRigBone(Transform node)
     {
         if (node == null)
@@ -1658,6 +1790,43 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     return true;
                 }
             }
+        }
+
+        Vector3 targetLocalDir = bone.parent != null
+            ? bone.parent.InverseTransformDirection(targetDir)
+            : targetDir;
+        if (targetLocalDir == Vector3.zero)
+        {
+            return false;
+        }
+        targetLocalDir.Normalize();
+
+        if (!cache.bindDirLocal.TryGetValue(bone, out Vector3 bindDirLocal) || bindDirLocal == Vector3.zero)
+        {
+            bindDirLocal = Vector3.forward;
+        }
+
+        if (!cache.bindRotLocal.TryGetValue(bone, out Quaternion bindRotLocal))
+        {
+            bindRotLocal = bone.localRotation;
+        }
+
+        Quaternion targetLocal = Quaternion.FromToRotation(bindDirLocal, targetLocalDir) * bindRotLocal;
+        bone.localRotation = Quaternion.Slerp(bone.localRotation, targetLocal, Mathf.Clamp01(alpha));
+        return true;
+    }
+
+    private bool ApplyAnimalBoneFromPointsLocalOnly(AnimalRigCache cache, Transform bone, Vector3 pointA, Vector3 pointB, float alpha)
+    {
+        if (bone == null)
+        {
+            return false;
+        }
+
+        Vector3 targetDir = (pointB - pointA).normalized;
+        if (targetDir == Vector3.zero)
+        {
+            return false;
         }
 
         Vector3 targetLocalDir = bone.parent != null

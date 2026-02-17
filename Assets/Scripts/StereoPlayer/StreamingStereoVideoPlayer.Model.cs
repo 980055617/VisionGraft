@@ -111,6 +111,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public Transform root;
         public Transform neck;
         public Transform head;
+        public Transform leftEar;
+        public Transform rightEar;
         public Transform spine;
         public Transform tailBase;
         public Transform tailMid;
@@ -734,8 +736,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (categoryId == 2)
         {
             // Head/torso (tail bones intentionally untouched).
-            ApplyAnimalBoneFromJoints(cache, cache.neck, jointsWorld, vis, 5, 4, alpha * 0.65f); // Throat -> Nose
-            ApplyAnimalBoneFromJoints(cache, cache.head, jointsWorld, vis, 5, 4, alpha * 0.65f); // Throat -> Nose
+            if (TryBuildDogHeadDirection(jointsWorld, vis, out Vector3 neckRoot, out Vector3 headTarget))
+            {
+                ApplyAnimalBoneFromPoints(cache, cache.neck, neckRoot, headTarget, alpha * 0.65f);
+                ApplyAnimalBoneFromPoints(cache, cache.head, neckRoot, headTarget, alpha * 0.65f);
+            }
+            else
+            {
+                ApplyAnimalBoneFromJoints(cache, cache.neck, jointsWorld, vis, 5, 4, alpha * 0.65f); // Throat -> Nose
+                ApplyAnimalBoneFromJoints(cache, cache.head, jointsWorld, vis, 5, 4, alpha * 0.65f); // Throat -> Nose
+            }
             if (enableAnimalSpineApply)
             {
                 ApplyAnimalBoneFromJoints(cache, cache.spine, jointsWorld, vis, 6, 7, alpha * 0.5f); // TailBase(hip) -> Withers
@@ -746,13 +756,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 return;
             }
 
-            // Front legs: Withers -> Elbow -> Knee -> Paw
-            ApplyAnimalLimbChain(cache, cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw, jointsWorld, vis, DogLeftFrontChain, alpha);
-            ApplyAnimalLimbChain(cache, cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw, jointsWorld, vis, DogRightFrontChain, alpha);
+            // Front legs: segment mapping from joint points (J0->J1, J1->J2, J2->J3).
+            ApplyAnimalLimbByJointSegments(cache, cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw, jointsWorld, vis, DogLeftFrontChain, alpha);
+            ApplyAnimalLimbByJointSegments(cache, cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw, jointsWorld, vis, DogRightFrontChain, alpha);
 
-            // Rear legs: TailBase(hip) -> Elbow/Hock -> Knee -> Paw
-            ApplyAnimalLimbChain(cache, cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, jointsWorld, vis, DogLeftRearChain, alpha);
-            ApplyAnimalLimbChain(cache, cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, jointsWorld, vis, DogRightRearChain, alpha);
+            // Rear legs: segment mapping from joint points (J0->J1, J1->J2, J2->J3).
+            ApplyAnimalLimbByJointSegments(cache, cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, jointsWorld, vis, DogLeftRearChain, alpha);
+            ApplyAnimalLimbByJointSegments(cache, cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, jointsWorld, vis, DogRightRearChain, alpha);
             return;
         }
 
@@ -811,6 +821,50 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         ApplyAnimalLimbChain(cache, cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw, jointsWorld, vis, chains.rightFrontChain, alpha);
         ApplyAnimalLimbChain(cache, cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, jointsWorld, vis, chains.leftRearChain, alpha);
         ApplyAnimalLimbChain(cache, cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, jointsWorld, vis, chains.rightRearChain, alpha);
+    }
+
+    private bool TryBuildDogHeadDirection(Vector3[] jointsWorld, byte[] vis, out Vector3 neckRoot, out Vector3 headTarget)
+    {
+        neckRoot = Vector3.zero;
+        headTarget = Vector3.zero;
+
+        // Fixed semantic indices provided by user:
+        // 0=L_Eye, 1=R_Eye, 4=Nose, 5=Throat.
+        bool hasThroat = TryGetJointPoint(jointsWorld, vis, 5, out Vector3 throat);
+        bool hasNose = TryGetJointPoint(jointsWorld, vis, 4, out Vector3 nose);
+        bool hasEyesMid = TryGetMidPoint(jointsWorld, vis, 0, 1, out Vector3 eyesMid);
+
+        if (!hasThroat)
+        {
+            return false;
+        }
+
+        Vector3 sum = Vector3.zero;
+        float w = 0f;
+        if (hasNose)
+        {
+            sum += nose * 0.55f;
+            w += 0.55f;
+        }
+        if (hasEyesMid)
+        {
+            sum += eyesMid * 0.45f;
+            w += 0.45f;
+        }
+
+        if (w <= 0f)
+        {
+            return false;
+        }
+
+        neckRoot = throat;
+        headTarget = sum / w;
+        if ((headTarget - neckRoot).sqrMagnitude < 0.000001f)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private void TryApplyAnimalRootOrientation(Transform instanceRoot, Vector3[] jointsWorld, byte[] vis, Transform screen)
@@ -1210,20 +1264,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         int rootIdx = chain[0];
-        int kneeIdx = chain.Length >= 3 ? chain[1] : -1;
+        int bendHintIdx = chain.Length >= 3 ? chain[1] : -1;
+        // For 3-bone limb rigs (upper/lower/paw), solve IK to the mid joint (chain[2]),
+        // then let paw bone handle the final segment (chain[2] -> chain[3]).
+        int ikTargetIdx = chain.Length >= 4 ? chain[2] : chain[2];
         int pawIdx = chain.Length >= 4 ? chain[3] : chain[2];
         if (!TryGetJointPoint(jointsWorld, vis, rootIdx, out Vector3 rootHint) ||
-            !TryGetJointPoint(jointsWorld, vis, pawIdx, out Vector3 pawTarget))
+            !TryGetJointPoint(jointsWorld, vis, ikTargetIdx, out Vector3 ikTarget))
         {
             return;
         }
 
-        if (kneeIdx >= 0 && !TryGetJointPoint(jointsWorld, vis, kneeIdx, out _))
+        if (bendHintIdx >= 0 && !TryGetJointPoint(jointsWorld, vis, bendHintIdx, out _))
         {
-            kneeIdx = -1;
+            bendHintIdx = -1;
         }
 
-        if (!TrySolveTwoBoneIkMidPoint(upper, lower, paw, rootHint, pawTarget, jointsWorld, vis, kneeIdx, out Vector3 solvedMid))
+        if (!TrySolveTwoBoneIkMidPoint(upper, lower, paw, rootHint, ikTarget, jointsWorld, vis, bendHintIdx, out Vector3 solvedMid))
         {
             // Fallback to directional FK if IK can't be solved.
             ApplyAnimalBoneFromJoints(cache, upper, jointsWorld, vis, chain[0], chain[1], alpha * 0.8f);
@@ -1240,11 +1297,34 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         Vector3 upperRoot = upper.position;
         ApplyAnimalBoneFromPoints(cache, upper, upperRoot, solvedMid, alpha * 0.95f);
-        ApplyAnimalBoneFromPoints(cache, lower, lower.position, pawTarget, alpha * 0.85f);
+        ApplyAnimalBoneFromPoints(cache, lower, lower.position, ikTarget, alpha * 0.85f);
 
         if (paw != null && chain.Length >= 4)
         {
-            ApplyAnimalBoneFromJoints(cache, paw, jointsWorld, vis, chain[2], chain[3], alpha * 0.25f);
+            if (TryGetJointPoint(jointsWorld, vis, pawIdx, out Vector3 pawTarget))
+            {
+                ApplyAnimalBoneFromPoints(cache, paw, paw.position, pawTarget, alpha * 0.35f);
+            }
+            else
+            {
+                ApplyAnimalBoneFromJoints(cache, paw, jointsWorld, vis, chain[2], chain[3], alpha * 0.25f);
+            }
+        }
+    }
+
+    private void ApplyAnimalLimbByJointSegments(AnimalRigCache cache, Transform upper, Transform lower, Transform paw, Vector3[] jointsWorld, byte[] vis, int[] chain, float alpha)
+    {
+        if (cache == null || chain == null || chain.Length < 4)
+        {
+            return;
+        }
+
+        // Joint-centric mapping: each bone uses the segment between adjacent meta joints.
+        ApplyAnimalBoneFromJoints(cache, upper, jointsWorld, vis, chain[0], chain[1], alpha * 0.9f);
+        ApplyAnimalBoneFromJoints(cache, lower, jointsWorld, vis, chain[1], chain[2], alpha * 0.85f);
+        if (paw != null)
+        {
+            ApplyAnimalBoneFromJoints(cache, paw, jointsWorld, vis, chain[2], chain[3], alpha * 0.7f);
         }
     }
 
@@ -1358,6 +1438,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         cache.neck = FindBoneByTokens(bones, "neck");
         cache.head = FindBoneByTokens(bones, "head");
+        cache.leftEar = FindBoneByTokens(bones, "er.l");
+        cache.rightEar = FindBoneByTokens(bones, "er.r");
         cache.spine = FindBoneByTokens(bones, "body", "spine", "chest", "back");
         cache.tailBase = FindBoneByTokens(bones, "tail.002", "tail");
         cache.tailMid = FindBoneByTokens(bones, "tail.003", "tail");
@@ -1378,6 +1460,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         PrimeAnimalBind(cache, cache.neck);
         PrimeAnimalBind(cache, cache.head);
+        PrimeAnimalBind(cache, cache.leftEar);
+        PrimeAnimalBind(cache, cache.rightEar);
         PrimeAnimalBind(cache, cache.spine);
         PrimeAnimalBind(cache, cache.tailBase);
         PrimeAnimalBind(cache, cache.tailMid);

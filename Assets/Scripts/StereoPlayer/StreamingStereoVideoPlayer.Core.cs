@@ -76,6 +76,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool alignFeetToAnkles = true;
     public float footAlignAlpha = 1f;
     public bool enableFootRootCorrection = false;
+    [Header("Bones Depth Assist")]
+    public bool enableYawDepthDisambiguation = true;
+    public float yawDepthOffsetMeters = 0.045f;
+    [Range(0f, 1f)] public float yawDepthBlend = 1f;
     [Header("Animal Bones")]
     public bool enableAnimalLimbApply = false;
     public bool enableAnimalSpineApply = false;
@@ -122,7 +126,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public float runtimeFovxMinDeg = 40f;
     public float runtimeFovxMaxDeg = 140f;
     public float runtimeFovxDefaultDeg = 90f;
-    public Vector2 settingsPanelSizeMeters = new Vector2(0.42f, 0.26f);
+    public Vector2 settingsPanelSizeMeters = new Vector2(0.78f, 0.5f);
     public Vector2 settingsPanelOffsetMeters = Vector2.zero;
     public float settingsPanelGapMeters = 0.08f;
     public float settingsPanelForwardOffsetMeters = 0.01f;
@@ -309,6 +313,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         FollowTick();
         DetectRuntimeRecenterFallback();
         HandleRuntimePauseInput();
+        RefreshRuntimeSettingsPerFrame();
+        RefreshRuntimePlaybackUi();
     }
 
     private void SubscribeRecenterEvents()

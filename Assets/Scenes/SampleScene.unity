@@ -1781,6 +1781,9 @@ MonoBehaviour:
   alignFeetToAnkles: 1
   footAlignAlpha: 1
   enableFootRootCorrection: 0
+  enableYawDepthDisambiguation: 1
+  yawDepthOffsetMeters: 0.045
+  yawDepthBlend: 1
   enableAnimalLimbApply: 1
   enableAnimalSpineApply: 1
   animalRootRotateAlpha: 0.6
@@ -1809,17 +1812,17 @@ MonoBehaviour:
   headHeightScaleMax: 1.35
   enableRuntimeControls: 1
   runtimeControlsPrefab: {fileID: 3675716834162371033, guid: 19be18d74f8608a4583c4c6c4e6e8723, type: 3}
-  controlsBarOffsetMeters: {x: 0, y: 0}
+  controlsBarOffsetMeters: {x: 0, y: -0.12}
   controlsBarGapMeters: 0
   controlsBarForwardOffsetMeters: 0.03
-  controlsBarSizeMeters: {x: 1.2, y: 0.25}
+  controlsBarSizeMeters: {x: 1.2, y: 0.34}
   enablePauseHotkey: 1
   useRuntimeFovxOverride: 0
   runtimeFovxDeg: 90
   runtimeFovxMinDeg: 40
   runtimeFovxMaxDeg: 140
   runtimeFovxDefaultDeg: 90
-  settingsPanelSizeMeters: {x: 0.42, y: 0.26}
+  settingsPanelSizeMeters: {x: 0.78, y: 0.5}
   settingsPanelOffsetMeters: {x: 0, y: 0}
   settingsPanelGapMeters: 0.08
   settingsPanelForwardOffsetMeters: 0.01

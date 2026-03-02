@@ -165,7 +165,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         text.alignment = TextAnchor.MiddleCenter;
         text.color = Color.white;
         text.fontSize = 52;
-        text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+        text.font = GetRuntimeUiFont();
         text.text = name.Contains("Settings") ? "Settings" : "Pause";
 
         return button;
@@ -484,7 +484,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         textRect.anchoredPosition = new Vector2(0f, 88f);
 
         Text text = textObj.AddComponent<Text>();
-        text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+        text.font = GetRuntimeUiFont();
         text.fontSize = 24;
         text.alignment = TextAnchor.MiddleCenter;
         text.color = Color.white;
@@ -646,7 +646,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         rect.anchoredPosition = Vector2.zero;
 
         Text text = obj.AddComponent<Text>();
-        text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+        text.font = GetRuntimeUiFont();
         text.fontSize = fontSize;
         text.alignment = anchor;
         text.color = Color.white;
@@ -665,7 +665,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         rect.anchoredPosition = Vector2.zero;
 
         Text text = obj.AddComponent<Text>();
-        text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+        text.font = GetRuntimeUiFont();
         text.fontSize = fontSize;
         text.alignment = anchor;
         text.color = Color.white;
@@ -757,7 +757,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         text.alignment = TextAnchor.MiddleCenter;
         text.color = Color.white;
         text.fontSize = 34;
-        text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+        text.font = GetRuntimeUiFont();
         text.text = label;
         return button;
     }
@@ -1302,6 +1302,30 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return m.ToString("00") + ":" + s.ToString("00");
     }
 
+    private static Font GetRuntimeUiFont()
+    {
+        try
+        {
+            Font legacy = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            if (legacy != null)
+            {
+                return legacy;
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            return Resources.GetBuiltinResource<Font>("Arial.ttf");
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private void HandleRuntimePauseInput()
     {
         if (!enablePauseHotkey)
@@ -1309,7 +1333,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        if (Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.P))
+        if (IsPauseHotkeyPressed())
         {
             TogglePausePlayback();
             return;
@@ -1327,6 +1351,25 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             prevPrimaryButtonPressed = false;
         }
+    }
+
+    private bool IsPauseHotkeyPressed()
+    {
+#if ENABLE_INPUT_SYSTEM
+        UnityEngine.InputSystem.Keyboard kb = UnityEngine.InputSystem.Keyboard.current;
+        if (kb != null &&
+            ((kb.spaceKey != null && kb.spaceKey.wasPressedThisFrame) ||
+             (kb.pKey != null && kb.pKey.wasPressedThisFrame)))
+        {
+            return true;
+        }
+#endif
+
+#if ENABLE_LEGACY_INPUT_MANAGER
+        return Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.P);
+#else
+        return false;
+#endif
     }
 
     private bool TryReadPrimaryButtonPressed(out bool pressed)

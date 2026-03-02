@@ -6,6 +6,17 @@ using UnityEngine.XR;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
+    public enum Joints2DMode
+    {
+        AsUV,
+        ProjectXYZ,
+        UV01,
+        NDC,
+        REL_PIX,
+        REL_BBOX01,
+        REL_BBOXNDC
+    }
+
     [Header("Bundle")]
     public string bundleFileName = "bundle.svb";
     public string bundleVideoEntryName = "video.mp4";   // zip entry name
@@ -48,6 +59,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public Vector2 testModelOffsetMeters = new Vector2(0.10f, 0.0f); // screen右へ10cm
     [Header("Follow (Meta)")]
     public bool useMetaFollow = true;
+    public bool useFrameReadySync = false;
     public int followTrackId = -1; // -1 = auto
     public bool followNearestToClick = true;
     public float followSelectThresholdPixels = 80f;
@@ -98,6 +110,32 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool logScreens = true;
     public bool logVideo = true;
     public bool logModel = true;
+    public bool debugDrawJoints = false;
+    public bool debugDrawAnchor = false;
+    public bool debugDisableRigApply = false;
+    public bool debugDrawSkeletonLines3D = false;
+    public bool debugDrawBoneAxisCompare = false;
+    public bool debugLogAxisCompare = false;
+    public bool debugForceDisableAnimatorForMeta = false;
+    public bool debugAutoBoneAxis = false;
+    public bool debugAutoBoneAxisApplyToRig = false;
+    [Range(0f, 1f)] public float debugAutoBoneAxisAlpha = 0.3f;
+    public bool enableDogDistalFreezeOnHighSkip = true;
+    [Range(0, 16)] public int dogDistalFreezeSkipThreshold = 6;
+    public bool debugDrawMeta2D = false;
+    public bool debugDrawJoints2D = false;
+    public Joints2DMode joints2DMode = Joints2DMode.AsUV;
+    public bool relFlipY = false;
+    public bool uvIsNormalized = false;
+    public bool flipU = false;
+    public bool flipV = false;
+    public bool applyCropScale = false;
+    public bool useJointScaleMultiplierForDecode = false;
+    public bool debugLogJointDecodeScaleCandidates = false;
+    public bool debugLogJointsRaw = false;
+    public bool debugLogJointsProcessed = false;
+    public bool debugProjectXYZUseRaw = false;
+    public bool debugSkipOnlyZeq0 = false;
     public bool showAnchorDebugCubes = false;
     public float anchorDebugCubeSize = 0.03f;
     public bool anchorDebugAlignBottom = true;
@@ -138,6 +176,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private bool loggedFovSource;
     private bool loggedQuantSource;
     private bool loggedManifestResolved;
+    private int lastFrameReadyFrame = -1;
     private string leftTexProp = "_MainTex";
     private string rightTexProp = "_MainTex";
     private Material leftMat;
@@ -197,11 +236,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         vp.source = VideoSource.Url;
         vp.isLooping = true;
         vp.renderMode = VideoRenderMode.APIOnly;
+        vp.timeUpdateMode = VideoTimeUpdateMode.UnscaledGameTime;
+        vp.playbackSpeed = 1f;
         vp.sendFrameReadyEvents = true;
+        Debug.Log($"[video_timing] timeScale={Time.timeScale:F3} timeUpdateMode={vp.timeUpdateMode} playbackSpeed={vp.playbackSpeed:F3}");
         loggedFirstFrame = false;
         vp.errorReceived += (player, msg) => Debug.LogError($"VideoError: {msg}");
         vp.frameReady += (player, frame) =>
         {
+            if (frame < 0)
+            {
+                lastFrameReadyFrame = -1;
+            }
+            else if (frame > int.MaxValue)
+            {
+                lastFrameReadyFrame = int.MaxValue;
+            }
+            else
+            {
+                lastFrameReadyFrame = (int)frame;
+            }
+
             if (!loggedFirstFrame && frame >= 0)
             {
                 loggedFirstFrame = true;
@@ -270,6 +325,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void LateUpdate()
     {
+        FlushAnimatorCheckLateUpdate();
+
         if (!forceScreensInFrontOfViewCamera)
         {
             return;
@@ -418,6 +475,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public float fovx;
         public float fovxDeg;
         public float quant_pos_scale;
+        public float quant_joint_scale;
         public float quantScale;
         public float quantPosScale;
         public float quant;
@@ -429,6 +487,77 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public int crop_w;
         public int crop_h;
         public bool has_crop;
+        public string joints_space;
+        public string camera_axes;
+        public string uv_origin;
+        public float joints_quant_scale;
+        public float fx_norm;
+        public float fy_norm;
+        public float cx;
+        public float cy;
+        public float fovy_deg;
+        public float fovy;
+    }
+
+    private bool TryGetManifestJointsSpace(out string jointsSpace)
+    {
+        jointsSpace = null;
+        if (manifest == null || string.IsNullOrEmpty(manifest.joints_space))
+        {
+            return false;
+        }
+
+        if (manifest.joints_space == "camera_xyz_absolute" || manifest.joints_space == "camera_xyz_root_relative")
+        {
+            jointsSpace = manifest.joints_space;
+            return true;
+        }
+
+        return false;
+    }
+
+    private string GetEffectiveJointsSpaceTag()
+    {
+        if (TryGetManifestJointsSpace(out string jointsSpace))
+        {
+            return jointsSpace;
+        }
+
+        // Fallback keeps legacy behavior assumptions.
+        return "camera_xyz_root_relative";
+    }
+
+    private bool IsEffectiveJointsSpaceAbsolute()
+    {
+        return GetEffectiveJointsSpaceTag() == "camera_xyz_absolute";
+    }
+
+    private bool TryGetManifestNormalizedIntrinsics(out float fxNorm, out float fyNorm, out int eyeW, out int eyeH)
+    {
+        fxNorm = 0f;
+        fyNorm = 0f;
+        eyeW = 0;
+        eyeH = 0;
+        if (manifest == null)
+        {
+            return false;
+        }
+
+        eyeW = manifest.eye_w;
+        eyeH = manifest.eye_h;
+        if (eyeW <= 0 || eyeH <= 0)
+        {
+            return false;
+        }
+
+        if (manifest.fx_norm <= 0f || manifest.fy_norm <= 0f)
+        {
+            return false;
+        }
+
+        fxNorm = manifest.fx_norm;
+        fyNorm = manifest.fy_norm;
+        return true;
     }
 
     private int GetCropX()

@@ -565,11 +565,40 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private bool TryGetFocalLengths(out float fx, out float fy)
     {
+        return TryGetProjectionIntrinsics(out fx, out fy, out _, out _);
+    }
+
+    private bool TryGetProjectionIntrinsics(out float fx, out float fy, out float cxPixels, out float cyPixels)
+    {
         fx = 0f;
         fy = 0f;
+        cxPixels = 0f;
+        cyPixels = 0f;
         if (manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
         {
             return false;
+        }
+
+        float w = manifest.eye_w;
+        float h = manifest.eye_h;
+        float cxNorm = 0.5f;
+        float cyNorm = 0.5f;
+        if (manifest.cx > 0f)
+        {
+            cxNorm = manifest.cx > 1f ? manifest.cx / w : manifest.cx;
+        }
+        if (manifest.cy > 0f)
+        {
+            cyNorm = manifest.cy > 1f ? manifest.cy / h : manifest.cy;
+        }
+        cxPixels = Mathf.Clamp01(cxNorm) * w;
+        cyPixels = Mathf.Clamp01(cyNorm) * h;
+
+        if (manifest.fx_norm > 0f && manifest.fy_norm > 0f)
+        {
+            fx = manifest.fx_norm;
+            fy = manifest.fy_norm;
+            return true;
         }
 
         if (!TryGetFovxDeg(out float fovxDeg))
@@ -579,7 +608,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         float fovxRad = fovxDeg * Mathf.Deg2Rad;
         fx = 1f / Mathf.Tan(fovxRad * 0.5f);
-        fy = fx * (manifest.eye_w / (float)manifest.eye_h);
+        if (manifest.fovy_deg > 0f || manifest.fovy > 0f)
+        {
+            float fovyDeg = manifest.fovy_deg > 0f ? manifest.fovy_deg : manifest.fovy;
+            float fovyRad = fovyDeg * Mathf.Deg2Rad;
+            fy = 1f / Mathf.Tan(fovyRad * 0.5f);
+        }
+        else
+        {
+            fy = fx * (manifest.eye_w / (float)manifest.eye_h);
+        }
         return fx > 0f && fy > 0f;
     }
 
@@ -590,13 +628,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return Vector3.zero;
         }
 
-        if (!TryGetFocalLengths(out float fx, out float fy))
+        if (!TryGetProjectionIntrinsics(out float fx, out float fy, out float cxPix, out float cyPix))
         {
             return Vector3.zero;
         }
 
-        float xNdc = (u / manifest.eye_w - 0.5f) * 2f;
-        float yNdc = (0.5f - v / manifest.eye_h) * 2f;
+        float xNdc = ((u - cxPix) / manifest.eye_w) * 2f;
+        float yNdc = ((cyPix - v) / manifest.eye_h) * 2f;
 
         float x = xNdc * zMeters / fx;
         float y = yNdc * zMeters / fy;
@@ -611,8 +649,21 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private Vector3 ReconstructCamLocalFromEyePixel(float uEye, float vEye, float zMeters, float fx, float fy, int eyeW, int eyeH)
     {
-        float xNdc = (uEye / (float)eyeW - 0.5f) * 2f;
-        float yNdc = (0.5f - vEye / (float)eyeH) * 2f;
+        float cxNorm = 0.5f;
+        float cyNorm = 0.5f;
+        if (manifest != null && manifest.eye_w > 0 && manifest.eye_h > 0)
+        {
+            if (manifest.cx > 0f)
+            {
+                cxNorm = manifest.cx > 1f ? manifest.cx / manifest.eye_w : manifest.cx;
+            }
+            if (manifest.cy > 0f)
+            {
+                cyNorm = manifest.cy > 1f ? manifest.cy / manifest.eye_h : manifest.cy;
+            }
+        }
+        float xNdc = ((uEye / (float)eyeW) - cxNorm) * 2f;
+        float yNdc = (cyNorm - (vEye / (float)eyeH)) * 2f;
         return new Vector3(xNdc * zMeters / fx, yNdc * zMeters / fy, zMeters);
     }
 

@@ -5,6 +5,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
     private const int TestModelLockFrames = 30;
     private const int MetaRangeFrameWindow = 60;
+    private const float InvalidJointSqrMagnitudeEpsilon = 1e-10f;
+    private const int MaxJointInvalidLogsPerFrame = 6;
+    private const int MaxFrameApplySummaryLogsPerFrame = 4;
+    private const int DiagFrameStart = 196;
+    private const int DiagFrameEnd = 212;
+    private const int MaxDiagLogsPerFrame = 24;
     private int lastAutoTrackId = int.MinValue;
     private int lastScreenPinholeLogFrame = -1;
     private float lastScreenPinholeSampleLogTime = -1f;
@@ -28,6 +34,75 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private int metaRangeMaxV = int.MinValue;
     private readonly HashSet<uint> outOfCropLoggedTracks = new HashSet<uint>();
     private readonly Dictionary<uint, Vector3[]> smoothedJointsByTrack = new Dictionary<uint, Vector3[]>();
+    private readonly Dictionary<Transform, Vector3> debugAutoAxisByBone = new Dictionary<Transform, Vector3>();
+    private readonly Dictionary<Transform, Quaternion> debugAutoRestLocalRotByBone = new Dictionary<Transform, Quaternion>();
+    private readonly HashSet<Transform> debugAutoAxisPickLogged = new HashSet<Transform>();
+    private readonly HashSet<Transform> dogBonesDumpLoggedRoots = new HashSet<Transform>();
+    private readonly HashSet<Transform> dogMappingLoggedRoots = new HashSet<Transform>();
+    private readonly HashSet<int> animatorMetaLockLogged = new HashSet<int>();
+    private int debugJointContextFrame = -1;
+    private uint debugJointContextTrackId = 0u;
+    private int debugJointInvalidLogFrame = -1;
+    private int debugJointInvalidLogCount = 0;
+    private int debugFrameApplySummaryLogFrame = -1;
+    private int debugFrameApplySummaryLogCount = 0;
+    private int debugDiagLogFrame = -1;
+    private int debugDiagLogCount = 0;
+    private readonly List<AnimatorCheckSample> pendingAnimatorChecks = new List<AnimatorCheckSample>(8);
+    private sealed class DebugDrawTrackState
+    {
+        public Vector3[] jointsWorld;
+        public byte[] jointsVis;
+        public float[] jointsCamZ;
+        public int jointCount;
+        public byte categoryId;
+        public bool hasAnchor;
+        public Vector3 anchorWorld;
+        public bool hasAxisCompare;
+        public string axisBoneName;
+        public int axisIdxA = -1;
+        public int axisIdxB = -1;
+        public Vector3 axisBase;
+        public Vector3 axisTargetDir;
+        public Vector3 axisBoneDir;
+        public float axisAngleDeg;
+        public int skeletonSkipCount;
+    }
+    private sealed class Meta2DOverlayItem
+    {
+        public uint trackId;
+        public Rect eyeRect;
+        public Vector2 anchor;
+        public Rect bbox;
+    }
+    private sealed class Joints2DOverlayPoint
+    {
+        public Vector2 pos;
+        public Color color;
+    }
+    private sealed class DebugProcessedJointState
+    {
+        public int frame = -1;
+        public Vector3[] jointsCamProcessed;
+        public byte[] jointsVis;
+    }
+    private sealed class AnimatorCheckSample
+    {
+        public int frame;
+        public uint trackId;
+        public string boneName;
+        public Transform bone;
+        public Vector3 boneBeforeApply;
+        public Vector3 boneAfterApply;
+        public bool animatorEnabled;
+        public AnimatorUpdateMode updateMode;
+    }
+    private readonly Dictionary<uint, DebugDrawTrackState> debugDrawStateByTrack = new Dictionary<uint, DebugDrawTrackState>();
+    private readonly List<Meta2DOverlayItem> meta2DOverlayItems = new List<Meta2DOverlayItem>(64);
+    private readonly List<Joints2DOverlayPoint> joints2DOverlayPoints = new List<Joints2DOverlayPoint>(256);
+    private readonly Dictionary<uint, DebugProcessedJointState> debugProcessedJointsByTrack = new Dictionary<uint, DebugProcessedJointState>();
+    private int lastMeta2DLogFrame = -1;
+    private int lastJoints2DLogFrame = -1;
     private GameObject anchorPinholeCube;
     private GameObject anchorScreenCube;
     private readonly Dictionary<Animator, HumanoidRigCache> humanoidCaches = new Dictionary<Animator, HumanoidRigCache>();
@@ -197,17 +272,41 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        if (debugDrawJoints || debugDrawAnchor || debugDrawSkeletonLines3D || debugDrawBoneAxisCompare)
+        {
+            debugDrawStateByTrack.Clear();
+        }
+        if (debugDrawMeta2D)
+        {
+            meta2DOverlayItems.Clear();
+        }
+        if (debugDrawJoints2D)
+        {
+            joints2DOverlayPoints.Clear();
+        }
+
         LogResolvedManifestOnce();
+        int displayedFrame = lastFrameReadyFrame;
         int frame = GetCurrentFrameIndex();
-        if (!TryReadFrameObjects(frame, metaFrameObjects) || metaFrameObjects.Count == 0)
+        int metaFrameUsed = useFrameReadySync ? displayedFrame : frame;
+        if (ShouldEmitRigDiag(metaFrameUsed, 0u) && TryConsumeDiagBudget(metaFrameUsed))
+        {
+            Debug.Log(
+                $"FRAME_SYNC frame={metaFrameUsed} videoFrame={frame} metaFrame={metaFrameUsed} cloudFrame={metaFrameUsed} modelFrame={metaFrameUsed}");
+        }
+
+        if (!TryReadFrameObjects(metaFrameUsed, metaFrameObjects) || metaFrameObjects.Count == 0)
         {
             return;
         }
 
+        frame = metaFrameUsed;
         UpdateMetaRange(frame);
+        LogMeta2DFrameSummaryOnce(frame);
 
         if (TryApplyConfiguredTrackPrefabs(frame))
         {
+            BuildJoints2DOverlayAndLog(frame);
             return;
         }
 
@@ -246,6 +345,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         ApplyMetaTarget(target, frame);
+        BuildJoints2DOverlayAndLog(frame);
     }
 
     private bool HasAnyReplacePrefabConfigured()
@@ -314,6 +414,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
         pickedScreen = screen;
+        CaptureMeta2DOverlay(target, screen, isRightEye, uEye);
 
         float uMeta = uEye;
         float vMeta = target.anchorV;
@@ -364,53 +465,62 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         DebugScreenPinholeConsistency(screen, uEyeF, vEyeF, frame, (int)target.trackId);
+        Vector3 anchorWorld = AnchorUvZToWorldPinhole(screen, uEyeF, vEyeF, target.anchorZ);
+        if (debugDrawAnchor)
+        {
+            DebugDrawTrackState state = GetOrCreateDebugDrawTrackState(target.trackId);
+            state.hasAnchor = true;
+            state.anchorWorld = anchorWorld;
+        }
+
         GameObject instance = GetOrCreateTrackInstance(target.trackId, target.categoryId);
         if (instance != null)
         {
             instance.SetActive(true);
             Camera viewCam = GetViewCamera() ?? Camera.main;
-            Vector3 worldPinhole = AnchorUvZToWorldPinhole(screen, uEyeF, vEyeF, target.anchorZ);
             Quaternion rotationPinhole = GetPinholeBasisRotation(screen);
             rotationPinhole = ApplyManualTrackYawOffset(target.trackId, frame, rotationPinhole, screen != null ? screen.up : Vector3.up);
             float targetHeight = ComputeTargetHeightMeters(bboxHAdjusted, target.anchorZ);
-            ApplyReplaceableModelTransform(instance, worldPinhole, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxWAdjusted, bboxHAdjusted, screen, frame);
+            ApplyReplaceableModelTransform(instance, anchorWorld, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxWAdjusted, bboxHAdjusted, screen, frame);
             TryApplySkeleton(instance, target, instance.transform.position, screen, frame);
             float bboxWorldH = 0f;
             if (TryGetFocalLengths(out _, out float fy))
             {
                 bboxWorldH = (2f * bboxHAdjusted / manifest.eye_h) * (target.anchorZ / fy);
             }
-            UpdateAnchorDebugCubes(screen, uEyeF, vEyeF, worldPinhole, viewCam, bboxWorldH);
-            LogReprojectionError(target.trackId, uEyeF, vEyeF, target.anchorZ, worldPinhole, viewCam, frame);
+            UpdateAnchorDebugCubes(screen, uEyeF, vEyeF, anchorWorld, viewCam, bboxWorldH);
+            LogReprojectionError(target.trackId, uEyeF, vEyeF, target.anchorZ, anchorWorld, viewCam, frame);
 
             Log(LogCategory.FOLLOW,
-                $"f={frame} t={target.trackId} anchor=({target.anchorU},{target.anchorV}) uEye={uEyeF:F2} vEye={vEyeF:F2} screen={(isRightEye ? "R" : "L")} z={target.anchorZ:F3} pos=({worldPinhole.x:F3},{worldPinhole.y:F3},{worldPinhole.z:F3})",
+                $"f={frame} t={target.trackId} anchor=({target.anchorU},{target.anchorV}) uEye={uEyeF:F2} vEye={vEyeF:F2} screen={(isRightEye ? "R" : "L")} z={target.anchorZ:F3} pos=({anchorWorld.x:F3},{anchorWorld.y:F3},{anchorWorld.z:F3})",
                 frame, (int)target.trackId);
             return;
         }
 
         if (spawnedTestModel == null)
         {
+            LogJointDebugSkip("no_track_instance_and_no_test_model", frame, target.trackId);
             return;
         }
 
+        LogJointDebugSkip("no_track_instance_use_test_model_path", frame, target.trackId);
+
         Camera viewCamFallback = GetViewCamera() ?? Camera.main;
-        Vector3 world = AnchorUvZToWorldPinhole(screen, uEyeF, vEyeF, target.anchorZ);
         Quaternion rotation = GetPinholeBasisRotation(screen);
 
-        spawnedTestModel.transform.SetPositionAndRotation(world, rotation);
+        spawnedTestModel.transform.SetPositionAndRotation(anchorWorld, rotation);
         spawnedTestModel.transform.localScale = Vector3.one * testModelSizeMeters;
-        AttachTransformLock(spawnedTestModel, world, rotation);
+        AttachTransformLock(spawnedTestModel, anchorWorld, rotation);
         float bboxWorldHTest = 0f;
         if (TryGetFocalLengths(out _, out float fyTest))
         {
             bboxWorldHTest = (2f * bboxHAdjusted / manifest.eye_h) * (target.anchorZ / fyTest);
         }
-        UpdateAnchorDebugCubes(screen, uEyeF, vEyeF, world, viewCamFallback, bboxWorldHTest);
-        LogReprojectionError(target.trackId, uEyeF, vEyeF, target.anchorZ, world, viewCamFallback, frame);
+        UpdateAnchorDebugCubes(screen, uEyeF, vEyeF, anchorWorld, viewCamFallback, bboxWorldHTest);
+        LogReprojectionError(target.trackId, uEyeF, vEyeF, target.anchorZ, anchorWorld, viewCamFallback, frame);
 
         Log(LogCategory.FOLLOW,
-            $"f={frame} t={target.trackId} anchor=({target.anchorU},{target.anchorV}) uEye={uEyeF:F2} vEye={vEyeF:F2} screen={(isRightEye ? "R" : "L")} z={target.anchorZ:F3} pos=({world.x:F3},{world.y:F3},{world.z:F3})",
+            $"f={frame} t={target.trackId} anchor=({target.anchorU},{target.anchorV}) uEye={uEyeF:F2} vEye={vEyeF:F2} screen={(isRightEye ? "R" : "L")} z={target.anchorZ:F3} pos=({anchorWorld.x:F3},{anchorWorld.y:F3},{anchorWorld.z:F3})",
             frame, (int)target.trackId);
     }
 
@@ -1100,7 +1210,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             hipMid = (obj.jointsCam[idx.leftHip] + obj.jointsCam[idx.rightHip]) * 0.5f;
         }
-        bool rootRel = hipMid.magnitude < boneRootRelThreshold;
+        bool rootRel = !IsEffectiveJointsSpaceAbsolute() && hipMid.magnitude < boneRootRelThreshold;
 
         Vector3[] jointsWorld = new Vector3[jointCount];
         for (int i = 0; i < jointCount; i++)
@@ -1132,16 +1242,33 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void TryApplySkeleton(GameObject instance, MetaObj obj, Vector3 rootWorld, Transform screen, int frame)
     {
+        Vector3 modelPosBefore = instance != null ? instance.transform.position : Vector3.zero;
+        int kpCountForSummary = obj.skeletonKpCount;
+        int visCountForSummary = 0;
+        int invalidCountForSummary = 0;
+        string jointsSpaceForSummary = "n/a";
+
         if (instance == null || !obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
         {
+            LogJointDebugSkip("missing_instance_or_skeleton_buffers", frame, obj.trackId);
+            TryLogFrameApplySummary(
+                frame, obj.trackId, obj.categoryId, kpCountForSummary, visCountForSummary, invalidCountForSummary,
+                jointsSpaceForSummary, false, rootWorld, rootWorld, modelPosBefore, modelPosBefore, "missing_instance_or_skeleton_buffers");
             return;
         }
 
         try
         {
+            debugJointContextFrame = frame;
+            debugJointContextTrackId = obj.trackId;
             int jointCount = obj.skeletonKpCount;
+            kpCountForSummary = jointCount;
             if (jointCount <= 0 || obj.jointsCam.Length < jointCount || obj.jointsVis.Length < jointCount)
             {
+                LogJointDebugSkip("invalid_kpCount_or_buffer_length", frame, obj.trackId);
+                TryLogFrameApplySummary(
+                    frame, obj.trackId, obj.categoryId, kpCountForSummary, visCountForSummary, invalidCountForSummary,
+                    jointsSpaceForSummary, true, rootWorld, rootWorld, modelPosBefore, instance.transform.position, "invalid_kpCount_or_buffer_length");
                 return;
             }
 
@@ -1149,6 +1276,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
             if (!TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
             {
+                LogJointDebugSkip("pinhole_basis_unavailable", frame, obj.trackId);
+                TryLogFrameApplySummary(
+                    frame, obj.trackId, obj.categoryId, kpCountForSummary, visCountForSummary, invalidCountForSummary,
+                    jointsSpaceForSummary, true, rootWorld, rootWorld, modelPosBefore, instance.transform.position, "pinhole_basis_unavailable");
                 return;
             }
 
@@ -1159,9 +1290,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             {
                 hipMid = (obj.jointsCam[idx.leftHip] + obj.jointsCam[idx.rightHip]) * 0.5f;
             }
-            bool rootRel = hipMid.magnitude < boneRootRelThreshold;
+            bool rootRel = !IsEffectiveJointsSpaceAbsolute() && hipMid.magnitude < boneRootRelThreshold;
+            jointsSpaceForSummary = rootRel ? "RootRel" : "CamSpace";
             int visOk = 0;
             Vector3[] jointsWorld = new Vector3[jointCount];
+            float[] dogCamZForSkip = obj.categoryId == 2 ? new float[jointCount] : null;
             for (int i = 0; i < jointCount; i++)
             {
                 if (obj.jointsVis[i] > 0)
@@ -1169,11 +1302,97 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     visOk++;
                 }
 
+                Vector3 raw = obj.jointsCam[i];
+                if (dogCamZForSkip != null)
+                {
+                    dogCamZForSkip[i] = raw.z;
+                }
+                bool nonFinite = float.IsNaN(raw.x) || float.IsInfinity(raw.x) ||
+                    float.IsNaN(raw.y) || float.IsInfinity(raw.y) ||
+                    float.IsNaN(raw.z) || float.IsInfinity(raw.z);
+                bool nearZero = raw.sqrMagnitude <= InvalidJointSqrMagnitudeEpsilon;
+                bool zNonPositive = raw.z <= 0f;
+                if (nonFinite || nearZero || zNonPositive)
+                {
+                    invalidCountForSummary++;
+                }
+
                 Vector3 joint = obj.jointsCam[i];
                 joint = new Vector3(joint.x * boneAxisSign.x, joint.y * boneAxisSign.y, joint.z * boneAxisSign.z);
                 jointsWorld[i] = rootRel
                     ? rootWorld + (camRotation * joint)
                     : camOrigin + (camRotation * joint);
+            }
+            visCountForSummary = visOk;
+            TryLogSpaceCheck(frame, obj, rootRel, rootWorld, screen, jointsWorld);
+            int dogSkipSegmentsForFrame = 0;
+            bool freezeDogDistal = false;
+            if (obj.categoryId == 2 && dogCamZForSkip != null)
+            {
+                dogSkipSegmentsForFrame = CountSkeletonLineSkipSegments(obj.categoryId, jointCount, obj.jointsVis, dogCamZForSkip);
+                freezeDogDistal = enableDogDistalFreezeOnHighSkip && dogSkipSegmentsForFrame >= dogDistalFreezeSkipThreshold;
+                if (freezeDogDistal && debugLogAxisCompare && TryConsumeDiagBudget(frame))
+                {
+                    Debug.Log(
+                        $"DOG_DISTAL_FREEZE frame={frame} trackId={obj.trackId} skipSegments={dogSkipSegmentsForFrame} threshold={dogDistalFreezeSkipThreshold}");
+                }
+            }
+
+            bool needsProcessedDebug = debugLogJointsProcessed || (debugDrawJoints2D && joints2DMode == Joints2DMode.ProjectXYZ && !debugProjectXYZUseRaw);
+            if (needsProcessedDebug)
+            {
+                Quaternion invCamRotation = Quaternion.Inverse(camRotation);
+                Vector3[] processedCam = new Vector3[jointCount];
+                for (int i = 0; i < jointCount; i++)
+                {
+                    processedCam[i] = invCamRotation * (jointsWorld[i] - camOrigin);
+                }
+
+                DebugProcessedJointState procState;
+                if (!debugProcessedJointsByTrack.TryGetValue(obj.trackId, out procState) || procState == null)
+                {
+                    procState = new DebugProcessedJointState();
+                    debugProcessedJointsByTrack[obj.trackId] = procState;
+                }
+                procState.frame = frame;
+                procState.jointsCamProcessed = processedCam;
+                procState.jointsVis = new byte[jointCount];
+                System.Array.Copy(obj.jointsVis, procState.jointsVis, jointCount);
+
+                if (debugLogJointsProcessed)
+                {
+                    float minX = float.MaxValue;
+                    float maxX = float.MinValue;
+                    float minY = float.MaxValue;
+                    float maxY = float.MinValue;
+                    float minZ = float.MaxValue;
+                    float maxZ = float.MinValue;
+                    int zLe0Count = 0;
+                    int zEq0Count = 0;
+                    for (int i = 0; i < jointCount; i++)
+                    {
+                        Vector3 pj = processedCam[i];
+                        minX = Mathf.Min(minX, pj.x);
+                        maxX = Mathf.Max(maxX, pj.x);
+                        minY = Mathf.Min(minY, pj.y);
+                        maxY = Mathf.Max(maxY, pj.y);
+                        minZ = Mathf.Min(minZ, pj.z);
+                        maxZ = Mathf.Max(maxZ, pj.z);
+                        if (pj.z <= 0f)
+                        {
+                            zLe0Count++;
+                        }
+                        if (Mathf.Approximately(pj.z, 0f))
+                        {
+                            zEq0Count++;
+                        }
+                    }
+
+                    Debug.Log(
+                        $"[joints_proc] frame={frame} trackId={obj.trackId} space={GetEffectiveJointsSpaceTag()} " +
+                        $"x({minX:F4},{maxX:F4}) y({minY:F4},{maxY:F4}) z({minZ:F4},{maxZ:F4}) " +
+                        $"zLe0Count={zLe0Count} zEq0Count={zEq0Count}");
+                }
             }
 
             if (enableJointSmoothing)
@@ -1188,6 +1407,138 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 ApplyYawDepthDisambiguation(jointsWorld, obj.jointsVis, idx, instance.transform, camOrigin);
             }
 
+            if (debugDrawJoints || debugDrawSkeletonLines3D || debugDrawBoneAxisCompare)
+            {
+                DebugDrawTrackState state = GetOrCreateDebugDrawTrackState(obj.trackId);
+                state.jointCount = jointCount;
+                state.categoryId = obj.categoryId;
+                state.jointsWorld = new Vector3[jointCount];
+                System.Array.Copy(jointsWorld, state.jointsWorld, jointCount);
+                state.jointsVis = new byte[jointCount];
+                System.Array.Copy(obj.jointsVis, state.jointsVis, jointCount);
+                state.jointsCamZ = new float[jointCount];
+                for (int i = 0; i < jointCount; i++)
+                {
+                    state.jointsCamZ[i] = obj.jointsCam[i].z;
+                }
+                state.skeletonSkipCount = CountSkeletonLineSkipSegments(obj.categoryId, jointCount, obj.jointsVis, state.jointsCamZ);
+                if (debugLogAxisCompare)
+                {
+                    Debug.Log($"SKELETON_LINE_SKIP frame={frame} trackId={obj.trackId} categoryId={obj.categoryId} skipSegments={state.skeletonSkipCount}");
+                }
+
+                state.hasAxisCompare = false;
+                state.axisBoneName = string.Empty;
+                state.axisIdxA = -1;
+                state.axisIdxB = -1;
+                if (debugDrawBoneAxisCompare)
+                {
+                    if (obj.categoryId == 2)
+                    {
+                        AnimalRigCache animalCache = GetOrBuildAnimalRigCache(instance.transform);
+                        if (TrySelectDogAxisComparePair(
+                            animalCache,
+                            jointCount,
+                            obj.jointsVis,
+                            state.jointsCamZ,
+                            out Transform dogBone,
+                            out int idxA,
+                            out int idxB,
+                            out int skipMissingBone,
+                            out int skipZEq0,
+                            out int skipVis0,
+                            out int skipOutOfRange,
+                            out int totalSegments))
+                        {
+                            Vector3 targetDir = jointsWorld[idxB] - jointsWorld[idxA];
+                            if (targetDir.sqrMagnitude > 0.000001f)
+                            {
+                                if (debugAutoBoneAxisApplyToRig)
+                                {
+                                    TryApplyAutoBoneAxis(dogBone, targetDir, frame, obj.trackId, dogBone.name);
+                                }
+                                state.hasAxisCompare = true;
+                                state.axisBoneName = dogBone.name;
+                                state.axisIdxA = idxA;
+                                state.axisIdxB = idxB;
+                                state.axisBase = jointsWorld[idxA];
+                                state.axisTargetDir = targetDir.normalized;
+                                state.axisBoneDir = dogBone.forward.normalized;
+                                state.axisAngleDeg = Vector3.Angle(state.axisTargetDir, state.axisBoneDir);
+                            }
+                        }
+                        else if (debugLogAxisCompare)
+                        {
+                            Debug.Log(
+                                $"DOG_AXIS_SKIP frame={frame} trackId={obj.trackId} " +
+                                $"skip_missingBone={skipMissingBone} skip_zEq0={skipZEq0} skip_vis0={skipVis0} skip_outOfRange={skipOutOfRange} total={totalSegments}");
+                        }
+                    }
+                    else
+                    {
+                        Animator axisAnimator = instance.GetComponentInChildren<Animator>();
+                        Transform leftUpperArm = axisAnimator != null ? axisAnimator.GetBoneTransform(HumanBodyBones.LeftUpperArm) : null;
+                        int idxA = 5;
+                        int idxB = 7;
+                        if (leftUpperArm != null &&
+                            IsDebugJointPairValid(idxA, idxB, jointCount, obj.jointsVis, state.jointsCamZ))
+                        {
+                            Vector3 targetDir = jointsWorld[idxB] - jointsWorld[idxA];
+                            if (targetDir.sqrMagnitude > 0.000001f)
+                            {
+                                if (debugAutoBoneAxisApplyToRig)
+                                {
+                                    TryApplyAutoBoneAxis(leftUpperArm, targetDir, frame, obj.trackId, "LeftUpperArm");
+                                }
+                                state.hasAxisCompare = true;
+                                state.axisBoneName = "LeftUpperArm";
+                                state.axisIdxA = idxA;
+                                state.axisIdxB = idxB;
+                                state.axisBase = jointsWorld[idxA];
+                                state.axisTargetDir = targetDir.normalized;
+                                state.axisBoneDir = leftUpperArm.forward.normalized;
+                                state.axisAngleDeg = Vector3.Angle(state.axisTargetDir, state.axisBoneDir);
+                            }
+                        }
+                    }
+
+                    if (debugLogAxisCompare)
+                    {
+                        if (state.hasAxisCompare)
+                        {
+                            Debug.Log(
+                                $"AXIS_COMPARE frame={frame} trackId={obj.trackId} bone={state.axisBoneName} idxA={state.axisIdxA} idxB={state.axisIdxB} " +
+                                $"angleDeg={state.axisAngleDeg:F2} skipSegments={state.skeletonSkipCount}");
+                        }
+                        else
+                        {
+                            Debug.Log(
+                                $"AXIS_COMPARE frame={frame} trackId={obj.trackId} bone=n/a idxA=-1 idxB=-1 " +
+                                $"angleDeg=n/a skipSegments={state.skeletonSkipCount}");
+                        }
+                    }
+                }
+            }
+
+            if (debugDrawJoints || debugDrawAnchor || debugDisableRigApply)
+            {
+                Vector3 firstJoint = jointCount > 0 ? jointsWorld[0] : Vector3.zero;
+                string anchorText = "n/a";
+                if (debugDrawStateByTrack.TryGetValue(obj.trackId, out DebugDrawTrackState stateForLog) && stateForLog.hasAnchor)
+                {
+                    anchorText = $"({stateForLog.anchorWorld.x:F3},{stateForLog.anchorWorld.y:F3},{stateForLog.anchorWorld.z:F3})";
+                }
+                Vector3 firstCam = jointCount > 0 ? obj.jointsCam[0] : Vector3.zero;
+                float camMag = firstCam.magnitude;
+                float worldFromRootMag = (jointCount > 0 ? (firstJoint - rootWorld).magnitude : 0f);
+                float scaleRatio = camMag > 0.000001f ? worldFromRootMag / camMag : 0f;
+                Debug.Log(
+                    $"JOINT_DEBUG frame={frame} trackId={obj.trackId} kpCount={jointCount} visCount={visOk} " +
+                    $"j0cam=({firstCam.x:F3},{firstCam.y:F3},{firstCam.z:F3}) j0world=({firstJoint.x:F3},{firstJoint.y:F3},{firstJoint.z:F3}) " +
+                    $"j0worldFromRootMag={worldFromRootMag:F3} j0camMag={camMag:F3} ratio={scaleRatio:F3} mode={(rootRel ? "RootRel" : "CamSpace")} " +
+                    $"anchorWorld={anchorText} rigApplySkipped={(debugDisableRigApply ? 1 : 0)}");
+            }
+
             Log(LogCategory.BONE,
                 $"f={frame} t={obj.trackId} J={jointCount} hipMid=({hipMid.x:F3},{hipMid.y:F3},{hipMid.z:F3}) mode={(rootRel ? "RootRel" : "CamSpace")} visOk={visOk}/{jointCount}",
                 frame, (int)obj.trackId);
@@ -1199,28 +1550,105 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
             if (!enableBoneApply)
             {
+                TryLogFrameApplySummary(
+                    frame, obj.trackId, obj.categoryId, kpCountForSummary, visCountForSummary, invalidCountForSummary,
+                    jointsSpaceForSummary, true, rootWorld, rootWorld, modelPosBefore, instance.transform.position, "enableBoneApply_false");
+                return;
+            }
+
+            if (debugDisableRigApply)
+            {
+                TryLogFrameApplySummary(
+                    frame, obj.trackId, obj.categoryId, kpCountForSummary, visCountForSummary, invalidCountForSummary,
+                    jointsSpaceForSummary, true, rootWorld, rootWorld, modelPosBefore, instance.transform.position, "debugDisableRigApply");
                 return;
             }
 
             Animator animator = instance.GetComponentInChildren<Animator>();
+            if (animator != null && animator.enabled && useMetaFollow && debugForceDisableAnimatorForMeta)
+            {
+                animator.enabled = false;
+                int animId = animator.GetInstanceID();
+                if (debugLogAxisCompare && !animatorMetaLockLogged.Contains(animId) && TryConsumeDiagBudget(frame))
+                {
+                    animatorMetaLockLogged.Add(animId);
+                    Debug.Log($"ANIMATOR_META_LOCK frame={frame} trackId={obj.trackId} enabledBefore=1 enabledAfter=0");
+                }
+            }
             if (obj.categoryId == 2)
             {
-                ApplyAnimalSkeleton(instance.transform, animator, jointsWorld, obj.jointsVis, obj.skeletonKpCount, obj.categoryId, screen);
+                AnimalRigCache dogCacheForErr = null;
+                Transform dogCheckBone = null;
+                Vector3 dogCheckBefore = Vector3.zero;
+                if (ShouldEmitRigDiag(frame, obj.trackId))
+                {
+                    dogCacheForErr = GetOrBuildAnimalRigCache(animator != null ? animator.transform : instance.transform);
+                    if (dogCacheForErr != null)
+                    {
+                        dogCheckBone = dogCacheForErr.head != null ? dogCacheForErr.head : instance.transform;
+                        dogCheckBefore = dogCheckBone.position;
+                    }
+                }
+                ApplyAnimalSkeleton(instance.transform, animator, jointsWorld, obj.jointsVis, obj.skeletonKpCount, obj.categoryId, screen, freezeDogDistal);
+                if (dogCacheForErr != null)
+                {
+                    TryLogCloudBoneErr(frame, obj.trackId, "Root", instance.transform, jointsWorld, 6);
+                    TryLogCloudBoneErr(frame, obj.trackId, "Head", dogCacheForErr.head, jointsWorld, 4);
+                    TryLogCloudBoneErr(frame, obj.trackId, "LeftHand", dogCacheForErr.leftFrontPaw, jointsWorld, 16);
+                    TryLogCloudBoneErr(frame, obj.trackId, "RightHand", dogCacheForErr.rightFrontPaw, jointsWorld, 17);
+                    TryLogCloudBoneErr(frame, obj.trackId, "LeftFoot", dogCacheForErr.leftRearPaw, jointsWorld, 18);
+                    TryLogCloudBoneErr(frame, obj.trackId, "RightFoot", dogCacheForErr.rightRearPaw, jointsWorld, 19);
+                }
+                if (dogCheckBone != null)
+                {
+                    QueueAnimatorCheckSample(frame, obj.trackId, dogCheckBone.name, dogCheckBone, dogCheckBefore, dogCheckBone.position, animator);
+                }
+                TryLogAnchorCheck(frame, obj, modelPosBefore, instance.transform.position, rootWorld, jointsWorld);
+                TryLogFrameApplySummary(
+                    frame, obj.trackId, obj.categoryId, kpCountForSummary, visCountForSummary, invalidCountForSummary,
+                    jointsSpaceForSummary, true, rootWorld, rootWorld, modelPosBefore, instance.transform.position, "none");
                 return;
             }
 
             if (animator == null || !animator.isHuman)
             {
+                TryLogFrameApplySummary(
+                    frame, obj.trackId, obj.categoryId, kpCountForSummary, visCountForSummary, invalidCountForSummary,
+                    jointsSpaceForSummary, true, rootWorld, rootWorld, modelPosBefore, instance.transform.position, "animator_missing_or_nonhuman");
                 return;
             }
 
             HumanoidRigCache cache = GetOrBuildHumanoidCache(animator);
             if (cache == null || !cache.ready)
             {
+                TryLogFrameApplySummary(
+                    frame, obj.trackId, obj.categoryId, kpCountForSummary, visCountForSummary, invalidCountForSummary,
+                    jointsSpaceForSummary, true, rootWorld, rootWorld, modelPosBefore, instance.transform.position, "humanoid_cache_not_ready");
                 return;
             }
 
+            Transform hipsBoneForCheck = null;
+            Vector3 hipsBeforeApply = Vector3.zero;
+            if (ShouldEmitRigDiag(frame, obj.trackId))
+            {
+                hipsBoneForCheck = cache.bones.TryGetValue(HumanBodyBones.Hips, out Transform hb) ? hb : null;
+                hipsBeforeApply = hipsBoneForCheck != null ? hipsBoneForCheck.position : Vector3.zero;
+            }
+
             bool applied = ApplyHumanoidLimbs(cache, jointsWorld, obj.jointsVis, idx);
+            if (ShouldEmitRigDiag(frame, obj.trackId))
+            {
+                TryLogCloudBoneErr(frame, obj.trackId, "Root", hipsBoneForCheck, jointsWorld, idx.leftHip >= 0 ? idx.leftHip : 0);
+                TryLogCloudBoneErr(frame, obj.trackId, "Head", cache.bones.TryGetValue(HumanBodyBones.Head, out Transform headBone) ? headBone : null, jointsWorld, idx.nose);
+                TryLogCloudBoneErr(frame, obj.trackId, "LeftHand", cache.bones.TryGetValue(HumanBodyBones.LeftHand, out Transform lHand) ? lHand : null, jointsWorld, idx.leftWrist);
+                TryLogCloudBoneErr(frame, obj.trackId, "RightHand", cache.bones.TryGetValue(HumanBodyBones.RightHand, out Transform rHand) ? rHand : null, jointsWorld, idx.rightWrist);
+                TryLogCloudBoneErr(frame, obj.trackId, "LeftFoot", cache.bones.TryGetValue(HumanBodyBones.LeftFoot, out Transform lFoot) ? lFoot : null, jointsWorld, idx.leftAnkle);
+                TryLogCloudBoneErr(frame, obj.trackId, "RightFoot", cache.bones.TryGetValue(HumanBodyBones.RightFoot, out Transform rFoot) ? rFoot : null, jointsWorld, idx.rightAnkle);
+                if (hipsBoneForCheck != null)
+                {
+                    QueueAnimatorCheckSample(frame, obj.trackId, "Hips", hipsBoneForCheck, hipsBeforeApply, hipsBoneForCheck.position, animator);
+                }
+            }
         if (alignFeetToAnkles)
         {
             AlignFeetToAnkles(cache, jointsWorld, obj.jointsVis, idx, instance.transform);
@@ -1231,14 +1659,844 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 boneAppliedLogged = true;
                 Log(LogCategory.BONE, "BONE_STATUS applied=true");
             }
+
+            TryLogFrameApplySummary(
+                frame, obj.trackId, obj.categoryId, kpCountForSummary, visCountForSummary, invalidCountForSummary,
+                jointsSpaceForSummary, true, rootWorld, rootWorld, modelPosBefore, instance.transform.position, applied ? "none" : "apply_returned_false");
+            TryLogAnchorCheck(frame, obj, modelPosBefore, instance.transform.position, rootWorld, jointsWorld);
         }
         catch (System.Exception ex)
         {
+            LogJointDebugSkip("exception_in_try_apply_skeleton", frame, obj.trackId);
             Debug.LogWarning($"TryApplySkeleton failed and was skipped. frame={frame} track={obj.trackId} ({ex.Message})");
+            TryLogFrameApplySummary(
+                frame, obj.trackId, obj.categoryId, kpCountForSummary, visCountForSummary, invalidCountForSummary,
+                jointsSpaceForSummary, true, rootWorld, rootWorld, modelPosBefore, instance != null ? instance.transform.position : modelPosBefore, "exception_in_try_apply_skeleton");
         }
     }
 
-    private void ApplyAnimalSkeleton(Transform instanceRoot, Animator animator, Vector3[] jointsWorld, byte[] vis, int jointCount, byte categoryId, Transform screen)
+    private bool IsJointDebugEnabled()
+    {
+        return debugDrawJoints || debugDrawAnchor || debugDisableRigApply;
+    }
+
+    private void LogJointDebugSkip(string reason, int frame, uint trackId)
+    {
+        if (!IsJointDebugEnabled())
+        {
+            return;
+        }
+
+        Debug.Log($"JOINT_DEBUG_SKIP frame={frame} trackId={trackId} reason={reason}");
+    }
+
+    private void LogMeta2DFrameSummaryOnce(int frame)
+    {
+        if (!debugDrawMeta2D || frame == lastMeta2DLogFrame || metaFrameObjects == null || metaFrameObjects.Count == 0 || manifest == null)
+        {
+            return;
+        }
+
+        lastMeta2DLogFrame = frame;
+        int minU = int.MaxValue;
+        int maxU = int.MinValue;
+        int minV = int.MaxValue;
+        int maxV = int.MinValue;
+        for (int i = 0; i < metaFrameObjects.Count; i++)
+        {
+            MetaObj obj = metaFrameObjects[i];
+            minU = Mathf.Min(minU, obj.anchorU);
+            maxU = Mathf.Max(maxU, obj.anchorU);
+            minV = Mathf.Min(minV, obj.anchorV);
+            maxV = Mathf.Max(maxV, obj.anchorV);
+        }
+
+        Debug.Log(
+            $"META_2D frame={frame} eye=({manifest.eye_w},{manifest.eye_h}) crop=({GetCropW()},{GetCropH()}) cropXY=({GetCropX()},{GetCropY()}) " +
+            $"anchorU=[{minU},{maxU}] anchorV=[{minV},{maxV}] toggles(norm={uvIsNormalized},flipU={flipU},flipV={flipV},applyCropScale={applyCropScale})");
+    }
+
+    private void BuildJoints2DOverlayAndLog(int frame)
+    {
+        if (!debugDrawJoints2D || manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0 || metaFrameObjects == null || metaFrameObjects.Count == 0)
+        {
+            return;
+        }
+
+        bool hasFxFy = TryGetProjectionIntrinsics(out float fx, out float fy, out float cx, out float cy);
+        bool hasManifestNormIntrinsics = TryGetManifestNormalizedIntrinsics(out float fxNorm, out float fyNorm, out int intrEyeW, out int intrEyeH);
+        int totalKp = 0;
+        int totalValid = 0;
+        int insideCount = 0;
+        int zNonPositiveSkipped = 0;
+        int zEq0Skipped = 0;
+        float minAnchorZ = float.MaxValue;
+        float maxAnchorZ = float.MinValue;
+        float minX = float.MaxValue;
+        float maxX = float.MinValue;
+        float minY = float.MaxValue;
+        float maxY = float.MinValue;
+        float minZ = float.MaxValue;
+        float maxZ = float.MinValue;
+        bool hasJointSamples = false;
+        float projMinX = float.MaxValue;
+        float projMaxX = float.MinValue;
+        float projMinY = float.MaxValue;
+        float projMaxY = float.MinValue;
+        float projMinZ = float.MaxValue;
+        float projMaxZ = float.MinValue;
+        bool hasProjectedSourceSamples = false;
+        int processedSourceObjCount = 0;
+        int rawSourceObjCount = 0;
+        bool loggedRefSet = false;
+        float logRefBboxW = 0f;
+        float logRefBboxH = 0f;
+        float logRefAnchorU = 0f;
+        float logRefAnchorV = 0f;
+
+        for (int i = 0; i < metaFrameObjects.Count; i++)
+        {
+            MetaObj obj = metaFrameObjects[i];
+            minAnchorZ = Mathf.Min(minAnchorZ, obj.anchorZ);
+            maxAnchorZ = Mathf.Max(maxAnchorZ, obj.anchorZ);
+
+            if (!obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null || obj.skeletonKpCount <= 0)
+            {
+                continue;
+            }
+
+            if (!ResolveAnchorToScreen(obj.anchorU, out Transform screen, out int anchorUEye, out bool isRightEye))
+            {
+                continue;
+            }
+            if (!TryGetEyeScreenRect(screen, out Rect eyeRect))
+            {
+                continue;
+            }
+
+            float anchorUBase = anchorUEye;
+            float anchorVBase = obj.anchorV;
+
+            float bboxX = obj.bboxX;
+            if (isRightEye && bboxX >= manifest.eye_w)
+            {
+                bboxX -= manifest.eye_w;
+            }
+            float bboxY = obj.bboxY;
+            float bboxX2 = bboxX + obj.bboxW;
+            float bboxY2 = bboxY + obj.bboxH;
+            if (!TryMapMetaUvToEyePixel(ref bboxX, ref bboxY))
+            {
+                continue;
+            }
+            if (!TryMapMetaUvToEyePixel(ref bboxX2, ref bboxY2))
+            {
+                continue;
+            }
+
+            float bboxMinU = Mathf.Min(bboxX, bboxX2);
+            float bboxMaxU = Mathf.Max(bboxX, bboxX2);
+            float bboxMinV = Mathf.Min(bboxY, bboxY2);
+            float bboxMaxV = Mathf.Max(bboxY, bboxY2);
+
+            if (!loggedRefSet)
+            {
+                loggedRefSet = true;
+                logRefBboxW = obj.bboxW;
+                logRefBboxH = obj.bboxH;
+                logRefAnchorU = obj.anchorU;
+                logRefAnchorV = obj.anchorV;
+            }
+
+            Vector3[] drawJoints = obj.jointsCam;
+            byte[] drawVis = obj.jointsVis;
+            bool usingProcessedSource = false;
+            if (joints2DMode == Joints2DMode.ProjectXYZ && !debugProjectXYZUseRaw &&
+                debugProcessedJointsByTrack.TryGetValue(obj.trackId, out DebugProcessedJointState procState) &&
+                procState != null && procState.frame == frame && procState.jointsCamProcessed != null)
+            {
+                drawJoints = procState.jointsCamProcessed;
+                if (procState.jointsVis != null)
+                {
+                    drawVis = procState.jointsVis;
+                }
+                usingProcessedSource = true;
+            }
+            if (joints2DMode == Joints2DMode.ProjectXYZ)
+            {
+                if (usingProcessedSource)
+                {
+                    processedSourceObjCount++;
+                }
+                else
+                {
+                    rawSourceObjCount++;
+                }
+            }
+
+            int kp = Mathf.Min((int)obj.skeletonKpCount, Mathf.Min(obj.jointsCam.Length, Mathf.Min(drawJoints.Length, drawVis.Length)));
+            totalKp += kp;
+            Color jointColor = (obj.trackId % 2u == 0u) ? new Color(1f, 1f, 0f, 0.95f) : new Color(1f, 0.35f, 0.15f, 0.95f);
+
+            for (int j = 0; j < kp; j++)
+            {
+                Vector3 rawJ = obj.jointsCam[j];
+                Vector3 jc = drawJoints[j];
+                minX = Mathf.Min(minX, rawJ.x);
+                maxX = Mathf.Max(maxX, rawJ.x);
+                minY = Mathf.Min(minY, rawJ.y);
+                maxY = Mathf.Max(maxY, rawJ.y);
+                minZ = Mathf.Min(minZ, rawJ.z);
+                maxZ = Mathf.Max(maxZ, rawJ.z);
+                hasJointSamples = true;
+                if (joints2DMode == Joints2DMode.ProjectXYZ)
+                {
+                    projMinX = Mathf.Min(projMinX, jc.x);
+                    projMaxX = Mathf.Max(projMaxX, jc.x);
+                    projMinY = Mathf.Min(projMinY, jc.y);
+                    projMaxY = Mathf.Max(projMaxY, jc.y);
+                    projMinZ = Mathf.Min(projMinZ, jc.z);
+                    projMaxZ = Mathf.Max(projMaxZ, jc.z);
+                    hasProjectedSourceSamples = true;
+                }
+
+                if (drawVis[j] == 0)
+                {
+                    continue;
+                }
+
+                totalValid++;
+                float u;
+                float v;
+                if (joints2DMode == Joints2DMode.AsUV)
+                {
+                    u = jc.x;
+                    v = jc.y;
+                }
+                else if (joints2DMode == Joints2DMode.UV01)
+                {
+                    u = jc.x * manifest.eye_w;
+                    v = jc.y * manifest.eye_h;
+                }
+                else if (joints2DMode == Joints2DMode.NDC)
+                {
+                    u = (jc.x * 0.5f + 0.5f) * manifest.eye_w;
+                    v = (0.5f - jc.y * 0.5f) * manifest.eye_h;
+                }
+                else if (joints2DMode == Joints2DMode.REL_PIX)
+                {
+                    u = anchorUBase + jc.x;
+                    v = anchorVBase + (relFlipY ? -jc.y : jc.y);
+                }
+                else if (joints2DMode == Joints2DMode.REL_BBOX01)
+                {
+                    u = anchorUBase + jc.x * obj.bboxW;
+                    v = anchorVBase + (relFlipY ? -jc.y : jc.y) * obj.bboxH;
+                }
+                else if (joints2DMode == Joints2DMode.REL_BBOXNDC)
+                {
+                    u = anchorUBase + jc.x * (obj.bboxW * 0.5f);
+                    v = anchorVBase + (relFlipY ? -jc.y : jc.y) * (obj.bboxH * 0.5f);
+                }
+                else
+                {
+                    if (!hasFxFy)
+                    {
+                        continue;
+                    }
+
+                    bool zIsZero = Mathf.Approximately(jc.z, 0f);
+                    bool shouldSkipForZ = debugSkipOnlyZeq0 ? zIsZero : jc.z <= 0f;
+                    if (shouldSkipForZ)
+                    {
+                        if (jc.z <= 0f)
+                        {
+                            zNonPositiveSkipped++;
+                        }
+                        if (zIsZero)
+                        {
+                            zEq0Skipped++;
+                        }
+                        continue;
+                    }
+
+                    if (hasManifestNormIntrinsics)
+                    {
+                        // Match PC-side normalized pinhole projection.
+                        float eyeW = intrEyeW;
+                        float eyeH = intrEyeH;
+                        u = (((jc.x / jc.z) * fxNorm) * 0.5f + 0.5f) * eyeW;
+                        v = (0.5f - ((jc.y / jc.z) * fyNorm) * 0.5f) * eyeH;
+                    }
+                    else
+                    {
+                        u = fx * (jc.x / jc.z) + cx;
+                        v = fy * (jc.y / jc.z) + cy;
+                    }
+                }
+
+                if (joints2DMode == Joints2DMode.REL_PIX || joints2DMode == Joints2DMode.REL_BBOX01 || joints2DMode == Joints2DMode.REL_BBOXNDC)
+                {
+                    if (!TryMapMetaUvToEyePixel(ref u, ref v))
+                    {
+                        continue;
+                    }
+                }
+
+                if (u >= bboxMinU && u <= bboxMaxU && v >= bboxMinV && v <= bboxMaxV)
+                {
+                    insideCount++;
+                }
+
+                Vector2 p = EyePixelToRectPixel(eyeRect, u, v);
+                joints2DOverlayPoints.Add(new Joints2DOverlayPoint { pos = p, color = jointColor });
+            }
+        }
+
+        if (lastJoints2DLogFrame == frame)
+        {
+            return;
+        }
+
+        lastJoints2DLogFrame = frame;
+        string anchorRange = minAnchorZ <= maxAnchorZ ? $"[{minAnchorZ:F3},{maxAnchorZ:F3}]" : "[n/a,n/a]";
+        string xRange = hasJointSamples ? $"[{minX:F3},{maxX:F3}]" : "[n/a,n/a]";
+        string yRange = hasJointSamples ? $"[{minY:F3},{maxY:F3}]" : "[n/a,n/a]";
+        string zRange = hasJointSamples ? $"[{minZ:F3},{maxZ:F3}]" : "[n/a,n/a]";
+        string projXRange = hasProjectedSourceSamples ? $"[{projMinX:F3},{projMaxX:F3}]" : "[n/a,n/a]";
+        string projYRange = hasProjectedSourceSamples ? $"[{projMinY:F3},{projMaxY:F3}]" : "[n/a,n/a]";
+        string projZRange = hasProjectedSourceSamples ? $"[{projMinZ:F3},{projMaxZ:F3}]" : "[n/a,n/a]";
+        string projectSource = "n/a";
+        if (joints2DMode == Joints2DMode.ProjectXYZ)
+        {
+            if (debugProjectXYZUseRaw)
+            {
+                projectSource = "raw";
+            }
+            else if (processedSourceObjCount > 0 && rawSourceObjCount == 0)
+            {
+                projectSource = "processed";
+            }
+            else if (processedSourceObjCount > 0 && rawSourceObjCount > 0)
+            {
+                projectSource = "processed+raw_fallback";
+            }
+            else
+            {
+                projectSource = "raw_fallback";
+            }
+        }
+        string zSkipText = joints2DMode == Joints2DMode.ProjectXYZ
+            ? $" zNonPositiveSkipped={zNonPositiveSkipped} zEq0Skipped={zEq0Skipped} projectSource={projectSource} skipOnlyZeq0={debugSkipOnlyZeq0} projX={projXRange} projY={projYRange} projZ={projZRange}"
+            : string.Empty;
+        string bboxAnchorText = loggedRefSet
+            ? $" bboxW={logRefBboxW:F1} bboxH={logRefBboxH:F1} anchorU={logRefAnchorU:F1} anchorV={logRefAnchorV:F1}"
+            : " bboxW=n/a bboxH=n/a anchorU=n/a anchorV=n/a";
+        Debug.Log(
+            $"JOINTS_2D frame={frame} mode={joints2DMode} kpCount={totalKp} validCount={totalValid} insideCount={insideCount} " +
+            $"anchorZ={anchorRange} jX={xRange} jY={yRange} jZ={zRange}{bboxAnchorText}{zSkipText}");
+    }
+
+    private void CaptureMeta2DOverlay(MetaObj obj, Transform screen, bool isRightEye, int uEyeFromResolve)
+    {
+        if (!debugDrawMeta2D || manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0 || screen == null)
+        {
+            return;
+        }
+
+        if (!TryGetEyeScreenRect(screen, out Rect eyeRect))
+        {
+            return;
+        }
+
+        float anchorU = uEyeFromResolve;
+        float anchorV = obj.anchorV;
+        if (!TryMapMetaUvToEyePixel(ref anchorU, ref anchorV))
+        {
+            return;
+        }
+
+        float bboxX = obj.bboxX;
+        if (isRightEye && bboxX >= manifest.eye_w)
+        {
+            bboxX -= manifest.eye_w;
+        }
+        float bboxY = obj.bboxY;
+        float bboxX2 = bboxX + obj.bboxW;
+        float bboxY2 = bboxY + obj.bboxH;
+        if (!TryMapMetaUvToEyePixel(ref bboxX, ref bboxY))
+        {
+            return;
+        }
+        if (!TryMapMetaUvToEyePixel(ref bboxX2, ref bboxY2))
+        {
+            return;
+        }
+
+        Vector2 anchorPx = EyePixelToRectPixel(eyeRect, anchorU, anchorV);
+        Vector2 p0 = EyePixelToRectPixel(eyeRect, bboxX, bboxY);
+        Vector2 p1 = EyePixelToRectPixel(eyeRect, bboxX2, bboxY2);
+        Rect bboxRect = Rect.MinMaxRect(Mathf.Min(p0.x, p1.x), Mathf.Min(p0.y, p1.y), Mathf.Max(p0.x, p1.x), Mathf.Max(p0.y, p1.y));
+
+        meta2DOverlayItems.Add(new Meta2DOverlayItem
+        {
+            trackId = obj.trackId,
+            eyeRect = eyeRect,
+            anchor = anchorPx,
+            bbox = bboxRect
+        });
+    }
+
+    private bool TryMapMetaUvToEyePixel(ref float u, ref float v)
+    {
+        if (manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
+        {
+            return false;
+        }
+
+        // Order of operations:
+        // a) normalized -> pixel
+        // b) flip
+        // c) crop remap (offset-only or ApplyCropToEyePixel)
+        // d) map to eye rect in OnGUI
+        if (uvIsNormalized)
+        {
+            u *= manifest.eye_w;
+            v *= manifest.eye_h;
+        }
+
+        if (flipU)
+        {
+            u = manifest.eye_w - u;
+        }
+        if (flipV)
+        {
+            v = manifest.eye_h - v;
+        }
+
+        if (applyCropScale)
+        {
+            ApplyCropToEyePixel(ref u, ref v);
+        }
+        else
+        {
+            u -= GetCropX();
+            v -= GetCropY();
+        }
+
+        return true;
+    }
+
+    private bool TryGetEyeScreenRect(Transform screen, out Rect rect)
+    {
+        rect = Rect.zero;
+        Camera cam = GetViewCamera() ?? Camera.main;
+        if (cam == null || screen == null)
+        {
+            return false;
+        }
+
+        GetScreenMeshLocalBounds(screen, out Vector3 center, out Vector3 size);
+        Vector3 e = size * 0.5f;
+        Vector3[] local = new Vector3[4]
+        {
+            center + new Vector3(-e.x, -e.y, 0f),
+            center + new Vector3( e.x, -e.y, 0f),
+            center + new Vector3( e.x,  e.y, 0f),
+            center + new Vector3(-e.x,  e.y, 0f),
+        };
+
+        float minX = float.MaxValue;
+        float minY = float.MaxValue;
+        float maxX = float.MinValue;
+        float maxY = float.MinValue;
+        for (int i = 0; i < local.Length; i++)
+        {
+            Vector3 world = screen.TransformPoint(local[i]);
+            Vector3 s = cam.WorldToScreenPoint(world);
+            if (s.z <= 0f)
+            {
+                return false;
+            }
+
+            float gx = s.x;
+            float gy = Screen.height - s.y;
+            minX = Mathf.Min(minX, gx);
+            minY = Mathf.Min(minY, gy);
+            maxX = Mathf.Max(maxX, gx);
+            maxY = Mathf.Max(maxY, gy);
+        }
+
+        rect = Rect.MinMaxRect(minX, minY, maxX, maxY);
+        return rect.width > 1f && rect.height > 1f;
+    }
+
+    private Vector2 EyePixelToRectPixel(Rect eyeRect, float u, float v)
+    {
+        float x = eyeRect.xMin + (u / manifest.eye_w) * eyeRect.width;
+        float y = eyeRect.yMin + (v / manifest.eye_h) * eyeRect.height;
+        return new Vector2(x, y);
+    }
+
+    private static void DrawRectOutline(Rect rect, Color color, float thickness)
+    {
+        Color old = GUI.color;
+        GUI.color = color;
+        GUI.DrawTexture(new Rect(rect.xMin, rect.yMin, rect.width, thickness), Texture2D.whiteTexture);
+        GUI.DrawTexture(new Rect(rect.xMin, rect.yMax - thickness, rect.width, thickness), Texture2D.whiteTexture);
+        GUI.DrawTexture(new Rect(rect.xMin, rect.yMin, thickness, rect.height), Texture2D.whiteTexture);
+        GUI.DrawTexture(new Rect(rect.xMax - thickness, rect.yMin, thickness, rect.height), Texture2D.whiteTexture);
+        GUI.color = old;
+    }
+
+    private static bool IsDebugJointPairValid(int idxA, int idxB, int jointCount, byte[] vis, float[] camZ)
+    {
+        if (idxA < 0 || idxB < 0 || idxA >= jointCount || idxB >= jointCount)
+        {
+            return false;
+        }
+        if (vis == null || idxA >= vis.Length || idxB >= vis.Length || vis[idxA] == 0 || vis[idxB] == 0)
+        {
+            return false;
+        }
+        if (camZ == null || idxA >= camZ.Length || idxB >= camZ.Length)
+        {
+            return false;
+        }
+
+        return !Mathf.Approximately(camZ[idxA], 0f) && !Mathf.Approximately(camZ[idxB], 0f);
+    }
+
+    private static int CountSkeletonLineSkipSegments(byte categoryId, int jointCount, byte[] vis, float[] camZ)
+    {
+        int skip = 0;
+        if (categoryId == 2)
+        {
+            CountChainSkipSegments(DogLeftFrontChain, jointCount, vis, camZ, ref skip);
+            CountChainSkipSegments(DogRightFrontChain, jointCount, vis, camZ, ref skip);
+            CountChainSkipSegments(DogLeftRearChain, jointCount, vis, camZ, ref skip);
+            CountChainSkipSegments(DogRightRearChain, jointCount, vis, camZ, ref skip);
+            return skip;
+        }
+
+        for (int i = 0; i + 1 < CocoEdges.Length; i += 2)
+        {
+            int a = CocoEdges[i];
+            int b = CocoEdges[i + 1];
+            if (!IsDebugJointPairValid(a, b, jointCount, vis, camZ))
+            {
+                skip++;
+            }
+        }
+        return skip;
+    }
+
+    private static void CountChainSkipSegments(int[] chain, int jointCount, byte[] vis, float[] camZ, ref int skip)
+    {
+        if (chain == null || chain.Length < 2)
+        {
+            return;
+        }
+
+        for (int i = 0; i + 1 < chain.Length; i++)
+        {
+            if (!IsDebugJointPairValid(chain[i], chain[i + 1], jointCount, vis, camZ))
+            {
+                skip++;
+            }
+        }
+    }
+
+    private void LogDogBonesOnce(Transform rigRoot)
+    {
+        if (rigRoot == null || dogBonesDumpLoggedRoots.Contains(rigRoot))
+        {
+            return;
+        }
+
+        dogBonesDumpLoggedRoots.Add(rigRoot);
+        Transform[] all = rigRoot.GetComponentsInChildren<Transform>(true);
+        string first = all != null && all.Length > 0 ? all[0].name : "n/a";
+        string last = all != null && all.Length > 0 ? all[all.Length - 1].name : "n/a";
+        int count = all != null ? all.Length : 0;
+        Debug.Log($"[dog_bones] count={count} first={first} last={last}");
+    }
+
+    private void LogDogMappingOnce(AnimalRigCache cache, Transform rigRoot)
+    {
+        if (cache == null || rigRoot == null || dogMappingLoggedRoots.Contains(rigRoot))
+        {
+            return;
+        }
+
+        dogMappingLoggedRoots.Add(rigRoot);
+        Debug.Log(
+            "[dog_map] " +
+            $"7-8->{(cache.leftFrontUpper != null ? cache.leftFrontUpper.name : "null")} " +
+            $"8-12->{(cache.leftFrontLower != null ? cache.leftFrontLower.name : "null")} " +
+            $"12-16->{(cache.leftFrontPaw != null ? cache.leftFrontPaw.name : "null")} " +
+            $"7-9->{(cache.rightFrontUpper != null ? cache.rightFrontUpper.name : "null")} " +
+            $"9-13->{(cache.rightFrontLower != null ? cache.rightFrontLower.name : "null")} " +
+            $"13-17->{(cache.rightFrontPaw != null ? cache.rightFrontPaw.name : "null")} " +
+            $"6-10->{(cache.leftRearUpper != null ? cache.leftRearUpper.name : "null")} " +
+            $"10-14->{(cache.leftRearLower != null ? cache.leftRearLower.name : "null")} " +
+            $"14-18->{(cache.leftRearPaw != null ? cache.leftRearPaw.name : "null")} " +
+            $"6-11->{(cache.rightRearUpper != null ? cache.rightRearUpper.name : "null")} " +
+            $"11-15->{(cache.rightRearLower != null ? cache.rightRearLower.name : "null")} " +
+            $"15-19->{(cache.rightRearPaw != null ? cache.rightRearPaw.name : "null")}");
+    }
+
+    private bool TrySelectDogAxisComparePair(
+        AnimalRigCache cache,
+        int jointCount,
+        byte[] vis,
+        float[] camZ,
+        out Transform selectedBone,
+        out int selectedIdxA,
+        out int selectedIdxB,
+        out int skipMissingBone,
+        out int skipZEq0,
+        out int skipVis0,
+        out int skipOutOfRange,
+        out int totalSegments)
+    {
+        selectedBone = null;
+        selectedIdxA = -1;
+        selectedIdxB = -1;
+        skipMissingBone = 0;
+        skipZEq0 = 0;
+        skipVis0 = 0;
+        skipOutOfRange = 0;
+        totalSegments = 0;
+
+        if (cache == null)
+        {
+            return false;
+        }
+
+        (int a, int b, Transform bone)[] segs = new[]
+        {
+            (7, 8, cache.leftFrontUpper),
+            (8, 12, cache.leftFrontLower),
+            (12, 16, cache.leftFrontPaw),
+            (7, 9, cache.rightFrontUpper),
+            (9, 13, cache.rightFrontLower),
+            (13, 17, cache.rightFrontPaw),
+            (6, 10, cache.leftRearUpper),
+            (10, 14, cache.leftRearLower),
+            (14, 18, cache.leftRearPaw),
+            (6, 11, cache.rightRearUpper),
+            (11, 15, cache.rightRearLower),
+            (15, 19, cache.rightRearPaw),
+        };
+
+        for (int i = 0; i < segs.Length; i++)
+        {
+            totalSegments++;
+            int a = segs[i].a;
+            int b = segs[i].b;
+            Transform bone = segs[i].bone;
+
+            if (bone == null)
+            {
+                skipMissingBone++;
+                continue;
+            }
+            if (a < 0 || b < 0 || a >= jointCount || b >= jointCount || vis == null || camZ == null || a >= vis.Length || b >= vis.Length || a >= camZ.Length || b >= camZ.Length)
+            {
+                skipOutOfRange++;
+                continue;
+            }
+            if (vis[a] == 0 || vis[b] == 0)
+            {
+                skipVis0++;
+                continue;
+            }
+            if (Mathf.Approximately(camZ[a], 0f) || Mathf.Approximately(camZ[b], 0f))
+            {
+                skipZEq0++;
+                continue;
+            }
+
+            selectedBone = bone;
+            selectedIdxA = a;
+            selectedIdxB = b;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static void DrawJointEdgeIfValid(Vector3[] jointsWorld, int jointCount, byte[] vis, float[] camZ, int a, int b)
+    {
+        if (!IsDebugJointPairValid(a, b, jointCount, vis, camZ))
+        {
+            return;
+        }
+        if (jointsWorld == null || a >= jointsWorld.Length || b >= jointsWorld.Length)
+        {
+            return;
+        }
+        Gizmos.DrawLine(jointsWorld[a], jointsWorld[b]);
+    }
+
+    private static void DrawJointChainIfValid(Vector3[] jointsWorld, int jointCount, byte[] vis, float[] camZ, int[] chain)
+    {
+        if (chain == null || chain.Length < 2)
+        {
+            return;
+        }
+        for (int i = 0; i + 1 < chain.Length; i++)
+        {
+            DrawJointEdgeIfValid(jointsWorld, jointCount, vis, camZ, chain[i], chain[i + 1]);
+        }
+    }
+
+    private static void DrawDebugArrow(Vector3 origin, Vector3 direction, float length)
+    {
+        if (direction.sqrMagnitude < 0.000001f || length <= 0f)
+        {
+            return;
+        }
+
+        Vector3 dir = direction.normalized;
+        Vector3 tip = origin + dir * length;
+        Gizmos.DrawLine(origin, tip);
+
+        Vector3 side = Vector3.Cross(dir, Vector3.up);
+        if (side.sqrMagnitude < 0.000001f)
+        {
+            side = Vector3.Cross(dir, Vector3.right);
+        }
+        side.Normalize();
+
+        float headLen = length * 0.25f;
+        Vector3 back = -dir * headLen;
+        Vector3 wing = side * (headLen * 0.55f);
+        Gizmos.DrawLine(tip, tip + back + wing);
+        Gizmos.DrawLine(tip, tip + back - wing);
+    }
+
+    private static void PickBestBoneAxisLocal(Transform bone, Vector3 targetDirWorld, out Vector3 selectedAxisLocal, out float minAngle)
+    {
+        selectedAxisLocal = Vector3.forward;
+        minAngle = float.MaxValue;
+        if (bone == null || targetDirWorld.sqrMagnitude < 0.000001f)
+        {
+            return;
+        }
+
+        Vector3[] candidates = new Vector3[]
+        {
+            Vector3.right, -Vector3.right,
+            Vector3.up, -Vector3.up,
+            Vector3.forward, -Vector3.forward
+        };
+
+        Vector3 targetDir = targetDirWorld.normalized;
+        for (int i = 0; i < candidates.Length; i++)
+        {
+            Vector3 axisWorld = bone.TransformDirection(candidates[i]).normalized;
+            float angle = Vector3.Angle(axisWorld, targetDir);
+            if (angle < minAngle)
+            {
+                minAngle = angle;
+                selectedAxisLocal = candidates[i];
+            }
+        }
+    }
+
+    private void TryApplyAutoBoneAxis(Transform bone, Vector3 targetDirWorld, int frame, uint trackId, string boneName)
+    {
+        if (!debugAutoBoneAxis || bone == null || targetDirWorld.sqrMagnitude < 0.000001f)
+        {
+            return;
+        }
+
+        Transform parent = bone.parent;
+        if (parent == null)
+        {
+            return;
+        }
+
+        Vector3 selectedAxisLocal;
+        float minAngle = -1f;
+        if (!debugAutoAxisByBone.TryGetValue(bone, out selectedAxisLocal))
+        {
+            PickBestBoneAxisLocal(bone, targetDirWorld, out selectedAxisLocal, out minAngle);
+            debugAutoAxisByBone[bone] = selectedAxisLocal;
+            if (debugLogAxisCompare && !debugAutoAxisPickLogged.Contains(bone))
+            {
+                debugAutoAxisPickLogged.Add(bone);
+                Debug.Log(
+                    $"AXIS_PICK frame={frame} trackId={trackId} bone={boneName} selectedAxisLocal=({selectedAxisLocal.x:F0},{selectedAxisLocal.y:F0},{selectedAxisLocal.z:F0}) minAngle={minAngle:F2}");
+            }
+        }
+
+        if (!debugAutoRestLocalRotByBone.TryGetValue(bone, out Quaternion restLocalRotation))
+        {
+            restLocalRotation = bone.localRotation;
+            debugAutoRestLocalRotByBone[bone] = restLocalRotation;
+        }
+
+        Vector3 targetDirParent = parent.InverseTransformDirection(targetDirWorld.normalized);
+        if (targetDirParent.sqrMagnitude < 0.000001f)
+        {
+            return;
+        }
+        targetDirParent.Normalize();
+
+        Vector3 axisParentNow = parent.InverseTransformDirection(bone.TransformDirection(selectedAxisLocal).normalized);
+        if (axisParentNow.sqrMagnitude > 0.000001f)
+        {
+            axisParentNow.Normalize();
+        }
+
+        bool flipChosen = false;
+        if (axisParentNow.sqrMagnitude > 0.000001f)
+        {
+            float angleNormal = Vector3.Angle(axisParentNow, targetDirParent);
+            float angleFlipped = Vector3.Angle(axisParentNow, -targetDirParent);
+            if (angleFlipped < angleNormal)
+            {
+                targetDirParent = -targetDirParent;
+                flipChosen = true;
+            }
+        }
+
+        Vector3 restAxisLocal = (restLocalRotation * selectedAxisLocal).normalized;
+        float angleBefore = Vector3.Angle(bone.TransformDirection(selectedAxisLocal).normalized, targetDirWorld.normalized);
+        Quaternion desiredLocal = Quaternion.FromToRotation(restAxisLocal, targetDirParent) * restLocalRotation;
+        bone.localRotation = Quaternion.Slerp(bone.localRotation, desiredLocal, Mathf.Clamp01(debugAutoBoneAxisAlpha));
+        float angleAfter = Vector3.Angle(bone.TransformDirection(selectedAxisLocal).normalized, targetDirWorld.normalized);
+
+        if (debugLogAxisCompare)
+        {
+            Debug.Log(
+                $"AXIS_SOLVE frame={frame} trackId={trackId} bone={boneName} " +
+                $"restAxisLocal=({restAxisLocal.x:F3},{restAxisLocal.y:F3},{restAxisLocal.z:F3}) " +
+                $"targetDirParent=({targetDirParent.x:F3},{targetDirParent.y:F3},{targetDirParent.z:F3}) " +
+                $"flipChosen={(flipChosen ? 1 : 0)} angleBefore={angleBefore:F2} angleAfter={angleAfter:F2}");
+        }
+
+        if (debugLogAxisCompare)
+        {
+            Debug.Log($"AXIS_COMPARE_AFTER frame={frame} trackId={trackId} bone={boneName} angleDeg={angleAfter:F2}");
+        }
+    }
+
+    private DebugDrawTrackState GetOrCreateDebugDrawTrackState(uint trackId)
+    {
+        if (!debugDrawStateByTrack.TryGetValue(trackId, out DebugDrawTrackState state) || state == null)
+        {
+            state = new DebugDrawTrackState();
+            debugDrawStateByTrack[trackId] = state;
+        }
+
+        return state;
+    }
+
+    private void ApplyAnimalSkeleton(Transform instanceRoot, Animator animator, Vector3[] jointsWorld, byte[] vis, int jointCount, byte categoryId, Transform screen, bool freezeDogDistal)
     {
         if (instanceRoot == null || jointsWorld == null || vis == null || jointCount < 20)
         {
@@ -1264,6 +2522,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        if (debugLogAxisCompare && categoryId == 2)
+        {
+            LogDogBonesOnce(rigRoot);
+            LogDogMappingOnce(cache, rigRoot);
+        }
+
         float alpha = Mathf.Clamp01(boneApplyAlpha);
         // Dog is handled in a reduced-drive mode:
         // root heading + head + limbs (no spine drive).
@@ -1287,12 +2551,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
 
             // Front legs: segment mapping from joint points (J0->J1, J1->J2, J2->J3).
-            ApplyAnimalLimbByJointSegments(cache, cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw, jointsWorld, vis, DogLeftFrontChain, alpha);
-            ApplyAnimalLimbByJointSegments(cache, cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw, jointsWorld, vis, DogRightFrontChain, alpha);
+            ApplyAnimalLimbByJointSegments(cache, cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw, jointsWorld, vis, DogLeftFrontChain, alpha, !freezeDogDistal);
+            ApplyAnimalLimbByJointSegments(cache, cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw, jointsWorld, vis, DogRightFrontChain, alpha, !freezeDogDistal);
 
             // Rear legs: segment mapping from joint points (J0->J1, J1->J2, J2->J3).
-            ApplyAnimalLimbByJointSegments(cache, cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, jointsWorld, vis, DogLeftRearChain, alpha);
-            ApplyAnimalLimbByJointSegments(cache, cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, jointsWorld, vis, DogRightRearChain, alpha);
+            ApplyAnimalLimbByJointSegments(cache, cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, jointsWorld, vis, DogLeftRearChain, alpha, !freezeDogDistal);
+            ApplyAnimalLimbByJointSegments(cache, cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, jointsWorld, vis, DogRightRearChain, alpha, !freezeDogDistal);
             return;
         }
 
@@ -1842,7 +3106,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
     }
 
-    private void ApplyAnimalLimbByJointSegments(AnimalRigCache cache, Transform upper, Transform lower, Transform paw, Vector3[] jointsWorld, byte[] vis, int[] chain, float alpha)
+    private void ApplyAnimalLimbByJointSegments(AnimalRigCache cache, Transform upper, Transform lower, Transform paw, Vector3[] jointsWorld, byte[] vis, int[] chain, float alpha, bool applyDistal)
     {
         if (cache == null || chain == null || chain.Length < 4)
         {
@@ -1852,7 +3116,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // Joint-centric mapping: each bone uses the segment between adjacent meta joints.
         ApplyAnimalBoneFromJointsLocalOnly(cache, upper, jointsWorld, vis, chain[0], chain[1], alpha * 0.9f);
         ApplyAnimalBoneFromJointsLocalOnly(cache, lower, jointsWorld, vis, chain[1], chain[2], alpha * 0.85f);
-        if (paw != null)
+        if (paw != null && applyDistal)
         {
             ApplyAnimalBoneFromJointsLocalOnly(cache, paw, jointsWorld, vis, chain[2], chain[3], alpha * 0.7f);
         }
@@ -2525,20 +3789,227 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return appliedAny;
     }
 
+    private bool TryLogJointInvalid(int idx, int visFlag, Vector3 p, string reason)
+    {
+        if (!debugLogAxisCompare)
+        {
+            return false;
+        }
+
+        if (debugJointInvalidLogFrame != debugJointContextFrame)
+        {
+            debugJointInvalidLogFrame = debugJointContextFrame;
+            debugJointInvalidLogCount = 0;
+        }
+
+        if (debugJointInvalidLogCount >= MaxJointInvalidLogsPerFrame)
+        {
+            return false;
+        }
+
+        debugJointInvalidLogCount++;
+        Debug.Log(
+            $"JOINT_INVALID frame={debugJointContextFrame} trackId={debugJointContextTrackId} idx={idx} vis={visFlag} " +
+            $"p=({p.x:F3},{p.y:F3},{p.z:F3}) reason={reason}");
+        return true;
+    }
+
+    private bool ShouldEmitRigDiag(int frame, uint trackId)
+    {
+        if (!debugLogAxisCompare)
+        {
+            return false;
+        }
+        if (frame < DiagFrameStart || frame > DiagFrameEnd)
+        {
+            return false;
+        }
+        return trackId == 0u || trackId == 1u;
+    }
+
+    private bool TryConsumeDiagBudget(int frame)
+    {
+        if (debugDiagLogFrame != frame)
+        {
+            debugDiagLogFrame = frame;
+            debugDiagLogCount = 0;
+        }
+        if (debugDiagLogCount >= MaxDiagLogsPerFrame)
+        {
+            return false;
+        }
+        debugDiagLogCount++;
+        return true;
+    }
+
+    private void TryLogSpaceCheck(int frame, MetaObj obj, bool rootRel, Vector3 rootWorld, Transform screen, Vector3[] jointsWorld)
+    {
+        if (!ShouldEmitRigDiag(frame, obj.trackId) || !TryConsumeDiagBudget(frame))
+        {
+            return;
+        }
+        Vector3 jCam0 = (obj.jointsCam != null && obj.jointsCam.Length > 0) ? obj.jointsCam[0] : Vector3.zero;
+        Vector3 jWorld0 = (jointsWorld != null && jointsWorld.Length > 0) ? jointsWorld[0] : Vector3.zero;
+        Vector3 screenPos = screen != null ? screen.position : Vector3.zero;
+        Debug.Log(
+            $"SPACE_CHECK frame={frame} trackId={obj.trackId} jointsSpace={(rootRel ? "RootRel" : "CamSpace")} rootSubtracted={(rootRel ? 1 : 0)} " +
+            $"jointsCam0=({jCam0.x:F3},{jCam0.y:F3},{jCam0.z:F3}) jointsWorld0=({jWorld0.x:F3},{jWorld0.y:F3},{jWorld0.z:F3}) " +
+            $"instancePos=({rootWorld.x:F3},{rootWorld.y:F3},{rootWorld.z:F3}) screenPos=({screenPos.x:F3},{screenPos.y:F3},{screenPos.z:F3})");
+    }
+
+    private void TryLogAnchorCheck(int frame, MetaObj obj, Vector3 modelPosBefore, Vector3 modelPosAfter, Vector3 rootWorld, Vector3[] jointsWorld)
+    {
+        if (!ShouldEmitRigDiag(frame, obj.trackId) || !TryConsumeDiagBudget(frame))
+        {
+            return;
+        }
+        Vector3 jwRoot = (jointsWorld != null && jointsWorld.Length > 0) ? jointsWorld[0] : Vector3.zero;
+        Debug.Log(
+            $"ANCHOR_CHECK frame={frame} trackId={obj.trackId} anchorWorldUsed=1 anchor=({rootWorld.x:F3},{rootWorld.y:F3},{rootWorld.z:F3}) " +
+            $"rootWorld=({rootWorld.x:F3},{rootWorld.y:F3},{rootWorld.z:F3}) instanceBefore=({modelPosBefore.x:F3},{modelPosBefore.y:F3},{modelPosBefore.z:F3}) " +
+            $"instanceAfter=({modelPosAfter.x:F3},{modelPosAfter.y:F3},{modelPosAfter.z:F3}) jointsWorldRoot=({jwRoot.x:F3},{jwRoot.y:F3},{jwRoot.z:F3})");
+    }
+
+    private void TryLogCloudBoneErr(int frame, uint trackId, string boneName, Transform bone, Vector3[] jointsWorld, int jointIndex)
+    {
+        if (!ShouldEmitRigDiag(frame, trackId) || !TryConsumeDiagBudget(frame))
+        {
+            return;
+        }
+        if (bone == null || jointsWorld == null || jointIndex < 0 || jointIndex >= jointsWorld.Length)
+        {
+            return;
+        }
+        Vector3 jw = jointsWorld[jointIndex];
+        Vector3 bw = bone.position;
+        float err = Vector3.Distance(jw, bw);
+        Debug.Log(
+            $"CLOUD_BONE_ERR frame={frame} trackId={trackId} bone={boneName} " +
+            $"jointWorld=({jw.x:F3},{jw.y:F3},{jw.z:F3}) boneWorld=({bw.x:F3},{bw.y:F3},{bw.z:F3}) err={err:F3} " +
+            $"usedJointIndex={jointIndex} usedArray=jointsWorld localOrWorld=world");
+    }
+
+    private void QueueAnimatorCheckSample(int frame, uint trackId, string boneName, Transform bone, Vector3 before, Vector3 after, Animator animator)
+    {
+        if (!ShouldEmitRigDiag(frame, trackId) || bone == null)
+        {
+            return;
+        }
+        pendingAnimatorChecks.Add(new AnimatorCheckSample
+        {
+            frame = frame,
+            trackId = trackId,
+            boneName = boneName,
+            bone = bone,
+            boneBeforeApply = before,
+            boneAfterApply = after,
+            animatorEnabled = animator != null && animator.enabled,
+            updateMode = animator != null ? animator.updateMode : AnimatorUpdateMode.Normal
+        });
+    }
+
+    private void FlushAnimatorCheckLateUpdate()
+    {
+        if (pendingAnimatorChecks.Count == 0)
+        {
+            return;
+        }
+        for (int i = 0; i < pendingAnimatorChecks.Count; i++)
+        {
+            AnimatorCheckSample s = pendingAnimatorChecks[i];
+            if (!ShouldEmitRigDiag(s.frame, s.trackId) || !TryConsumeDiagBudget(s.frame))
+            {
+                continue;
+            }
+            Vector3 late = s.bone != null ? s.bone.position : Vector3.zero;
+            Debug.Log(
+                $"ANIMATOR_CHECK frame={s.frame} trackId={s.trackId} bone={s.boneName} " +
+                $"boneBeforeApply=({s.boneBeforeApply.x:F3},{s.boneBeforeApply.y:F3},{s.boneBeforeApply.z:F3}) " +
+                $"boneAfterApply=({s.boneAfterApply.x:F3},{s.boneAfterApply.y:F3},{s.boneAfterApply.z:F3}) " +
+                $"boneAfterLateUpdate=({late.x:F3},{late.y:F3},{late.z:F3}) animatorEnabled={(s.animatorEnabled ? 1 : 0)} updateMode={s.updateMode}");
+        }
+        pendingAnimatorChecks.Clear();
+    }
+
+    private void TryLogFrameApplySummary(
+        int frame,
+        uint trackId,
+        byte categoryId,
+        int kpCount,
+        int visCount,
+        int invalidCount,
+        string jointsSpaceMode,
+        bool anchorWorldUsed,
+        Vector3 anchorWorld,
+        Vector3 rootWorld,
+        Vector3 modelPosBefore,
+        Vector3 modelPosAfter,
+        string reasonSkipped)
+    {
+        if (!debugLogAxisCompare)
+        {
+            return;
+        }
+
+        if (debugFrameApplySummaryLogFrame != frame)
+        {
+            debugFrameApplySummaryLogFrame = frame;
+            debugFrameApplySummaryLogCount = 0;
+        }
+
+        if (debugFrameApplySummaryLogCount >= MaxFrameApplySummaryLogsPerFrame)
+        {
+            return;
+        }
+
+        debugFrameApplySummaryLogCount++;
+        Vector3 delta = modelPosAfter - modelPosBefore;
+        Debug.Log(
+            $"FRAME_APPLY_SUMMARY frame={frame} trackId={trackId} category={categoryId} kpCount={kpCount} visCount={visCount} invalidCount={invalidCount} " +
+            $"jointsSpace={jointsSpaceMode} anchorWorldUsed={(anchorWorldUsed ? 1 : 0)} " +
+            $"anchor=({anchorWorld.x:F3},{anchorWorld.y:F3},{anchorWorld.z:F3}) root=({rootWorld.x:F3},{rootWorld.y:F3},{rootWorld.z:F3}) " +
+            $"modelPosBefore=({modelPosBefore.x:F3},{modelPosBefore.y:F3},{modelPosBefore.z:F3}) modelPosAfter=({modelPosAfter.x:F3},{modelPosAfter.y:F3},{modelPosAfter.z:F3}) " +
+            $"delta=({delta.x:F3},{delta.y:F3},{delta.z:F3}) reasonSkipped={reasonSkipped}");
+    }
+
     private bool TryGetJointPoint(Vector3[] jointsWorld, byte[] vis, int idx, out Vector3 point)
     {
         point = Vector3.zero;
         if (jointsWorld == null || vis == null)
         {
+            TryLogJointInvalid(idx, -1, Vector3.zero, "null_buffers");
             return false;
         }
 
-        if (idx < 0 || idx >= jointsWorld.Length || idx >= vis.Length || vis[idx] == 0)
+        if (idx < 0 || idx >= jointsWorld.Length || idx >= vis.Length)
         {
+            TryLogJointInvalid(idx, -1, Vector3.zero, "out_of_range");
             return false;
         }
 
-        point = jointsWorld[idx];
+        byte visFlag = vis[idx];
+        Vector3 p = jointsWorld[idx];
+        if (visFlag == 0)
+        {
+            TryLogJointInvalid(idx, visFlag, p, "vis0");
+            return false;
+        }
+
+        if (float.IsNaN(p.x) || float.IsInfinity(p.x) ||
+            float.IsNaN(p.y) || float.IsInfinity(p.y) ||
+            float.IsNaN(p.z) || float.IsInfinity(p.z))
+        {
+            TryLogJointInvalid(idx, visFlag, p, "non_finite");
+            return false;
+        }
+
+        if (p.sqrMagnitude <= InvalidJointSqrMagnitudeEpsilon)
+        {
+            TryLogJointInvalid(idx, visFlag, p, "near_zero");
+            return false;
+        }
+
+        point = p;
         return true;
     }
 
@@ -2736,6 +4207,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
+        if (debugAutoBoneAxis && debugAutoBoneAxisApplyToRig && IsHumanoidAutoAxisLimbBone(boneId))
+        {
+            TryApplyAutoBoneAxis(bone, targetDir, -1, 0u, boneId.ToString());
+            if (debugLogAxisCompare &&
+                (boneId == HumanBodyBones.LeftLowerArm || boneId == HumanBodyBones.RightUpperArm))
+            {
+                Vector3 axisLocal = debugAutoAxisByBone.TryGetValue(bone, out Vector3 cachedAxis) ? cachedAxis : Vector3.forward;
+                float afterAngle = Vector3.Angle(bone.TransformDirection(axisLocal).normalized, targetDir);
+                Debug.Log($"AXIS_COMPARE_AFTER frame=-1 trackId=0 bone={boneId} angleDeg={afterAngle:F2}");
+            }
+            return true;
+        }
+
         if (!cache.bindDirWorld.TryGetValue(boneId, out Vector3 bindDir) || bindDir == Vector3.zero)
         {
             bindDir = Vector3.forward;
@@ -2749,6 +4233,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Quaternion targetRot = Quaternion.FromToRotation(bindDir, targetDir) * bindRot;
         bone.rotation = Quaternion.Slerp(bone.rotation, targetRot, Mathf.Clamp01(alpha));
         return true;
+    }
+
+    private static bool IsHumanoidAutoAxisLimbBone(HumanBodyBones boneId)
+    {
+        return
+            boneId == HumanBodyBones.LeftUpperArm ||
+            boneId == HumanBodyBones.LeftLowerArm ||
+            boneId == HumanBodyBones.RightUpperArm ||
+            boneId == HumanBodyBones.RightLowerArm ||
+            boneId == HumanBodyBones.LeftUpperLeg ||
+            boneId == HumanBodyBones.LeftLowerLeg ||
+            boneId == HumanBodyBones.RightUpperLeg ||
+            boneId == HumanBodyBones.RightLowerLeg;
     }
 
     private void AlignFeetToAnkles(HumanoidRigCache cache, Vector3[] jointsWorld, byte[] vis, SkeletonIndices idx, Transform root)
@@ -3357,6 +4854,105 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             : "none";
 
         return $"Components[{allComponents}]";
+    }
+
+    private void OnGUI()
+    {
+        if ((!debugDrawMeta2D || meta2DOverlayItems == null || meta2DOverlayItems.Count == 0) &&
+            (!debugDrawJoints2D || joints2DOverlayPoints == null || joints2DOverlayPoints.Count == 0))
+        {
+            return;
+        }
+
+        if (debugDrawMeta2D)
+        {
+            for (int i = 0; i < meta2DOverlayItems.Count; i++)
+            {
+                Meta2DOverlayItem item = meta2DOverlayItems[i];
+                DrawRectOutline(item.eyeRect, new Color(0.1f, 0.9f, 1f, 0.8f), 1f);
+
+                Color c = (item.trackId % 2u == 0u) ? new Color(1f, 0.92f, 0.1f, 0.95f) : new Color(1f, 0.35f, 0.15f, 0.95f);
+                DrawRectOutline(item.bbox, c, 2f);
+                Color old = GUI.color;
+                GUI.color = c;
+                GUI.DrawTexture(new Rect(item.anchor.x - 3f, item.anchor.y - 3f, 6f, 6f), Texture2D.whiteTexture);
+                GUI.color = old;
+            }
+        }
+
+        if (debugDrawJoints2D)
+        {
+            for (int i = 0; i < joints2DOverlayPoints.Count; i++)
+            {
+                Joints2DOverlayPoint p = joints2DOverlayPoints[i];
+                Color old = GUI.color;
+                GUI.color = p.color;
+                GUI.DrawTexture(new Rect(p.pos.x - 2f, p.pos.y - 2f, 4f, 4f), Texture2D.whiteTexture);
+                GUI.color = old;
+            }
+        }
+    }
+
+    private void OnDrawGizmos()
+    {
+        foreach (KeyValuePair<uint, DebugDrawTrackState> kv in debugDrawStateByTrack)
+        {
+            DebugDrawTrackState state = kv.Value;
+            if (state == null)
+            {
+                continue;
+            }
+
+            if (debugDrawAnchor && state.hasAnchor)
+            {
+                Gizmos.color = Color.cyan;
+                Gizmos.DrawSphere(state.anchorWorld, 0.025f);
+            }
+
+            // Draw points in world space reconstructed in TryApplySkeleton from jointsCam (+ pinhole basis).
+            if (debugDrawJoints && state.jointsWorld != null && state.jointCount > 0)
+            {
+                Gizmos.color = Color.yellow;
+                int n = Mathf.Min(state.jointCount, state.jointsWorld.Length);
+                for (int i = 0; i < n; i++)
+                {
+                    if (state.jointsVis != null && i < state.jointsVis.Length && state.jointsVis[i] == 0)
+                    {
+                        continue;
+                    }
+
+                    Gizmos.DrawSphere(state.jointsWorld[i], 0.012f);
+                }
+            }
+
+            if (debugDrawSkeletonLines3D && state.jointsWorld != null && state.jointCount > 0)
+            {
+                Gizmos.color = new Color(0.15f, 1f, 0.35f, 0.9f);
+                if (state.categoryId == 2)
+                {
+                    DrawJointChainIfValid(state.jointsWorld, state.jointCount, state.jointsVis, state.jointsCamZ, DogLeftFrontChain);
+                    DrawJointChainIfValid(state.jointsWorld, state.jointCount, state.jointsVis, state.jointsCamZ, DogRightFrontChain);
+                    DrawJointChainIfValid(state.jointsWorld, state.jointCount, state.jointsVis, state.jointsCamZ, DogLeftRearChain);
+                    DrawJointChainIfValid(state.jointsWorld, state.jointCount, state.jointsVis, state.jointsCamZ, DogRightRearChain);
+                }
+                else
+                {
+                    for (int i = 0; i + 1 < CocoEdges.Length; i += 2)
+                    {
+                        DrawJointEdgeIfValid(state.jointsWorld, state.jointCount, state.jointsVis, state.jointsCamZ, CocoEdges[i], CocoEdges[i + 1]);
+                    }
+                }
+            }
+
+            if (debugDrawBoneAxisCompare && state.hasAxisCompare)
+            {
+                float axisLen = 0.18f;
+                Gizmos.color = Color.green;
+                DrawDebugArrow(state.axisBase, state.axisTargetDir, axisLen);
+                Gizmos.color = Color.magenta;
+                DrawDebugArrow(state.axisBase, state.axisBoneDir, axisLen);
+            }
+        }
     }
 
     private sealed class TestModelTransformLock : MonoBehaviour

@@ -75,3 +75,7 @@ Thumbs.db
 # Asset Store tools
 Assets/AssetStoreTools*
 
+# saving code assistants settings
+.codex/
+.gemini/
+

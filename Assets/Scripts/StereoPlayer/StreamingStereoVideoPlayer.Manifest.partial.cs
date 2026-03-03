@@ -219,6 +219,36 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return 0f;
     }
 
+    private float DecodeAnchorDepthMetersFromBundle(float zRaw01)
+    {
+        if (float.IsNaN(zRaw01) || float.IsInfinity(zRaw01))
+        {
+            zRaw01 = 0f;
+        }
+
+        float z01 = Mathf.Clamp01(zRaw01);
+        float screenDist = Mathf.Max(0.001f, screenDistanceMeters);
+        float eps = Mathf.Max(0f, epsilonMeters);
+        float popout = Mathf.Max(0f, popoutRangeMeters) * z01;
+
+        float zPlacement = screenDist - eps - popout;
+        zPlacement = Mathf.Max(zPlacement, Mathf.Max(0.001f, minDistanceFromHeadMeters));
+        zPlacement = Mathf.Min(zPlacement, screenDist - 0.0001f);
+        return Mathf.Max(0.001f, zPlacement);
+    }
+
+    private Vector3 DecodeJointCamFromBundle(Vector3 bundleCam)
+    {
+        if (float.IsNaN(bundleCam.x) || float.IsInfinity(bundleCam.x) ||
+            float.IsNaN(bundleCam.y) || float.IsInfinity(bundleCam.y) ||
+            float.IsNaN(bundleCam.z) || float.IsInfinity(bundleCam.z))
+        {
+            return Vector3.zero;
+        }
+
+        return bundleCam;
+    }
+
 
     private void LogResolvedManifestOnce()
     {

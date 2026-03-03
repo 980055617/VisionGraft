@@ -5,6 +5,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
     // Depends on: meta frame cache, track instance state, manifest/screen helpers, manual-yaw/diagnostics partials
     // Provides: FollowTick pipeline, target selection, replaceable model apply, TryApplySkeleton entry
+    private readonly Dictionary<uint, int> depthDebugLastFrameByTrack = new Dictionary<uint, int>();
 
     private void PlaceOrMoveTestModel(PickResult pick)
     {
@@ -214,45 +215,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         pickedScreen = screen;
         CaptureMeta2DOverlay(target, screen, isRightEye, uEye);
 
-        float uMeta = uEye;
-        float vMeta = target.anchorV;
-        float uEyeF = uMeta;
-        float vEyeF = vMeta;
-
-        int cropW = GetCropW();
-        int cropH = GetCropH();
-        bool hasCrop = cropW > 0 && cropH > 0;
-        bool outOfCrop = false;
-        if (hasCrop)
-        {
-            int cropX = GetCropX();
-            int cropY = GetCropY();
-            uEyeF = uMeta - cropX;
-            vEyeF = vMeta - cropY;
-            if (uEyeF < 0f || vEyeF < 0f || uEyeF >= cropW || vEyeF >= cropH)
-            {
-                outOfCrop = true;
-            }
-            uEyeF = Mathf.Clamp(uEyeF, 0f, cropW - 1f);
-            vEyeF = Mathf.Clamp(vEyeF, 0f, cropH - 1f);
-        }
-        else
-        {
-            uEyeF = Mathf.Clamp(uEyeF, 0f, manifest.eye_w - 1f);
-            vEyeF = Mathf.Clamp(vEyeF, 0f, manifest.eye_h - 1f);
-        }
-
-        if (outOfCrop)
-        {
-            if (!outOfCropLoggedTracks.Contains(target.trackId))
-            {
-                outOfCropLoggedTracks.Add(target.trackId);
-                Log(LogCategory.META_RANGE,
-                    $"CROP_SKIP f={frame} t={target.trackId} uMeta={uMeta:F1} vMeta={vMeta:F1} crop_y0={GetCropY()} crop_h={cropH}",
-                    frame, (int)target.trackId);
-            }
-            return;
-        }
+        // Bundle writer stores anchor/bbox already mapped into eye pixel coordinates.
+        float uEyeF = Mathf.Clamp(uEye, 0f, manifest.eye_w - 1f);
+        float vEyeF = Mathf.Clamp(target.anchorV, 0f, manifest.eye_h - 1f);
 
         float bboxWAdjusted = target.bboxW;
         float bboxHAdjusted = target.bboxH;
@@ -264,6 +229,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         DebugScreenPinholeConsistency(screen, uEyeF, vEyeF, frame, (int)target.trackId);
         Vector3 anchorWorld = AnchorUvZToWorldPinhole(screen, uEyeF, vEyeF, target.anchorZ);
+        DebugLogDepthPlacement(target, frame, screen, uEyeF, vEyeF, anchorWorld);
         if (debugDrawAnchor)
         {
             DebugDrawTrackState state = GetOrCreateDebugDrawTrackState(target.trackId);
@@ -320,6 +286,42 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Log(LogCategory.FOLLOW,
             $"f={frame} t={target.trackId} anchor=({target.anchorU},{target.anchorV}) uEye={uEyeF:F2} vEye={vEyeF:F2} screen={(isRightEye ? "R" : "L")} z={target.anchorZ:F3} pos=({anchorWorld.x:F3},{anchorWorld.y:F3},{anchorWorld.z:F3})",
             frame, (int)target.trackId);
+    }
+
+    private void DebugLogDepthPlacement(MetaObj target, int frame, Transform screen, float uEyeF, float vEyeF, Vector3 anchorWorld)
+    {
+#if !UNITY_EDITOR && !DEVELOPMENT_BUILD
+        return;
+#endif
+        if (!debugDepthPlacementLog)
+        {
+            return;
+        }
+
+        if (debugDepthTrackId >= 0 && target.trackId != (uint)debugDepthTrackId)
+        {
+            return;
+        }
+
+        int logEvery = Mathf.Max(1, debugDepthLogEveryNFrames);
+        if (frame >= 0 && (frame % logEvery) != 0)
+        {
+            return;
+        }
+
+        if (depthDebugLastFrameByTrack.TryGetValue(target.trackId, out int lastFrame) && lastFrame == frame)
+        {
+            return;
+        }
+        depthDebugLastFrameByTrack[target.trackId] = frame;
+
+        float screenDist = Mathf.Max(0.001f, screenDistanceMeters);
+        float z01 = Mathf.Clamp01(target.anchorZRaw01);
+        float popoutFromScreen = screenDist - target.anchorZ;
+        string screenName = screen != null ? screen.name : "null";
+        Debug.Log(
+            $"[DEPTH_DEBUG] f={frame} track={target.trackId} screen={screenName} " +
+            $"screenDist={screenDist:F3} z01={z01:F4} zPlacement={target.anchorZ:F4} popout={popoutFromScreen:F4}");
     }
 
 

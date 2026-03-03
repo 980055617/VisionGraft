@@ -20,6 +20,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private Text runtimeProgressText;
     private Slider runtimeFovxSlider;
     private Text runtimeFovxValueText;
+    private Slider runtimeScreenDistanceSlider;
+    private Text runtimeScreenDistanceValueText;
     private Text runtimeTrackSelectionText;
     private Slider runtimeTrackYawSlider;
     private Text runtimeTrackYawValueText;
@@ -28,8 +30,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private bool runtimeSettingsOpen;
     private bool runtimeFovxInitialized;
     private bool suppressRuntimeProgressCallback;
+    private bool suppressRuntimeScreenDistanceCallback;
     private bool suppressRuntimeTrackYawCallback;
+    private int runtimeSettingsPlacementLockDepth;
     private readonly List<InputDevice> xrInputDevices = new List<InputDevice>();
+    private static System.Type trackedDeviceGraphicRaycasterType;
+    private static bool trackedDeviceGraphicRaycasterTypeResolved;
 
     private void EnsureRuntimeControls()
     {
@@ -43,6 +49,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             {
                 runtimeSettingsRoot.SetActive(false);
             }
+            SetScreenColliderBlockForSettings(false);
             return;
         }
 
@@ -68,7 +75,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (runtimeSettingsRoot != null)
         {
             runtimeSettingsRoot.SetActive(runtimeSettingsOpen);
+            SetScreenColliderBlockForSettings(runtimeSettingsOpen);
             UpdateRuntimeSettingsPlacement();
+            UpdateRuntimeScreenDistanceUiState();
             UpdateRuntimeTrackRotationUiState();
         }
     }
@@ -80,6 +89,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             GameObject prefabRoot = Instantiate(runtimeControlsPrefab);
             prefabRoot.name = "RuntimeControlsBar";
+            EnsureCanvasRaycasters(prefabRoot);
             EnsurePauseButtonExists(prefabRoot);
             EnsureSettingsButtonExists(prefabRoot);
             EnsureProgressControlsExists(prefabRoot);
@@ -92,6 +102,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         canvas.renderMode = RenderMode.WorldSpace;
         canvas.worldCamera = GetViewCamera();
         root.AddComponent<GraphicRaycaster>();
+        EnsureCanvasRaycasters(root);
 
         RectTransform rect = root.GetComponent<RectTransform>();
         rect.sizeDelta = new Vector2(RuntimeControlsDefaultCanvasWidth, RuntimeControlsDefaultCanvasHeight);
@@ -558,6 +569,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             canvas.worldCamera = GetViewCamera();
             settingsRootObj.AddComponent<GraphicRaycaster>();
         }
+        EnsureCanvasRaycasters(settingsRootObj);
 
         Canvas rootCanvas = settingsRootObj.GetComponent<Canvas>();
         if (rootCanvas == null)
@@ -601,26 +613,38 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         UpdateRuntimeFovxText(runtimeFovxDeg);
 
-        CreateLabel(panelObj.transform, "TrackLabel", "Track", 0.12f, 0.32f, 44, TextAnchor.MiddleLeft);
-        runtimeTrackSelectionText = CreateLabel(panelObj.transform, "TrackValue", "none", 0.88f, 0.32f, 40, TextAnchor.MiddleRight);
-        runtimeTrackFrontGuideText = CreateWideLabel(panelObj.transform, "TrackFrontGuide", "Arrow above head = FRONT  |  +:left  -:right", 0.5f, 0.44f, 24, TextAnchor.MiddleCenter);
+        CreateLabel(panelObj.transform, "ScreenDistLabel", "Screen Dist", 0.12f, 0.43f, 42, TextAnchor.MiddleLeft);
+        runtimeScreenDistanceValueText = CreateLabel(panelObj.transform, "ScreenDistValue", string.Empty, 0.88f, 0.43f, 38, TextAnchor.MiddleRight);
+        runtimeScreenDistanceSlider = CreateSlider(panelObj.transform, "ScreenDistanceSlider", 0.43f);
+        if (runtimeScreenDistanceSlider != null)
+        {
+            runtimeScreenDistanceSlider.onValueChanged.RemoveListener(OnRuntimeScreenDistanceSliderChanged);
+            UpdateRuntimeScreenDistanceSliderRange();
+            runtimeScreenDistanceSlider.SetValueWithoutNotify(ClampRuntimeScreenDistance(screenDistanceMeters));
+            runtimeScreenDistanceSlider.onValueChanged.AddListener(OnRuntimeScreenDistanceSliderChanged);
+        }
+        UpdateRuntimeScreenDistanceText(screenDistanceMeters);
+
+        CreateLabel(panelObj.transform, "TrackLabel", "Track", 0.12f, 0.28f, 44, TextAnchor.MiddleLeft);
+        runtimeTrackSelectionText = CreateLabel(panelObj.transform, "TrackValue", "none", 0.88f, 0.28f, 40, TextAnchor.MiddleRight);
+        runtimeTrackFrontGuideText = CreateWideLabel(panelObj.transform, "TrackFrontGuide", "Arrow above head = FRONT  |  +:left  -:right", 0.5f, 0.36f, 24, TextAnchor.MiddleCenter);
         runtimeTrackKeyInfoText = CreateWideLabel(panelObj.transform, "TrackKeyInfo", "Keys:0  Frame:0", 0.5f, 0.05f, 24, TextAnchor.MiddleCenter);
 
-        Button prevTrack = CreateSmallButton(panelObj.transform, "TrackPrevButton", new Vector2(-210f, -95f), "<");
+        Button prevTrack = CreateSmallButton(panelObj.transform, "TrackPrevButton", new Vector2(-210f, -115f), "<");
         prevTrack.onClick.RemoveListener(OnRuntimeTrackPrevClicked);
         prevTrack.onClick.AddListener(OnRuntimeTrackPrevClicked);
 
-        Button nextTrack = CreateSmallButton(panelObj.transform, "TrackNextButton", new Vector2(-90f, -95f), ">");
+        Button nextTrack = CreateSmallButton(panelObj.transform, "TrackNextButton", new Vector2(-90f, -115f), ">");
         nextTrack.onClick.RemoveListener(OnRuntimeTrackNextClicked);
         nextTrack.onClick.AddListener(OnRuntimeTrackNextClicked);
 
-        Button resetYaw = CreateSmallButton(panelObj.transform, "TrackYawResetButton", new Vector2(210f, -95f), "Reset");
+        Button resetYaw = CreateSmallButton(panelObj.transform, "TrackYawResetButton", new Vector2(210f, -115f), "Reset");
         resetYaw.onClick.RemoveListener(OnRuntimeTrackYawResetClicked);
         resetYaw.onClick.AddListener(OnRuntimeTrackYawResetClicked);
 
-        CreateLabel(panelObj.transform, "YawLabel", "Yaw", 0.12f, 0.16f, 44, TextAnchor.MiddleLeft);
-        runtimeTrackYawValueText = CreateLabel(panelObj.transform, "YawValue", "0.0 deg", 0.88f, 0.16f, 40, TextAnchor.MiddleRight);
-        runtimeTrackYawSlider = CreateSlider(panelObj.transform, "TrackYawSlider", 0.16f);
+        CreateLabel(panelObj.transform, "YawLabel", "Yaw", 0.12f, 0.12f, 44, TextAnchor.MiddleLeft);
+        runtimeTrackYawValueText = CreateLabel(panelObj.transform, "YawValue", "0.0 deg", 0.88f, 0.12f, 40, TextAnchor.MiddleRight);
+        runtimeTrackYawSlider = CreateSlider(panelObj.transform, "TrackYawSlider", 0.12f);
         if (runtimeTrackYawSlider != null)
         {
             runtimeTrackYawSlider.minValue = -180f;
@@ -793,6 +817,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return Mathf.Clamp(value, min, max);
     }
 
+    private float ClampRuntimeScreenDistance(float value)
+    {
+        float min = Mathf.Min(runtimeScreenDistanceMinMeters, runtimeScreenDistanceMaxMeters);
+        float max = Mathf.Max(runtimeScreenDistanceMinMeters, runtimeScreenDistanceMaxMeters);
+        return Mathf.Clamp(value, min, max);
+    }
+
     private void UpdateFovxSliderRange()
     {
         if (runtimeFovxSlider == null)
@@ -806,6 +837,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         runtimeFovxSlider.maxValue = max;
     }
 
+    private void UpdateRuntimeScreenDistanceSliderRange()
+    {
+        if (runtimeScreenDistanceSlider == null)
+        {
+            return;
+        }
+
+        float min = Mathf.Min(runtimeScreenDistanceMinMeters, runtimeScreenDistanceMaxMeters);
+        float max = Mathf.Max(runtimeScreenDistanceMinMeters, runtimeScreenDistanceMaxMeters);
+        runtimeScreenDistanceSlider.minValue = min;
+        runtimeScreenDistanceSlider.maxValue = max;
+    }
+
     private void OnRuntimeFovxSliderChanged(float value)
     {
         runtimeFovxDeg = ClampRuntimeFovx(value);
@@ -815,8 +859,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (fitScreenToFov)
         {
-            PlaceScreens();
+            PlaceScreensWithoutMovingSettings();
         }
+    }
+
+    private void OnRuntimeScreenDistanceSliderChanged(float value)
+    {
+        if (suppressRuntimeScreenDistanceCallback)
+        {
+            return;
+        }
+
+        screenDistanceMeters = ClampRuntimeScreenDistance(value);
+        UpdateRuntimeScreenDistanceText(screenDistanceMeters);
+        PlaceScreensWithoutMovingSettings();
     }
 
     private void UpdateRuntimeFovxText(float value)
@@ -829,19 +885,57 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         runtimeFovxValueText.text = value.ToString("F1") + " deg";
     }
 
+    private void UpdateRuntimeScreenDistanceText(float value)
+    {
+        if (runtimeScreenDistanceValueText == null)
+        {
+            return;
+        }
+
+        runtimeScreenDistanceValueText.text = value.ToString("F2") + " m";
+    }
+
     private void ToggleRuntimeSettingsPanel()
     {
         runtimeSettingsOpen = !runtimeSettingsOpen;
         if (runtimeSettingsRoot != null)
         {
             runtimeSettingsRoot.SetActive(runtimeSettingsOpen && enableRuntimeControls);
+            SetScreenColliderBlockForSettings(runtimeSettingsOpen && enableRuntimeControls);
             if (runtimeSettingsOpen)
             {
                 UpdateRuntimeSettingsPlacement();
+                UpdateRuntimeScreenDistanceUiState();
                 UpdateRuntimeTrackRotationUiState();
             }
         }
         UpdateSettingsButtonLabel();
+    }
+
+    private void SetScreenColliderBlockForSettings(bool settingsOpen)
+    {
+        // Screen colliders can steal controller/UI rays from the settings canvas.
+        bool colliderEnabled = !settingsOpen;
+        SetColliderEnabled(leftScreen, colliderEnabled);
+        SetColliderEnabled(rightScreen, colliderEnabled);
+    }
+
+    private static void SetColliderEnabled(Transform target, bool enabled)
+    {
+        if (target == null)
+        {
+            return;
+        }
+
+        Collider[] colliders = target.GetComponents<Collider>();
+        for (int i = 0; i < colliders.Length; i++)
+        {
+            Collider collider = colliders[i];
+            if (collider != null)
+            {
+                collider.enabled = enabled;
+            }
+        }
     }
 
     private void UpdateSettingsButtonLabel()
@@ -861,14 +955,65 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 #else
         EventSystem eventSystem = Object.FindObjectOfType<EventSystem>();
 #endif
-        if (eventSystem != null)
+        if (eventSystem == null)
+        {
+            GameObject eventSystemObj = new GameObject("EventSystem");
+            eventSystem = eventSystemObj.AddComponent<EventSystem>();
+        }
+
+        if (eventSystem.GetComponent<InputSystemUIInputModule>() == null)
+        {
+            eventSystem.gameObject.AddComponent<InputSystemUIInputModule>();
+        }
+    }
+
+    private void EnsureCanvasRaycasters(GameObject root)
+    {
+        if (root == null)
         {
             return;
         }
 
-        GameObject eventSystemObj = new GameObject("EventSystem");
-        eventSystemObj.AddComponent<EventSystem>();
-        eventSystemObj.AddComponent<InputSystemUIInputModule>();
+        Canvas[] canvases = root.GetComponentsInChildren<Canvas>(true);
+        for (int i = 0; i < canvases.Length; i++)
+        {
+            Canvas canvas = canvases[i];
+            if (canvas == null)
+            {
+                continue;
+            }
+
+            GameObject canvasGo = canvas.gameObject;
+            GraphicRaycaster raycaster = canvasGo.GetComponent<GraphicRaycaster>();
+            if (raycaster == null)
+            {
+                raycaster = canvasGo.AddComponent<GraphicRaycaster>();
+            }
+
+            // Settings panel is rotated 180deg in this scene setup.
+            // Accept reversed graphics so slider/button raycasts still hit.
+            raycaster.ignoreReversedGraphics = false;
+
+            System.Type trackedRaycasterType = GetTrackedDeviceGraphicRaycasterType();
+            if (trackedRaycasterType != null && canvasGo.GetComponent(trackedRaycasterType) == null)
+            {
+                canvasGo.AddComponent(trackedRaycasterType);
+            }
+        }
+    }
+
+    private static System.Type GetTrackedDeviceGraphicRaycasterType()
+    {
+        if (trackedDeviceGraphicRaycasterTypeResolved)
+        {
+            return trackedDeviceGraphicRaycasterType;
+        }
+
+        trackedDeviceGraphicRaycasterTypeResolved = true;
+        trackedDeviceGraphicRaycasterType =
+            System.Type.GetType("UnityEngine.XR.Interaction.Toolkit.UI.TrackedDeviceGraphicRaycaster, Unity.XR.Interaction.Toolkit") ??
+            System.Type.GetType("UnityEngine.XR.Interaction.Toolkit.UI.TrackedDeviceGraphicRaycaster, Unity.XR.Interaction.Toolkit.Runtime");
+        return trackedDeviceGraphicRaycasterType;
     }
 
     private void UpdateRuntimeControlsPlacement()
@@ -927,9 +1072,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        // Anchor the settings panel relative to the runtime bar so it does not
-        // jump when FOV changes and screen width is recalculated.
-        Transform basis = runtimeControlsRoot != null ? runtimeControlsRoot.transform : (leftScreen != null ? leftScreen : rightScreen);
+        if (runtimeSettingsPlacementLockDepth > 0)
+        {
+            return;
+        }
+
+        // Place the settings panel to the right of the video screen and slightly in front.
+        Transform baseScreen = rightScreen != null ? rightScreen : leftScreen;
+        Transform basis = baseScreen != null
+            ? baseScreen
+            : (runtimeControlsRoot != null ? runtimeControlsRoot.transform : null);
         if (basis == null)
         {
             return;
@@ -942,14 +1094,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             toHead = -basis.forward;
         }
 
-        float halfBarW = Mathf.Abs(controlsBarSizeMeters.x) * 0.5f;
+        float basisWidth = controlsBarSizeMeters.x;
+        if (baseScreen != null)
+        {
+            GetScreenSizeMeters(baseScreen, out float screenWidthMeters, out _, out _);
+            basisWidth = Mathf.Abs(screenWidthMeters);
+        }
+
+        float halfBarW = Mathf.Abs(basisWidth) * 0.5f;
         float halfPanelW = Mathf.Abs(settingsPanelSizeMeters.x) * 0.5f;
         float rightFromBar = halfBarW + settingsPanelGapMeters + halfPanelW + settingsPanelOffsetMeters.x;
+        float forwardFromScreen = Mathf.Max(settingsPanelForwardOffsetMeters, 0.06f);
         runtimeSettingsRoot.transform.position =
             basis.position
             + basis.right * rightFromBar
             + basis.up * settingsPanelOffsetMeters.y
-            + toHead * settingsPanelForwardOffsetMeters;
+            + toHead * forwardFromScreen;
         Quaternion panelRotation = basis.rotation;
         if (head != null)
         {
@@ -985,6 +1145,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 settingsPanelSizeMeters.x / size.x,
                 settingsPanelSizeMeters.y / size.y,
                 1f);
+        }
+    }
+
+    private void PlaceScreensWithoutMovingSettings()
+    {
+        runtimeSettingsPlacementLockDepth++;
+        try
+        {
+            PlaceScreens();
+        }
+        finally
+        {
+            runtimeSettingsPlacementLockDepth = Mathf.Max(0, runtimeSettingsPlacementLockDepth - 1);
         }
     }
 
@@ -1141,6 +1314,30 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
     }
 
+    private void UpdateRuntimeScreenDistanceUiState()
+    {
+        if (runtimeScreenDistanceSlider == null && runtimeScreenDistanceValueText == null)
+        {
+            return;
+        }
+
+        float clamped = ClampRuntimeScreenDistance(screenDistanceMeters);
+        if (!Mathf.Approximately(screenDistanceMeters, clamped))
+        {
+            screenDistanceMeters = clamped;
+        }
+
+        if (runtimeScreenDistanceSlider != null)
+        {
+            UpdateRuntimeScreenDistanceSliderRange();
+            suppressRuntimeScreenDistanceCallback = true;
+            runtimeScreenDistanceSlider.SetValueWithoutNotify(clamped);
+            suppressRuntimeScreenDistanceCallback = false;
+        }
+
+        UpdateRuntimeScreenDistanceText(clamped);
+    }
+
     private void PauseForManualRotationEdit()
     {
         if (vp == null || !vp.isPlaying)
@@ -1160,6 +1357,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        UpdateRuntimeScreenDistanceUiState();
         UpdateRuntimeTrackRotationUiState();
         UpdateManualYawGuide(true);
     }

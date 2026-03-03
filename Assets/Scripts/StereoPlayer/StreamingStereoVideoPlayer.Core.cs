@@ -42,7 +42,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public Transform headTransform;
     public float screenDistanceMeters = 2.0f;
     public Vector3 screenOffsetMeters = Vector3.zero;
+    public bool legacyVirtualOrigin = false;
     public bool fitScreenToFov = false;
+    [Header("Depth Popout")]
+    public float popoutRangeMeters = 0.35f;
+    public float epsilonMeters = 0.02f;
+    public float minDistanceFromHeadMeters = 0.25f;
 
     [Header("Test Model")]
     public GameObject testModelPrefab;
@@ -136,6 +141,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool debugLogJointsProcessed = false;
     public bool debugProjectXYZUseRaw = false;
     public bool debugSkipOnlyZeq0 = false;
+    public bool debugDepthPlacementLog = true;
+    public int debugDepthTrackId = -1;
+    public int debugDepthLogEveryNFrames = 15;
     public bool showAnchorDebugCubes = false;
     public float anchorDebugCubeSize = 0.03f;
     public bool anchorDebugAlignBottom = true;
@@ -164,6 +172,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public float runtimeFovxMinDeg = 40f;
     public float runtimeFovxMaxDeg = 140f;
     public float runtimeFovxDefaultDeg = 90f;
+    public float runtimeScreenDistanceMinMeters = 0.5f;
+    public float runtimeScreenDistanceMaxMeters = 3.0f;
     public Vector2 settingsPanelSizeMeters = new Vector2(0.78f, 0.5f);
     public Vector2 settingsPanelOffsetMeters = Vector2.zero;
     public float settingsPanelGapMeters = 0.08f;

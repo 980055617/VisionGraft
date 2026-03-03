@@ -37,6 +37,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public ushort bboxH;
         public ushort anchorU;
         public ushort anchorV;
+        public float anchorZRaw01;
         public float anchorZ;
         public bool hasSkeleton;
         public ushort skeletonKpCount;
@@ -331,6 +332,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                                         // Quantization in bundle build is q = round(value / quantScale),
                                         // so decode must be value = q * quantScale.
                                         Vector3 decoded = new Vector3(xq * quantScale, yq * quantScale, zq * quantScale);
+                                        decoded = DecodeJointCamFromBundle(decoded);
                                         jointsCam[p] = decoded;
 
                                         if (zq < qZMin) qZMin = zq;
@@ -401,7 +403,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                             }
                         }
 
-                        float anchorZ = anchorZq * GetQuantPosScale();
+                        float anchorZRaw01 = anchorZq * GetQuantPosScale();
+                        float anchorZ = DecodeAnchorDepthMetersFromBundle(anchorZRaw01);
                         outObjs.Add(new MetaObj
                         {
                             trackId = trackId,
@@ -412,6 +415,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                             bboxH = bboxH,
                             anchorU = anchorU,
                             anchorV = anchorV,
+                            anchorZRaw01 = anchorZRaw01,
                             anchorZ = anchorZ,
                             hasSkeleton = hasSkeleton,
                             skeletonKpCount = kpCount,

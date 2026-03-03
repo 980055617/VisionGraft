@@ -39,9 +39,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        EnsureScreenCollider(leftScreen, "leftScreen");
-        EnsureScreenCollider(rightScreen, "rightScreen");
-
         Camera cam = GetViewCamera();
         if (cam == null)
         {
@@ -114,17 +111,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         hitDistance = 0f;
         hitPoint = Vector3.zero;
         hasHitDistance = false;
-
-        if (Physics.Raycast(ray, out RaycastHit hit, 20f, Physics.AllLayers, QueryTriggerInteraction.Collide))
-        {
-            screen = hit.transform;
-            uv = hit.textureCoord;
-            hitName = hit.transform.name;
-            hitDistance = hit.distance;
-            hitPoint = hit.point;
-            hasHitDistance = true;
-            return true;
-        }
 
         bool leftHit = TryRaycastScreenPlane(leftScreen, ray, out Vector2 leftUv, out float leftDist, out Vector3 leftPoint);
         bool rightHit = TryRaycastScreenPlane(rightScreen, ray, out Vector2 rightUv, out float rightDist, out Vector3 rightPoint);

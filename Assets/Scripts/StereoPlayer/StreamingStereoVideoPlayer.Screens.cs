@@ -75,20 +75,45 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        var collider = screen.GetComponent<Collider>();
-        if (collider == null)
+        MeshFilter meshFilter = screen.GetComponent<MeshFilter>();
+        if (meshFilter == null || meshFilter.sharedMesh == null)
         {
-            var meshCollider = screen.gameObject.AddComponent<MeshCollider>();
-            var meshFilter = screen.GetComponent<MeshFilter>();
-            if (meshFilter != null && meshFilter.sharedMesh != null)
-            {
-                meshCollider.sharedMesh = meshFilter.sharedMesh;
-            }
-            else
-            {
-                Debug.LogWarning($"EnsureScreenCollider: mesh missing for {label}.");
-            }
+            Debug.LogWarning($"EnsureScreenCollider: mesh missing for {label}.");
+            return;
         }
+
+        MeshCollider meshCollider = null;
+        Collider[] colliders = screen.GetComponents<Collider>();
+        for (int i = 0; i < colliders.Length; i++)
+        {
+            Collider collider = colliders[i];
+            if (collider == null)
+            {
+                continue;
+            }
+
+            if (collider is MeshCollider asMesh && meshCollider == null)
+            {
+                meshCollider = asMesh;
+                continue;
+            }
+
+            // Keep screen hit area tightly matched to the rendered quad.
+            Destroy(collider);
+        }
+
+        if (meshCollider == null)
+        {
+            meshCollider = screen.gameObject.AddComponent<MeshCollider>();
+        }
+
+        if (meshCollider.sharedMesh != meshFilter.sharedMesh)
+        {
+            meshCollider.sharedMesh = meshFilter.sharedMesh;
+        }
+
+        meshCollider.convex = false;
+        meshCollider.isTrigger = false;
     }
 
     private void EnsureUnlitMaterial(Renderer renderer, string label)
@@ -679,6 +704,29 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         lockedPinholeRotation = head.rotation;
     }
 
+    private bool TryGetHeadVirtualOrigin(out Vector3 origin, out Quaternion rotation)
+    {
+        origin = Vector3.zero;
+        rotation = Quaternion.identity;
+
+        if (hasLockedPinholeBasis)
+        {
+            origin = lockedPinholeOrigin;
+            rotation = lockedPinholeRotation;
+            return true;
+        }
+
+        Transform head = GetViewCamera() != null ? GetViewCamera().transform : GetHeadTransform();
+        if (head == null)
+        {
+            return false;
+        }
+
+        origin = head.position + head.TransformVector(screenOffsetMeters);
+        rotation = head.rotation;
+        return true;
+    }
+
     private bool TryGetPinholeBasis(Transform screen, out Vector3 camOrigin, out Quaternion camRotation)
     {
         camOrigin = Vector3.zero;
@@ -686,13 +734,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (screen == null)
         {
-            if (hasLockedPinholeBasis)
-            {
-                camOrigin = lockedPinholeOrigin;
-                camRotation = lockedPinholeRotation;
-                return true;
-            }
-            return false;
+            return TryGetHeadVirtualOrigin(out camOrigin, out camRotation);
         }
 
         Vector3 screenFront = GetScreenFrontDirection(screen);
@@ -712,7 +754,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         camUp.Normalize();
 
         camRotation = Quaternion.LookRotation(camForward, camUp);
-        camOrigin = screen.position + screenFront * screenDistanceMeters;
+        if (legacyVirtualOrigin)
+        {
+            camOrigin = screen.position + screenFront * screenDistanceMeters;
+            return true;
+        }
+
+        if (!TryGetHeadVirtualOrigin(out camOrigin, out _))
+        {
+            camOrigin = screen.position + screenFront * screenDistanceMeters;
+        }
         return true;
     }
 

@@ -1,3 +1,4 @@
+using System.Reflection;
 using UnityEngine;
 using UnityEngine.Video;
 
@@ -274,6 +275,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             ApplyScreenScaleToFitFov(rightScreen, width, height);
         }
 
+        // Keep ISDK ray interaction surfaces aligned with the current screen mesh size.
+        SyncRayCanvasInteractionSurfaceToScreen(leftScreen);
+        SyncRayCanvasInteractionSurfaceToScreen(rightScreen);
+
         Vector3 rightOffset = head.right * 0.001f;
         if (leftScreen != null)
         {
@@ -290,6 +295,158 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         FixFacingIfNeeded(leftScreen, head);
         FixFacingIfNeeded(rightScreen, head);
         UpdateRuntimeControlsPlacement();
+    }
+
+    private void SyncRayCanvasInteractionSurfaceToScreen(Transform screen)
+    {
+        if (screen == null)
+        {
+            return;
+        }
+
+        GetScreenMeshLocalBounds(screen, out _, out Vector3 meshSizeLocal);
+        float targetWidth = Mathf.Abs(meshSizeLocal.x);
+        float targetHeight = Mathf.Abs(meshSizeLocal.y);
+        if (targetWidth <= 0.000001f || targetHeight <= 0.000001f)
+        {
+            return;
+        }
+
+        if (screen is RectTransform screenRect)
+        {
+            screenRect.sizeDelta = new Vector2(targetWidth, targetHeight);
+        }
+
+        Transform interactionRoot = FindDeepChildByName(screen, "ISDK_RayCanvasInteraction");
+        if (interactionRoot == null)
+        {
+            return;
+        }
+
+        Transform surface = ResolveInteractionSurfaceTransform(interactionRoot, "_surface");
+        Transform selectSurface = ResolveInteractionSurfaceTransform(interactionRoot, "_selectSurface");
+        if (surface == null)
+        {
+            surface = FindDeepChildByName(interactionRoot, "Surface");
+        }
+
+        SyncSurfaceRectAndClipperSize(surface, targetWidth, targetHeight);
+        if (selectSurface != null && selectSurface != surface)
+        {
+            SyncSurfaceRectAndClipperSize(selectSurface, targetWidth, targetHeight);
+        }
+    }
+
+    private static Transform ResolveInteractionSurfaceTransform(Transform interactionRoot, string fieldName)
+    {
+        if (interactionRoot == null || string.IsNullOrEmpty(fieldName))
+        {
+            return null;
+        }
+
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        Component[] components = interactionRoot.GetComponents<Component>();
+        for (int i = 0; i < components.Length; i++)
+        {
+            Component component = components[i];
+            if (component == null)
+            {
+                continue;
+            }
+
+            FieldInfo field = component.GetType().GetField(fieldName, flags);
+            if (field == null)
+            {
+                continue;
+            }
+
+            object value = field.GetValue(component);
+            if (value is Transform tr)
+            {
+                return tr;
+            }
+
+            if (value is Component comp)
+            {
+                return comp.transform;
+            }
+
+            if (value is GameObject go)
+            {
+                return go.transform;
+            }
+        }
+
+        return null;
+    }
+
+    private static void SyncSurfaceRectAndClipperSize(Transform surface, float width, float height)
+    {
+        if (surface == null)
+        {
+            return;
+        }
+
+        if (surface is RectTransform rect)
+        {
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition3D = Vector3.zero;
+            rect.offsetMin = Vector2.zero;
+            rect.offsetMax = Vector2.zero;
+        }
+
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        Component[] components = surface.GetComponentsInChildren<Component>(true);
+        for (int i = 0; i < components.Length; i++)
+        {
+            Component component = components[i];
+            if (component == null)
+            {
+                continue;
+            }
+
+            FieldInfo sizeField = component.GetType().GetField("_size", flags);
+            if (sizeField == null || sizeField.FieldType != typeof(Vector3))
+            {
+                continue;
+            }
+
+            Vector3 size = (Vector3)sizeField.GetValue(component);
+            size.x = width;
+            size.y = height;
+            if (size.z <= 0f)
+            {
+                size.z = 0.01f;
+            }
+            sizeField.SetValue(component, size);
+        }
+    }
+
+    private static Transform FindDeepChildByName(Transform root, string exactName)
+    {
+        if (root == null || string.IsNullOrEmpty(exactName))
+        {
+            return null;
+        }
+
+        if (root.name == exactName)
+        {
+            return root;
+        }
+
+        for (int i = 0; i < root.childCount; i++)
+        {
+            Transform child = root.GetChild(i);
+            Transform found = FindDeepChildByName(child, exactName);
+            if (found != null)
+            {
+                return found;
+            }
+        }
+
+        return null;
     }
 
     private void FixFacingIfNeeded(Transform screen, Transform head)

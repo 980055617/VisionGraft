@@ -1732,17 +1732,12 @@ MonoBehaviour:
   bundleVideoEntryName: video.mp4
   bundleManifestEntryName: manifest.json
   bundleMetaEntryName: meta.bin
-  reExtractAlways: 0
   extractedVideoFileName: video.mp4
   extractedManifestFileName: manifest.json
   extractedMetaFileName: meta.bin
   leftScreen: {fileID: 1279353384}
   rightScreen: {fileID: 911806757}
-  debugMarkerPrefab: {fileID: 0}
-  debugMarkerScale: 0.03
-  debugPixel: {x: -1, y: -1}
   markerOffset: 0.02
-  spawnMarkerOnPrepared: 0
   headTransform: {fileID: 773190241}
   screenDistanceMeters: 1
   screenOffsetMeters: {x: 0, y: 0, z: 0}
@@ -1795,47 +1790,8 @@ MonoBehaviour:
   animalModelForwardLocal: {x: 0, y: 0, z: -1}
   animalModelUpLocal: {x: 0, y: 1, z: 0}
   forceScreensInFrontOfViewCamera: 0
-  verboseLog: 0
-  logGeneral: 0
-  logBundle: 0
-  logMeta: 1
-  logPicking: 0
-  logFollow: 1
-  logScreens: 1
-  logVideo: 0
-  logModel: 0
-  debugDrawJoints: 0
-  debugDrawAnchor: 0
-  debugDisableRigApply: 0
-  debugDrawSkeletonLines3D: 0
-  debugDrawBoneAxisCompare: 0
-  debugLogAxisCompare: 0
-  debugForceDisableAnimatorForMeta: 0
-  debugAutoBoneAxis: 0
-  debugAutoBoneAxisApplyToRig: 0
-  debugAutoBoneAxisAlpha: 0.3
   enableDogDistalFreezeOnHighSkip: 1
   dogDistalFreezeSkipThreshold: 6
-  debugDrawMeta2D: 0
-  debugDrawJoints2D: 0
-  joints2DMode: 0
-  relFlipY: 0
-  uvIsNormalized: 0
-  flipU: 0
-  flipV: 0
-  applyCropScale: 0
-  useJointScaleMultiplierForDecode: 0
-  debugLogJointDecodeScaleCandidates: 0
-  debugLogJointsRaw: 0
-  debugLogJointsProcessed: 0
-  debugProjectXYZUseRaw: 0
-  debugSkipOnlyZeq0: 0
-  debugDepthPlacementLog: 1
-  debugDepthTrackId: -1
-  debugDepthLogEveryNFrames: 15
-  showAnchorDebugCubes: 0
-  anchorDebugCubeSize: 0.03
-  anchorDebugAlignBottom: 1
   alignModelToBBoxBottom: 1
   bboxAnchorVToBottom: 0.5
   modelBottomExtraOffsetMeters: -0.015
@@ -1862,38 +1818,6 @@ MonoBehaviour:
   settingsPanelOffsetMeters: {x: 0, y: 0}
   settingsPanelGapMeters: 0.08
   settingsPanelForwardOffsetMeters: 0.01
-  dogDiagnosticMode: 0
-  dogDiagnosticLogEffectiveValues: 0
-  dogDiagOverrideBoneApplyAlpha: 0
-  dogDiagBoneApplyAlpha: 1
-  dogDiagOverrideAnimalRootRotateAlpha: 0
-  dogDiagAnimalRootRotateAlpha: 0.6
-  dogDiagOverrideEnableJointSmoothing: 0
-  dogDiagEnableJointSmoothing: 1
-  dogDiagOverrideJointSmoothingAlpha: 0
-  dogDiagJointSmoothingAlpha: 0.35
-  dogDiagOverrideApplyManualYaw: 0
-  dogDiagApplyManualYaw: 1
-  dogDiagOverrideEnableYawDepthDisambiguation: 0
-  dogDiagEnableYawDepthDisambiguation: 1
-  dogDiagOverrideYawDepthBlend: 0
-  dogDiagYawDepthBlend: 1
-  dogDiagOverrideEnableDogDistalFreeze: 0
-  dogDiagEnableDogDistalFreeze: 1
-  dogDiagOverrideDogDistalFreezeSkipThreshold: 0
-  dogDiagDogDistalFreezeSkipThreshold: 6
-  dogDiagOverrideBoneRootRelThreshold: 0
-  dogDiagBoneRootRelThreshold: 0.2
-  dogDiagOverrideBoneAxisSign: 0
-  dogDiagBoneAxisSign: {x: 1, y: 1, z: 1}
-  debugLog:
-    enableLogs: 1
-    enabled: 03000000000000000100000002000000
-    onlyFrame: -1
-    onlyTrack: 0
-    logEveryNFrames: -1
-    maxLines: 50
-    dedup: 1
 --- !u!114 &1029322083431137655
 MonoBehaviour:
   m_ObjectHideFlags: 0

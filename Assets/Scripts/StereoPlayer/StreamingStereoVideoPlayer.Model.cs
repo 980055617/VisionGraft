@@ -6,14 +6,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const int TestModelLockFrames = 30;
     private const int MetaRangeFrameWindow = 60;
     private const float InvalidJointSqrMagnitudeEpsilon = 1e-10f;
-    private const int MaxJointInvalidLogsPerFrame = 6;
-    private const int MaxFrameApplySummaryLogsPerFrame = 4;
-    private const int DiagFrameStart = 196;
-    private const int DiagFrameEnd = 212;
-    private const int MaxDiagLogsPerFrame = 24;
     private int lastAutoTrackId = int.MinValue;
-    private int lastScreenPinholeLogFrame = -1;
-    private float lastScreenPinholeSampleLogTime = -1f;
     private readonly Dictionary<uint, GameObject> trackInstances = new Dictionary<uint, GameObject>();
     private readonly Dictionary<uint, GameObject> trackPrefabSources = new Dictionary<uint, GameObject>();
     private readonly Dictionary<uint, SortedDictionary<int, float>> manualYawKeyframesByTrack = new Dictionary<uint, SortedDictionary<int, float>>();
@@ -34,78 +27,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private int metaRangeMaxV = int.MinValue;
     private readonly HashSet<uint> outOfCropLoggedTracks = new HashSet<uint>();
     private readonly Dictionary<uint, Vector3[]> smoothedJointsByTrack = new Dictionary<uint, Vector3[]>();
-    private readonly Dictionary<Transform, Vector3> debugAutoAxisByBone = new Dictionary<Transform, Vector3>();
-    private readonly Dictionary<Transform, Quaternion> debugAutoRestLocalRotByBone = new Dictionary<Transform, Quaternion>();
-    private readonly HashSet<Transform> debugAutoAxisPickLogged = new HashSet<Transform>();
-    private readonly HashSet<Transform> dogBonesDumpLoggedRoots = new HashSet<Transform>();
-    private readonly HashSet<Transform> dogMappingLoggedRoots = new HashSet<Transform>();
-    private readonly HashSet<int> animatorMetaLockLogged = new HashSet<int>();
-    private int debugJointContextFrame = -1;
-    private uint debugJointContextTrackId = 0u;
-    private int debugJointInvalidLogFrame = -1;
-    private int debugJointInvalidLogCount = 0;
-    private int debugFrameApplySummaryLogFrame = -1;
-    private int debugFrameApplySummaryLogCount = 0;
-    private int debugDiagLogFrame = -1;
-    private int debugDiagLogCount = 0;
-    private int dogDiagLastLogFrame = -1;
-    private readonly List<AnimatorCheckSample> pendingAnimatorChecks = new List<AnimatorCheckSample>(8);
-    private sealed class DebugDrawTrackState
-    {
-        public Vector3[] jointsWorld;
-        public byte[] jointsVis;
-        public float[] jointsCamZ;
-        public int jointCount;
-        public byte categoryId;
-        public bool hasAnchor;
-        public Vector3 anchorWorld;
-        public bool hasAxisCompare;
-        public string axisBoneName;
-        public int axisIdxA = -1;
-        public int axisIdxB = -1;
-        public Vector3 axisBase;
-        public Vector3 axisTargetDir;
-        public Vector3 axisBoneDir;
-        public float axisAngleDeg;
-        public int skeletonSkipCount;
-    }
-    private sealed class Meta2DOverlayItem
-    {
-        public uint trackId;
-        public Rect eyeRect;
-        public Vector2 anchor;
-        public Rect bbox;
-    }
-    private sealed class Joints2DOverlayPoint
-    {
-        public Vector2 pos;
-        public Color color;
-    }
-    private sealed class DebugProcessedJointState
-    {
-        public int frame = -1;
-        public Vector3[] jointsCamProcessed;
-        public byte[] jointsVis;
-    }
-    private sealed class AnimatorCheckSample
-    {
-        public int frame;
-        public uint trackId;
-        public string boneName;
-        public Transform bone;
-        public Vector3 boneBeforeApply;
-        public Vector3 boneAfterApply;
-        public bool animatorEnabled;
-        public AnimatorUpdateMode updateMode;
-    }
-    private readonly Dictionary<uint, DebugDrawTrackState> debugDrawStateByTrack = new Dictionary<uint, DebugDrawTrackState>();
-    private readonly List<Meta2DOverlayItem> meta2DOverlayItems = new List<Meta2DOverlayItem>(64);
-    private readonly List<Joints2DOverlayPoint> joints2DOverlayPoints = new List<Joints2DOverlayPoint>(256);
-    private readonly Dictionary<uint, DebugProcessedJointState> debugProcessedJointsByTrack = new Dictionary<uint, DebugProcessedJointState>();
-    private int lastMeta2DLogFrame = -1;
-    private int lastJoints2DLogFrame = -1;
-    private GameObject anchorPinholeCube;
-    private GameObject anchorScreenCube;
     private readonly Dictionary<Animator, HumanoidRigCache> humanoidCaches = new Dictionary<Animator, HumanoidRigCache>();
     private readonly Dictionary<Transform, AnimalRigCache> animalRigCaches = new Dictionary<Transform, AnimalRigCache>();
     private static readonly int[] CocoEdges = new[]

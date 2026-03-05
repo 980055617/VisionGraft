@@ -125,19 +125,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        if (debugAutoBoneAxis && debugAutoBoneAxisApplyToRig && IsHumanoidAutoAxisLimbBone(boneId))
-        {
-            TryApplyAutoBoneAxis(bone, targetDir, -1, 0u, boneId.ToString());
-            if (debugLogAxisCompare &&
-                (boneId == HumanBodyBones.LeftLowerArm || boneId == HumanBodyBones.RightUpperArm))
-            {
-                Vector3 axisLocal = debugAutoAxisByBone.TryGetValue(bone, out Vector3 cachedAxis) ? cachedAxis : Vector3.forward;
-                float afterAngle = Vector3.Angle(bone.TransformDirection(axisLocal).normalized, targetDir);
-                Debug.Log($"AXIS_COMPARE_AFTER frame=-1 trackId=0 bone={boneId} angleDeg={afterAngle:F2}");
-            }
-            return true;
-        }
-
         if (!cache.bindDirWorld.TryGetValue(boneId, out Vector3 bindDir) || bindDir == Vector3.zero)
         {
             bindDir = Vector3.forward;
@@ -151,20 +138,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Quaternion targetRot = Quaternion.FromToRotation(bindDir, targetDir) * bindRot;
         bone.rotation = Quaternion.Slerp(bone.rotation, targetRot, Mathf.Clamp01(alpha));
         return true;
-    }
-
-
-    private static bool IsHumanoidAutoAxisLimbBone(HumanBodyBones boneId)
-    {
-        return
-            boneId == HumanBodyBones.LeftUpperArm ||
-            boneId == HumanBodyBones.LeftLowerArm ||
-            boneId == HumanBodyBones.RightUpperArm ||
-            boneId == HumanBodyBones.RightLowerArm ||
-            boneId == HumanBodyBones.LeftUpperLeg ||
-            boneId == HumanBodyBones.LeftLowerLeg ||
-            boneId == HumanBodyBones.RightUpperLeg ||
-            boneId == HumanBodyBones.RightLowerLeg;
     }
 
 

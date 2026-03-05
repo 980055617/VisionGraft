@@ -96,7 +96,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         EnsureScreensExist();
         SetupScreensAndMaterials();
-        LogStereoSetup("OnPrepared");
         LogVideoPlayerState("OnPrepared(start)");
 
         if (w <= 0 || h <= 0)
@@ -126,11 +125,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         DumpScreenState("after PlaceScreens");
         LogVideoPlayerState("OnPrepared");
 
-        if (spawnMarkerOnPrepared)
-        {
-            TrySpawnDebugMarker();
-        }
-
         if (spawnTestModelOnPrepared)
         {
             TrySpawnTestModel();
@@ -145,8 +139,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void LateUpdate()
     {
-        FlushAnimatorCheckLateUpdate();
-
         if (!forceScreensInFrontOfViewCamera)
         {
             return;

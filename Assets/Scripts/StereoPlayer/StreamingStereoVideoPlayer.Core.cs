@@ -6,23 +6,11 @@ using UnityEngine.XR;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
-    public enum Joints2DMode
-    {
-        AsUV,
-        ProjectXYZ,
-        UV01,
-        NDC,
-        REL_PIX,
-        REL_BBOX01,
-        REL_BBOXNDC
-    }
-
     [Header("Bundle")]
     public string bundleFileName = "bundle.svb";
     public string bundleVideoEntryName = "video.mp4";   // zip entry name
     public string bundleManifestEntryName = "manifest.json";
     public string bundleMetaEntryName = "meta.bin";
-    public bool reExtractAlways = false;                // true: always re-extract
     public string extractedVideoFileName = "video.mp4"; // extracted file name
     public string extractedManifestFileName = "manifest.json";
     public string extractedMetaFileName = "meta.bin";
@@ -31,12 +19,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public Transform leftScreen;
     public Transform rightScreen;
 
-    [Header("Debug Marker")]
-    public GameObject debugMarkerPrefab;
-    public float debugMarkerScale = 0.03f;
-    public Vector2Int debugPixel = new Vector2Int(-1, -1); // (-1,-1)縺ｪ繧我ｸｭ蠢・
     public float markerOffset = 0.02f; // 繧ｹ繧ｯ繝ｪ繝ｼ繝ｳ謇句燕縺ｫ蜃ｺ縺・m)
-    public bool spawnMarkerOnPrepared = false;
 
     [Header("Placement")]
     public Transform headTransform;
@@ -69,7 +52,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool followNearestToClick = true;
     public float followSelectThresholdPixels = 80f;
 
-    [Header("Follow (Debug Sin)")]
+    [Header("Follow (Sine Motion)")]
     public bool enableFollow = true;
     public float followAmplitudePixels = 30f;
     public float followSpeed = 1f;
@@ -104,49 +87,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public Vector3 animalModelForwardLocal = Vector3.right;
     public Vector3 animalModelUpLocal = Vector3.up;
 
-    [Header("Debug")]
+    [Header("Runtime Flags")]
     public bool forceScreensInFrontOfViewCamera = false;
     [SerializeField] private bool verboseLog = true;
-    public bool logGeneral = true;
-    public bool logBundle = true;
-    public bool logMeta = true;
-    public bool logPicking = true;
-    public bool logFollow = true;
-    public bool logScreens = true;
-    public bool logVideo = true;
-    public bool logModel = true;
-    public bool debugDrawJoints = false;
-    public bool debugDrawAnchor = false;
-    public bool debugDisableRigApply = false;
-    public bool debugDrawSkeletonLines3D = false;
-    public bool debugDrawBoneAxisCompare = false;
-    public bool debugLogAxisCompare = false;
-    public bool debugForceDisableAnimatorForMeta = false;
-    public bool debugAutoBoneAxis = false;
-    public bool debugAutoBoneAxisApplyToRig = false;
-    [Range(0f, 1f)] public float debugAutoBoneAxisAlpha = 0.3f;
     public bool enableDogDistalFreezeOnHighSkip = true;
     [Range(0, 16)] public int dogDistalFreezeSkipThreshold = 6;
-    public bool debugDrawMeta2D = false;
-    public bool debugDrawJoints2D = false;
-    public Joints2DMode joints2DMode = Joints2DMode.AsUV;
-    public bool relFlipY = false;
-    public bool uvIsNormalized = false;
-    public bool flipU = false;
-    public bool flipV = false;
-    public bool applyCropScale = false;
-    public bool useJointScaleMultiplierForDecode = false;
-    public bool debugLogJointDecodeScaleCandidates = false;
-    public bool debugLogJointsRaw = false;
-    public bool debugLogJointsProcessed = false;
-    public bool debugProjectXYZUseRaw = false;
-    public bool debugSkipOnlyZeq0 = false;
-    public bool debugDepthPlacementLog = true;
-    public int debugDepthTrackId = -1;
-    public int debugDepthLogEveryNFrames = 15;
-    public bool showAnchorDebugCubes = false;
-    public float anchorDebugCubeSize = 0.03f;
-    public bool anchorDebugAlignBottom = true;
     public bool alignModelToBBoxBottom = true;
     public float bboxAnchorVToBottom = 0.5f;
     public float modelBottomExtraOffsetMeters = 0f;
@@ -179,45 +124,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public float settingsPanelGapMeters = 0.08f;
     public float settingsPanelForwardOffsetMeters = 0.01f;
 
-    [Header("Dog Diagnostic Mode")]
-    public bool dogDiagnosticMode = false;
-    public bool dogDiagnosticLogEffectiveValues = false;
-
-    public bool dogDiagOverrideBoneApplyAlpha = false;
-    [Range(0f, 1f)] public float dogDiagBoneApplyAlpha = 1f;
-    public bool dogDiagOverrideAnimalRootRotateAlpha = false;
-    [Range(0f, 1f)] public float dogDiagAnimalRootRotateAlpha = 0.6f;
-
-    public bool dogDiagOverrideEnableJointSmoothing = false;
-    public bool dogDiagEnableJointSmoothing = true;
-    public bool dogDiagOverrideJointSmoothingAlpha = false;
-    [Range(0f, 1f)] public float dogDiagJointSmoothingAlpha = 0.35f;
-
-    public bool dogDiagOverrideApplyManualYaw = false;
-    public bool dogDiagApplyManualYaw = true;
-
-    public bool dogDiagOverrideEnableYawDepthDisambiguation = false;
-    public bool dogDiagEnableYawDepthDisambiguation = true;
-    public bool dogDiagOverrideYawDepthBlend = false;
-    [Range(0f, 1f)] public float dogDiagYawDepthBlend = 1f;
-
-    public bool dogDiagOverrideEnableDogDistalFreeze = false;
-    public bool dogDiagEnableDogDistalFreeze = true;
-    public bool dogDiagOverrideDogDistalFreezeSkipThreshold = false;
-    [Range(0, 16)] public int dogDiagDogDistalFreezeSkipThreshold = 6;
-
-    public bool dogDiagOverrideBoneRootRelThreshold = false;
-    public float dogDiagBoneRootRelThreshold = 0.2f;
-    public bool dogDiagOverrideBoneAxisSign = false;
-    public Vector3 dogDiagBoneAxisSign = Vector3.one;
-
     private VideoPlayer vp;
     private ManifestData manifest;
     private bool loggedFirstFrame;
-    private bool fallbackApplied;
     private bool loggedFovSource;
     private bool loggedQuantSource;
-    private bool loggedManifestResolved;
     private int lastFrameReadyFrame = -1;
     private string leftTexProp = "_MainTex";
     private string rightTexProp = "_MainTex";

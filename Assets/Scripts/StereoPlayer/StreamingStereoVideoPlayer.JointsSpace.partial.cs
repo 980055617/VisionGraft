@@ -10,13 +10,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         point = Vector3.zero;
         if (jointsWorld == null || vis == null)
         {
-            TryLogJointInvalid(idx, -1, Vector3.zero, "null_buffers");
             return false;
         }
 
         if (idx < 0 || idx >= jointsWorld.Length || idx >= vis.Length)
         {
-            TryLogJointInvalid(idx, -1, Vector3.zero, "out_of_range");
             return false;
         }
 
@@ -24,7 +22,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 p = jointsWorld[idx];
         if (visFlag == 0)
         {
-            TryLogJointInvalid(idx, visFlag, p, "vis0");
             return false;
         }
 
@@ -32,13 +29,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             float.IsNaN(p.y) || float.IsInfinity(p.y) ||
             float.IsNaN(p.z) || float.IsInfinity(p.z))
         {
-            TryLogJointInvalid(idx, visFlag, p, "non_finite");
             return false;
         }
 
         if (p.sqrMagnitude <= InvalidJointSqrMagnitudeEpsilon)
         {
-            TryLogJointInvalid(idx, visFlag, p, "near_zero");
             return false;
         }
 

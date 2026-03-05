@@ -393,94 +393,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         screen.localScale = scale;
     }
 
-    private void ApplyScreenFallbackMagenta()
-    {
-        if (fallbackApplied)
-        {
-            return;
-        }
-
-        fallbackApplied = true;
-        ApplyFallbackToScreen(leftScreen, "left");
-        ApplyFallbackToScreen(rightScreen, "right");
-    }
-
-    private void ApplyFallbackToScreen(Transform screen, string label)
-    {
-        if (screen == null)
-        {
-            Debug.LogWarning($"Fallback skipped: {label} screen is null.");
-            return;
-        }
-
-        var renderer = screen.GetComponent<Renderer>();
-        if (renderer == null || renderer.material == null)
-        {
-            Debug.LogWarning($"Fallback skipped: {label} renderer/material missing.");
-            return;
-        }
-
-        var mat = renderer.material;
-        if (mat.HasProperty("_BaseColor"))
-        {
-            mat.SetColor("_BaseColor", Color.magenta);
-        }
-
-        if (mat.HasProperty("_BaseMap"))
-        {
-            mat.SetTexture("_BaseMap", null);
-        }
-
-        LogScreens($"Fallback applied: {label} screen set to magenta.");
-    }
-
-    private void TrySpawnDebugMarker()
-    {
-        if (leftScreen == null)
-        {
-            Debug.LogWarning("Debug marker skipped: leftScreen is null.");
-            return;
-        }
-
-        if (manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
-        {
-            Debug.LogWarning("Debug marker skipped: manifest eye_w/eye_h invalid or not loaded.");
-            return;
-        }
-
-        Vector2Int finalPixel = debugPixel;
-        if (finalPixel.x < 0 || finalPixel.y < 0)
-        {
-            finalPixel = new Vector2Int(manifest.eye_w / 2, manifest.eye_h / 2);
-        }
-
-        Vector3 world = EyePixelToWorldOnScreen(finalPixel.x, finalPixel.y, leftScreen, manifest.eye_w, manifest.eye_h, markerOffset);
-
-        LogScreens(
-            $"SpawnDebugMarker: eye_w={manifest.eye_w} eye_h={manifest.eye_h} " +
-            $"debugPixel=({finalPixel.x},{finalPixel.y}) " +
-            $"leftScreen scale={leftScreen.localScale} pos={leftScreen.position} rot={leftScreen.rotation.eulerAngles} " +
-            $"world={world}");
-
-        GameObject marker = debugMarkerPrefab != null
-            ? Instantiate(debugMarkerPrefab, world, leftScreen.rotation)
-            : GameObject.CreatePrimitive(PrimitiveType.Sphere);
-
-        if (debugMarkerPrefab == null)
-        {
-            marker.name = "DebugMarker(auto)";
-            var collider = marker.GetComponent<Collider>();
-            if (collider != null)
-            {
-                Destroy(collider);
-            }
-        }
-
-        marker.transform.position = world;
-        marker.transform.rotation = leftScreen.rotation;
-        marker.transform.localScale = Vector3.one * debugMarkerScale;
-    }
-
     private Vector3 EyePixelToWorldOnScreen(int u, int v, Transform screen, float eyeW, float eyeH, float offsetMeters)
         => EyePixelToWorldOnScreen((float)u, (float)v, screen, eyeW, eyeH, offsetMeters);
 
@@ -644,32 +556,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             fy = fx * (manifest.eye_w / (float)manifest.eye_h);
         }
         return fx > 0f && fy > 0f;
-    }
-
-    private Vector3 AnchorUvZToWorld(Transform screen, float u, float v, float zMeters)
-    {
-        if (screen == null || manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
-        {
-            return Vector3.zero;
-        }
-
-        if (!TryGetProjectionIntrinsics(out float fx, out float fy, out float cxPix, out float cyPix))
-        {
-            return Vector3.zero;
-        }
-
-        float xNdc = ((u - cxPix) / manifest.eye_w) * 2f;
-        float yNdc = ((cyPix - v) / manifest.eye_h) * 2f;
-
-        float x = xNdc * zMeters / fx;
-        float y = yNdc * zMeters / fy;
-        float z = zMeters;
-
-        Transform head = GetViewCamera() != null ? GetViewCamera().transform : GetHeadTransform();
-        Vector3 origin = head != null ? head.position : Vector3.zero;
-
-        Vector3 world = origin + screen.right * x + screen.up * y + screen.forward * z;
-        return world;
     }
 
     private Vector3 ReconstructCamLocalFromEyePixel(float uEye, float vEye, float zMeters, float fx, float fy, int eyeW, int eyeH)

@@ -340,19 +340,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                                         if (decoded.z < decZMin) decZMin = decoded.z;
                                         if (decoded.z > decZMax) decZMax = decoded.z;
 
-                                        if (debugLogJointDecodeScaleCandidates && p == 0)
-                                        {
-                                            Debug.Log(
-                                                $"JOINT_DECODE frame={frameIndex} trackId={trackId} kpCount={kpCount} quantScale={quantScale:F6} " +
-                                                $"q0=({xq},{yq},{zq}) decoded0=({decoded.x:F3},{decoded.y:F3},{decoded.z:F3}) used=mul");
-                                        }
-                                    }
-
-                                    if (debugLogJointsRaw && frameIndex == 7)
-                                    {
-                                        Debug.Log(
-                                            $"[dequant_check] frame={frameIndex} trackId={trackId} qZ[min,max]=({qZMin},{qZMax}) " +
-                                            $"quantJointScale={quantScale:F6} decodedZ[min,max]=({decZMin:F4},{decZMax:F4})");
                                     }
                                 }
                                 else
@@ -366,41 +353,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                                 jointsVis = pr.ReadBytes(kpCount);
                             }
 
-                            if (debugLogJointsRaw && jointsCam != null && kpCount > 0)
-                            {
-                                float minX = float.MaxValue;
-                                float maxX = float.MinValue;
-                                float minY = float.MaxValue;
-                                float maxY = float.MinValue;
-                                float minZ = float.MaxValue;
-                                float maxZ = float.MinValue;
-                                int zLe0Count = 0;
-                                int zEq0Count = 0;
-                                int statCount = Mathf.Min((int)kpCount, jointsCam.Length);
-                                for (int p = 0; p < statCount; p++)
-                                {
-                                    Vector3 j = jointsCam[p];
-                                    minX = Mathf.Min(minX, j.x);
-                                    maxX = Mathf.Max(maxX, j.x);
-                                    minY = Mathf.Min(minY, j.y);
-                                    maxY = Mathf.Max(maxY, j.y);
-                                    minZ = Mathf.Min(minZ, j.z);
-                                    maxZ = Mathf.Max(maxZ, j.z);
-                                    if (j.z <= 0f)
-                                    {
-                                        zLe0Count++;
-                                    }
-                                    if (Mathf.Approximately(j.z, 0f))
-                                    {
-                                        zEq0Count++;
-                                    }
-                                }
-
-                                Debug.Log(
-                                    $"[joints_raw] frame={frameIndex} trackId={trackId} space={GetEffectiveJointsSpaceTag()} " +
-                                    $"x({minX:F4},{maxX:F4}) y({minY:F4},{maxY:F4}) z({minZ:F4},{maxZ:F4}) " +
-                                    $"zLe0Count={zLe0Count} zEq0Count={zEq0Count} quantJointScale={GetQuantJointScale():F6}");
-                            }
                         }
 
                         float anchorZRaw01 = anchorZq * GetQuantPosScale();

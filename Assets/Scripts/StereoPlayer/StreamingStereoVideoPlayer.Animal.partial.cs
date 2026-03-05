@@ -35,12 +35,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        if (debugLogAxisCompare && categoryId == 2)
-        {
-            LogDogBonesOnce(rigRoot);
-            LogDogMappingOnce(cache, rigRoot);
-        }
-
         float alpha = categoryId == 2
             ? GetEffectiveDogBoneApplyAlpha()
             : Mathf.Clamp01(boneApplyAlpha);
@@ -137,23 +131,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private float GetEffectiveDogBoneApplyAlpha()
     {
-        if (!dogDiagnosticMode || !dogDiagOverrideBoneApplyAlpha)
-        {
-            return Mathf.Clamp01(boneApplyAlpha);
-        }
-
-        return Mathf.Clamp01(dogDiagBoneApplyAlpha);
+        return Mathf.Clamp01(boneApplyAlpha);
     }
 
 
     private float GetEffectiveDogRootRotateAlpha()
     {
-        if (!dogDiagnosticMode || !dogDiagOverrideAnimalRootRotateAlpha)
-        {
-            return Mathf.Clamp01(animalRootRotateAlpha);
-        }
-
-        return Mathf.Clamp01(dogDiagAnimalRootRotateAlpha);
+        return Mathf.Clamp01(animalRootRotateAlpha);
     }
 
 

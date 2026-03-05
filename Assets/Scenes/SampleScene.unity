@@ -184,7 +184,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _position: {x: 0, y: 0, z: 0}
-  _size: {x: 1, y: 1, z: 0.01}
+  _size: {x: 100, y: 100, z: 0.01}
 --- !u!114 &68001647
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1388,7 +1388,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _position: {x: 0, y: 0, z: 0}
-  _size: {x: 1, y: 1, z: 0.01}
+  _size: {x: 100, y: 100, z: 0.01}
 --- !u!114 &1287097225
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1856,10 +1856,36 @@ MonoBehaviour:
   runtimeFovxMinDeg: 40
   runtimeFovxMaxDeg: 140
   runtimeFovxDefaultDeg: 90
+  runtimeScreenDistanceMinMeters: 0.5
+  runtimeScreenDistanceMaxMeters: 3
   settingsPanelSizeMeters: {x: 0.78, y: 0.5}
   settingsPanelOffsetMeters: {x: 0, y: 0}
   settingsPanelGapMeters: 0.08
   settingsPanelForwardOffsetMeters: 0.01
+  dogDiagnosticMode: 0
+  dogDiagnosticLogEffectiveValues: 0
+  dogDiagOverrideBoneApplyAlpha: 0
+  dogDiagBoneApplyAlpha: 1
+  dogDiagOverrideAnimalRootRotateAlpha: 0
+  dogDiagAnimalRootRotateAlpha: 0.6
+  dogDiagOverrideEnableJointSmoothing: 0
+  dogDiagEnableJointSmoothing: 1
+  dogDiagOverrideJointSmoothingAlpha: 0
+  dogDiagJointSmoothingAlpha: 0.35
+  dogDiagOverrideApplyManualYaw: 0
+  dogDiagApplyManualYaw: 1
+  dogDiagOverrideEnableYawDepthDisambiguation: 0
+  dogDiagEnableYawDepthDisambiguation: 1
+  dogDiagOverrideYawDepthBlend: 0
+  dogDiagYawDepthBlend: 1
+  dogDiagOverrideEnableDogDistalFreeze: 0
+  dogDiagEnableDogDistalFreeze: 1
+  dogDiagOverrideDogDistalFreezeSkipThreshold: 0
+  dogDiagDogDistalFreezeSkipThreshold: 6
+  dogDiagOverrideBoneRootRelThreshold: 0
+  dogDiagBoneRootRelThreshold: 0.2
+  dogDiagOverrideBoneAxisSign: 0
+  dogDiagBoneAxisSign: {x: 1, y: 1, z: 1}
   debugLog:
     enableLogs: 1
     enabled: 03000000000000000100000002000000

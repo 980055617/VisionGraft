@@ -125,17 +125,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private int GetFullHeight()
-    {
-        if (manifest != null && manifest.height > 0)
-        {
-            return manifest.height;
-        }
-
-        return metaHeader.height;
-    }
-
-
     private int GetMetaW()
     {
         if (manifest != null && manifest.meta_w > 0)
@@ -249,22 +238,5 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return bundleCam;
     }
 
-
-    private void LogResolvedManifestOnce()
-    {
-        if (!verboseLog || !logMeta || loggedManifestResolved || manifest == null)
-        {
-            return;
-        }
-
-        loggedManifestResolved = true;
-        // Intentional: manifest logs are disabled in the new category-only logger.
-        float metaW = GetMetaW();
-        float metaH = GetMetaH();
-        float sx = metaW > 0 ? manifest.eye_w / metaW : 0f;
-        float sy = metaH > 0 ? manifest.eye_h / metaH : 0f;
-        _ = sx;
-        _ = sy;
-    }
 }
 

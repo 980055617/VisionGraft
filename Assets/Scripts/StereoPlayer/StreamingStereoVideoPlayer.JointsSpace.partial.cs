@@ -90,7 +90,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private void SmoothJointsWorld(uint trackId, Vector3[] jointsWorld, byte[] vis)
+    private void SmoothJointsWorld(uint trackId, Vector3[] jointsWorld, byte[] vis, float alphaOverride = -1f)
     {
         if (jointsWorld == null || vis == null || jointsWorld.Length == 0)
         {
@@ -108,7 +108,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        float a = Mathf.Clamp01(jointSmoothingAlpha);
+        float a = alphaOverride >= 0f ? Mathf.Clamp01(alphaOverride) : Mathf.Clamp01(jointSmoothingAlpha);
         for (int i = 0; i < jointsWorld.Length; i++)
         {
             if (i >= vis.Length || vis[i] == 0)
@@ -124,14 +124,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private void ApplyYawDepthDisambiguation(Vector3[] jointsWorld, byte[] vis, SkeletonIndices idx, Transform root, Vector3 camOrigin)
+    private void ApplyYawDepthDisambiguation(Vector3[] jointsWorld, byte[] vis, SkeletonIndices idx, Transform root, Vector3 camOrigin, float blendOverride = -1f)
     {
         if (jointsWorld == null || vis == null || root == null)
         {
             return;
         }
 
-        float baseOffset = Mathf.Max(0f, yawDepthOffsetMeters) * Mathf.Clamp01(yawDepthBlend);
+        float blend = blendOverride >= 0f ? Mathf.Clamp01(blendOverride) : Mathf.Clamp01(yawDepthBlend);
+        float baseOffset = Mathf.Max(0f, yawDepthOffsetMeters) * blend;
         if (baseOffset <= 0.0001f)
         {
             return;

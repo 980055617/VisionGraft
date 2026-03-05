@@ -179,6 +179,38 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public float settingsPanelGapMeters = 0.08f;
     public float settingsPanelForwardOffsetMeters = 0.01f;
 
+    [Header("Dog Diagnostic Mode")]
+    public bool dogDiagnosticMode = false;
+    public bool dogDiagnosticLogEffectiveValues = false;
+
+    public bool dogDiagOverrideBoneApplyAlpha = false;
+    [Range(0f, 1f)] public float dogDiagBoneApplyAlpha = 1f;
+    public bool dogDiagOverrideAnimalRootRotateAlpha = false;
+    [Range(0f, 1f)] public float dogDiagAnimalRootRotateAlpha = 0.6f;
+
+    public bool dogDiagOverrideEnableJointSmoothing = false;
+    public bool dogDiagEnableJointSmoothing = true;
+    public bool dogDiagOverrideJointSmoothingAlpha = false;
+    [Range(0f, 1f)] public float dogDiagJointSmoothingAlpha = 0.35f;
+
+    public bool dogDiagOverrideApplyManualYaw = false;
+    public bool dogDiagApplyManualYaw = true;
+
+    public bool dogDiagOverrideEnableYawDepthDisambiguation = false;
+    public bool dogDiagEnableYawDepthDisambiguation = true;
+    public bool dogDiagOverrideYawDepthBlend = false;
+    [Range(0f, 1f)] public float dogDiagYawDepthBlend = 1f;
+
+    public bool dogDiagOverrideEnableDogDistalFreeze = false;
+    public bool dogDiagEnableDogDistalFreeze = true;
+    public bool dogDiagOverrideDogDistalFreezeSkipThreshold = false;
+    [Range(0, 16)] public int dogDiagDogDistalFreezeSkipThreshold = 6;
+
+    public bool dogDiagOverrideBoneRootRelThreshold = false;
+    public float dogDiagBoneRootRelThreshold = 0.2f;
+    public bool dogDiagOverrideBoneAxisSign = false;
+    public Vector3 dogDiagBoneAxisSign = Vector3.one;
+
     private VideoPlayer vp;
     private ManifestData manifest;
     private bool loggedFirstFrame;

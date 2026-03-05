@@ -48,6 +48,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private int debugFrameApplySummaryLogCount = 0;
     private int debugDiagLogFrame = -1;
     private int debugDiagLogCount = 0;
+    private int dogDiagLastLogFrame = -1;
     private readonly List<AnimatorCheckSample> pendingAnimatorChecks = new List<AnimatorCheckSample>(8);
     private sealed class DebugDrawTrackState
     {

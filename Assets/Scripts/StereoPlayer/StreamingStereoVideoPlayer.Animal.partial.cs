@@ -16,13 +16,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // Root orientation:
         // - dog: yaw-only style using world-up (screen tilt is ignored)
         // - others: previous behavior using screen-up
+        float rootRotateAlpha = categoryId == 2
+            ? GetEffectiveDogRootRotateAlpha()
+            : Mathf.Clamp01(animalRootRotateAlpha);
         if (categoryId == 2)
         {
-            TryApplyAnimalRootOrientation(instanceRoot, jointsWorld, vis, null);
+            TryApplyAnimalRootOrientation(instanceRoot, jointsWorld, vis, null, rootRotateAlpha);
         }
         else
         {
-            TryApplyAnimalRootOrientation(instanceRoot, jointsWorld, vis, screen);
+            TryApplyAnimalRootOrientation(instanceRoot, jointsWorld, vis, screen, rootRotateAlpha);
         }
 
         Transform rigRoot = animator != null ? animator.transform : instanceRoot;
@@ -38,31 +41,35 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             LogDogMappingOnce(cache, rigRoot);
         }
 
-        float alpha = Mathf.Clamp01(boneApplyAlpha);
+        float alpha = categoryId == 2
+            ? GetEffectiveDogBoneApplyAlpha()
+            : Mathf.Clamp01(boneApplyAlpha);
         // Dog is handled in a reduced-drive mode:
         // root heading + head + limbs (no spine drive).
         if (categoryId == 2)
         {
-            // Head only.
-            if (TryBuildDogHeadDirection(jointsWorld, vis, out Vector3 neckRoot, out Vector3 headTarget))
-            {
-                ApplyAnimalBoneFromPoints(cache, cache.neck, neckRoot, headTarget, alpha * 0.65f);
-                ApplyAnimalBoneFromPoints(cache, cache.head, neckRoot, headTarget, alpha * 0.65f);
-            }
-            else
-            {
-                ApplyAnimalBoneFromJoints(cache, cache.neck, jointsWorld, vis, 5, 4, alpha * 0.65f); // Throat -> Nose
-                ApplyAnimalBoneFromJoints(cache, cache.head, jointsWorld, vis, 5, 4, alpha * 0.65f); // Throat -> Nose
-            }
+            // Head only: fixed mapping (Throat -> Nose), no fallback.
+            ApplyAnimalBoneFromJoints(cache, cache.neck, jointsWorld, vis, 5, 4, alpha * 0.65f);
+            ApplyAnimalBoneFromJoints(cache, cache.head, jointsWorld, vis, 5, 4, alpha * 0.65f);
 
             if (!enableAnimalLimbApply)
             {
                 return;
             }
 
-            // Front legs: segment mapping from joint points (J0->J1, J1->J2, J2->J3).
-            ApplyAnimalLimbByJointSegments(cache, cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw, jointsWorld, vis, DogLeftFrontChain, alpha, !freezeDogDistal);
-            ApplyAnimalLimbByJointSegments(cache, cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw, jointsWorld, vis, DogRightFrontChain, alpha, !freezeDogDistal);
+            // Front legs: fixed mapping (no distal apply).
+            // left front:
+            //   001 (upper) <- 8 -> 12
+            //   002 (lower) <- 12 -> 16
+            //   003 (paw)   <- untouched
+            ApplyAnimalBoneFromJoints(cache, cache.leftFrontUpper, jointsWorld, vis, 8, 12, alpha * 0.9f);
+            ApplyAnimalBoneFromJoints(cache, cache.leftFrontLower, jointsWorld, vis, 12, 16, alpha * 0.85f);
+            // right front:
+            //   001 (upper) <- 9 -> 13
+            //   002 (lower) <- 13 -> 17
+            //   003 (paw)   <- untouched
+            ApplyAnimalBoneFromJoints(cache, cache.rightFrontUpper, jointsWorld, vis, 9, 13, alpha * 0.9f);
+            ApplyAnimalBoneFromJoints(cache, cache.rightFrontLower, jointsWorld, vis, 13, 17, alpha * 0.85f);
 
             // Rear legs: segment mapping from joint points (J0->J1, J1->J2, J2->J3).
             ApplyAnimalLimbByJointSegments(cache, cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, jointsWorld, vis, DogLeftRearChain, alpha, !freezeDogDistal);
@@ -128,7 +135,29 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private void TryApplyAnimalRootOrientation(Transform instanceRoot, Vector3[] jointsWorld, byte[] vis, Transform screen)
+    private float GetEffectiveDogBoneApplyAlpha()
+    {
+        if (!dogDiagnosticMode || !dogDiagOverrideBoneApplyAlpha)
+        {
+            return Mathf.Clamp01(boneApplyAlpha);
+        }
+
+        return Mathf.Clamp01(dogDiagBoneApplyAlpha);
+    }
+
+
+    private float GetEffectiveDogRootRotateAlpha()
+    {
+        if (!dogDiagnosticMode || !dogDiagOverrideAnimalRootRotateAlpha)
+        {
+            return Mathf.Clamp01(animalRootRotateAlpha);
+        }
+
+        return Mathf.Clamp01(dogDiagAnimalRootRotateAlpha);
+    }
+
+
+    private void TryApplyAnimalRootOrientation(Transform instanceRoot, Vector3[] jointsWorld, byte[] vis, Transform screen, float rotateAlpha)
     {
         if (instanceRoot == null || jointsWorld == null || vis == null)
         {
@@ -161,7 +190,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Quaternion modelBasis = Quaternion.LookRotation(modelForward, modelUp);
         Quaternion targetBasis = Quaternion.LookRotation(planarForward, up);
         Quaternion targetRootRot = targetBasis * Quaternion.Inverse(modelBasis);
-        instanceRoot.rotation = Quaternion.Slerp(instanceRoot.rotation, targetRootRot, Mathf.Clamp01(animalRootRotateAlpha));
+        instanceRoot.rotation = Quaternion.Slerp(instanceRoot.rotation, targetRootRot, Mathf.Clamp01(rotateAlpha));
     }
 
 
@@ -170,19 +199,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         forward = Vector3.zero;
         bool hasRear = TryGetJointPoint(jointsWorld, vis, 6, out Vector3 rearHub);   // TailBase(hip)
         bool hasWithers = TryGetJointPoint(jointsWorld, vis, 7, out Vector3 withers);
-        bool hasNose = TryGetJointPoint(jointsWorld, vis, 4, out Vector3 nose);
 
         if (hasRear && hasWithers)
         {
             forward = (withers - rearHub).normalized;
-        }
-        else if (hasRear && hasNose)
-        {
-            forward = (nose - rearHub).normalized;
-        }
-        else if (hasWithers && hasNose)
-        {
-            forward = (nose - withers).normalized;
         }
 
         return forward.sqrMagnitude > 0.000001f;
@@ -590,11 +610,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         // Joint-centric mapping: each bone uses the segment between adjacent meta joints.
-        ApplyAnimalBoneFromJointsLocalOnly(cache, upper, jointsWorld, vis, chain[0], chain[1], alpha * 0.9f);
-        ApplyAnimalBoneFromJointsLocalOnly(cache, lower, jointsWorld, vis, chain[1], chain[2], alpha * 0.85f);
+        ApplyAnimalBoneFromJoints(cache, upper, jointsWorld, vis, chain[0], chain[1], alpha * 0.9f);
+        ApplyAnimalBoneFromJoints(cache, lower, jointsWorld, vis, chain[1], chain[2], alpha * 0.85f);
         if (paw != null && applyDistal)
         {
-            ApplyAnimalBoneFromJointsLocalOnly(cache, paw, jointsWorld, vis, chain[2], chain[3], alpha * 0.7f);
+            ApplyAnimalBoneFromJoints(cache, paw, jointsWorld, vis, chain[2], chain[3], alpha * 0.7f);
         }
     }
 
@@ -1005,13 +1025,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         cache.bindRotLocal[bone] = bone.localRotation;
         Vector3 bindDirLocal = Vector3.forward;
-        if (bone.childCount > 0)
+        if (TryGetBoneCenterDirectionWorld(cache, bone, out Vector3 bindDirWorld))
         {
-            Vector3 childDirWorld = (bone.GetChild(0).position - bone.position);
-            if (childDirWorld.sqrMagnitude > 0.000001f)
-            {
-                bindDirLocal = bone.InverseTransformDirection(childDirWorld.normalized);
-            }
+            bindDirLocal = bone.InverseTransformDirection(bindDirWorld);
         }
         cache.bindDirLocal[bone] = bindDirLocal == Vector3.zero ? Vector3.forward : bindDirLocal.normalized;
     }
@@ -1046,23 +1062,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        Transform aimChild = ResolveAnimalAimChild(cache, bone);
-        if (aimChild != null)
+        if (TryGetBoneCenterDirectionWorld(cache, bone, out Vector3 currentDir))
         {
-            Vector3 currentDir = (aimChild.position - bone.position);
-            if (currentDir.sqrMagnitude > 0.000001f)
+            Quaternion deltaWorld = Quaternion.FromToRotation(currentDir, targetDir);
+            Quaternion targetWorld = deltaWorld * bone.rotation;
+            // When nearly opposite, FromTo rotation axis is unstable and can spin frame-to-frame.
+            // Fall back to bind-space solve for deterministic behavior.
+            float dot = Vector3.Dot(currentDir, targetDir);
+            if (dot > -0.98f)
             {
-                currentDir.Normalize();
-                Quaternion deltaWorld = Quaternion.FromToRotation(currentDir, targetDir);
-                Quaternion targetWorld = deltaWorld * bone.rotation;
-                // When nearly opposite, FromTo rotation axis is unstable and can spin frame-to-frame.
-                // Fall back to bind-space solve for deterministic behavior.
-                float dot = Vector3.Dot(currentDir, targetDir);
-                if (dot > -0.98f)
-                {
-                    bone.rotation = Quaternion.Slerp(bone.rotation, targetWorld, Mathf.Clamp01(alpha));
-                    return true;
-                }
+                bone.rotation = Quaternion.Slerp(bone.rotation, targetWorld, Mathf.Clamp01(alpha));
+                return true;
             }
         }
 
@@ -1142,6 +1152,103 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         return null;
+    }
+
+
+    private bool TryGetBoneCenterDirectionWorld(AnimalRigCache cache, Transform bone, out Vector3 dirWorld)
+    {
+        dirWorld = Vector3.zero;
+        if (bone == null)
+        {
+            return false;
+        }
+
+        Transform centerTarget = ResolveAnimalAimChild(cache, bone);
+        // For limb segments, prefer pure bone-to-bone pivot direction.
+        if (centerTarget != null && IsAnimalLimbBone(cache, bone))
+        {
+            Vector3 childPivotDir = centerTarget.position - bone.position;
+            if (childPivotDir.sqrMagnitude > 0.000001f)
+            {
+                dirWorld = childPivotDir.normalized;
+                return true;
+            }
+        }
+
+        if (centerTarget == null)
+        {
+            centerTarget = bone;
+        }
+
+        if (!TryGetTransformCenterWorld(centerTarget, out Vector3 centerWorld))
+        {
+            return false;
+        }
+
+        Vector3 rawDir = centerWorld - bone.position;
+        if (rawDir.sqrMagnitude <= 0.000001f)
+        {
+            return false;
+        }
+
+        dirWorld = rawDir.normalized;
+        return true;
+    }
+
+
+    private static bool IsAnimalLimbBone(AnimalRigCache cache, Transform bone)
+    {
+        if (cache == null || bone == null)
+        {
+            return false;
+        }
+
+        return
+            bone == cache.leftFrontUpper ||
+            bone == cache.leftFrontLower ||
+            bone == cache.leftFrontPaw ||
+            bone == cache.rightFrontUpper ||
+            bone == cache.rightFrontLower ||
+            bone == cache.rightFrontPaw ||
+            bone == cache.leftRearUpper ||
+            bone == cache.leftRearLower ||
+            bone == cache.leftRearPaw ||
+            bone == cache.rightRearUpper ||
+            bone == cache.rightRearLower ||
+            bone == cache.rightRearPaw;
+    }
+
+
+    private bool TryGetTransformCenterWorld(Transform target, out Vector3 centerWorld)
+    {
+        centerWorld = Vector3.zero;
+        if (target == null)
+        {
+            return false;
+        }
+
+        SkinnedMeshRenderer smr = target.GetComponent<SkinnedMeshRenderer>();
+        if (smr != null)
+        {
+            centerWorld = target.TransformPoint(smr.localBounds.center);
+            return true;
+        }
+
+        MeshFilter mf = target.GetComponent<MeshFilter>();
+        if (mf != null && mf.sharedMesh != null)
+        {
+            centerWorld = target.TransformPoint(mf.sharedMesh.bounds.center);
+            return true;
+        }
+
+        Renderer renderer = target.GetComponent<Renderer>();
+        if (renderer != null)
+        {
+            centerWorld = renderer.bounds.center;
+            return true;
+        }
+
+        return false;
     }
 
 

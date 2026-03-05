@@ -658,6 +658,70 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         int visCountForSummary = 0;
         int invalidCountForSummary = 0;
         string jointsSpaceForSummary = "n/a";
+        bool dogDiagActive = dogDiagnosticMode && obj.categoryId == 2;
+
+        Vector3 effectiveBoneAxisSign = boneAxisSign;
+        float effectiveRootRelThreshold = boneRootRelThreshold;
+        bool effectiveEnableJointSmoothing = enableJointSmoothing;
+        float effectiveJointSmoothingAlpha = jointSmoothingAlpha;
+        bool effectiveApplyManualYaw = true;
+        bool effectiveEnableYawDepthDisambiguation = enableYawDepthDisambiguation;
+        float effectiveYawDepthBlend = yawDepthBlend;
+        bool effectiveEnableDogDistalFreeze = enableDogDistalFreezeOnHighSkip;
+        int effectiveDogDistalFreezeSkipThreshold = dogDistalFreezeSkipThreshold;
+
+        if (dogDiagActive)
+        {
+            if (dogDiagOverrideBoneAxisSign)
+            {
+                effectiveBoneAxisSign = dogDiagBoneAxisSign;
+            }
+            if (dogDiagOverrideBoneRootRelThreshold)
+            {
+                effectiveRootRelThreshold = dogDiagBoneRootRelThreshold;
+            }
+            if (dogDiagOverrideEnableJointSmoothing)
+            {
+                effectiveEnableJointSmoothing = dogDiagEnableJointSmoothing;
+            }
+            if (dogDiagOverrideJointSmoothingAlpha)
+            {
+                effectiveJointSmoothingAlpha = dogDiagJointSmoothingAlpha;
+            }
+            if (dogDiagOverrideApplyManualYaw)
+            {
+                effectiveApplyManualYaw = dogDiagApplyManualYaw;
+            }
+            if (dogDiagOverrideEnableYawDepthDisambiguation)
+            {
+                effectiveEnableYawDepthDisambiguation = dogDiagEnableYawDepthDisambiguation;
+            }
+            if (dogDiagOverrideYawDepthBlend)
+            {
+                effectiveYawDepthBlend = dogDiagYawDepthBlend;
+            }
+            if (dogDiagOverrideEnableDogDistalFreeze)
+            {
+                effectiveEnableDogDistalFreeze = dogDiagEnableDogDistalFreeze;
+            }
+            if (dogDiagOverrideDogDistalFreezeSkipThreshold)
+            {
+                effectiveDogDistalFreezeSkipThreshold = dogDiagDogDistalFreezeSkipThreshold;
+            }
+
+            if (dogDiagnosticLogEffectiveValues && frame != dogDiagLastLogFrame)
+            {
+                dogDiagLastLogFrame = frame;
+                Debug.Log(
+                    $"DOG_DIAG_EFFECTIVE frame={frame} " +
+                    $"axisSign=({effectiveBoneAxisSign.x:F2},{effectiveBoneAxisSign.y:F2},{effectiveBoneAxisSign.z:F2}) " +
+                    $"rootRelThreshold={effectiveRootRelThreshold:F3} " +
+                    $"smooth={(effectiveEnableJointSmoothing ? 1 : 0)} smoothAlpha={Mathf.Clamp01(effectiveJointSmoothingAlpha):F2} " +
+                    $"manualYaw={(effectiveApplyManualYaw ? 1 : 0)} " +
+                    $"yawDepth={(effectiveEnableYawDepthDisambiguation ? 1 : 0)} yawDepthBlend={Mathf.Clamp01(effectiveYawDepthBlend):F2} " +
+                    $"distalFreeze={(effectiveEnableDogDistalFreeze ? 1 : 0)} distalThreshold={Mathf.Max(0, effectiveDogDistalFreezeSkipThreshold)}");
+            }
+        }
 
         if (instance == null || !obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
         {
@@ -701,7 +765,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             {
                 hipMid = (obj.jointsCam[idx.leftHip] + obj.jointsCam[idx.rightHip]) * 0.5f;
             }
-            bool rootRel = !IsEffectiveJointsSpaceAbsolute() && hipMid.magnitude < boneRootRelThreshold;
+            bool rootRel = !IsEffectiveJointsSpaceAbsolute() && hipMid.magnitude < effectiveRootRelThreshold;
             jointsSpaceForSummary = rootRel ? "RootRel" : "CamSpace";
             int visOk = 0;
             Vector3[] jointsWorld = new Vector3[jointCount];
@@ -729,7 +793,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 }
 
                 Vector3 joint = obj.jointsCam[i];
-                joint = new Vector3(joint.x * boneAxisSign.x, joint.y * boneAxisSign.y, joint.z * boneAxisSign.z);
+                joint = new Vector3(joint.x * effectiveBoneAxisSign.x, joint.y * effectiveBoneAxisSign.y, joint.z * effectiveBoneAxisSign.z);
                 jointsWorld[i] = rootRel
                     ? rootWorld + (camRotation * joint)
                     : camOrigin + (camRotation * joint);
@@ -741,11 +805,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (obj.categoryId == 2 && dogCamZForSkip != null)
             {
                 dogSkipSegmentsForFrame = CountSkeletonLineSkipSegments(obj.categoryId, jointCount, obj.jointsVis, dogCamZForSkip);
-                freezeDogDistal = enableDogDistalFreezeOnHighSkip && dogSkipSegmentsForFrame >= dogDistalFreezeSkipThreshold;
+                freezeDogDistal =
+                    effectiveEnableDogDistalFreeze &&
+                    dogSkipSegmentsForFrame >= Mathf.Max(0, effectiveDogDistalFreezeSkipThreshold);
                 if (freezeDogDistal && debugLogAxisCompare && TryConsumeDiagBudget(frame))
                 {
                     Debug.Log(
-                        $"DOG_DISTAL_FREEZE frame={frame} trackId={obj.trackId} skipSegments={dogSkipSegmentsForFrame} threshold={dogDistalFreezeSkipThreshold}");
+                        $"DOG_DISTAL_FREEZE frame={frame} trackId={obj.trackId} skipSegments={dogSkipSegmentsForFrame} threshold={Mathf.Max(0, effectiveDogDistalFreezeSkipThreshold)}");
                 }
             }
 
@@ -806,16 +872,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 }
             }
 
-            if (enableJointSmoothing)
+            if (effectiveEnableJointSmoothing)
             {
-                SmoothJointsWorld(obj.trackId, jointsWorld, obj.jointsVis);
+                SmoothJointsWorld(obj.trackId, jointsWorld, obj.jointsVis, Mathf.Clamp01(effectiveJointSmoothingAlpha));
             }
 
-            ApplyManualYawToJoints(obj.trackId, frame, jointsWorld, obj.jointsVis, instance.transform.position, instance.transform.up);
-
-            if (enableYawDepthDisambiguation)
+            if (effectiveApplyManualYaw)
             {
-                ApplyYawDepthDisambiguation(jointsWorld, obj.jointsVis, idx, instance.transform, camOrigin);
+                ApplyManualYawToJoints(obj.trackId, frame, jointsWorld, obj.jointsVis, instance.transform.position, instance.transform.up);
+            }
+
+            if (effectiveEnableYawDepthDisambiguation)
+            {
+                ApplyYawDepthDisambiguation(jointsWorld, obj.jointsVis, idx, instance.transform, camOrigin, Mathf.Clamp01(effectiveYawDepthBlend));
             }
 
             if (debugDrawJoints || debugDrawSkeletonLines3D || debugDrawBoneAxisCompare)

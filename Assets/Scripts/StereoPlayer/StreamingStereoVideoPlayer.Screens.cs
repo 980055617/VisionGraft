@@ -6,26 +6,42 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
     private void EnsureScreensExist()
     {
-        if (leftScreen == null)
-        {
-            var leftObj = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            leftObj.name = "LeftScreen_Runtime";
-            leftObj.transform.SetParent(transform, false);
-            leftScreen = leftObj.transform;
-        }
-
-        if (rightScreen == null)
-        {
-            var rightObj = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            rightObj.name = "RightScreen_Runtime";
-            rightObj.transform.SetParent(transform, false);
-            rightScreen = rightObj.transform;
-        }
+        RecreateRuntimeScreen(ref leftScreen, "LeftScreen_Runtime", leftScreenPrefab);
+        RecreateRuntimeScreen(ref rightScreen, "RightScreen_Runtime", rightScreenPrefab);
 
         EnsureScreenRenderer(leftScreen);
         EnsureScreenRenderer(rightScreen);
         EnsureScreenCollider(leftScreen);
         EnsureScreenCollider(rightScreen);
+    }
+
+    private void RecreateRuntimeScreen(ref Transform screenSlot, string runtimeName, GameObject screenPrefab)
+    {
+        if (screenSlot != null)
+        {
+            Destroy(screenSlot.gameObject);
+            screenSlot = null;
+        }
+
+        screenSlot = CreateRuntimeScreen(runtimeName, screenPrefab);
+    }
+
+    private Transform CreateRuntimeScreen(string runtimeName, GameObject screenPrefab)
+    {
+        GameObject screenObj;
+        if (screenPrefab != null)
+        {
+            screenObj = Instantiate(screenPrefab, transform, false);
+            screenObj.name = runtimeName;
+        }
+        else
+        {
+            screenObj = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            screenObj.name = runtimeName;
+            screenObj.transform.SetParent(transform, false);
+        }
+
+        return screenObj != null ? screenObj.transform : null;
     }
 
     private Renderer EnsureScreenRenderer(Transform screen)

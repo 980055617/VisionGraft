@@ -59,7 +59,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         vp.prepareCompleted += OnPrepared;
 
-        yield return EnsureBundleAndPrepareVideo();
+        if (showBundlePickerOnStart)
+        {
+            yield return RunBundlePickerFlowAndPrepareVideo();
+        }
+        else
+        {
+            yield return EnsureBundleAndPrepareVideo();
+        }
     }
 
 
@@ -139,6 +146,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void Update()
     {
+        if (bundlePickerActive)
+        {
+            UpdateBundlePickerPlacement();
+            return;
+        }
+
         if (TryPick(out PickResult pick))
         {
             pickedPixel = pick.pixel;
@@ -168,6 +181,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 continue;
             }
 
+            TryApplyPreferredTrackingOriginMode(xr);
             xr.trackingOriginUpdated += OnTrackingOriginUpdated;
         }
     }
@@ -192,7 +206,36 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void OnTrackingOriginUpdated(XRInputSubsystem _)
     {
+        if (forceStationaryTrackingOrigin)
+        {
+            for (int i = 0; i < xrInputSubsystems.Count; i++)
+            {
+                XRInputSubsystem xr = xrInputSubsystems[i];
+                if (xr != null)
+                {
+                    TryApplyPreferredTrackingOriginMode(xr);
+                }
+            }
+        }
+
         RecenterScreensToCurrentFacing();
+    }
+
+
+    private void TryApplyPreferredTrackingOriginMode(XRInputSubsystem xr)
+    {
+        if (!forceStationaryTrackingOrigin || xr == null)
+        {
+            return;
+        }
+
+        TrackingOriginModeFlags supported = xr.GetSupportedTrackingOriginModes();
+        if ((supported & TrackingOriginModeFlags.Device) == 0)
+        {
+            return;
+        }
+
+        xr.TrySetTrackingOriginMode(TrackingOriginModeFlags.Device);
     }
 
 

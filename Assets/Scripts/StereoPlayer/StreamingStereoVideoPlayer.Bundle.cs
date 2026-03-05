@@ -8,18 +8,20 @@ using UnityEngine.Networking;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
-    private IEnumerator EnsureBundleAndPrepareVideo()
+    private IEnumerator EnsureBundleAndPrepareVideo(string selectedBundlePath = null)
     {
         if (vp == null)
         {
             yield break;
         }
 
-        string streamingBundleUrl = Path.Combine(Application.streamingAssetsPath, bundleFileName);
-        streamingBundleUrl = streamingBundleUrl.Replace("\\", "/");
-        string persistentBundlePath = Path.Combine(Application.persistentDataPath, bundleFileName);
-        // Always refresh the persistent bundle so replaced StreamingAssets/bundle.svb is picked up.
+        string bundlePathToLoad = selectedBundlePath;
+        if (string.IsNullOrEmpty(bundlePathToLoad))
         {
+            string streamingBundleUrl = Path.Combine(Application.streamingAssetsPath, bundleFileName);
+            streamingBundleUrl = streamingBundleUrl.Replace("\\", "/");
+            string persistentBundlePath = Path.Combine(Application.persistentDataPath, bundleFileName);
+            // Always refresh the persistent bundle so replaced StreamingAssets/bundle.svb is picked up.
             using (UnityWebRequest request = UnityWebRequest.Get(streamingBundleUrl))
             {
                 yield return request.SendWebRequest();
@@ -43,9 +45,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     yield break;
                 }
             }
+
+            bundlePathToLoad = persistentBundlePath;
         }
 
-        if (!File.Exists(persistentBundlePath))
+        if (string.IsNullOrEmpty(bundlePathToLoad) || !File.Exists(bundlePathToLoad))
         {
             yield break;
         }
@@ -71,7 +75,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             try
             {
                 Directory.CreateDirectory(cacheDir);
-                using (var fs = new FileStream(persistentBundlePath, FileMode.Open, FileAccess.Read))
+                using (var fs = new FileStream(bundlePathToLoad, FileMode.Open, FileAccess.Read))
                 using (var za = new ZipArchive(fs, ZipArchiveMode.Read))
                 {
                     if (!ExtractZipEntry(za, bundleVideoEntryName, extractedVideoPath))

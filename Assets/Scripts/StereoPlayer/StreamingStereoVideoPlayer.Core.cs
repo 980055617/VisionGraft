@@ -16,8 +16,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public string extractedMetaFileName = "meta.bin";
 
     [Header("Screens")]
-    public Transform leftScreen;
-    public Transform rightScreen;
+    private Transform leftScreen;
+    private Transform rightScreen;
+    public GameObject leftScreenPrefab;
+    public GameObject rightScreenPrefab;
 
     public float markerOffset = 0.02f; // 繧ｹ繧ｯ繝ｪ繝ｼ繝ｳ謇句燕縺ｫ蜃ｺ縺・m)
 
@@ -89,6 +91,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     [Header("Runtime Flags")]
     public bool forceScreensInFrontOfViewCamera = false;
+    public bool forceStationaryTrackingOrigin = true;
     public bool enableDogDistalFreezeOnHighSkip = true;
     [Range(0, 16)] public int dogDistalFreezeSkipThreshold = 6;
     public bool alignModelToBBoxBottom = true;

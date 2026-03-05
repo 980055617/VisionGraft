@@ -41,79 +41,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private bool TryGetManifestNormalizedIntrinsics(out float fxNorm, out float fyNorm, out int eyeW, out int eyeH)
-    {
-        fxNorm = 0f;
-        fyNorm = 0f;
-        eyeW = 0;
-        eyeH = 0;
-        if (manifest == null)
-        {
-            return false;
-        }
-
-        eyeW = manifest.eye_w;
-        eyeH = manifest.eye_h;
-        if (eyeW <= 0 || eyeH <= 0)
-        {
-            return false;
-        }
-
-        if (manifest.fx_norm <= 0f || manifest.fy_norm <= 0f)
-        {
-            return false;
-        }
-
-        fxNorm = manifest.fx_norm;
-        fyNorm = manifest.fy_norm;
-        return true;
-    }
-
-
-    private int GetCropX()
-    {
-        if (manifest == null)
-        {
-            return 0;
-        }
-
-        return manifest.crop_x > 0 ? manifest.crop_x : manifest.crop_x0;
-    }
-
-
-    private int GetCropY()
-    {
-        if (manifest == null)
-        {
-            return 0;
-        }
-
-        return manifest.crop_y > 0 ? manifest.crop_y : manifest.crop_y0;
-    }
-
-
-    private int GetCropW()
-    {
-        if (manifest == null)
-        {
-            return 0;
-        }
-
-        return manifest.crop_w > 0 ? manifest.crop_w : 0;
-    }
-
-
-    private int GetCropH()
-    {
-        if (manifest == null)
-        {
-            return 0;
-        }
-
-        return manifest.crop_h > 0 ? manifest.crop_h : 0;
-    }
-
-
     private int GetFullWidth()
     {
         if (manifest != null && manifest.width > 0)
@@ -122,28 +49,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         return metaHeader.width;
-    }
-
-
-    private int GetMetaW()
-    {
-        if (manifest != null && manifest.meta_w > 0)
-        {
-            return manifest.meta_w;
-        }
-
-        return manifest != null ? manifest.eye_w : 0;
-    }
-
-
-    private int GetMetaH()
-    {
-        if (manifest != null && manifest.meta_h > 0)
-        {
-            return manifest.meta_h;
-        }
-
-        return manifest != null ? manifest.eye_h : 0;
     }
 
 

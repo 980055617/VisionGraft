@@ -35,21 +35,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
         {
-            Debug.LogWarning("ClickPick: manifest not ready.");
             return false;
         }
 
         Camera cam = GetViewCamera();
         if (cam == null)
         {
-            Debug.LogWarning("ClickPick: view camera not found.");
             return false;
         }
 
         Ray ray = cam.ScreenPointToRay(mousePos);
         if (!TryPickScreenByRay(ray, out Transform pickedScreen, out Vector2 uv, out string hitName, out float hitDistance, out Vector3 hitPoint, out bool hasHitDistance))
         {
-            LogPicking("ClickPick: no hit.");
             return false;
         }
 
@@ -57,7 +54,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         bool isRight = rightScreen != null && (pickedScreen == rightScreen || pickedScreen.IsChildOf(rightScreen));
         if (!isLeft && !isRight)
         {
-            LogPicking($"ClickPick: hit other object {hitName}");
             return false;
         }
 
@@ -77,7 +73,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             hasHitDistance = hasHitDistance
         };
 
-        LogPicking($"ClickPick: screen={(isLeft ? "left" : "right")} uv={uv} pixel=({u},{v}) hit={hitName}");
         return true;
     }
 
@@ -122,7 +117,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             hitDistance = leftDist;
             hitPoint = leftPoint;
             hasHitDistance = true;
-            LogPicking("ClickPick: plane fallback hit leftScreen.");
             return true;
         }
 
@@ -134,7 +128,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             hitDistance = rightDist;
             hitPoint = rightPoint;
             hasHitDistance = true;
-            LogPicking("ClickPick: plane fallback hit rightScreen.");
             return true;
         }
 

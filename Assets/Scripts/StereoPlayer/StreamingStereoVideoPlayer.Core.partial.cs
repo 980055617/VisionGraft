@@ -1,5 +1,4 @@
-﻿using System.Collections;
-using System.Collections.Generic;
+using System.Collections;
 using UnityEngine;
 using UnityEngine.Video;
 using UnityEngine.XR;
@@ -9,15 +8,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // Depends on: shared runtime fields in Core.cs, Bundle/UI/Screens partials
     // Provides: Awake/OnEnable/OnDisable/OnDestroy/Start/OnPrepared/Update/LateUpdate and recenter flow
 
-    private void Awake()
-    {
-        LogGeneral("StreamingStereoVideoPlayer Awake");
-    }
-
-
     private void OnEnable()
     {
-        LogGeneral("StreamingStereoVideoPlayer OnEnable");
         SubscribeRecenterEvents();
     }
 
@@ -36,18 +28,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private IEnumerator Start()
     {
-        LogGeneral("StreamingStereoVideoPlayer Start");
-        LogActiveCameras();
-        LogGeneral($"Screen refs at Start: leftScreen={(leftScreen != null ? leftScreen.name : "null")} rightScreen={(rightScreen != null ? rightScreen.name : "null")}");
-        if (leftScreen == null || rightScreen == null)
-        {
-            Debug.LogWarning("One or more screen references are null at Start.");
-        }
-
         vp = GetComponent<VideoPlayer>();
         if (vp == null)
         {
-            Debug.LogError("VideoPlayer component not found on this GameObject.");
             yield break;
         }
 
@@ -57,9 +40,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         vp.timeUpdateMode = VideoTimeUpdateMode.UnscaledGameTime;
         vp.playbackSpeed = 1f;
         vp.sendFrameReadyEvents = true;
-        Debug.Log($"[video_timing] timeScale={Time.timeScale:F3} timeUpdateMode={vp.timeUpdateMode} playbackSpeed={vp.playbackSpeed:F3}");
-        loggedFirstFrame = false;
-        vp.errorReceived += (player, msg) => Debug.LogError($"VideoError: {msg}");
         vp.frameReady += (player, frame) =>
         {
             if (frame < 0)
@@ -73,12 +53,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             else
             {
                 lastFrameReadyFrame = (int)frame;
-            }
-
-            if (!loggedFirstFrame && frame >= 0)
-            {
-                loggedFirstFrame = true;
-                LogVideo($"FirstFrameReady: {frame}");
             }
             ApplyVideoFrameTexture(player);
         };
@@ -96,13 +70,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         EnsureScreensExist();
         SetupScreensAndMaterials();
-        LogVideoPlayerState("OnPrepared(start)");
 
         if (w <= 0 || h <= 0)
         {
-            Debug.LogWarning($"Video size is invalid: {w}x{h}");
             vp.Play();
-            LogVideoPlayerState("OnPrepared(after Play invalid)");
             return;
         }
 
@@ -122,8 +93,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         PlaceScreens();
         EnsureRuntimeControls();
-        DumpScreenState("after PlaceScreens");
-        LogVideoPlayerState("OnPrepared");
 
         if (spawnTestModelOnPrepared)
         {
@@ -132,7 +101,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         vp.Play();
         UpdatePauseButtonLabel();
-        LogVideoPlayerState("after Play");
         vp.prepareCompleted -= OnPrepared;
     }
 
@@ -177,14 +145,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             hasPickedPixel = true;
             pickedScreen = pick.screen;
             TrySelectFollowTrackFromPick(pick);
-            PlaceOrMoveTestModel(pick);
+            TrySpawnOrMoveTestModel(pick);
         }
 
         FollowTick();
         DetectRuntimeRecenterFallback();
         HandleRuntimePauseInput();
         RefreshRuntimeSettingsPerFrame();
-        RefreshRuntimePlaybackUi();
+        UpdateRuntimeProgressUi();
     }
 
 
@@ -222,7 +190,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private void OnTrackingOriginUpdated(XRInputSubsystem subsystem)
+    private void OnTrackingOriginUpdated(XRInputSubsystem _)
     {
         RecenterScreensToCurrentFacing();
     }
@@ -236,7 +204,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        Transform head = GetViewCamera() != null ? GetViewCamera().transform : GetHeadTransform();
+        Transform head = GetViewOrHeadTransform();
         if (head == null)
         {
             headPosePrimed = false;

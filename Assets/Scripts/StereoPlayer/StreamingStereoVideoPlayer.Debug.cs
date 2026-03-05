@@ -2,71 +2,6 @@ using UnityEngine;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
-    public enum LogCategory
-    {
-        META_RANGE,
-        FOLLOW,
-        SCALE,
-        BONE,
-        PINHOLE_ERR
-    }
-
-    private bool ShouldLog(LogCategory cat, int frame, int track)
-    {
-        return false;
-    }
-
-
-    private void Log(LogCategory cat, string msg, int frame = -1, int track = -1, float? metric = null)
-    {
-    }
-
-
-    private void LogGeneral(string msg)
-    {
-    }
-
-
-    private void LogBundle(string msg)
-    {
-    }
-
-
-    private void LogMeta(string msg)
-    {
-    }
-
-
-    private void LogPicking(string msg)
-    {
-    }
-
-
-    private void LogFollow(string msg)
-    {
-    }
-
-
-    private void LogScreens(string msg)
-    {
-    }
-
-
-    private void LogVideo(string msg)
-    {
-    }
-
-
-    private void LogModel(string msg)
-    {
-    }
-
-
-    private void LogActiveCameras()
-    {
-    }
-
-
     private Camera[] GetActiveCameras()
     {
 #if UNITY_2023_1_OR_NEWER
@@ -126,14 +61,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private void LogVideoPlayerState(string tag)
+    private Transform GetViewOrHeadTransform()
     {
-        _ = tag;
-    }
-
-
-    private void DumpScreenState(string tag)
-    {
-        _ = tag;
+        Camera viewCam = GetViewCamera();
+        return viewCam != null ? viewCam.transform : GetHeadTransform();
     }
 }

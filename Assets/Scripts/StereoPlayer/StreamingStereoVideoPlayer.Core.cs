@@ -89,7 +89,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     [Header("Runtime Flags")]
     public bool forceScreensInFrontOfViewCamera = false;
-    [SerializeField] private bool verboseLog = true;
     public bool enableDogDistalFreezeOnHighSkip = true;
     [Range(0, 16)] public int dogDistalFreezeSkipThreshold = 6;
     public bool alignModelToBBoxBottom = true;
@@ -126,9 +125,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private VideoPlayer vp;
     private ManifestData manifest;
-    private bool loggedFirstFrame;
-    private bool loggedFovSource;
-    private bool loggedQuantSource;
     private int lastFrameReadyFrame = -1;
     private string leftTexProp = "_MainTex";
     private string rightTexProp = "_MainTex";
@@ -155,8 +151,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public int height;
         public int eye_w;
         public int eye_h;
-        public int meta_w;
-        public int meta_h;
         public int num_frames;
         public float fps;
         public float fovx_deg;
@@ -168,16 +162,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public float quantPosScale;
         public float quant;
         public float quant_pos;
-        public int crop_x;
-        public int crop_y;
-        public int crop_x0;
-        public int crop_y0;
-        public int crop_w;
-        public int crop_h;
-        public bool has_crop;
         public string joints_space;
-        public string camera_axes;
-        public string uv_origin;
         public float joints_quant_scale;
         public float fx_norm;
         public float fy_norm;

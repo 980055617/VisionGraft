@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
@@ -14,13 +14,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (leftScreen == null)
         {
-            Debug.LogWarning("Test model skipped: leftScreen is null.");
             return;
         }
 
         if (manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
         {
-            Debug.LogWarning("Test model skipped: manifest eye_w/eye_h invalid or not loaded.");
             return;
         }
 
@@ -38,13 +36,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         if (pick.screen == null)
         {
-            Debug.LogWarning("TrySpawnOrMoveTestModel: screen is null.");
             return;
         }
 
         if (manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
         {
-            Debug.LogWarning("TrySpawnOrMoveTestModel: manifest not ready.");
             return;
         }
 
@@ -76,7 +72,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         world += right * testModelOffsetMeters.x + up * testModelOffsetMeters.y;
         Quaternion rotation = Quaternion.LookRotation(-rayDir, up);
 
-        ApplyTestModelTransform(world, rotation, pick.screen, pick.pixel.x, pick.pixel.y, pick.hitDistance, depthTowardCamera, "ray");
+        ApplyTestModelTransform(world, rotation);
     }
 
 
@@ -89,18 +85,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (screen == null)
         {
-            Debug.LogWarning("TrySpawnOrMoveTestModelAtPixel: screen is null.");
             return;
         }
 
         if (manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
         {
-            Debug.LogWarning("TrySpawnOrMoveTestModelAtPixel: manifest not ready.");
             return;
         }
 
         Vector3 worldOnPlane = EyePixelToWorldOnScreen(u, v, screen, manifest.eye_w, manifest.eye_h, 0f);
-        Transform head = GetViewCamera() != null ? GetViewCamera().transform : GetHeadTransform();
+        Transform head = GetViewOrHeadTransform();
         Vector3 frontDir = (head != null)
             ? (head.position - screen.position).normalized
             : GetScreenFrontDirection(screen);
@@ -119,11 +113,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             + frontDir * depth;
         Quaternion rotation = Quaternion.LookRotation(-frontDir, screen.up);
 
-        ApplyTestModelTransform(world, rotation, screen, u, v, dist, depth, "pixel");
+        ApplyTestModelTransform(world, rotation);
     }
 
 
-    private void ApplyTestModelTransform(Vector3 world, Quaternion rotation, Transform screen, int u, int v, float dist, float depth, string mode)
+    private void ApplyTestModelTransform(Vector3 world, Quaternion rotation)
     {
         if (destroyPreviousTestModel && spawnedTestModel != null)
         {
@@ -150,21 +144,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         EnsureTestModelComponents(spawnedTestModel);
         spawnedTestModel.transform.SetPositionAndRotation(world, rotation);
         spawnedTestModel.transform.localScale = Vector3.one * testModelSizeMeters;
-        LogModel($"SpawnOrMoveTestModel({mode}): screen={screen.name} pixel=({u},{v}) world={world} rot={rotation.eulerAngles}");
-        LogModel($"SpawnOrMoveTestModelDepth({mode}): dist={dist:F3} depth={depth:F3} screen={screen.position}");
-        LogModel(
-            $"SpawnOrMoveTestModelDebug: worldPos={spawnedTestModel.transform.position} localPos={spawnedTestModel.transform.localPosition} " +
-            $"parent={(spawnedTestModel.transform.parent != null ? spawnedTestModel.transform.parent.name : "null")}");
         AttachTransformLock(spawnedTestModel, world, rotation);
-
-        float posError = Vector3.Distance(spawnedTestModel.transform.position, world);
-        if (posError > 0.001f)
-        {
-            Debug.LogWarning(
-                $"TestModelPositionMismatch: expected={world} actual={spawnedTestModel.transform.position} " +
-                $"error={posError:F4} active={spawnedTestModel.activeInHierarchy} " +
-                $"components={DescribeMovementComponents(spawnedTestModel)}");
-        }
     }
 
 
@@ -206,23 +186,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         locker.Arm(world, rotation, TestModelLockFrames);
     }
-
-
-    private string DescribeMovementComponents(GameObject go)
-    {
-        if (go == null)
-        {
-            return "null";
-        }
-
-        var components = go.GetComponents<Component>();
-        string allComponents = components != null && components.Length > 0
-            ? string.Join(",", System.Array.ConvertAll(components, c => c != null ? c.GetType().Name : "null"))
-            : "none";
-
-        return $"Components[{allComponents}]";
-    }
-
 
     private sealed class TestModelTransformLock : MonoBehaviour
     {

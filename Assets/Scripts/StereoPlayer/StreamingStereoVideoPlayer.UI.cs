@@ -854,7 +854,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         runtimeFovxDeg = ClampRuntimeFovx(value);
         useRuntimeFovxOverride = true;
-        loggedFovSource = false;
         UpdateRuntimeFovxText(runtimeFovxDeg);
 
         if (fitScreenToFov)
@@ -1035,7 +1034,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             center = (leftScreen.position + rightScreen.position) * 0.5f;
         }
 
-        Transform head = GetViewCamera() != null ? GetViewCamera().transform : GetHeadTransform();
+        Transform head = GetViewOrHeadTransform();
         Vector3 toHead = head != null ? (head.position - center).normalized : -basis.forward;
         if (toHead == Vector3.zero)
         {
@@ -1087,7 +1086,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        Transform head = GetViewCamera() != null ? GetViewCamera().transform : GetHeadTransform();
+        Transform head = GetViewOrHeadTransform();
         Vector3 toHead = head != null ? (head.position - basis.position).normalized : -basis.forward;
         if (toHead == Vector3.zero)
         {
@@ -1226,7 +1225,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         PauseForManualRotationEdit();
-        ResetManualYawOffsetDegForTrack(trackId);
+        SetManualYawOffsetDegForTrack(trackId, 0f);
         UpdateRuntimeTrackRotationUiState();
     }
 
@@ -1360,11 +1359,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         UpdateRuntimeScreenDistanceUiState();
         UpdateRuntimeTrackRotationUiState();
         UpdateManualYawGuide(true);
-    }
-
-    private void RefreshRuntimePlaybackUi()
-    {
-        UpdateRuntimeProgressUi();
     }
 
     private void UpdateRuntimeProgressUi()

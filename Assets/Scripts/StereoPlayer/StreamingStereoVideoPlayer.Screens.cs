@@ -21,13 +21,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             rightScreen = rightObj.transform;
         }
 
-        EnsureScreenRenderer(leftScreen, "leftScreen");
-        EnsureScreenRenderer(rightScreen, "rightScreen");
-        EnsureScreenCollider(leftScreen, "leftScreen");
-        EnsureScreenCollider(rightScreen, "rightScreen");
+        EnsureScreenRenderer(leftScreen);
+        EnsureScreenRenderer(rightScreen);
+        EnsureScreenCollider(leftScreen);
+        EnsureScreenCollider(rightScreen);
     }
 
-    private Renderer EnsureScreenRenderer(Transform screen, string label)
+    private Renderer EnsureScreenRenderer(Transform screen)
     {
         if (screen == null)
         {
@@ -51,10 +51,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             {
                 meshFilter.sharedMesh = quadMesh;
             }
-            else
-            {
-                Debug.LogWarning($"Quad mesh not found for {label}.");
-            }
         }
 
         var renderer = screen.GetComponent<MeshRenderer>();
@@ -64,11 +60,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         renderer.enabled = true;
-        EnsureUnlitMaterial(renderer, label);
+        EnsureUnlitMaterial(renderer);
         return renderer;
     }
 
-    private void EnsureScreenCollider(Transform screen, string label)
+    private void EnsureScreenCollider(Transform screen)
     {
         if (screen == null)
         {
@@ -78,7 +74,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         MeshFilter meshFilter = screen.GetComponent<MeshFilter>();
         if (meshFilter == null || meshFilter.sharedMesh == null)
         {
-            Debug.LogWarning($"EnsureScreenCollider: mesh missing for {label}.");
             return;
         }
 
@@ -116,7 +111,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         meshCollider.isTrigger = false;
     }
 
-    private void EnsureUnlitMaterial(Renderer renderer, string label)
+    private void EnsureUnlitMaterial(Renderer renderer)
     {
         if (renderer == null)
         {
@@ -150,28 +145,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             mat = new Material(shader);
             renderer.material = mat;
         }
-        else
-        {
-            Debug.LogWarning($"Fallback shader not found for {label}.");
-        }
     }
 
     private void SetupScreensAndMaterials()
     {
-        Renderer leftRenderer = EnsureScreenRenderer(leftScreen, "leftScreen");
-        Renderer rightRenderer = EnsureScreenRenderer(rightScreen, "rightScreen");
+        Renderer leftRenderer = EnsureScreenRenderer(leftScreen);
+        Renderer rightRenderer = EnsureScreenRenderer(rightScreen);
 
-        leftMat = CreateUniqueMaterial(leftRenderer, "left");
-        rightMat = CreateUniqueMaterial(rightRenderer, "right");
+        leftMat = CreateUniqueMaterial(leftRenderer);
+        rightMat = CreateUniqueMaterial(rightRenderer);
 
-        leftTexProp = ResolveTexProp(leftMat, "left");
-        rightTexProp = ResolveTexProp(rightMat, "right");
+        leftTexProp = ResolveTexProp(leftMat);
+        rightTexProp = ResolveTexProp(rightMat);
 
-        ApplyStereoUvSettings(leftMat, 1, "left");
-        ApplyStereoUvSettings(rightMat, 2, "right");
+        ApplyStereoUvSettings(leftMat, 1);
+        ApplyStereoUvSettings(rightMat, 2);
     }
 
-    private Material CreateUniqueMaterial(Renderer renderer, string label)
+    private Material CreateUniqueMaterial(Renderer renderer)
     {
         if (renderer == null)
         {
@@ -189,7 +180,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
             if (fallbackShader == null)
             {
-                Debug.LogWarning($"CreateUniqueMaterial: no shader for {label}.");
                 return null;
             }
 
@@ -201,7 +191,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return uniqueMat;
     }
 
-    private string ResolveTexProp(Material mat, string label)
+    private string ResolveTexProp(Material mat)
     {
         if (mat == null)
         {
@@ -218,7 +208,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return "_BaseMap";
         }
 
-        Debug.LogWarning($"ResolveTexProp: no known property on {label} material.");
         return "_MainTex";
     }
 
@@ -240,7 +229,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
     }
 
-    private void ApplyStereoUvSettings(Material mat, int eyeMode, string label)
+    private void ApplyStereoUvSettings(Material mat, int eyeMode)
     {
         if (mat == null)
         {
@@ -283,7 +272,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             float height = width * (manifest.eye_h / (float)manifest.eye_w);
             ApplyScreenScaleToFitFov(leftScreen, width, height);
             ApplyScreenScaleToFitFov(rightScreen, width, height);
-            // Intentional: PlaceScreens logs are disabled in the category-only logger.
         }
 
         Vector3 rightOffset = head.right * 0.001f;
@@ -299,18 +287,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             rightScreen.rotation = rotation;
         }
 
-        if (!fitScreenToFov && leftScreen != null)
-        {
-            GetScreenSizeMeters(leftScreen, out float width, out float height, out _);
-            // Intentional: PlaceScreens logs are disabled in the category-only logger.
-        }
-
-        FixFacingIfNeeded(leftScreen, head, "left");
-        FixFacingIfNeeded(rightScreen, head, "right");
+        FixFacingIfNeeded(leftScreen, head);
+        FixFacingIfNeeded(rightScreen, head);
         UpdateRuntimeControlsPlacement();
     }
 
-    private void FixFacingIfNeeded(Transform screen, Transform head, string label)
+    private void FixFacingIfNeeded(Transform screen, Transform head)
     {
         if (screen == null || head == null)
         {
@@ -321,14 +303,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 normalWorld = screen.TransformDirection(normalLocal).normalized;
         Vector3 toHead = (head.position - screen.position).normalized;
         float dotBefore = Vector3.Dot(normalWorld, toHead);
-        LogScreens($"ScreenFacingMeshNormal[{label}]: normalLocal={normalLocal} normalWorld={normalWorld} toHead={toHead} dotBefore={dotBefore:F3}");
 
         if (dotBefore < 0f)
         {
             screen.Rotate(0f, 180f, 0f, Space.Self);
-            Vector3 normalWorldAfter = screen.TransformDirection(normalLocal).normalized;
-            float dotAfter = Vector3.Dot(normalWorldAfter, toHead);
-            LogScreens($"ScreenFacingMeshNormalFix[{label}]: dotAfter={dotAfter:F3} newNormalWorld={normalWorldAfter}");
         }
     }
 
@@ -403,14 +381,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 local = new Vector3(xN, yN, 0f);
         Vector3 worldOnPlane = screen.TransformPoint(local);
         Vector3 world = worldOnPlane + screen.forward * offsetMeters;
-
-        if (verboseLog)
-        {
-            Vector3 s = screen.lossyScale;
-            LogScreens(
-                $"EyePixelToWorldOnScreenF: u={u:F2} v={v:F2} eyeW={eyeW} eyeH={eyeH} " +
-                $"lossy=({s.x:F3},{s.y:F3},{s.z:F3}) xN={xN:F4} yN={yN:F4} world={world}");
-        }
         return world;
     }
 
@@ -465,11 +435,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             float min = Mathf.Min(runtimeFovxMinDeg, runtimeFovxMaxDeg);
             float max = Mathf.Max(runtimeFovxMinDeg, runtimeFovxMaxDeg);
             fovxDeg = Mathf.Clamp(runtimeFovxDeg, min, max);
-            if (verboseLog && !loggedFovSource)
-            {
-                LogMeta($"FOVx source=runtimeOverride fovx_deg={fovxDeg}");
-                loggedFovSource = true;
-            }
             return true;
         }
 
@@ -477,26 +442,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (manifestFovx > 0f)
         {
             fovxDeg = manifestFovx;
-            if (verboseLog && !loggedFovSource)
-            {
-                LogMeta($"FOVx source=manifest fovx_deg={fovxDeg}");
-                loggedFovSource = true;
-            }
             return true;
         }
 
         if (metaHeader.fovxDeg > 0f)
         {
             fovxDeg = metaHeader.fovxDeg;
-            if (verboseLog && !loggedFovSource)
-            {
-                LogMeta($"FOVx source=metaHeader fovx_deg={fovxDeg}");
-                loggedFovSource = true;
-            }
             return true;
         }
 
-        Debug.LogWarning("FOVx not available; no fallback value.");
         return false;
     }
 
@@ -602,7 +556,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return true;
         }
 
-        Transform head = GetViewCamera() != null ? GetViewCamera().transform : GetHeadTransform();
+        Transform head = GetViewOrHeadTransform();
         if (head == null)
         {
             return false;
@@ -677,7 +631,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (!TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
         {
-            Debug.LogWarning("AnchorUvZToWorldPinhole: screen missing.");
             return Vector3.zero;
         }
 

@@ -1235,52 +1235,5 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return false;
     }
 
-
-    private void DrawSkeleton(Vector3[] jointsWorld, byte[] vis, byte categoryId)
-    {
-        if (jointsWorld == null || vis == null)
-        {
-            return;
-        }
-
-        if (TryGetCategoryEdges(categoryId, out ushort[] edgePairs) && edgePairs != null && edgePairs.Length >= 2)
-        {
-            for (int i = 0; i + 1 < edgePairs.Length; i += 2)
-            {
-                int a = edgePairs[i];
-                int b = edgePairs[i + 1];
-                if (a < 0 || b < 0 || a >= jointsWorld.Length || b >= jointsWorld.Length)
-                {
-                    continue;
-                }
-
-                if (vis[a] == 0 || vis[b] == 0)
-                {
-                    continue;
-                }
-
-                Debug.DrawLine(jointsWorld[a], jointsWorld[b], Color.yellow, 0f, false);
-            }
-            return;
-        }
-
-        for (int i = 0; i < CocoEdges.Length; i += 2)
-        {
-            int a = CocoEdges[i];
-            int b = CocoEdges[i + 1];
-            if (a < 0 || b < 0 || a >= jointsWorld.Length || b >= jointsWorld.Length)
-            {
-                continue;
-            }
-
-            if (vis[a] == 0 || vis[b] == 0)
-            {
-                continue;
-            }
-
-            Debug.DrawLine(jointsWorld[a], jointsWorld[b], Color.yellow, 0f, false);
-        }
-    }
-
 }
 

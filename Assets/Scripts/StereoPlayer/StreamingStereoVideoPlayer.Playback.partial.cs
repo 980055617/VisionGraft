@@ -6,12 +6,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // Depends on: meta frame cache, track instance state, manifest/screen helpers, and manual-yaw partials
     // Provides: FollowTick pipeline, target selection, replaceable model apply, TryApplySkeleton entry
 
-    private void PlaceOrMoveTestModel(PickResult pick)
-    {
-        TrySpawnOrMoveTestModel(pick);
-    }
-
-
     public void FollowTick()
     {
         if (useMetaFollow && metaLoaded)
@@ -49,8 +43,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         spawnedTestModel.transform.SetPositionAndRotation(world, rotation);
         spawnedTestModel.transform.localScale = Vector3.one * testModelSizeMeters;
         AttachTransformLock(spawnedTestModel, world, rotation);
-
-        LogFollow($"FollowTick: base=({pickedPixel.x},{pickedPixel.y}) offset=({du},{dv}) pixel=({u2},{v2}) world={world}");
     }
 
 
@@ -76,14 +68,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         frame = metaFrameUsed;
-        UpdateMetaRange(frame);
 
         if (TryApplyConfiguredTrackPrefabs(frame))
         {
             return;
         }
-
-        // Intentional: per-frame meta summary suppressed in category-only logger.
 
         MetaObj target = metaFrameObjects[0];
         if (followTrackId >= 0)
@@ -185,7 +174,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void ApplyMetaTarget(MetaObj target, int frame)
     {
-        if (!ResolveAnchorToScreen(target.anchorU, out Transform screen, out int uEye, out bool isRightEye))
+        if (!ResolveAnchorToScreen(target.anchorU, out Transform screen, out int uEye, out _))
         {
             return;
         }
@@ -200,21 +189,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         Vector3 anchorWorld = AnchorUvZToWorldPinhole(screen, uEyeF, vEyeF, target.anchorZ);
 
-        GameObject instance = GetOrCreateTrackInstance(target.trackId, target.categoryId);
+        GameObject instance = GetOrCreateTrackInstance(target.trackId);
         if (instance != null)
         {
             instance.SetActive(true);
-            Camera viewCam = GetViewCamera() ?? Camera.main;
             Quaternion rotationPinhole = GetPinholeBasisRotation(screen);
             rotationPinhole = ApplyManualTrackYawOffset(target.trackId, frame, rotationPinhole, screen != null ? screen.up : Vector3.up);
             float targetHeight = ComputeTargetHeightMeters(bboxHAdjusted, target.anchorZ);
-            ApplyReplaceableModelTransform(instance, anchorWorld, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxWAdjusted, bboxHAdjusted, screen, frame);
+            ApplyReplaceableModelTransform(instance, anchorWorld, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxWAdjusted, bboxHAdjusted, screen);
             TryApplySkeleton(instance, target, instance.transform.position, screen, frame);
-            float bboxWorldH = 0f;
-            if (TryGetFocalLengths(out _, out float fy))
-            {
-                bboxWorldH = (2f * bboxHAdjusted / manifest.eye_h) * (target.anchorZ / fy);
-            }
             return;
         }
 
@@ -223,17 +206,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        Camera viewCamFallback = GetViewCamera() ?? Camera.main;
         Quaternion rotation = GetPinholeBasisRotation(screen);
 
         spawnedTestModel.transform.SetPositionAndRotation(anchorWorld, rotation);
         spawnedTestModel.transform.localScale = Vector3.one * testModelSizeMeters;
         AttachTransformLock(spawnedTestModel, anchorWorld, rotation);
-        float bboxWorldHTest = 0f;
-        if (TryGetFocalLengths(out _, out float fyTest))
-        {
-            bboxWorldHTest = (2f * bboxHAdjusted / manifest.eye_h) * (target.anchorZ / fyTest);
-        }
     }
 
 
@@ -268,18 +245,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
         }
 
-        if (verboseLog)
-        {
-            LogMeta($"Meta auto-select: track={best.trackId} anchor=({best.anchorU},{best.anchorV}) distSq={bestDistSq:F1} leftCenter={leftCenterU:F1} rightCenter={rightCenterU:F1}");
-        }
-
         return best;
     }
 
 
-    private GameObject GetOrCreateTrackInstance(uint trackId, byte categoryId)
+    private GameObject GetOrCreateTrackInstance(uint trackId)
     {
-        GameObject prefab = ResolveTrackPrefab(trackId, categoryId);
+        GameObject prefab = ResolveTrackPrefab(trackId);
         if (prefab == null)
         {
             return null;
@@ -320,7 +292,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private GameObject ResolveTrackPrefab(uint trackId, byte categoryId)
+    private GameObject ResolveTrackPrefab(uint trackId)
     {
         if (useTrackPrefabOverrides)
         {
@@ -360,7 +332,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private void ApplyReplaceableModelTransform(GameObject instance, Vector3 world, Quaternion rotation, float targetHeightMeters, MetaObj obj, float uEye, float vEye, float bboxWAdjusted, float bboxHAdjusted, Transform screen, int frame)
+    private void ApplyReplaceableModelTransform(GameObject instance, Vector3 world, Quaternion rotation, float targetHeightMeters, MetaObj obj, float uEye, float vEye, float bboxWAdjusted, float bboxHAdjusted, Transform screen)
     {
         if (instance == null)
         {
@@ -377,28 +349,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         instance.transform.SetPositionAndRotation(world, rotation);
 
-        Vector3 pivotOffset = Vector3.zero;
         if (model != null && model.anchor != null)
         {
             Vector3 anchorWorld = model.anchor.position;
             Vector3 rootWorld = instance.transform.position;
             Vector3 delta = anchorWorld - rootWorld;
-            pivotOffset = delta;
             instance.transform.position = world - delta;
-        }
-
-        if (verboseLog)
-        {
-            if (TryGetFocalLengths(out float fx, out float fy))
-            {
-                float xNdc = (uEye / (float)manifest.eye_w - 0.5f) * 2f;
-                float yNdc = (0.5f - vEye / (float)manifest.eye_h) * 2f;
-                float x = xNdc * obj.anchorZ / fx;
-                float y = yNdc * obj.anchorZ / fy;
-                // Intentional: pinhole detail logs suppressed in category-only logger.
-            }
-
-            Debug.DrawLine(world, world + rotation * Vector3.forward * 0.2f, Color.cyan, 0.05f);
         }
 
         if (TryGetFocalLengths(out float fxScale, out float fyScale))
@@ -411,12 +367,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             float uniformScale = obj.categoryId == 2 ? Mathf.Min(scaleW, scaleH) : scaleH;
             instance.transform.localScale = baseScale * uniformScale;
             Vector3 lossy = instance.transform.lossyScale;
-            string pivotInfo = model != null && model.anchor != null ? $" pivotOffset={pivotOffset}" : string.Empty;
             if (model != null && model.anchor == null && model.alignToGround)
             {
                 float offsetWorld = model.baseBottomOffsetLocal * lossy.y;
                 instance.transform.position += instance.transform.up * offsetWorld;
-                pivotInfo += $" groundOffset={offsetWorld:F3}";
             }
 
             if (alignModelToBBoxBottom && model != null)
@@ -444,11 +398,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             {
                 TryApplyHumanoidHeadHeightScaleCorrection(instance.transform, model, obj, rootWorld: instance.transform.position, screen: screen, baseScale: baseScale, uniformScale: uniformScale);
             }
-
-            Log(LogCategory.SCALE,
-                $"f={frame} t={obj.trackId} bboxPx=({bboxWAdjusted:F1},{bboxHAdjusted:F1}) bboxWorld=({bboxWorldW:F3},{bboxWorldH:F3}) " +
-                $"baseBounds=({baseBounds.x:F3},{baseBounds.y:F3}) appliedScale=({instance.transform.localScale.x:F3},{instance.transform.localScale.y:F3},{instance.transform.localScale.z:F3}){pivotInfo}",
-                frame, (int)obj.trackId);
             return;
         }
 
@@ -695,9 +644,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 AlignFeetToAnkles(cache, jointsWorld, obj.jointsVis, idx, instance.transform);
             }
         }
-        catch (System.Exception ex)
+        catch
         {
-            Debug.LogWarning($"TryApplySkeleton failed and was skipped. frame={frame} track={obj.trackId} ({ex.Message})");
         }
     }
 

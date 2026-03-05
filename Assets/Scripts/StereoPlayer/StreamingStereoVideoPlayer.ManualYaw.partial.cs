@@ -205,12 +205,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private void ResetManualYawOffsetDegForTrack(uint trackId)
-    {
-        SetManualYawOffsetDegForTrack(trackId, 0f);
-    }
-
-
     private int GetManualYawKeyCountForTrack(uint trackId)
     {
         if (!manualYawKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> keys) || keys == null)

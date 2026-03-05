@@ -4,7 +4,6 @@ using UnityEngine;
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
     private const int TestModelLockFrames = 30;
-    private const int MetaRangeFrameWindow = 60;
     private const float InvalidJointSqrMagnitudeEpsilon = 1e-10f;
     private int lastAutoTrackId = int.MinValue;
     private readonly Dictionary<uint, GameObject> trackInstances = new Dictionary<uint, GameObject>();
@@ -14,25 +13,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private GameObject manualYawGuideRoot;
     private Transform manualYawGuideShaft;
     private Transform manualYawGuideTip;
-    private bool boneStatusLogged;
-    private bool skeletonPresent;
-    private bool metaRangeLogged;
-    private bool boneAppliedLogged;
-    private int metaRangeStartFrame = -1;
-    private int metaRangeFrameCount;
-    private int lastMetaRangeFrame = -1;
-    private int metaRangeMinU = int.MaxValue;
-    private int metaRangeMaxU = int.MinValue;
-    private int metaRangeMinV = int.MaxValue;
-    private int metaRangeMaxV = int.MinValue;
-    private readonly HashSet<uint> outOfCropLoggedTracks = new HashSet<uint>();
     private readonly Dictionary<uint, Vector3[]> smoothedJointsByTrack = new Dictionary<uint, Vector3[]>();
     private readonly Dictionary<Animator, HumanoidRigCache> humanoidCaches = new Dictionary<Animator, HumanoidRigCache>();
     private readonly Dictionary<Transform, AnimalRigCache> animalRigCaches = new Dictionary<Transform, AnimalRigCache>();
-    private static readonly int[] CocoEdges = new[]
-    {
-        0,1, 0,2, 1,3, 2,4, 0,5, 0,6, 5,6, 5,7, 7,9, 6,8, 8,10, 11,12, 11,13, 13,15, 12,14, 14,16, 5,11, 6,12
-    };
     private static readonly int[] DogLeftFrontChain = { 7, 8, 12, 16 };
     private static readonly int[] DogRightFrontChain = { 7, 9, 13, 17 };
     private static readonly int[] DogLeftRearChain = { 6, 10, 14, 18 };

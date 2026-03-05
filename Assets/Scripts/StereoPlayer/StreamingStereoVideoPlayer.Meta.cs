@@ -6,24 +6,18 @@ using UnityEngine;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
-    private const string MetaMagic = "SVB1";
-
     private struct MetaHeader
     {
-        public string magic;
-        public ushort version;
         public ushort compressId;
         public ushort width;
         public ushort height;
         public float fps;
         public uint numFrames;
         public ushort eyeWidth;
-        public ushort reserved;
         public float fovxDeg;
         public float quantPosScale;
         public float quantJointScale;
         public ulong categoryTableOffset;
-        public uint categoryTableSize;
         public ulong indexTableOffset;
     }
 
@@ -58,25 +52,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float manifestScale = GetManifestQuantPosScale();
         if (manifestScale > 0f)
         {
-            if (verboseLog && !loggedQuantSource)
-            {
-                LogMeta($"QuantPosScale source=manifest quant_pos_scale={manifestScale}");
-                loggedQuantSource = true;
-            }
             return manifestScale;
         }
 
         if (metaHeader.quantPosScale > 0f)
         {
-            if (verboseLog && !loggedQuantSource)
-            {
-                LogMeta($"QuantPosScale source=metaHeader quant_pos_scale={metaHeader.quantPosScale}");
-                loggedQuantSource = true;
-            }
             return metaHeader.quantPosScale;
         }
 
-        Debug.LogWarning("QuantPosScale not available; anchorZ will be zero.");
         return 0f;
     }
 
@@ -109,7 +92,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         if (!File.Exists(metaPath))
         {
-            Debug.LogWarning($"Meta not found. path={metaPath}");
             return;
         }
 
@@ -126,50 +108,40 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             using (var br = new BinaryReader(fs))
             {
                 metaHeader = ReadHeaderV2(br);
-                if (metaHeader.magic != MetaMagic || metaHeader.version != 2)
-                {
-                    Debug.LogWarning($"Meta header unexpected. magic={metaHeader.magic} version={metaHeader.version}");
-                }
 
                 ReadCategoryTable(br, metaHeader.categoryTableOffset);
                 ReadIndexTable(br, metaHeader.indexTableOffset, metaHeader.numFrames);
             }
 
             metaLoaded = frameOffsets != null && frameOffsets.Length > 0;
-            LogMeta($"Meta loaded. compress={metaHeader.compressId} frames={metaHeader.numFrames} eyeW={metaHeader.eyeWidth} fps={metaHeader.fps:F2}");
-            LogMeta($"Meta categories={categoryKpCounts.Count} indexTable={(frameOffsets != null ? frameOffsets.Length : 0)}");
-
-            if (metaLoaded && TryReadFrameObjects(0, metaFrameObjects))
-            {
-                LogMeta($"Meta frame0 obj_count={metaFrameObjects.Count}");
-            }
         }
-        catch (Exception ex)
+        catch
         {
-            Debug.LogError($"Meta load failed. path={metaPath} ({ex.Message})");
         }
     }
 
     private MetaHeader ReadHeaderV2(BinaryReader br)
     {
+        _ = br.ReadChars(4);   // magic
+        _ = br.ReadUInt16();   // version
+
         MetaHeader h = new MetaHeader
         {
-            magic = new string(br.ReadChars(4)),
-            version = br.ReadUInt16(),
             compressId = br.ReadUInt16(),
             width = br.ReadUInt16(),
             height = br.ReadUInt16(),
             fps = br.ReadSingle(),
             numFrames = br.ReadUInt32(),
-            eyeWidth = br.ReadUInt16(),
-            reserved = br.ReadUInt16(),
-            fovxDeg = br.ReadSingle(),
-            quantPosScale = br.ReadSingle(),
-            quantJointScale = br.ReadSingle(),
-            categoryTableOffset = br.ReadUInt64(),
-            categoryTableSize = br.ReadUInt32(),
-            indexTableOffset = br.ReadUInt64()
+            eyeWidth = br.ReadUInt16()
         };
+
+        _ = br.ReadUInt16(); // reserved
+        h.fovxDeg = br.ReadSingle();
+        h.quantPosScale = br.ReadSingle();
+        h.quantJointScale = br.ReadSingle();
+        h.categoryTableOffset = br.ReadUInt64();
+        _ = br.ReadUInt32(); // categoryTableSize
+        h.indexTableOffset = br.ReadUInt64();
         return h;
     }
 
@@ -380,9 +352,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
             return true;
         }
-        catch (Exception ex)
+        catch
         {
-            Debug.LogError($"Meta frame read failed. frame={frameIndex} ({ex.Message})");
             return false;
         }
     }
@@ -398,7 +369,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             case 2:
                 return DecompressLz4Frame(compressed);
             default:
-                Debug.LogError($"Meta decompress unsupported. compress_id={compressId}");
                 return null;
         }
     }
@@ -407,14 +377,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         if (input == null || input.Length < 6)
         {
-            Debug.LogError("Meta zlib data too small.");
             return null;
         }
 
         int deflateLen = input.Length - 6;
         if (deflateLen <= 0)
         {
-            Debug.LogError("Meta zlib data length invalid.");
             return null;
         }
 
@@ -432,7 +400,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Type lz4StreamType = Type.GetType("K4os.Compression.LZ4.Streams.LZ4Stream, K4os.Compression.LZ4.Streams");
         if (lz4StreamType == null)
         {
-            Debug.LogError("Meta lz4 requested but K4os.Compression.LZ4.Streams not found.");
             return null;
         }
 
@@ -504,7 +471,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
         }
 
-        Debug.LogError("Meta lz4 decode method not found or failed.");
         return null;
     }
 
@@ -543,11 +509,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (bestTrack >= 0)
         {
             followTrackId = bestTrack;
-            LogMeta($"Meta pick track: trackId={followTrackId} frame={frame}");
-        }
-        else
-        {
-            LogMeta("Meta pick track: no match within threshold.");
         }
     }
 }

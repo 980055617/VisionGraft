@@ -14,6 +14,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private Transform manualYawGuideShaft;
     private Transform manualYawGuideTip;
     private readonly Dictionary<uint, Vector3[]> smoothedJointsByTrack = new Dictionary<uint, Vector3[]>();
+    private readonly Dictionary<Transform, Vector3> personRootYawForwardByRoot = new Dictionary<Transform, Vector3>();
     private readonly Dictionary<Animator, HumanoidRigCache> humanoidCaches = new Dictionary<Animator, HumanoidRigCache>();
     private readonly Dictionary<Transform, AnimalRigCache> animalRigCaches = new Dictionary<Transform, AnimalRigCache>();
     private static readonly int[] DogLeftFrontChain = { 7, 8, 12, 16 };
@@ -41,53 +42,31 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public int rightFoot;
     }
 
-    private static readonly SkeletonIndices Coco17Indices = new SkeletonIndices
+    private static readonly SkeletonIndices MetrabsSmpl24Indices = new SkeletonIndices
     {
-        nose = 0,
-        leftEye = 1,
-        rightEye = 2,
-        leftShoulder = 5,
-        rightShoulder = 6,
-        leftElbow = 7,
-        rightElbow = 8,
-        leftWrist = 9,
-        rightWrist = 10,
-        leftHip = 11,
-        rightHip = 12,
-        leftKnee = 13,
-        rightKnee = 14,
-        leftAnkle = 15,
-        rightAnkle = 16,
-        leftFoot = 15,
-        rightFoot = 16
-    };
-
-    private static readonly SkeletonIndices Blaze33Indices = new SkeletonIndices
-    {
-        nose = 0,
-        leftEye = 2,
-        rightEye = 5,
-        leftShoulder = 11,
-        rightShoulder = 12,
-        leftElbow = 13,
-        rightElbow = 14,
-        leftWrist = 15,
-        rightWrist = 16,
-        leftHip = 23,
-        rightHip = 24,
-        leftKnee = 25,
-        rightKnee = 26,
-        leftAnkle = 27,
-        rightAnkle = 28,
-        leftFoot = 31,
-        rightFoot = 32
+        nose = 15,
+        leftEye = -1,
+        rightEye = -1,
+        leftShoulder = 16,
+        rightShoulder = 17,
+        leftElbow = 18,
+        rightElbow = 19,
+        leftWrist = 20,
+        rightWrist = 21,
+        leftHip = 1,
+        rightHip = 2,
+        leftKnee = 4,
+        rightKnee = 5,
+        leftAnkle = 7,
+        rightAnkle = 8,
+        leftFoot = 10,
+        rightFoot = 11
     };
 
     private sealed class HumanoidRigCache
     {
         public readonly Dictionary<HumanBodyBones, Transform> bones = new Dictionary<HumanBodyBones, Transform>();
-        public readonly Dictionary<HumanBodyBones, Vector3> bindDirWorld = new Dictionary<HumanBodyBones, Vector3>();
-        public readonly Dictionary<HumanBodyBones, Quaternion> bindRotWorld = new Dictionary<HumanBodyBones, Quaternion>();
+        public readonly Dictionary<HumanBodyBones, Quaternion> bindRotLocal = new Dictionary<HumanBodyBones, Quaternion>();
         public bool ready;
     }
 

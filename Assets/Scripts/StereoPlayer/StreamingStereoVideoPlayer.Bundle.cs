@@ -69,6 +69,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         string extractedVideoPath = Path.Combine(cacheDir, extractedVideoFileName);
         string extractedManifestPath = Path.Combine(cacheDir, extractedManifestFileName);
         string extractedMetaPath = Path.Combine(cacheDir, extractedMetaFileName);
+        string extractedPipelineManifestPath = Path.Combine(cacheDir, extractedPipelineManifestFileName);
+        string extractedKeypoints3dPath = Path.Combine(cacheDir, extractedKeypoints3dFileName);
+        string extractedOtherObjectProxiesPath = Path.Combine(cacheDir, extractedOtherObjectProxiesFileName);
 
         // Always extract fresh files after cache clear.
         {
@@ -78,6 +81,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 using (var fs = new FileStream(bundlePathToLoad, FileMode.Open, FileAccess.Read))
                 using (var za = new ZipArchive(fs, ZipArchiveMode.Read))
                 {
+                    LogBundleEntries(za);
+
                     if (!ExtractZipEntry(za, bundleVideoEntryName, extractedVideoPath))
                     {
                         yield break;
@@ -89,6 +94,21 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     }
 
                     if (!ExtractZipEntry(za, bundleMetaEntryName, extractedMetaPath))
+                    {
+                        yield break;
+                    }
+
+                    if (!ExtractZipEntry(za, bundlePipelineManifestEntryName, extractedPipelineManifestPath))
+                    {
+                        yield break;
+                    }
+
+                    if (!ExtractZipEntry(za, bundleKeypoints3dEntryName, extractedKeypoints3dPath))
+                    {
+                        yield break;
+                    }
+
+                    if (!ExtractZipEntry(za, bundleOtherObjectProxiesEntryName, extractedOtherObjectProxiesPath))
                     {
                         yield break;
                     }
@@ -107,6 +127,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         TryLoadManifest(extractedManifestPath);
         LoadMeta(extractedMetaPath);
+        LoadBundleSidecars(extractedPipelineManifestPath, extractedKeypoints3dPath, extractedOtherObjectProxiesPath);
 
         string normalizedVideoPath = extractedVideoPath.Replace("\\", "/");
         vp.url = normalizedVideoPath;
@@ -129,6 +150,29 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         return true;
+    }
+
+    private void LogBundleEntries(ZipArchive za)
+    {
+        if (za == null)
+        {
+            return;
+        }
+
+        try
+        {
+            for (int i = 0; i < za.Entries.Count; i++)
+            {
+                ZipArchiveEntry entry = za.Entries[i];
+                if (entry != null)
+                {
+                    Debug.Log($"SVB entry: {entry.FullName} ({entry.Length} bytes)");
+                }
+            }
+        }
+        catch
+        {
+        }
     }
 
     private void TryLoadManifest(string manifestPath)
@@ -172,6 +216,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (string.IsNullOrEmpty(manifest.joints_space) && TryExtractJsonString(json, "joints_space", out string jointsSpace))
         {
             manifest.joints_space = jointsSpace;
+        }
+        if (string.IsNullOrEmpty(manifest.joints_source) && TryExtractJsonString(json, "joints_source", out string jointsSource))
+        {
+            manifest.joints_source = jointsSource;
+        }
+        if (string.IsNullOrEmpty(manifest.camera_axes) && TryExtractJsonString(json, "camera_axes", out string cameraAxes))
+        {
+            manifest.camera_axes = cameraAxes;
+        }
+        if (string.IsNullOrEmpty(manifest.uv_origin) && TryExtractJsonString(json, "uv_origin", out string uvOrigin))
+        {
+            manifest.uv_origin = uvOrigin;
         }
         if (manifest.fx_norm <= 0f && TryExtractJsonFloat(json, "fx_norm", out float fxNorm))
         {

@@ -11,13 +11,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        AnimalRigCache cache = TryApplyAnimalSkeletonPlacement(instanceRoot, animator, jointsWorld, vis, jointCount);
+        if (cache == null || !cache.ready)
+        {
+            return;
+        }
+
         // Root orientation:
         // - dog: yaw-only style using world-up (screen tilt is ignored)
         // - others: previous behavior using screen-up
-        float rootRotateAlpha = categoryId == 2
+        bool isAnimalCategory = IsCategoryAnimal(categoryId);
+        float rootRotateAlpha = isAnimalCategory
             ? GetEffectiveDogRootRotateAlpha()
             : Mathf.Clamp01(animalRootRotateAlpha);
-        if (categoryId == 2)
+        if (isAnimalCategory)
         {
             TryApplyAnimalRootOrientation(instanceRoot, jointsWorld, vis, null, rootRotateAlpha);
         }
@@ -26,19 +33,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             TryApplyAnimalRootOrientation(instanceRoot, jointsWorld, vis, screen, rootRotateAlpha);
         }
 
-        Transform rigRoot = animator != null ? animator.transform : instanceRoot;
-        AnimalRigCache cache = GetOrBuildAnimalRigCache(rigRoot);
-        if (cache == null || !cache.ready)
+        if (TryGetAnimalSkeletonRootWorld(jointsWorld, vis, jointCount, out Vector3 skeletonRoot))
         {
-            return;
+            AlignAnimalRootToSkeleton(instanceRoot, cache, skeletonRoot);
         }
 
-        float alpha = categoryId == 2
+        float alpha = isAnimalCategory
             ? GetEffectiveDogBoneApplyAlpha()
             : Mathf.Clamp01(boneApplyAlpha);
         // Dog is handled in a reduced-drive mode:
         // root heading + head + limbs (no spine drive).
-        if (categoryId == 2)
+        if (isAnimalCategory)
         {
             // Head only: fixed mapping (Throat -> Nose), no fallback.
             ApplyAnimalBoneFromJoints(cache, cache.neck, jointsWorld, vis, 5, 4, alpha * 0.65f);
@@ -184,6 +189,103 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         return forward.sqrMagnitude > 0.000001f;
+    }
+
+    private bool TryGetAnimalSkeletonRootWorld(Vector3[] jointsWorld, byte[] vis, int jointCount, out Vector3 rootWorld)
+    {
+        if (jointCount > 7 && TryGetMidPoint(jointsWorld, vis, 6, 7, out rootWorld))
+        {
+            return true;
+        }
+
+        if (TryGetJointPoint(jointsWorld, vis, 0, out rootWorld))
+        {
+            return true;
+        }
+
+        if (!TryGetVisibleJointBounds(jointsWorld, vis, jointCount, out Bounds bounds))
+        {
+            rootWorld = Vector3.zero;
+            return false;
+        }
+
+        rootWorld = bounds.center;
+        return true;
+    }
+
+    private AnimalRigCache TryApplyAnimalSkeletonPlacement(Transform instanceRoot, Animator animator, Vector3[] jointsWorld, byte[] vis, int jointCount)
+    {
+        if (instanceRoot == null)
+        {
+            return null;
+        }
+
+        Transform rigRoot = animator != null ? animator.transform : instanceRoot;
+        AnimalRigCache cache = GetOrBuildAnimalRigCache(rigRoot);
+        if (TryGetAnimalSkeletonRootWorld(jointsWorld, vis, jointCount, out Vector3 skeletonRoot))
+        {
+            if (enableSkeletonScaleCorrection)
+            {
+                ApplyAnimalSkeletonScale(instanceRoot, jointsWorld, vis, jointCount);
+            }
+            if (cache == null || !cache.ready)
+            {
+                instanceRoot.position = skeletonRoot;
+            }
+            else
+            {
+                AlignAnimalRootToSkeleton(instanceRoot, cache, skeletonRoot);
+            }
+        }
+
+        if (cache == null || !cache.ready)
+        {
+            return cache;
+        }
+
+        return cache;
+    }
+
+    private void ApplyAnimalSkeletonScale(Transform root, Vector3[] jointsWorld, byte[] vis, int jointCount)
+    {
+        if (root == null || !TryGetVisibleJointBounds(jointsWorld, vis, jointCount, out Bounds bounds))
+        {
+            return;
+        }
+
+        ReplaceableModel model = root.GetComponent<ReplaceableModel>();
+        if (model == null)
+        {
+            return;
+        }
+
+        float skeletonExtent = Mathf.Max(bounds.size.x, Mathf.Max(bounds.size.y, bounds.size.z));
+        float modelExtent = Mathf.Max(model.baseBoundsSize.x, model.baseBoundsSize.y);
+        if (skeletonExtent <= 0.0001f || modelExtent <= 0.0001f)
+        {
+            return;
+        }
+
+        float bboxReferenceUniform = ResolveCurrentUniformScale(root, model);
+        float uniform = ClampSkeletonUniformScale((skeletonExtent / modelExtent) * model.userScale, bboxReferenceUniform);
+        root.localScale = model.baseLocalScale * uniform;
+    }
+
+    private void AlignAnimalRootToSkeleton(Transform instanceRoot, AnimalRigCache cache, Vector3 skeletonRoot)
+    {
+        if (instanceRoot == null)
+        {
+            return;
+        }
+
+        Transform rootBone = cache != null ? cache.root : null;
+        if (rootBone != null)
+        {
+            instanceRoot.position += skeletonRoot - rootBone.position;
+            return;
+        }
+
+        instanceRoot.position = skeletonRoot;
     }
 
     private struct AnimalGraphChains

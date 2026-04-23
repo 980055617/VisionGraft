@@ -37,6 +37,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public ushort skeletonKpCount;
         public Vector3[] jointsCam;
         public byte[] jointsVis;
+        public bool hasSkeletonRootCam;
+        public Vector3 skeletonRootCam;
+        public bool hasOtherProxy;
+        public bool hasOtherProxyCenter;
+        public bool hasOtherProxySize;
+        public Vector3 otherAnchorCameraXyz;
+        public Vector3 otherProxyCenter;
+        public Vector3 otherProxySize;
     }
 
     private bool metaLoaded;
@@ -329,7 +337,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
                         float anchorZRaw01 = anchorZq * GetQuantPosScale();
                         float anchorZ = DecodeAnchorDepthMetersFromBundle(anchorZRaw01);
-                        outObjs.Add(new MetaObj
+                        MetaObj obj = new MetaObj
                         {
                             trackId = trackId,
                             categoryId = categoryId,
@@ -345,7 +353,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                             skeletonKpCount = kpCount,
                             jointsCam = jointsCam,
                             jointsVis = jointsVis
-                        });
+                        };
+
+                        ApplySidecarsToMetaObject(ref obj, frameIndex);
+                        outObjs.Add(obj);
                     }
                 }
             }

@@ -11,9 +11,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public string bundleVideoEntryName = "video.mp4";   // zip entry name
     public string bundleManifestEntryName = "manifest.json";
     public string bundleMetaEntryName = "meta.bin";
+    public string bundlePipelineManifestEntryName = "source/pipeline_manifest.json";
+    public string bundleKeypoints3dEntryName = "source/keypoints3d.json";
+    public string bundleOtherObjectProxiesEntryName = "source/other_object_proxies.json";
     public string extractedVideoFileName = "video.mp4"; // extracted file name
     public string extractedManifestFileName = "manifest.json";
     public string extractedMetaFileName = "meta.bin";
+    public string extractedPipelineManifestFileName = "pipeline_manifest.json";
+    public string extractedKeypoints3dFileName = "keypoints3d.json";
+    public string extractedOtherObjectProxiesFileName = "other_object_proxies.json";
 
     [Header("Screens")]
     private Transform leftScreen;
@@ -66,18 +72,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     [Header("Bones")]
     public bool enableBoneApply = true;
     public float boneApplyAlpha = 1f;
-    public bool useExtendedBoneMap = true;
-    public float torsoBoneApplyAlpha = 0.35f;
-    public float headBoneApplyAlpha = 0.35f;
-    public float shoulderBoneApplyAlpha = 0.45f;
     public bool enableJointSmoothing = true;
     [Range(0f, 1f)] public float jointSmoothingAlpha = 0.35f;
-    public float boneRootRelThreshold = 0.2f;
     public Vector3 boneAxisSign = Vector3.one;
     public float fallbackQuantJointScale = 1f;
-    public bool alignFeetToAnkles = true;
-    public float footAlignAlpha = 1f;
-    public bool enableFootRootCorrection = false;
+    [Header("Pose Pipelines")]
+    public Vector3 personBoneAxisSign = new Vector3(1f, -1f, 1f);
+    public Vector3 animalBoneAxisSign = Vector3.one;
+    public bool remapSkeletonDepthToScreenRange = true;
+    public bool enableSkeletonScaleCorrection = false;
+    public float skeletonScaleMin = 0.2f;
+    public float skeletonScaleMax = 5f;
+    public float skeletonScaleRelativeMin = 0.75f;
+    public float skeletonScaleRelativeMax = 1.25f;
+    public bool stabilizePersonRootYaw = true;
+    public float personRootYawMaxDegreesPerSecond = 180f;
+    [Range(0f, 1f)] public float smpl24RootRotateAlpha = 0.85f;
+    [Range(0f, 1f)] public float smpl24LimbIkAlpha = 0.9f;
+    [Range(0f, 1f)] public float smpl24SpineAlpha = 0.35f;
     [Header("Bones Depth Assist")]
     public bool enableYawDepthDisambiguation = true;
     public float yawDepthOffsetMeters = 0.045f;
@@ -98,6 +110,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public float bboxAnchorVToBottom = 0.5f;
     public float modelBottomExtraOffsetMeters = 0f;
     public bool bottomAlignVerticalOnly = true;
+    [Header("Other Proxy")]
+    public bool showOtherProxyBoxes = true;
+    public Color otherProxyBoxColor = new Color(1f, 0.78f, 0.18f, 0.32f);
     [Header("Humanoid Height Fit")]
     public bool enableHeadHeightScaleCorrection = true;
     [Range(0f, 1f)] public float headHeightScaleAlpha = 0.35f;
@@ -166,6 +181,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public float quant;
         public float quant_pos;
         public string joints_space;
+        public string joints_source;
+        public string camera_axes;
+        public string uv_origin;
         public float joints_quant_scale;
         public float fx_norm;
         public float fy_norm;

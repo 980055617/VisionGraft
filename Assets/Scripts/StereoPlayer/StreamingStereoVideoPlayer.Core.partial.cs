@@ -59,7 +59,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         vp.prepareCompleted += OnPrepared;
 
-        if (showBundlePickerOnStart)
+        if (skipSelection)
+        {
+            yield return EnsureDefaultSvbAndPrepareVideo();
+        }
+        else if (showBundlePickerOnStart)
         {
             yield return RunBundlePickerFlowAndPrepareVideo();
         }

@@ -68,6 +68,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         frame = metaFrameUsed;
+        ApplyOtherProxyBoxesForFrame(metaFrameObjects, frame);
 
         if (TryApplyConfiguredTrackPrefabs(frame))
         {
@@ -188,6 +189,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float bboxHAdjusted = target.bboxH;
 
         Vector3 anchorWorld = AnchorUvZToWorldPinhole(screen, uEyeF, vEyeF, target.anchorZ);
+        if (IsCategoryOther(target.categoryId) && target.hasOtherProxy &&
+            TryOtherProxyWorld(target, screen, out Vector3 otherWorld, out _))
+        {
+            anchorWorld = otherWorld;
+        }
 
         GameObject instance = GetOrCreateTrackInstance(target.trackId);
         if (instance != null)
@@ -197,7 +203,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             rotationPinhole = ApplyManualTrackYawOffset(target.trackId, frame, rotationPinhole, screen != null ? screen.up : Vector3.up);
             float targetHeight = ComputeTargetHeightMeters(bboxHAdjusted, target.anchorZ);
             ApplyReplaceableModelTransform(instance, anchorWorld, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxWAdjusted, bboxHAdjusted, screen);
-            TryApplySkeleton(instance, target, instance.transform.position, screen, frame);
+            TryApplySkeleton(instance, target, anchorWorld, screen, frame);
             return;
         }
 
@@ -357,6 +363,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             instance.transform.position = world - delta;
         }
 
+        if (IsCategoryOther(obj.categoryId) && obj.hasOtherProxySize && obj.otherProxySize.sqrMagnitude > 0.000001f)
+        {
+            Vector3 proxySize = AbsVector(obj.otherProxySize);
+            Vector2 baseBounds = model != null ? model.baseBoundsSize : Vector2.zero;
+            float scaleW = baseBounds.x > 0.000001f ? proxySize.x / baseBounds.x : targetUniform;
+            float scaleH = baseBounds.y > 0.000001f ? proxySize.y / baseBounds.y : targetUniform;
+            float proxyUniform = Mathf.Max(scaleW, scaleH) * userScale;
+            if (proxyUniform <= 0.000001f)
+            {
+                proxyUniform = targetUniform;
+            }
+
+            instance.transform.localScale = baseScale * proxyUniform;
+            return;
+        }
+
         if (TryGetFocalLengths(out float fxScale, out float fyScale))
         {
             float bboxWorldW = (2f * bboxWAdjusted / manifest.eye_w) * (obj.anchorZ / fxScale);
@@ -364,7 +386,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Vector2 baseBounds = model != null ? model.baseBoundsSize : Vector2.zero;
             float scaleW = baseBounds.x > 0f ? bboxWorldW / baseBounds.x : targetUniform;
             float scaleH = baseBounds.y > 0f ? bboxWorldH / baseBounds.y : targetUniform;
-            float uniformScale = obj.categoryId == 2 ? Mathf.Min(scaleW, scaleH) : scaleH;
+            float uniformScale = IsCategoryAnimal(obj.categoryId) ? Mathf.Min(scaleW, scaleH) : scaleH;
             instance.transform.localScale = baseScale * uniformScale;
             Vector3 lossy = instance.transform.lossyScale;
             if (model != null && model.anchor == null && model.alignToGround)
@@ -394,7 +416,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 }
             }
 
-            if (enableHeadHeightScaleCorrection && model != null && obj.categoryId != 2)
+            if (enableHeadHeightScaleCorrection && model != null && IsCategoryPerson(obj.categoryId))
             {
                 TryApplyHumanoidHeadHeightScaleCorrection(instance.transform, model, obj, rootWorld: instance.transform.position, screen: screen, baseScale: baseScale, uniformScale: uniformScale);
             }
@@ -408,7 +430,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             instance.transform.position += instance.transform.up * offsetWorld;
         }
 
-        if (enableHeadHeightScaleCorrection && model != null && obj.categoryId != 2)
+        if (enableHeadHeightScaleCorrection && model != null && IsCategoryPerson(obj.categoryId))
         {
             TryApplyHumanoidHeadHeightScaleCorrection(instance.transform, model, obj, rootWorld: instance.transform.position, screen: screen, baseScale: baseScale, uniformScale: targetUniform);
         }
@@ -463,46 +485,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        int jointCount = obj.skeletonKpCount;
-        if (jointCount <= 0 || obj.jointsCam.Length < jointCount || obj.jointsVis.Length < jointCount)
+        SkeletonIndices idx = MetrabsSmpl24Indices;
+        if (!TryBuildPoseWorld(obj, rootWorld, screen, ResolvePoseAxisSign(personBoneAxisSign), out PoseWorldData pose) ||
+            pose.jointCount != 24)
         {
             return false;
-        }
-
-        SkeletonIndices idx = ResolveSkeletonIndices(jointCount);
-        if (!TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
-        {
-            return false;
-        }
-
-        Vector3 hipMid = Vector3.zero;
-        if (idx.leftHip >= 0 && idx.rightHip >= 0 &&
-            idx.leftHip < obj.jointsCam.Length && idx.rightHip < obj.jointsCam.Length)
-        {
-            hipMid = (obj.jointsCam[idx.leftHip] + obj.jointsCam[idx.rightHip]) * 0.5f;
-        }
-        bool rootRel = !IsEffectiveJointsSpaceAbsolute() && hipMid.magnitude < boneRootRelThreshold;
-
-        Vector3[] jointsWorld = new Vector3[jointCount];
-        for (int i = 0; i < jointCount; i++)
-        {
-            Vector3 joint = obj.jointsCam[i];
-            joint = new Vector3(joint.x * boneAxisSign.x, joint.y * boneAxisSign.y, joint.z * boneAxisSign.z);
-            jointsWorld[i] = rootRel
-                ? rootWorld + (camRotation * joint)
-                : camOrigin + (camRotation * joint);
         }
 
         if (idx.leftShoulder < 0 || idx.rightShoulder < 0 ||
-            idx.leftShoulder >= jointCount || idx.rightShoulder >= jointCount ||
+            idx.leftShoulder >= pose.jointCount || idx.rightShoulder >= pose.jointCount ||
             idx.leftShoulder >= obj.jointsVis.Length || idx.rightShoulder >= obj.jointsVis.Length ||
             obj.jointsVis[idx.leftShoulder] == 0 || obj.jointsVis[idx.rightShoulder] == 0)
         {
             return false;
         }
 
-        Vector3 shouldersMid = (jointsWorld[idx.leftShoulder] + jointsWorld[idx.rightShoulder]) * 0.5f;
-        if (!TryGetHeadTarget(jointsWorld, obj.jointsVis, shouldersMid, idx, out Vector3 head))
+        Vector3 shouldersMid = (pose.jointsWorld[idx.leftShoulder] + pose.jointsWorld[idx.rightShoulder]) * 0.5f;
+        if (!TryGetHeadTarget(pose.jointsWorld, obj.jointsVis, shouldersMid, idx, out Vector3 head))
         {
             return false;
         }
@@ -511,50 +510,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return true;
     }
 
-
-    private static bool IsDogSegmentUsable(int idxA, int idxB, int jointCount, byte[] vis, Vector3[] jointsCam)
-    {
-        if (idxA < 0 || idxB < 0 || idxA >= jointCount || idxB >= jointCount)
-        {
-            return false;
-        }
-        if (vis == null || jointsCam == null || idxA >= vis.Length || idxB >= vis.Length || idxA >= jointsCam.Length || idxB >= jointsCam.Length)
-        {
-            return false;
-        }
-        if (vis[idxA] == 0 || vis[idxB] == 0)
-        {
-            return false;
-        }
-
-        return !Mathf.Approximately(jointsCam[idxA].z, 0f) && !Mathf.Approximately(jointsCam[idxB].z, 0f);
-    }
-
-
-    private static int CountDogSkipSegments(int jointCount, byte[] vis, Vector3[] jointsCam)
-    {
-        int skip = 0;
-        for (int i = 0; i + 1 < DogLeftFrontChain.Length; i++)
-        {
-            if (!IsDogSegmentUsable(DogLeftFrontChain[i], DogLeftFrontChain[i + 1], jointCount, vis, jointsCam)) skip++;
-        }
-        for (int i = 0; i + 1 < DogRightFrontChain.Length; i++)
-        {
-            if (!IsDogSegmentUsable(DogRightFrontChain[i], DogRightFrontChain[i + 1], jointCount, vis, jointsCam)) skip++;
-        }
-        for (int i = 0; i + 1 < DogLeftRearChain.Length; i++)
-        {
-            if (!IsDogSegmentUsable(DogLeftRearChain[i], DogLeftRearChain[i + 1], jointCount, vis, jointsCam)) skip++;
-        }
-        for (int i = 0; i + 1 < DogRightRearChain.Length; i++)
-        {
-            if (!IsDogSegmentUsable(DogRightRearChain[i], DogRightRearChain[i + 1], jointCount, vis, jointsCam)) skip++;
-        }
-
-        return skip;
-    }
-
-
     private void TryApplySkeleton(GameObject instance, MetaObj obj, Vector3 rootWorld, Transform screen, int frame)
     {
         if (instance == null || !obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
@@ -562,90 +517,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        try
+        if (IsCategoryAnimal(obj.categoryId))
         {
-            int jointCount = obj.skeletonKpCount;
-            if (jointCount <= 0 || obj.jointsCam.Length < jointCount || obj.jointsVis.Length < jointCount)
-            {
-                return;
-            }
-
-            SkeletonIndices idx = ResolveSkeletonIndices(jointCount);
-            if (!TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
-            {
-                return;
-            }
-
-            Vector3 hipMid = Vector3.zero;
-            if (idx.leftHip >= 0 && idx.rightHip >= 0 &&
-                idx.leftHip < obj.jointsCam.Length && idx.rightHip < obj.jointsCam.Length)
-            {
-                hipMid = (obj.jointsCam[idx.leftHip] + obj.jointsCam[idx.rightHip]) * 0.5f;
-            }
-
-            bool rootRel = !IsEffectiveJointsSpaceAbsolute() && hipMid.magnitude < boneRootRelThreshold;
-            Vector3[] jointsWorld = new Vector3[jointCount];
-            for (int i = 0; i < jointCount; i++)
-            {
-                Vector3 joint = obj.jointsCam[i];
-                joint = new Vector3(joint.x * boneAxisSign.x, joint.y * boneAxisSign.y, joint.z * boneAxisSign.z);
-                jointsWorld[i] = rootRel
-                    ? rootWorld + (camRotation * joint)
-                    : camOrigin + (camRotation * joint);
-            }
-
-            bool freezeDogDistal = false;
-            if (obj.categoryId == 2)
-            {
-                int dogSkipSegments = CountDogSkipSegments(jointCount, obj.jointsVis, obj.jointsCam);
-                freezeDogDistal =
-                    enableDogDistalFreezeOnHighSkip &&
-                    dogSkipSegments >= Mathf.Max(0, dogDistalFreezeSkipThreshold);
-            }
-
-            if (enableJointSmoothing)
-            {
-                SmoothJointsWorld(obj.trackId, jointsWorld, obj.jointsVis, Mathf.Clamp01(jointSmoothingAlpha));
-            }
-
-            ApplyManualYawToJoints(obj.trackId, frame, jointsWorld, obj.jointsVis, instance.transform.position, instance.transform.up);
-
-            if (enableYawDepthDisambiguation)
-            {
-                ApplyYawDepthDisambiguation(jointsWorld, obj.jointsVis, idx, instance.transform, camOrigin, Mathf.Clamp01(yawDepthBlend));
-            }
-
-            if (!enableBoneApply)
-            {
-                return;
-            }
-
-            Animator animator = instance.GetComponentInChildren<Animator>();
-            if (obj.categoryId == 2)
-            {
-                ApplyAnimalSkeleton(instance.transform, animator, jointsWorld, obj.jointsVis, obj.skeletonKpCount, obj.categoryId, screen, freezeDogDistal);
-                return;
-            }
-
-            if (animator == null || !animator.isHuman)
-            {
-                return;
-            }
-
-            HumanoidRigCache cache = GetOrBuildHumanoidCache(animator);
-            if (cache == null || !cache.ready)
-            {
-                return;
-            }
-
-            ApplyHumanoidLimbs(cache, jointsWorld, obj.jointsVis, idx);
-            if (alignFeetToAnkles)
-            {
-                AlignFeetToAnkles(cache, jointsWorld, obj.jointsVis, idx, instance.transform);
-            }
+            TryApplyAnimalPosePipeline(instance, obj, rootWorld, screen, frame);
+            return;
         }
-        catch
+
+        if (!IsCategoryOther(obj.categoryId))
         {
+            TryApplyPersonPosePipeline(instance, obj, rootWorld, screen, frame);
         }
     }
 

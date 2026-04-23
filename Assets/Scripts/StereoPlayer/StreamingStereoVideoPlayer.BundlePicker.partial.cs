@@ -7,6 +7,8 @@ using UnityEngine.UI;
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
     [Header("Bundle Picker")]
+    public bool skipSelection = false;
+    public string defaultsvb = "bundle.svb";
     public bool showBundlePickerOnStart = true;
     public bool fallbackToStreamingBundleWhenCanceled = true;
     public string bundlePickerInitialDirectory = "/storage/emulated/0";
@@ -58,8 +60,49 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (fallbackToStreamingBundleWhenCanceled)
         {
-            yield return EnsureBundleAndPrepareVideo();
+            yield return EnsureDefaultSvbAndPrepareVideo();
         }
+    }
+
+    private IEnumerator EnsureDefaultSvbAndPrepareVideo()
+    {
+        string defaultPath = ResolveDefaultSvbPath();
+        if (string.IsNullOrEmpty(defaultPath))
+        {
+            yield return EnsureBundleAndPrepareVideo();
+            yield break;
+        }
+
+        yield return EnsureBundleAndPrepareVideo(defaultPath);
+    }
+
+    private string ResolveDefaultSvbPath()
+    {
+        string candidate = string.IsNullOrEmpty(defaultsvb) ? bundleFileName : defaultsvb.Trim();
+        if (string.IsNullOrEmpty(candidate) ||
+            string.Equals(candidate, bundleFileName, System.StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (Path.IsPathRooted(candidate))
+        {
+            return candidate;
+        }
+
+        string persistentCandidate = Path.Combine(Application.persistentDataPath, candidate);
+        if (File.Exists(persistentCandidate))
+        {
+            return persistentCandidate;
+        }
+
+        string sdcardCandidate = Path.Combine("/storage/emulated/0", candidate);
+        if (File.Exists(sdcardCandidate))
+        {
+            return sdcardCandidate;
+        }
+
+        return candidate;
     }
 
     private IEnumerator RequestStoragePermissionIfNeeded()

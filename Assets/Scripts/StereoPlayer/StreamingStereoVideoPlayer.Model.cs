@@ -15,6 +15,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private Transform manualYawGuideTip;
     private readonly Dictionary<uint, Vector3[]> smoothedJointsByTrack = new Dictionary<uint, Vector3[]>();
     private readonly Dictionary<Transform, Vector3> personRootYawForwardByRoot = new Dictionary<Transform, Vector3>();
+    private readonly Dictionary<Transform, Vector3> animalRootYawForwardByRoot = new Dictionary<Transform, Vector3>();
     private readonly Dictionary<Animator, HumanoidRigCache> humanoidCaches = new Dictionary<Animator, HumanoidRigCache>();
     private readonly Dictionary<Transform, AnimalRigCache> animalRigCaches = new Dictionary<Transform, AnimalRigCache>();
     private static readonly int[] DogLeftFrontChain = { 7, 8, 12, 16 };

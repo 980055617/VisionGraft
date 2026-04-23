@@ -164,6 +164,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             planarForward.Normalize();
         }
 
+        if (stabilizeAnimalRootYaw)
+        {
+            planarForward = StabilizeAnimalYawForward(instanceRoot, up, planarForward);
+        }
+
         Vector3 modelForward = animalModelForwardLocal.sqrMagnitude > 0.000001f
             ? animalModelForwardLocal.normalized
             : Vector3.right;
@@ -175,6 +180,48 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Quaternion targetBasis = Quaternion.LookRotation(planarForward, up);
         Quaternion targetRootRot = targetBasis * Quaternion.Inverse(modelBasis);
         instanceRoot.rotation = Quaternion.Slerp(instanceRoot.rotation, targetRootRot, Mathf.Clamp01(rotateAlpha));
+    }
+
+    private Vector3 StabilizeAnimalYawForward(Transform root, Vector3 up, Vector3 forward)
+    {
+        if (root == null)
+        {
+            return forward;
+        }
+
+        Vector3 prevForward = Vector3.zero;
+        if (!animalRootYawForwardByRoot.TryGetValue(root, out prevForward) || prevForward.sqrMagnitude < 0.000001f)
+        {
+            prevForward = Vector3.ProjectOnPlane(root.forward, up);
+        }
+        if (prevForward.sqrMagnitude < 0.000001f)
+        {
+            return forward;
+        }
+        prevForward.Normalize();
+
+        Vector3 candA = Vector3.ProjectOnPlane(forward, up);
+        if (candA.sqrMagnitude < 0.000001f)
+        {
+            return forward;
+        }
+        candA.Normalize();
+
+        Vector3 candB = -candA;
+        Vector3 chosen = Vector3.Dot(prevForward, candA) >= Vector3.Dot(prevForward, candB) ? candA : candB;
+
+        float dt = Time.deltaTime > 0.0001f ? Time.deltaTime : (1f / 60f);
+        float maxStep = Mathf.Max(1f, animalRootYawMaxDegreesPerSecond) * dt;
+        float signedAngle = Vector3.SignedAngle(prevForward, chosen, up);
+        float clampedAngle = Mathf.Clamp(signedAngle, -maxStep, maxStep);
+        Vector3 stabilized = Quaternion.AngleAxis(clampedAngle, up) * prevForward;
+        if (stabilized.sqrMagnitude < 0.000001f)
+        {
+            stabilized = chosen;
+        }
+        stabilized.Normalize();
+        animalRootYawForwardByRoot[root] = stabilized;
+        return stabilized;
     }
 
     private bool TryGetAnimalBodyDirection(Vector3[] jointsWorld, byte[] vis, out Vector3 forward)
@@ -278,14 +325,39 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        Transform rootBone = cache != null ? cache.root : null;
-        if (rootBone != null)
+        Transform placementBone = ResolveAnimalPlacementBone(cache);
+        if (placementBone != null)
         {
-            instanceRoot.position += skeletonRoot - rootBone.position;
+            instanceRoot.position += skeletonRoot - placementBone.position;
             return;
         }
 
         instanceRoot.position = skeletonRoot;
+    }
+
+    private static Transform ResolveAnimalPlacementBone(AnimalRigCache cache)
+    {
+        if (cache == null)
+        {
+            return null;
+        }
+
+        if (cache.spine != null)
+        {
+            return cache.spine;
+        }
+
+        if (cache.neck != null)
+        {
+            return cache.neck;
+        }
+
+        if (cache.tailBase != null)
+        {
+            return cache.tailBase;
+        }
+
+        return cache.root;
     }
 
     private struct AnimalGraphChains

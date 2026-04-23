@@ -247,6 +247,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return Vector3.zero;
         }
 
+        if (pose != null)
+        {
+            Vector3 skeletonRoot3d = Vector3.zero;
+            if (TryReadVector3(GetList(pose, "skeletonRoot3d"), unitScale, out skeletonRoot3d))
+            {
+                return skeletonRoot3d;
+            }
+        }
+
         if (StringEquals(category, "person"))
         {
             return joints[0];

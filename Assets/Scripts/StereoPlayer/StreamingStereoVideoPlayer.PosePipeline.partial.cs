@@ -175,7 +175,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        if (obj.hasSkeletonRootCam && remapSkeletonDepthToScreenRange)
+        bool useAbsoluteSkeletonRoot =
+            obj.hasSkeletonRootCam &&
+            (IsCategoryPerson(obj.categoryId) || IsCategoryAnimal(obj.categoryId));
+        if (useAbsoluteSkeletonRoot && remapSkeletonDepthToScreenRange)
         {
             Vector3 rootCam = ApplyPoseAxisSign(obj.skeletonRootCam, axisSign);
             Vector3[] jointsCamAbs = new Vector3[jointCount];
@@ -208,7 +211,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         bool rootRel = obj.hasSkeletonRootCam || !IsEffectiveJointsSpaceAbsolute();
         Vector3 rootBaseWorld = rootWorld;
-        if (obj.hasSkeletonRootCam)
+        if (useAbsoluteSkeletonRoot)
         {
             Vector3 rootCam = ApplyPoseAxisSign(obj.skeletonRootCam, axisSign);
             rootBaseWorld = camOrigin + (camRotation * rootCam);

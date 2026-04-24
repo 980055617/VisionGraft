@@ -177,7 +177,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public string joints_source;
         public string camera_axes;
         public string uv_origin;
-        public float joints_quant_scale;
         public float fx_norm;
         public float fy_norm;
         public float cx;

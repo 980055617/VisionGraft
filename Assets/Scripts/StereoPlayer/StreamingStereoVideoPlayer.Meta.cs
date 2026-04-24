@@ -56,38 +56,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private readonly List<MetaObj> metaFrameObjects = new List<MetaObj>(64);
     private float GetQuantPosScale()
     {
-        float manifestScale = GetManifestQuantPosScale();
-        if (manifestScale > 0f)
-        {
-            return manifestScale;
-        }
-
-        if (metaHeader.quantPosScale > 0f)
-        {
-            return metaHeader.quantPosScale;
-        }
-
-        return 0f;
+        return GetManifestQuantPosScale();
     }
 
     private float GetQuantJointScale()
     {
-        if (metaHeader.quantJointScale > 0f)
-        {
-            return metaHeader.quantJointScale;
-        }
-
-        if (manifest != null && manifest.joints_quant_scale > 0f)
-        {
-            return manifest.joints_quant_scale;
-        }
-
-        if (manifest != null && manifest.quant_joint_scale > 0f)
-        {
-            return manifest.quant_joint_scale;
-        }
-
-        return 0f;
+        return manifest != null && manifest.quant_joint_scale > 0f
+            ? manifest.quant_joint_scale
+            : 0f;
     }
 
     private void LoadMeta(string metaPath)

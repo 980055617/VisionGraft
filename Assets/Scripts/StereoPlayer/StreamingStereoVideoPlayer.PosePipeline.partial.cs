@@ -12,11 +12,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public Vector3 camOrigin;
     }
 
-    private void TryApplyPersonPosePipeline(GameObject instance, MetaObj obj, Vector3 rootWorld, Transform screen, int frame)
+    private void TryApplyPersonPosePipeline(GameObject instance, MetaObj obj, Transform screen, int frame)
     {
         try
         {
-            if (!TryBuildPoseWorld(obj, rootWorld, screen, ResolvePoseAxisSign(personBoneAxisSign), out PoseWorldData pose))
+            if (!TryBuildPoseWorld(obj, screen, ResolvePoseAxisSign(personBoneAxisSign), out PoseWorldData pose))
             {
                 return;
             }
@@ -68,11 +68,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
     }
 
-    private void TryApplyAnimalPosePipeline(GameObject instance, MetaObj obj, Vector3 rootWorld, Transform screen, int frame)
+    private void TryApplyAnimalPosePipeline(GameObject instance, MetaObj obj, Transform screen, int frame)
     {
         try
         {
-            if (!TryBuildPoseWorld(obj, rootWorld, screen, ResolvePoseAxisSign(animalBoneAxisSign), out PoseWorldData pose))
+            if (!TryBuildPoseWorld(obj, screen, ResolvePoseAxisSign(animalBoneAxisSign), out PoseWorldData pose))
             {
                 return;
             }
@@ -154,7 +154,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return skip;
     }
 
-    private bool TryBuildPoseWorld(MetaObj obj, Vector3 rootWorld, Transform screen, Vector3 axisSign, out PoseWorldData pose)
+    private bool TryBuildPoseWorld(MetaObj obj, Transform screen, Vector3 axisSign, out PoseWorldData pose)
     {
         pose = default(PoseWorldData);
         if (!obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
@@ -168,17 +168,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
+        if (!obj.hasSkeletonRootCam || !IsManifestJointsSpaceRootRelative())
+        {
+            return false;
+        }
+
         if (!TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
         {
             return false;
         }
 
-        bool useAbsoluteSkeletonRoot =
-            obj.hasSkeletonRootCam &&
-            (IsCategoryPerson(obj.categoryId) || IsCategoryAnimal(obj.categoryId));
-        if (useAbsoluteSkeletonRoot && remapSkeletonDepthToScreenRange)
+        Vector3 rootCam = ApplyPoseAxisSign(obj.skeletonRootCam, axisSign);
+        if (remapSkeletonDepthToScreenRange)
         {
-            Vector3 rootCam = ApplyPoseAxisSign(obj.skeletonRootCam, axisSign);
             Vector3[] jointsCamAbs = new Vector3[jointCount];
             for (int i = 0; i < jointCount; i++)
             {
@@ -207,21 +209,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
         }
 
-        bool rootRel = obj.hasSkeletonRootCam || IsManifestJointsSpaceRootRelative();
-        Vector3 rootBaseWorld = rootWorld;
-        if (useAbsoluteSkeletonRoot)
-        {
-            Vector3 rootCam = ApplyPoseAxisSign(obj.skeletonRootCam, axisSign);
-            rootBaseWorld = camOrigin + (camRotation * rootCam);
-        }
-
+        Vector3 rootBaseWorld = camOrigin + (camRotation * rootCam);
         Vector3[] jointsWorld = new Vector3[jointCount];
         for (int i = 0; i < jointCount; i++)
         {
             Vector3 joint = ApplyPoseAxisSign(obj.jointsCam[i], axisSign);
-            jointsWorld[i] = rootRel
-                ? rootBaseWorld + (camRotation * joint)
-                : camOrigin + (camRotation * joint);
+            jointsWorld[i] = rootBaseWorld + (camRotation * joint);
         }
 
         pose = new PoseWorldData

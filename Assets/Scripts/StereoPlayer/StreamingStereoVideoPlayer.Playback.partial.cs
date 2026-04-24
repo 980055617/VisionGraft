@@ -203,7 +203,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             rotationPinhole = ApplyManualTrackYawOffset(target.trackId, frame, rotationPinhole, screen != null ? screen.up : Vector3.up);
             float targetHeight = ComputeTargetHeightMeters(bboxHAdjusted, target.anchorZ);
             ApplyReplaceableModelTransform(instance, anchorWorld, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxWAdjusted, bboxHAdjusted, screen);
-            TryApplySkeleton(instance, target, anchorWorld, screen, frame);
+            TryApplySkeleton(instance, target, screen, frame);
             return;
         }
 
@@ -418,7 +418,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
             if (enableHeadHeightScaleCorrection && model != null && IsCategoryPerson(obj.categoryId))
             {
-                TryApplyHumanoidHeadHeightScaleCorrection(instance.transform, model, obj, rootWorld: instance.transform.position, screen: screen, baseScale: baseScale, uniformScale: uniformScale);
+                TryApplyHumanoidHeadHeightScaleCorrection(instance.transform, model, obj, screen: screen, baseScale: baseScale, uniformScale: uniformScale);
             }
             return;
         }
@@ -432,19 +432,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (enableHeadHeightScaleCorrection && model != null && IsCategoryPerson(obj.categoryId))
         {
-            TryApplyHumanoidHeadHeightScaleCorrection(instance.transform, model, obj, rootWorld: instance.transform.position, screen: screen, baseScale: baseScale, uniformScale: targetUniform);
+            TryApplyHumanoidHeadHeightScaleCorrection(instance.transform, model, obj, screen: screen, baseScale: baseScale, uniformScale: targetUniform);
         }
     }
 
 
-    private void TryApplyHumanoidHeadHeightScaleCorrection(Transform root, ReplaceableModel model, MetaObj obj, Vector3 rootWorld, Transform screen, Vector3 baseScale, float uniformScale)
+    private void TryApplyHumanoidHeadHeightScaleCorrection(Transform root, ReplaceableModel model, MetaObj obj, Transform screen, Vector3 baseScale, float uniformScale)
     {
         if (root == null || model == null || !obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
         {
             return;
         }
 
-        if (!TryGetHeadTargetWorld(obj, rootWorld, screen, out Vector3 headTargetWorld))
+        if (!TryGetHeadTargetWorld(obj, screen, out Vector3 headTargetWorld))
         {
             return;
         }
@@ -477,7 +477,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private bool TryGetHeadTargetWorld(MetaObj obj, Vector3 rootWorld, Transform screen, out Vector3 headTargetWorld)
+    private bool TryGetHeadTargetWorld(MetaObj obj, Transform screen, out Vector3 headTargetWorld)
     {
         headTargetWorld = Vector3.zero;
         if (!obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
@@ -486,7 +486,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         SkeletonIndices idx = MetrabsSmpl24Indices;
-        if (!TryBuildPoseWorld(obj, rootWorld, screen, ResolvePoseAxisSign(personBoneAxisSign), out PoseWorldData pose) ||
+        if (!TryBuildPoseWorld(obj, screen, ResolvePoseAxisSign(personBoneAxisSign), out PoseWorldData pose) ||
             pose.jointCount != 24)
         {
             return false;
@@ -510,7 +510,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return true;
     }
 
-    private void TryApplySkeleton(GameObject instance, MetaObj obj, Vector3 rootWorld, Transform screen, int frame)
+    private void TryApplySkeleton(GameObject instance, MetaObj obj, Transform screen, int frame)
     {
         if (instance == null || !obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
         {
@@ -519,13 +519,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (IsCategoryAnimal(obj.categoryId))
         {
-            TryApplyAnimalPosePipeline(instance, obj, rootWorld, screen, frame);
+            TryApplyAnimalPosePipeline(instance, obj, screen, frame);
             return;
         }
 
         if (!IsCategoryOther(obj.categoryId))
         {
-            TryApplyPersonPosePipeline(instance, obj, rootWorld, screen, frame);
+            TryApplyPersonPosePipeline(instance, obj, screen, frame);
         }
     }
 

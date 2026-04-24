@@ -3,7 +3,7 @@
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
     // Depends on: manifest/metaHeader fields in Core.cs and Meta partial
-    // Provides: manifest fallback resolution, crop helpers, intrinsics/fov/quant accessors
+    // Provides: manifest-driven crop helpers and intrinsics/fov accessors
 
     private bool IsManifestJointsSpaceRootRelative()
     {

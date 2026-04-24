@@ -117,7 +117,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             yield break;
         }
 
-        TryLoadManifest(extractedManifestPath);
+        if (!TryLoadManifest(extractedManifestPath))
+        {
+            yield break;
+        }
         LoadMeta(extractedMetaPath);
         LoadBundleSidecars(extractedKeypoints3dPath, extractedOtherObjectProxiesPath);
 
@@ -167,19 +170,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
     }
 
-    private void TryLoadManifest(string manifestPath)
+    private bool TryLoadManifest(string manifestPath)
     {
         if (!File.Exists(manifestPath))
         {
-            return;
+            return false;
         }
 
         try
         {
             manifest = JsonUtility.FromJson<ManifestData>(File.ReadAllText(manifestPath));
+            return
+                manifest != null &&
+                manifest.quant_pos_scale > 0f &&
+                manifest.quant_joint_scale > 0f &&
+                manifest.joints_space == "camera_xyz_root_relative";
         }
         catch
         {
+            manifest = null;
         }
+
+        return false;
     }
 }

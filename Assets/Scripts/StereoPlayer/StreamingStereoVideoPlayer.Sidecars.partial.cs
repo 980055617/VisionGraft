@@ -107,7 +107,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                         continue;
                     }
 
-                    float unitScale = ResolveSidecarUnitScale(category, pose, keypoints);
+                    float unitScale = ResolveSidecarUnitScale(pose);
                     Vector3[] joints = new Vector3[keypoints.Count];
                     byte[] vis = new byte[keypoints.Count];
                     for (int k = 0; k < keypoints.Count; k++)
@@ -187,10 +187,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
     }
 
-    private float ResolveSidecarUnitScale(string category, Dictionary<string, object> pose, List<object> keypoints)
+    private float ResolveSidecarUnitScale(Dictionary<string, object> pose)
     {
-        string coord = pose != null ? GetString(pose, "coordinateSystem") : null;
-        if (StringEquals(category, "person") || StringContains(coord, "metrabs"))
+        string units = pose != null ? GetString(pose, "units") : null;
+        if (StringEquals(units, "millimeters"))
         {
             return 0.001f;
         }
@@ -205,13 +205,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return Vector3.zero;
         }
 
-        if (pose != null)
+        if (pose != null && TryReadVector3(GetList(pose, "skeletonRoot3d"), unitScale, out Vector3 skeletonRoot3d))
         {
-            Vector3 skeletonRoot3d = Vector3.zero;
-            if (TryReadVector3(GetList(pose, "skeletonRoot3d"), unitScale, out skeletonRoot3d))
-            {
-                return skeletonRoot3d;
-            }
+            return skeletonRoot3d;
         }
 
         if (StringEquals(category, "person"))
@@ -219,22 +215,26 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return joints[0];
         }
 
-        if (StringEquals(category, "animal") && joints.Length > 7)
+        if (StringEquals(category, "animal"))
         {
-            return (joints[6] + joints[7]) * 0.5f;
-        }
-
-        if (pose != null)
-        {
-            Dictionary<string, object> bbox3d = GetDict(pose, "bbox3d");
-            Vector3 center = Vector3.zero;
-            if (TryReadVector3(GetList(bbox3d, "center"), unitScale, out center))
+            List<object> rootIndices = pose != null ? GetList(pose, "rootJointIndices") : null;
+            if (rootIndices != null && rootIndices.Count >= 2)
             {
-                return center;
+                int idxA = GetInt(rootIndices, 0, -1);
+                int idxB = GetInt(rootIndices, 1, -1);
+                if (idxA >= 0 && idxB >= 0 && idxA < joints.Length && idxB < joints.Length)
+                {
+                    return (joints[idxA] + joints[idxB]) * 0.5f;
+                }
+            }
+
+            if (joints.Length > 7)
+            {
+                return (joints[6] + joints[7]) * 0.5f;
             }
         }
 
-        return joints[0];
+        return Vector3.zero;
     }
 
     private void LoadOtherObjectProxiesSidecar(string path)
@@ -508,12 +508,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private static bool StringEquals(string a, string b)
     {
         return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool StringContains(string value, string needle)
-    {
-        return !string.IsNullOrEmpty(value) &&
-            value.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     private static Vector3 AbsVector(Vector3 v)

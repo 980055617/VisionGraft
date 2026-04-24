@@ -1,8 +1,6 @@
 using System.Collections;
 using System.IO;
 using System.IO.Compression;
-using System.Globalization;
-using System.Text.RegularExpressions;
 using UnityEngine;
 using UnityEngine.Networking;
 
@@ -69,7 +67,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         string extractedVideoPath = Path.Combine(cacheDir, extractedVideoFileName);
         string extractedManifestPath = Path.Combine(cacheDir, extractedManifestFileName);
         string extractedMetaPath = Path.Combine(cacheDir, extractedMetaFileName);
-        string extractedPipelineManifestPath = Path.Combine(cacheDir, extractedPipelineManifestFileName);
         string extractedKeypoints3dPath = Path.Combine(cacheDir, extractedKeypoints3dFileName);
         string extractedOtherObjectProxiesPath = Path.Combine(cacheDir, extractedOtherObjectProxiesFileName);
 
@@ -98,11 +95,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                         yield break;
                     }
 
-                    if (!ExtractZipEntry(za, bundlePipelineManifestEntryName, extractedPipelineManifestPath))
-                    {
-                        yield break;
-                    }
-
                     if (!ExtractZipEntry(za, bundleKeypoints3dEntryName, extractedKeypoints3dPath))
                     {
                         yield break;
@@ -127,7 +119,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         TryLoadManifest(extractedManifestPath);
         LoadMeta(extractedMetaPath);
-        LoadBundleSidecars(extractedPipelineManifestPath, extractedKeypoints3dPath, extractedOtherObjectProxiesPath);
+        LoadBundleSidecars(extractedKeypoints3dPath, extractedOtherObjectProxiesPath);
 
         string normalizedVideoPath = extractedVideoPath.Replace("\\", "/");
         vp.url = normalizedVideoPath;
@@ -184,107 +176,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         try
         {
-            string json = File.ReadAllText(manifestPath);
-            manifest = JsonUtility.FromJson<ManifestData>(json);
-            if (manifest == null)
-            {
-                return;
-            }
-
-            bool hasJointsSpaceInRaw = json.Contains("\"joints_space\"");
-            bool hasFxNormInRaw = json.Contains("\"fx_norm\"");
-            bool hasFyNormInRaw = json.Contains("\"fy_norm\"");
-            bool parseMissingJointsSpace = string.IsNullOrEmpty(manifest.joints_space);
-            bool parseMissingFxFy = manifest.fx_norm <= 0f || manifest.fy_norm <= 0f;
-            if ((hasJointsSpaceInRaw && parseMissingJointsSpace) || ((hasFxNormInRaw || hasFyNormInRaw) && parseMissingFxFy))
-            {
-                FillManifestMissingFieldsFromRawJson(json);
-            }
+            manifest = JsonUtility.FromJson<ManifestData>(File.ReadAllText(manifestPath));
         }
         catch
         {
         }
-    }
-
-    private void FillManifestMissingFieldsFromRawJson(string json)
-    {
-        if (manifest == null || string.IsNullOrEmpty(json))
-        {
-            return;
-        }
-
-        if (string.IsNullOrEmpty(manifest.joints_space) && TryExtractJsonString(json, "joints_space", out string jointsSpace))
-        {
-            manifest.joints_space = jointsSpace;
-        }
-        if (string.IsNullOrEmpty(manifest.joints_source) && TryExtractJsonString(json, "joints_source", out string jointsSource))
-        {
-            manifest.joints_source = jointsSource;
-        }
-        if (string.IsNullOrEmpty(manifest.camera_axes) && TryExtractJsonString(json, "camera_axes", out string cameraAxes))
-        {
-            manifest.camera_axes = cameraAxes;
-        }
-        if (string.IsNullOrEmpty(manifest.uv_origin) && TryExtractJsonString(json, "uv_origin", out string uvOrigin))
-        {
-            manifest.uv_origin = uvOrigin;
-        }
-        if (manifest.fx_norm <= 0f && TryExtractJsonFloat(json, "fx_norm", out float fxNorm))
-        {
-            manifest.fx_norm = fxNorm;
-        }
-        if (manifest.fy_norm <= 0f && TryExtractJsonFloat(json, "fy_norm", out float fyNorm))
-        {
-            manifest.fy_norm = fyNorm;
-        }
-        if (manifest.eye_w <= 0 && TryExtractJsonInt(json, "eye_w", out int eyeW))
-        {
-            manifest.eye_w = eyeW;
-        }
-        if (manifest.eye_h <= 0 && TryExtractJsonInt(json, "eye_h", out int eyeH))
-        {
-            manifest.eye_h = eyeH;
-        }
-        if (manifest.joints_quant_scale <= 0f && TryExtractJsonFloat(json, "joints_quant_scale", out float jointsQuantScale))
-        {
-            manifest.joints_quant_scale = jointsQuantScale;
-        }
-    }
-
-    private static bool TryExtractJsonString(string json, string key, out string value)
-    {
-        value = null;
-        Match m = Regex.Match(json, $"\"{Regex.Escape(key)}\"\\s*:\\s*\"([^\"]*)\"");
-        if (!m.Success || m.Groups.Count < 2)
-        {
-            return false;
-        }
-
-        value = m.Groups[1].Value;
-        return !string.IsNullOrEmpty(value);
-    }
-
-    private static bool TryExtractJsonFloat(string json, string key, out float value)
-    {
-        value = 0f;
-        Match m = Regex.Match(json, $"\"{Regex.Escape(key)}\"\\s*:\\s*(-?[0-9]+(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)");
-        if (!m.Success || m.Groups.Count < 2)
-        {
-            return false;
-        }
-
-        return float.TryParse(m.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
-    }
-
-    private static bool TryExtractJsonInt(string json, string key, out int value)
-    {
-        value = 0;
-        Match m = Regex.Match(json, $"\"{Regex.Escape(key)}\"\\s*:\\s*(-?[0-9]+)");
-        if (!m.Success || m.Groups.Count < 2)
-        {
-            return false;
-        }
-
-        return int.TryParse(m.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
     }
 }

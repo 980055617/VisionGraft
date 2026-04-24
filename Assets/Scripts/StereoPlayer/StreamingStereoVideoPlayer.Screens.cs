@@ -767,12 +767,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         camUp.Normalize();
 
         camRotation = Quaternion.LookRotation(camForward, camUp);
-        if (legacyVirtualOrigin)
-        {
-            camOrigin = screen.position + screenFront * screenDistanceMeters;
-            return true;
-        }
-
         if (!TryGetHeadVirtualOrigin(out camOrigin, out _))
         {
             camOrigin = screen.position + screenFront * screenDistanceMeters;

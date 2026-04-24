@@ -51,7 +51,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private MetaHeader metaHeader;
     private readonly Dictionary<ushort, ushort> categoryKpCounts = new Dictionary<ushort, ushort>();
     private readonly Dictionary<byte, string> categoryNames = new Dictionary<byte, string>();
-    private readonly Dictionary<byte, ushort[]> categoryEdges = new Dictionary<byte, ushort[]>();
     private ulong[] frameOffsets;
     private string metaFilePath;
     private readonly List<MetaObj> metaFrameObjects = new List<MetaObj>(64);
@@ -88,11 +87,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return manifest.quant_joint_scale;
         }
 
-        if (fallbackQuantJointScale > 0f)
-        {
-            return fallbackQuantJointScale;
-        }
-
         return 0f;
     }
 
@@ -107,7 +101,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         metaLoaded = false;
         categoryKpCounts.Clear();
         categoryNames.Clear();
-        categoryEdges.Clear();
         frameOffsets = null;
 
         try
@@ -171,32 +164,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
             ushort edgeCount = br.ReadUInt16();
             int edgeBytes = edgeCount * sizeof(ushort) * 2;
-            ushort[] edges = null;
             if (edgeBytes > 0)
             {
-                edges = new ushort[edgeCount * 2];
-                for (int e = 0; e < edgeCount; e++)
-                {
-                    edges[e * 2] = br.ReadUInt16();
-                    edges[e * 2 + 1] = br.ReadUInt16();
-                }
+                br.BaseStream.Seek(edgeBytes, SeekOrigin.Current);
             }
 
             categoryKpCounts[catId] = kpCount;
             categoryNames[(byte)catId] = catName;
-            categoryEdges[(byte)catId] = edges ?? Array.Empty<ushort>();
         }
-    }
-
-    private bool TryGetCategoryEdges(byte categoryId, out ushort[] edges)
-    {
-        if (categoryEdges.TryGetValue(categoryId, out edges) && edges != null && edges.Length >= 2)
-        {
-            return true;
-        }
-
-        edges = null;
-        return false;
     }
 
     private void ReadIndexTable(BinaryReader br, ulong offset, uint numFrames)

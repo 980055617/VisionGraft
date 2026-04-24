@@ -28,39 +28,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private readonly Dictionary<int, Dictionary<uint, OtherObjectProxy>> otherProxiesByFrame = new Dictionary<int, Dictionary<uint, OtherObjectProxy>>();
     private readonly Dictionary<uint, GameObject> otherProxyBoxesByTrack = new Dictionary<uint, GameObject>();
     private Material otherProxyBoxMaterial;
-    private bool sidecarsLoaded;
 
-    private void LoadBundleSidecars(string pipelineManifestPath, string keypoints3dPath, string otherObjectProxiesPath)
+    private void LoadBundleSidecars(string keypoints3dPath, string otherObjectProxiesPath)
     {
-        sidecarsLoaded = false;
         sidecarSkeletonsByFrame.Clear();
         otherProxiesByFrame.Clear();
 
-        TryLoadPipelineManifestSidecar(pipelineManifestPath);
         LoadKeypoints3dSidecar(keypoints3dPath);
         LoadOtherObjectProxiesSidecar(otherObjectProxiesPath);
 
-        sidecarsLoaded = sidecarSkeletonsByFrame.Count > 0 || otherProxiesByFrame.Count > 0;
         Debug.Log($"SVB sidecars loaded: keypointFrames={sidecarSkeletonsByFrame.Count}, otherProxyFrames={otherProxiesByFrame.Count}");
-    }
-
-    private void TryLoadPipelineManifestSidecar(string path)
-    {
-        if (string.IsNullOrEmpty(path) || !File.Exists(path))
-        {
-            return;
-        }
-
-        try
-        {
-            string json = File.ReadAllText(path);
-            FillManifestMissingFieldsFromRawJson(json);
-            Debug.Log($"SVB pipeline manifest loaded: {Path.GetFileName(path)}");
-        }
-        catch (Exception ex)
-        {
-            Debug.LogWarning($"Failed to load SVB pipeline manifest sidecar: {ex.Message}");
-        }
     }
 
     private void LoadKeypoints3dSidecar(string path)
@@ -206,25 +183,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (keypoints != null)
             {
                 categoryKpCounts[id] = (ushort)Mathf.Min(ushort.MaxValue, keypoints.Count);
-            }
-
-            List<object> skeleton = GetList(cat, "skeleton");
-            if (skeleton != null)
-            {
-                List<ushort> edges = new List<ushort>(skeleton.Count * 2);
-                for (int i = 0; i < skeleton.Count; i++)
-                {
-                    List<object> edge = skeleton[i] as List<object>;
-                    if (edge == null || edge.Count < 2)
-                    {
-                        continue;
-                    }
-
-                    edges.Add((ushort)Mathf.Clamp(GetInt(edge, 0, 0), 0, ushort.MaxValue));
-                    edges.Add((ushort)Mathf.Clamp(GetInt(edge, 1, 0), 0, ushort.MaxValue));
-                }
-
-                categoryEdges[id] = edges.ToArray();
             }
         }
     }

@@ -4,144 +4,37 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
     // Entry point for animal pose application and root orientation.
 
-    private void ApplyAnimalSkeleton(Transform instanceRoot, Animator animator, Vector3[] jointsWorld, byte[] vis, int jointCount, byte categoryId, Transform screen, bool freezeDogDistal)
+    private void ApplyAnimalSkeleton(Transform instanceRoot, Animator animator, Vector3[] jointsWorld, byte[] vis, int jointCount, Vector3 skeletonRoot, bool freezeAnimalDistal)
     {
         if (instanceRoot == null || jointsWorld == null || vis == null || jointCount < 20)
         {
             return;
         }
 
-        AnimalRigCache cache = TryApplyAnimalSkeletonPlacement(instanceRoot, animator, jointsWorld, vis, jointCount);
-        if (cache == null || !cache.ready)
+        AnimalRigCache cache = ApplyAnimalSkeletonPlacement(instanceRoot, animator, jointsWorld, vis, jointCount, skeletonRoot);
+        if (!cache.ready)
         {
             return;
         }
 
-        // Root orientation:
-        // - dog: yaw-only style using world-up (screen tilt is ignored)
-        // - others: previous behavior using screen-up
-        bool isAnimalCategory = IsCategoryAnimal(categoryId);
-        float rootRotateAlpha = isAnimalCategory
-            ? GetEffectiveDogRootRotateAlpha()
-            : Mathf.Clamp01(animalRootRotateAlpha);
-        if (isAnimalCategory)
-        {
-            TryApplyAnimalRootOrientation(instanceRoot, jointsWorld, vis, null, rootRotateAlpha);
-        }
-        else
-        {
-            TryApplyAnimalRootOrientation(instanceRoot, jointsWorld, vis, screen, rootRotateAlpha);
-        }
+        // Animal pose application only runs for the "animal" category path.
+        // Keep root heading as yaw-only against world-up.
+        TryApplyAnimalRootOrientation(instanceRoot, jointsWorld, vis, Mathf.Clamp01(animalRootRotateAlpha));
+        AlignAnimalRootToSkeleton(instanceRoot, cache, skeletonRoot);
 
-        if (TryGetAnimalSkeletonRootWorld(jointsWorld, vis, jointCount, out Vector3 skeletonRoot))
-        {
-            AlignAnimalRootToSkeleton(instanceRoot, cache, skeletonRoot);
-        }
+        float alpha = Mathf.Clamp01(boneApplyAlpha);
 
-        float alpha = isAnimalCategory
-            ? GetEffectiveDogBoneApplyAlpha()
-            : Mathf.Clamp01(boneApplyAlpha);
-        // Dog is handled in a reduced-drive mode:
-        // root heading + head + limbs (no spine drive).
-        if (isAnimalCategory)
-        {
-            // Head only: fixed mapping (Throat -> Nose), no fallback.
-            ApplyAnimalBoneFromJoints(cache, cache.neck, jointsWorld, vis, 5, 4, alpha * 0.65f);
-            ApplyAnimalBoneFromJoints(cache, cache.head, jointsWorld, vis, 5, 4, alpha * 0.65f);
-
-            if (!enableAnimalLimbApply)
-            {
-                return;
-            }
-
-            // Front legs: fixed mapping (no distal apply).
-            // left front:
-            //   001 (upper) <- 8 -> 12
-            //   002 (lower) <- 12 -> 16
-            //   003 (paw)   <- untouched
-            ApplyAnimalBoneFromJoints(cache, cache.leftFrontUpper, jointsWorld, vis, 8, 12, alpha * 0.9f);
-            ApplyAnimalBoneFromJoints(cache, cache.leftFrontLower, jointsWorld, vis, 12, 16, alpha * 0.85f);
-            // right front:
-            //   001 (upper) <- 9 -> 13
-            //   002 (lower) <- 13 -> 17
-            //   003 (paw)   <- untouched
-            ApplyAnimalBoneFromJoints(cache, cache.rightFrontUpper, jointsWorld, vis, 9, 13, alpha * 0.9f);
-            ApplyAnimalBoneFromJoints(cache, cache.rightFrontLower, jointsWorld, vis, 13, 17, alpha * 0.85f);
-
-            // Rear legs: segment mapping from joint points (J0->J1, J1->J2, J2->J3).
-            ApplyAnimalLimbByJointSegments(cache, cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, jointsWorld, vis, DogLeftRearChain, alpha, !freezeDogDistal);
-            ApplyAnimalLimbByJointSegments(cache, cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, jointsWorld, vis, DogRightRearChain, alpha, !freezeDogDistal);
-            return;
-        }
-
-        if (!TryResolveAnimalGraphChains(categoryId, jointsWorld, vis, screen, out AnimalGraphChains chains))
-        {
-            // Fallback to previous fixed mapping if graph extraction fails.
-            ApplyAnimalBoneFromJoints(cache, cache.neck, jointsWorld, vis, 4, 0, alpha * 0.65f);
-            ApplyAnimalBoneFromJoints(cache, cache.head, jointsWorld, vis, 4, 0, alpha * 0.65f);
-            if (enableAnimalSpineApply)
-            {
-                ApplyAnimalBoneFromJoints(cache, cache.spine, jointsWorld, vis, 7, 4, alpha * 0.5f);
-            }
-            ApplyAnimalBoneFromJoints(cache, cache.tailBase, jointsWorld, vis, 4, 7, alpha * 0.3f);
-            ApplyAnimalBoneFromJoints(cache, cache.tailMid, jointsWorld, vis, 4, 7, alpha * 0.2f);
-            ApplyAnimalBoneFromJoints(cache, cache.tailTip, jointsWorld, vis, 4, 7, alpha * 0.15f);
-            if (enableAnimalLimbApply)
-            {
-                ApplyAnimalBoneFromJoints(cache, cache.leftFrontUpper, jointsWorld, vis, 5, 8, alpha * 0.8f);
-                ApplyAnimalBoneFromJoints(cache, cache.leftFrontLower, jointsWorld, vis, 8, 12, alpha * 0.45f);
-                ApplyAnimalBoneFromJoints(cache, cache.leftFrontPaw, jointsWorld, vis, 12, 16, alpha * 0.25f);
-                ApplyAnimalBoneFromJoints(cache, cache.rightFrontUpper, jointsWorld, vis, 6, 9, alpha * 0.8f);
-                ApplyAnimalBoneFromJoints(cache, cache.rightFrontLower, jointsWorld, vis, 9, 13, alpha * 0.45f);
-                ApplyAnimalBoneFromJoints(cache, cache.rightFrontPaw, jointsWorld, vis, 13, 17, alpha * 0.25f);
-                ApplyAnimalBoneFromJoints(cache, cache.leftRearUpper, jointsWorld, vis, 7, 10, alpha * 0.8f);
-                ApplyAnimalBoneFromJoints(cache, cache.leftRearLower, jointsWorld, vis, 10, 14, alpha * 0.45f);
-                ApplyAnimalBoneFromJoints(cache, cache.leftRearPaw, jointsWorld, vis, 14, 18, alpha * 0.25f);
-                ApplyAnimalBoneFromJoints(cache, cache.rightRearUpper, jointsWorld, vis, 7, 11, alpha * 0.8f);
-                ApplyAnimalBoneFromJoints(cache, cache.rightRearLower, jointsWorld, vis, 11, 15, alpha * 0.45f);
-                ApplyAnimalBoneFromJoints(cache, cache.rightRearPaw, jointsWorld, vis, 15, 19, alpha * 0.25f);
-            }
-            return;
-        }
-
-        if (chains.hasHead)
-        {
-            ApplyAnimalBoneFromPoints(cache, cache.neck, chains.headRoot, chains.headTip, alpha * 0.65f);
-            ApplyAnimalBoneFromPoints(cache, cache.head, chains.headRoot, chains.headTip, alpha * 0.65f);
-        }
-        if (chains.hasTorso)
-        {
-            if (enableAnimalSpineApply)
-            {
-                ApplyAnimalBoneFromJoints(cache, cache.spine, jointsWorld, vis, chains.rearHub, chains.frontHub, alpha * 0.5f);
-            }
-            ApplyAnimalBoneFromJoints(cache, cache.tailBase, jointsWorld, vis, chains.frontHub, chains.rearHub, alpha * 0.3f);
-            ApplyAnimalBoneFromJoints(cache, cache.tailMid, jointsWorld, vis, chains.frontHub, chains.rearHub, alpha * 0.2f);
-            ApplyAnimalBoneFromJoints(cache, cache.tailTip, jointsWorld, vis, chains.frontHub, chains.rearHub, alpha * 0.15f);
-        }
+        ApplyAnimalHeadPose(cache, jointsWorld, vis, alpha);
 
         if (!enableAnimalLimbApply)
         {
             return;
         }
 
-        ApplyAnimalLimbChain(cache, cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw, jointsWorld, vis, chains.leftFrontChain, alpha);
-        ApplyAnimalLimbChain(cache, cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw, jointsWorld, vis, chains.rightFrontChain, alpha);
-        ApplyAnimalLimbChain(cache, cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, jointsWorld, vis, chains.leftRearChain, alpha);
-        ApplyAnimalLimbChain(cache, cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, jointsWorld, vis, chains.rightRearChain, alpha);
+        ApplyAnimalLimbPose(cache, jointsWorld, vis, alpha, freezeAnimalDistal);
     }
 
-    private float GetEffectiveDogBoneApplyAlpha()
-    {
-        return Mathf.Clamp01(boneApplyAlpha);
-    }
-
-    private float GetEffectiveDogRootRotateAlpha()
-    {
-        return Mathf.Clamp01(animalRootRotateAlpha);
-    }
-
-    private void TryApplyAnimalRootOrientation(Transform instanceRoot, Vector3[] jointsWorld, byte[] vis, Transform screen, float rotateAlpha)
+    private void TryApplyAnimalRootOrientation(Transform instanceRoot, Vector3[] jointsWorld, byte[] vis, float rotateAlpha)
     {
         if (instanceRoot == null || jointsWorld == null || vis == null)
         {
@@ -153,7 +46,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        Vector3 up = screen != null && screen.up.sqrMagnitude > 0.0001f ? screen.up.normalized : Vector3.up;
+        Vector3 up = Vector3.up;
         Vector3 planarForward = Vector3.ProjectOnPlane(bodyForward, up);
         if (planarForward.sqrMagnitude < 0.000001f)
         {
@@ -260,34 +153,21 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return true;
     }
 
-    private AnimalRigCache TryApplyAnimalSkeletonPlacement(Transform instanceRoot, Animator animator, Vector3[] jointsWorld, byte[] vis, int jointCount)
+    private AnimalRigCache ApplyAnimalSkeletonPlacement(Transform instanceRoot, Animator animator, Vector3[] jointsWorld, byte[] vis, int jointCount, Vector3 skeletonRoot)
     {
-        if (instanceRoot == null)
-        {
-            return null;
-        }
-
         Transform rigRoot = animator != null ? animator.transform : instanceRoot;
         AnimalRigCache cache = GetOrBuildAnimalRigCache(rigRoot);
-        if (TryGetAnimalSkeletonRootWorld(jointsWorld, vis, jointCount, out Vector3 skeletonRoot))
+        if (enableSkeletonScaleCorrection)
         {
-            if (enableSkeletonScaleCorrection)
-            {
-                ApplyAnimalSkeletonScale(instanceRoot, jointsWorld, vis, jointCount);
-            }
-            if (cache == null || !cache.ready)
-            {
-                instanceRoot.position = skeletonRoot;
-            }
-            else
-            {
-                AlignAnimalRootToSkeleton(instanceRoot, cache, skeletonRoot);
-            }
+            ApplyAnimalSkeletonScale(instanceRoot, jointsWorld, vis, jointCount);
         }
-
-        if (cache == null || !cache.ready)
+        if (cache.ready)
         {
-            return cache;
+            AlignAnimalRootToSkeleton(instanceRoot, cache, skeletonRoot);
+        }
+        else
+        {
+            instanceRoot.position = skeletonRoot;
         }
 
         return cache;
@@ -325,54 +205,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        Transform placementBone = ResolveAnimalPlacementBone(cache);
-        if (placementBone != null)
-        {
-            instanceRoot.position += skeletonRoot - placementBone.position;
-            return;
-        }
-
-        instanceRoot.position = skeletonRoot;
+        instanceRoot.position += skeletonRoot - ResolveAnimalPlacementBone(cache).position;
     }
 
     private static Transform ResolveAnimalPlacementBone(AnimalRigCache cache)
     {
-        if (cache == null)
-        {
-            return null;
-        }
-
-        if (cache.spine != null)
-        {
-            return cache.spine;
-        }
-
-        if (cache.neck != null)
-        {
-            return cache.neck;
-        }
-
-        if (cache.tailBase != null)
-        {
-            return cache.tailBase;
-        }
-
-        return cache.root;
+        return cache.spine ?? cache.neck ?? cache.tailBase ?? cache.root;
     }
-
-    private struct AnimalGraphChains
-    {
-        public bool hasHead;
-        public bool hasTorso;
-        public int frontHub;
-        public int rearHub;
-        public Vector3 headRoot;
-        public Vector3 headTip;
-        public int[] leftFrontChain;
-        public int[] rightFrontChain;
-        public int[] leftRearChain;
-        public int[] rightRearChain;
-    }
-
 }
 

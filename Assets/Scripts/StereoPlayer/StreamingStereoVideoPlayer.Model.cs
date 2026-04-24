@@ -18,10 +18,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private readonly Dictionary<Transform, Vector3> animalRootYawForwardByRoot = new Dictionary<Transform, Vector3>();
     private readonly Dictionary<Animator, HumanoidRigCache> humanoidCaches = new Dictionary<Animator, HumanoidRigCache>();
     private readonly Dictionary<Transform, AnimalRigCache> animalRigCaches = new Dictionary<Transform, AnimalRigCache>();
-    private static readonly int[] DogLeftFrontChain = { 7, 8, 12, 16 };
-    private static readonly int[] DogRightFrontChain = { 7, 9, 13, 17 };
-    private static readonly int[] DogLeftRearChain = { 6, 10, 14, 18 };
-    private static readonly int[] DogRightRearChain = { 6, 11, 15, 19 };
+    private static readonly int[] AnimalLeftFrontChain = { 7, 8, 12, 16 };
+    private static readonly int[] AnimalRightFrontChain = { 7, 9, 13, 17 };
+    private static readonly int[] AnimalLeftRearChain = { 6, 10, 14, 18 };
+    private static readonly int[] AnimalRightRearChain = { 6, 11, 15, 19 };
     private struct SkeletonIndices
     {
         public int nose;
@@ -76,12 +76,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public Transform root;
         public Transform neck;
         public Transform head;
-        public Transform leftEar;
-        public Transform rightEar;
         public Transform spine;
         public Transform tailBase;
-        public Transform tailMid;
-        public Transform tailTip;
         public Transform leftFrontUpper;
         public Transform leftFrontLower;
         public Transform leftFrontPaw;

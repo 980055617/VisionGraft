@@ -77,11 +77,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 return;
             }
 
-            bool freezeDogDistal = false;
-            int dogSkipSegments = CountDogSkipSegments(pose.jointCount, obj.jointsVis, obj.jointsCam);
-            freezeDogDistal =
-                enableDogDistalFreezeOnHighSkip &&
-                dogSkipSegments >= Mathf.Max(0, dogDistalFreezeSkipThreshold);
+            bool freezeAnimalDistal =
+                enableAnimalDistalFreezeOnHighSkip &&
+                CountAnimalSkipSegments(pose.jointCount, obj.jointsVis, obj.jointsCam) >= Mathf.Max(0, animalDistalFreezeSkipThreshold);
 
             if (enableJointSmoothing)
             {
@@ -99,18 +97,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Animator animator = instance.GetComponentInChildren<Animator>();
             if (!enableBoneApply)
             {
-                TryApplyAnimalSkeletonPlacement(instance.transform, animator, pose.jointsWorld, obj.jointsVis, pose.jointCount);
+                ApplyAnimalSkeletonPlacement(instance.transform, animator, pose.jointsWorld, obj.jointsVis, pose.jointCount, skeletonRoot);
                 return;
             }
 
-            ApplyAnimalSkeleton(instance.transform, animator, pose.jointsWorld, obj.jointsVis, pose.jointCount, obj.categoryId, screen, freezeDogDistal);
+            ApplyAnimalSkeleton(instance.transform, animator, pose.jointsWorld, obj.jointsVis, pose.jointCount, skeletonRoot, freezeAnimalDistal);
         }
         catch
         {
         }
     }
 
-    private static bool IsDogSegmentUsable(int idxA, int idxB, int jointCount, byte[] vis, Vector3[] jointsCam)
+    private static bool IsAnimalSegmentUsable(int idxA, int idxB, int jointCount, byte[] vis, Vector3[] jointsCam)
     {
         if (idxA < 0 || idxB < 0 || idxA >= jointCount || idxB >= jointCount)
         {
@@ -130,27 +128,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return !Mathf.Approximately(jointsCam[idxA].z, 0f) && !Mathf.Approximately(jointsCam[idxB].z, 0f);
     }
 
-    private static int CountDogSkipSegments(int jointCount, byte[] vis, Vector3[] jointsCam)
+    private static int CountAnimalSkipSegments(int jointCount, byte[] vis, Vector3[] jointsCam)
     {
         int skip = 0;
-        for (int i = 0; i + 1 < DogLeftFrontChain.Length; i++)
+        for (int i = 0; i + 1 < AnimalLeftFrontChain.Length; i++)
         {
-            if (!IsDogSegmentUsable(DogLeftFrontChain[i], DogLeftFrontChain[i + 1], jointCount, vis, jointsCam)) skip++;
+            if (!IsAnimalSegmentUsable(AnimalLeftFrontChain[i], AnimalLeftFrontChain[i + 1], jointCount, vis, jointsCam)) skip++;
         }
 
-        for (int i = 0; i + 1 < DogRightFrontChain.Length; i++)
+        for (int i = 0; i + 1 < AnimalRightFrontChain.Length; i++)
         {
-            if (!IsDogSegmentUsable(DogRightFrontChain[i], DogRightFrontChain[i + 1], jointCount, vis, jointsCam)) skip++;
+            if (!IsAnimalSegmentUsable(AnimalRightFrontChain[i], AnimalRightFrontChain[i + 1], jointCount, vis, jointsCam)) skip++;
         }
 
-        for (int i = 0; i + 1 < DogLeftRearChain.Length; i++)
+        for (int i = 0; i + 1 < AnimalLeftRearChain.Length; i++)
         {
-            if (!IsDogSegmentUsable(DogLeftRearChain[i], DogLeftRearChain[i + 1], jointCount, vis, jointsCam)) skip++;
+            if (!IsAnimalSegmentUsable(AnimalLeftRearChain[i], AnimalLeftRearChain[i + 1], jointCount, vis, jointsCam)) skip++;
         }
 
-        for (int i = 0; i + 1 < DogRightRearChain.Length; i++)
+        for (int i = 0; i + 1 < AnimalRightRearChain.Length; i++)
         {
-            if (!IsDogSegmentUsable(DogRightRearChain[i], DogRightRearChain[i + 1], jointCount, vis, jointsCam)) skip++;
+            if (!IsAnimalSegmentUsable(AnimalRightRearChain[i], AnimalRightRearChain[i + 1], jointCount, vis, jointsCam)) skip++;
         }
 
         return skip;
@@ -209,7 +207,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
         }
 
-        bool rootRel = obj.hasSkeletonRootCam || !IsEffectiveJointsSpaceAbsolute();
+        bool rootRel = obj.hasSkeletonRootCam || IsManifestJointsSpaceRootRelative();
         Vector3 rootBaseWorld = rootWorld;
         if (useAbsoluteSkeletonRoot)
         {
@@ -240,11 +238,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (axisSign.sqrMagnitude > 0.000001f)
         {
             return axisSign;
-        }
-
-        if (boneAxisSign.sqrMagnitude > 0.000001f)
-        {
-            return boneAxisSign;
         }
 
         return Vector3.one;

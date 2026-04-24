@@ -4,7 +4,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
     private void RegisterAnimalAimChild(AnimalRigCache cache, Transform bone, Transform aimChild)
     {
-        if (cache == null || bone == null || aimChild == null)
+        if (bone == null || aimChild == null)
         {
             return;
         }
@@ -12,10 +12,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         cache.aimChildByBone[bone] = aimChild;
     }
 
+    private void RegisterAnimalAimPairs(AnimalRigCache cache, params Transform[] bones)
+    {
+        if (bones == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i + 1 < bones.Length; i += 2)
+        {
+            RegisterAnimalAimChild(cache, bones[i], bones[i + 1]);
+        }
+    }
+
 
     private void PrimeAnimalBind(AnimalRigCache cache, Transform bone)
     {
-        if (cache == null || bone == null || cache.bindRotLocal.ContainsKey(bone))
+        if (bone == null || cache.bindRotLocal.ContainsKey(bone))
         {
             return;
         }
@@ -27,6 +40,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             bindDirLocal = bone.InverseTransformDirection(bindDirWorld);
         }
         cache.bindDirLocal[bone] = bindDirLocal == Vector3.zero ? Vector3.forward : bindDirLocal.normalized;
+    }
+
+    private void PrimeAnimalBinds(AnimalRigCache cache, params Transform[] bones)
+    {
+        if (bones == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < bones.Length; i++)
+        {
+            PrimeAnimalBind(cache, bones[i]);
+        }
     }
 
 
@@ -97,48 +123,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return true;
     }
 
-
-    private bool ApplyAnimalBoneFromPointsLocalOnly(AnimalRigCache cache, Transform bone, Vector3 pointA, Vector3 pointB, float alpha)
-    {
-        if (bone == null)
-        {
-            return false;
-        }
-
-        Vector3 targetDir = (pointB - pointA).normalized;
-        if (targetDir == Vector3.zero)
-        {
-            return false;
-        }
-
-        Vector3 targetLocalDir = bone.parent != null
-            ? bone.parent.InverseTransformDirection(targetDir)
-            : targetDir;
-        if (targetLocalDir == Vector3.zero)
-        {
-            return false;
-        }
-        targetLocalDir.Normalize();
-
-        if (!cache.bindDirLocal.TryGetValue(bone, out Vector3 bindDirLocal) || bindDirLocal == Vector3.zero)
-        {
-            bindDirLocal = Vector3.forward;
-        }
-
-        if (!cache.bindRotLocal.TryGetValue(bone, out Quaternion bindRotLocal))
-        {
-            bindRotLocal = bone.localRotation;
-        }
-
-        Quaternion targetLocal = Quaternion.FromToRotation(bindDirLocal, targetLocalDir) * bindRotLocal;
-        bone.localRotation = Quaternion.Slerp(bone.localRotation, targetLocal, Mathf.Clamp01(alpha));
-        return true;
-    }
-
-
     private Transform ResolveAnimalAimChild(AnimalRigCache cache, Transform bone)
     {
-        if (cache != null && bone != null && cache.aimChildByBone.TryGetValue(bone, out Transform mapped) && mapped != null)
+        if (bone != null && cache.aimChildByBone.TryGetValue(bone, out Transform mapped) && mapped != null)
         {
             return mapped;
         }
@@ -195,7 +182,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private static bool IsAnimalLimbBone(AnimalRigCache cache, Transform bone)
     {
-        if (cache == null || bone == null)
+        if (bone == null)
         {
             return false;
         }

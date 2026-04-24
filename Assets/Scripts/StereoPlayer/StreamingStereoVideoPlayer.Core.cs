@@ -1,6 +1,7 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Serialization;
 using UnityEngine.Video;
 using UnityEngine.XR;
 
@@ -11,13 +12,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public string bundleVideoEntryName = "video.mp4";   // zip entry name
     public string bundleManifestEntryName = "manifest.json";
     public string bundleMetaEntryName = "meta.bin";
-    public string bundlePipelineManifestEntryName = "source/pipeline_manifest.json";
     public string bundleKeypoints3dEntryName = "source/keypoints3d.json";
     public string bundleOtherObjectProxiesEntryName = "source/other_object_proxies.json";
     public string extractedVideoFileName = "video.mp4"; // extracted file name
     public string extractedManifestFileName = "manifest.json";
     public string extractedMetaFileName = "meta.bin";
-    public string extractedPipelineManifestFileName = "pipeline_manifest.json";
     public string extractedKeypoints3dFileName = "keypoints3d.json";
     public string extractedOtherObjectProxiesFileName = "other_object_proxies.json";
 
@@ -33,7 +32,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public Transform headTransform;
     public float screenDistanceMeters = 2.0f;
     public Vector3 screenOffsetMeters = Vector3.zero;
-    public bool legacyVirtualOrigin = false;
     public bool fitScreenToFov = false;
     [Header("Depth Popout")]
     public float popoutRangeMeters = 0.35f;
@@ -74,8 +72,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public float boneApplyAlpha = 1f;
     public bool enableJointSmoothing = true;
     [Range(0f, 1f)] public float jointSmoothingAlpha = 0.35f;
-    public Vector3 boneAxisSign = Vector3.one;
-    public float fallbackQuantJointScale = 1f;
     [Header("Pose Pipelines")]
     public Vector3 personBoneAxisSign = new Vector3(1f, -1f, 1f);
     public Vector3 animalBoneAxisSign = Vector3.one;
@@ -96,18 +92,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     [Range(0f, 1f)] public float yawDepthBlend = 1f;
     [Header("Animal Bones")]
     public bool enableAnimalLimbApply = false;
-    public bool enableAnimalSpineApply = false;
     public bool stabilizeAnimalRootYaw = true;
     public float animalRootYawMaxDegreesPerSecond = 180f;
     [Range(0f, 1f)] public float animalRootRotateAlpha = 0.6f;
     public Vector3 animalModelForwardLocal = Vector3.right;
     public Vector3 animalModelUpLocal = Vector3.up;
+    [FormerlySerializedAs("enableDogDistalFreezeOnHighSkip")]
+    public bool enableAnimalDistalFreezeOnHighSkip = true;
+    [FormerlySerializedAs("dogDistalFreezeSkipThreshold")]
+    [Range(0, 16)] public int animalDistalFreezeSkipThreshold = 6;
 
     [Header("Runtime Flags")]
     public bool forceScreensInFrontOfViewCamera = false;
     public bool forceStationaryTrackingOrigin = true;
-    public bool enableDogDistalFreezeOnHighSkip = true;
-    [Range(0, 16)] public int dogDistalFreezeSkipThreshold = 6;
     public bool alignModelToBBoxBottom = true;
     public float bboxAnchorVToBottom = 0.5f;
     public float modelBottomExtraOffsetMeters = 0f;
@@ -174,14 +171,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public int num_frames;
         public float fps;
         public float fovx_deg;
-        public float fovx;
-        public float fovxDeg;
         public float quant_pos_scale;
         public float quant_joint_scale;
-        public float quantScale;
-        public float quantPosScale;
-        public float quant;
-        public float quant_pos;
         public string joints_space;
         public string joints_source;
         public string camera_axes;

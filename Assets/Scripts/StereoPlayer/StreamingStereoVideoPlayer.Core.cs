@@ -7,26 +7,23 @@ using UnityEngine.XR;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
-    [Header("Bundle")]
     public string bundleFileName = "bundle.svb";
-    public string bundleVideoEntryName = "video.mp4";   // zip entry name
-    public string bundleManifestEntryName = "manifest.json";
-    public string bundleMetaEntryName = "meta.bin";
-    public string bundleKeypoints3dEntryName = "source/keypoints3d.json";
-    public string bundleOtherObjectProxiesEntryName = "source/other_object_proxies.json";
-    public string extractedVideoFileName = "video.mp4"; // extracted file name
-    public string extractedManifestFileName = "manifest.json";
-    public string extractedMetaFileName = "meta.bin";
-    public string extractedKeypoints3dFileName = "keypoints3d.json";
-    public string extractedOtherObjectProxiesFileName = "other_object_proxies.json";
+    private const string BundleVideoEntryName = "video.mp4";
+    private const string BundleManifestEntryName = "manifest.json";
+    private const string BundleMetaEntryName = "meta.bin";
+    private const string BundleKeypoints3dEntryName = "source/keypoints3d.json";
+    private const string BundleOtherObjectProxiesEntryName = "source/other_object_proxies.json";
+    private const string ExtractedVideoFileName = "video.mp4";
+    private const string ExtractedManifestFileName = "manifest.json";
+    private const string ExtractedMetaFileName = "meta.bin";
+    private const string ExtractedKeypoints3dFileName = "keypoints3d.json";
+    private const string ExtractedOtherObjectProxiesFileName = "other_object_proxies.json";
 
     [Header("Screens")]
     private Transform leftScreen;
     private Transform rightScreen;
     public GameObject leftScreenPrefab;
     public GameObject rightScreenPrefab;
-
-    public float markerOffset = 0.02f; // 繧ｹ繧ｯ繝ｪ繝ｼ繝ｳ謇句燕縺ｫ蜃ｺ縺・m)
 
     [Header("Placement")]
     public Transform headTransform;
@@ -38,19 +35,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public float epsilonMeters = 0.02f;
     public float minDistanceFromHeadMeters = 0.25f;
 
-    [Header("Test Model")]
-    public GameObject testModelPrefab;
     public GameObject replacePrefab;
     [Header("Track Prefab Overrides")]
     public bool useTrackPrefabOverrides = true;
     public GameObject track0Prefab;
     public GameObject track1Prefab;
-    public Vector2Int testPixel = new Vector2Int(-1, -1);
-    public float testDepthMeters = 0.5f;
-    public bool spawnTestModelOnPrepared = false;
-    public bool destroyPreviousTestModel = true; // Step2霑ｽ蠕薙ｒ閠・∴繧九↑繧映alse謗ｨ螂ｨ
-    public float testModelSizeMeters = 0.05f; // 5cm
-    public Vector2 testModelOffsetMeters = new Vector2(0.10f, 0.0f); // screen蜿ｳ縺ｸ10cm
     [Header("Follow (Meta)")]
     public bool useMetaFollow = true;
     public bool useFrameReadySync = false;
@@ -58,13 +47,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool followNearestToClick = true;
     public float followSelectThresholdPixels = 80f;
 
-    [Header("Follow (Sine Motion)")]
-    public bool enableFollow = true;
-    public float followAmplitudePixels = 30f;
-    public float followSpeed = 1f;
-
     [Header("Video Layout")]
-    public bool sideBySide = true;
     public float baseHeight = 1f;
 
     [Header("Bones")]
@@ -128,8 +111,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool enablePauseHotkey = true;
 
     [Header("Runtime FOVx Tuning")]
-    public bool useRuntimeFovxOverride = false;
-    public float runtimeFovxDeg = 90f;
     public float runtimeFovxMinDeg = 40f;
     public float runtimeFovxMaxDeg = 140f;
     public float runtimeFovxDefaultDeg = 90f;
@@ -148,10 +129,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private Material leftMat;
     private Material rightMat;
     private Mesh quadMesh;
-    private GameObject spawnedTestModel;
-    private Vector2Int pickedPixel;
-    private bool hasPickedPixel;
-    private Transform pickedScreen;
     private bool hasLockedPinholeBasis;
     private Vector3 lockedPinholeOrigin;
     private Quaternion lockedPinholeRotation = Quaternion.identity;
@@ -160,6 +137,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private Vector3 lastHeadPos;
     private Quaternion lastHeadRot = Quaternion.identity;
     private bool prevPrimaryButtonPressed;
+    private bool useRuntimeFovxOverride;
+    private float runtimeFovxDeg;
 
     [System.Serializable]
     private class ManifestData

@@ -8,47 +8,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     public void FollowTick()
     {
-        if (useMetaFollow && metaLoaded)
-        {
-            FollowTickMeta();
-            return;
-        }
-
-        if (!enableFollow || !hasPickedPixel || spawnedTestModel == null)
+        if (!useMetaFollow || !metaLoaded)
         {
             return;
         }
-
-        if (manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
-        {
-            return;
-        }
-
-        Transform screen = leftScreen;
-        if (screen == null)
-        {
-            return;
-        }
-
-        float t = vp != null ? (float)vp.time : Time.time;
-        int du = Mathf.RoundToInt(Mathf.Sin(t * followSpeed) * followAmplitudePixels);
-        int dv = Mathf.RoundToInt(Mathf.Cos(t * followSpeed) * followAmplitudePixels);
-        int u2 = Mathf.Clamp(pickedPixel.x + du, 0, manifest.eye_w - 1);
-        int v2 = Mathf.Clamp(pickedPixel.y + dv, 0, manifest.eye_h - 1);
-
-        Vector3 worldOnPlane = EyePixelToWorldOnScreen(u2, v2, screen, manifest.eye_w, manifest.eye_h, 0f);
-        Vector3 world = worldOnPlane + screen.forward * markerOffset;
-        Quaternion rotation = screen.rotation;
-
-        spawnedTestModel.transform.SetPositionAndRotation(world, rotation);
-        spawnedTestModel.transform.localScale = Vector3.one * testModelSizeMeters;
-        AttachTransformLock(spawnedTestModel, world, rotation);
-    }
-
-
-    private void FollowTickMeta()
-    {
-        if (!HasAnyReplacePrefabConfigured() && spawnedTestModel == null)
+        if (!HasAnyReplacePrefabConfigured())
         {
             return;
         }
@@ -98,8 +62,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             target = SelectAutoFollowTarget(metaFrameObjects);
             followTrackId = (int)target.trackId;
-            hasPickedPixel = true;
-            pickedPixel = new Vector2Int(target.anchorU, target.anchorV);
 
             if (followTrackId != lastAutoTrackId)
             {
@@ -179,7 +141,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             return;
         }
-        pickedScreen = screen;
 
         // Bundle writer stores anchor/bbox already mapped into eye pixel coordinates.
         float uEyeF = Mathf.Clamp(uEye, 0f, manifest.eye_w - 1f);
@@ -206,17 +167,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             TryApplySkeleton(instance, target, screen, frame);
             return;
         }
-
-        if (spawnedTestModel == null)
-        {
-            return;
-        }
-
-        Quaternion rotation = GetPinholeBasisRotation(screen);
-
-        spawnedTestModel.transform.SetPositionAndRotation(anchorWorld, rotation);
-        spawnedTestModel.transform.localScale = Vector3.one * testModelSizeMeters;
-        AttachTransformLock(spawnedTestModel, anchorWorld, rotation);
     }
 
 

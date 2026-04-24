@@ -8,7 +8,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private bool ResolveAnchorToScreen(ushort anchorU, out Transform screen, out int uEye, out bool isRightEye)
     {
-        screen = pickedScreen != null ? pickedScreen : leftScreen;
+        screen = leftScreen;
         uEye = anchorU;
         isRightEye = false;
 

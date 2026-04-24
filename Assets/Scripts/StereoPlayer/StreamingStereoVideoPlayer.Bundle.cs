@@ -64,11 +64,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
         }
 
-        string extractedVideoPath = Path.Combine(cacheDir, extractedVideoFileName);
-        string extractedManifestPath = Path.Combine(cacheDir, extractedManifestFileName);
-        string extractedMetaPath = Path.Combine(cacheDir, extractedMetaFileName);
-        string extractedKeypoints3dPath = Path.Combine(cacheDir, extractedKeypoints3dFileName);
-        string extractedOtherObjectProxiesPath = Path.Combine(cacheDir, extractedOtherObjectProxiesFileName);
+        string extractedVideoPath = Path.Combine(cacheDir, ExtractedVideoFileName);
+        string extractedManifestPath = Path.Combine(cacheDir, ExtractedManifestFileName);
+        string extractedMetaPath = Path.Combine(cacheDir, ExtractedMetaFileName);
+        string extractedKeypoints3dPath = Path.Combine(cacheDir, ExtractedKeypoints3dFileName);
+        string extractedOtherObjectProxiesPath = Path.Combine(cacheDir, ExtractedOtherObjectProxiesFileName);
 
         // Always extract fresh files after cache clear.
         {
@@ -80,27 +80,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 {
                     LogBundleEntries(za);
 
-                    if (!ExtractZipEntry(za, bundleVideoEntryName, extractedVideoPath))
+                    if (!ExtractZipEntry(za, BundleVideoEntryName, extractedVideoPath))
                     {
                         yield break;
                     }
 
-                    if (!ExtractZipEntry(za, bundleManifestEntryName, extractedManifestPath))
+                    if (!ExtractZipEntry(za, BundleManifestEntryName, extractedManifestPath))
                     {
                         yield break;
                     }
 
-                    if (!ExtractZipEntry(za, bundleMetaEntryName, extractedMetaPath))
+                    if (!ExtractZipEntry(za, BundleMetaEntryName, extractedMetaPath))
                     {
                         yield break;
                     }
 
-                    if (!ExtractZipEntry(za, bundleKeypoints3dEntryName, extractedKeypoints3dPath))
+                    if (!ExtractZipEntry(za, BundleKeypoints3dEntryName, extractedKeypoints3dPath))
                     {
                         yield break;
                     }
 
-                    if (!ExtractZipEntry(za, bundleOtherObjectProxiesEntryName, extractedOtherObjectProxiesPath))
+                    if (!ExtractZipEntry(za, BundleOtherObjectProxiesEntryName, extractedOtherObjectProxiesPath))
                     {
                         yield break;
                     }

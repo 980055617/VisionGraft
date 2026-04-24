@@ -59,11 +59,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         vp.prepareCompleted += OnPrepared;
 
-        if (skipSelection)
-        {
-            yield return EnsureDefaultSvbAndPrepareVideo();
-        }
-        else if (showBundlePickerOnStart)
+        if (showBundlePickerOnStart)
         {
             yield return RunBundlePickerFlowAndPrepareVideo();
         }
@@ -88,7 +84,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        float perEyeWidth = sideBySide ? w * 0.5f : w;
+        float perEyeWidth = manifest != null && manifest.eye_w > 0 ? manifest.eye_w : w * 0.5f;
         float aspect = perEyeWidth / h;
         Vector3 screenScale = new Vector3(aspect * baseHeight, baseHeight, 1f);
 
@@ -104,11 +100,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         PlaceScreens();
         EnsureRuntimeControls();
-
-        if (spawnTestModelOnPrepared)
-        {
-            TrySpawnTestModel();
-        }
 
         vp.Play();
         UpdatePauseButtonLabel();
@@ -158,11 +149,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (TryPick(out PickResult pick))
         {
-            pickedPixel = pick.pixel;
-            hasPickedPixel = true;
-            pickedScreen = pick.screen;
             TrySelectFollowTrackFromPick(pick);
-            TrySpawnOrMoveTestModel(pick);
         }
 
         FollowTick();

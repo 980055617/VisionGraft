@@ -59,7 +59,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         int u = Mathf.Clamp(Mathf.RoundToInt(uv.x * (manifest.eye_w - 1)), 0, manifest.eye_w - 1);
         int v = Mathf.Clamp(Mathf.RoundToInt((1f - uv.y) * (manifest.eye_h - 1)), 0, manifest.eye_h - 1);
-        testPixel = new Vector2Int(u, v);
         pick = new PickResult
         {
             eye = isLeft ? PickResult.Eye.Left : PickResult.Eye.Right,

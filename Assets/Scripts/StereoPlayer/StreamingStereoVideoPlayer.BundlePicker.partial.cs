@@ -6,17 +6,15 @@ using UnityEngine.UI;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
+    private const float BundlePickerDistanceMeters = 1.1f;
+    private const int BundlePickerEntriesPerPage = 8;
+    private const bool BundlePickerFlipHorizontal = true;
+    private static readonly Vector2 BundlePickerOffsetMeters = Vector2.zero;
+    private static readonly Vector2 BundlePickerSizeMeters = new Vector2(1.05f, 0.82f);
+
     [Header("Bundle Picker")]
-    public bool skipSelection = false;
-    public string defaultsvb = "bundle.svb";
     public bool showBundlePickerOnStart = true;
-    public bool fallbackToStreamingBundleWhenCanceled = true;
     public string bundlePickerInitialDirectory = "/storage/emulated/0";
-    public float bundlePickerDistanceMeters = 1.1f;
-    public Vector2 bundlePickerOffsetMeters = Vector2.zero;
-    public Vector2 bundlePickerSizeMeters = new Vector2(1.05f, 0.82f);
-    [Range(4, 16)] public int bundlePickerEntriesPerPage = 8;
-    public bool bundlePickerFlipHorizontal = true;
     public GameObject bundlePickerCanvasWithInteractionRayPrefab;
 
     private GameObject bundlePickerRoot;
@@ -51,58 +49,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         CloseBundlePickerUi();
-
-        if (!string.IsNullOrEmpty(bundlePickerSelectedPath))
-        {
-            yield return EnsureBundleAndPrepareVideo(bundlePickerSelectedPath);
-            yield break;
-        }
-
-        if (fallbackToStreamingBundleWhenCanceled)
-        {
-            yield return EnsureDefaultSvbAndPrepareVideo();
-        }
-    }
-
-    private IEnumerator EnsureDefaultSvbAndPrepareVideo()
-    {
-        string defaultPath = ResolveDefaultSvbPath();
-        if (string.IsNullOrEmpty(defaultPath))
-        {
-            yield return EnsureBundleAndPrepareVideo();
-            yield break;
-        }
-
-        yield return EnsureBundleAndPrepareVideo(defaultPath);
-    }
-
-    private string ResolveDefaultSvbPath()
-    {
-        string candidate = string.IsNullOrEmpty(defaultsvb) ? bundleFileName : defaultsvb.Trim();
-        if (string.IsNullOrEmpty(candidate) ||
-            string.Equals(candidate, bundleFileName, System.StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
-
-        if (Path.IsPathRooted(candidate))
-        {
-            return candidate;
-        }
-
-        string persistentCandidate = Path.Combine(Application.persistentDataPath, candidate);
-        if (File.Exists(persistentCandidate))
-        {
-            return persistentCandidate;
-        }
-
-        string sdcardCandidate = Path.Combine("/storage/emulated/0", candidate);
-        if (File.Exists(sdcardCandidate))
-        {
-            return sdcardCandidate;
-        }
-
-        return candidate;
+        yield return EnsureBundleAndPrepareVideo(bundlePickerSelectedPath);
     }
 
     private IEnumerator RequestStoragePermissionIfNeeded()
@@ -154,8 +101,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         RectTransform canvasRect = bundlePickerRoot.GetComponent<RectTransform>();
         canvasRect.sizeDelta = new Vector2(canvasW, canvasH);
         canvasRect.localScale = new Vector3(
-            Mathf.Max(0.01f, bundlePickerSizeMeters.x) / canvasW,
-            Mathf.Max(0.01f, bundlePickerSizeMeters.y) / canvasH,
+            Mathf.Max(0.01f, BundlePickerSizeMeters.x) / canvasW,
+            Mathf.Max(0.01f, BundlePickerSizeMeters.y) / canvasH,
             1f);
 
         Transform contentRoot = ResolveBundlePickerContentRoot(bundlePickerRoot);
@@ -175,11 +122,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         CreateBundlePickerButton(panelObj.transform, "UpButton", "Up", new Vector2(-360f, 230f), new Vector2(200f, 56f), () => NavigateBundlePickerUp());
         CreateBundlePickerButton(panelObj.transform, "RefreshButton", "Refresh", new Vector2(-130f, 230f), new Vector2(220f, 56f), RefreshBundlePickerEntries);
-        CreateBundlePickerButton(panelObj.transform, "DefaultButton", "Use Default", new Vector2(145f, 230f), new Vector2(260f, 56f), UseDefaultBundleAndClosePicker);
-        CreateBundlePickerButton(panelObj.transform, "CancelButton", "Cancel", new Vector2(405f, 230f), new Vector2(190f, 56f), CancelBundlePicker);
+        CreateBundlePickerButton(panelObj.transform, "DefaultButton", "Use Default", new Vector2(275f, 230f), new Vector2(260f, 56f), UseDefaultBundleAndClosePicker);
 
         bundlePickerEntryButtons.Clear();
-        for (int i = 0; i < Mathf.Clamp(bundlePickerEntriesPerPage, 4, 16); i++)
+        for (int i = 0; i < BundlePickerEntriesPerPage; i++)
         {
             int localIndex = i;
             float y = 160f - i * 64f;
@@ -234,14 +180,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        float distance = bundlePickerDistanceMeters > 0f
-            ? bundlePickerDistanceMeters
+        float distance = BundlePickerDistanceMeters > 0f
+            ? BundlePickerDistanceMeters
             : screenDistanceMeters;
         Vector3 pos =
             head.position +
             head.forward * Mathf.Max(0.2f, distance) +
-            head.right * bundlePickerOffsetMeters.x +
-            head.up * bundlePickerOffsetMeters.y;
+            head.right * BundlePickerOffsetMeters.x +
+            head.up * BundlePickerOffsetMeters.y;
         bundlePickerRoot.transform.position = pos;
         Vector3 toHead = (head.position - pos).normalized;
         if (Mathf.Abs(Vector3.Dot(toHead, Vector3.up)) > 0.98f)
@@ -254,7 +200,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         Quaternion rot = Quaternion.LookRotation(toHead, Vector3.up);
-        if (bundlePickerFlipHorizontal)
+        if (BundlePickerFlipHorizontal)
         {
             rot *= Quaternion.Euler(0f, 180f, 0f);
         }
@@ -362,7 +308,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void UpdateBundlePickerEntryButtons()
     {
-        int perPage = Mathf.Clamp(bundlePickerEntriesPerPage, 4, 16);
+        int perPage = BundlePickerEntriesPerPage;
         int startIndex = bundlePickerPageIndex * perPage;
 
         for (int i = 0; i < bundlePickerEntryButtons.Count; i++)
@@ -419,7 +365,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void OnBundlePickerEntryClicked(int localIndex)
     {
-        int perPage = Mathf.Clamp(bundlePickerEntriesPerPage, 4, 16);
+        int perPage = BundlePickerEntriesPerPage;
         int entryIndex = bundlePickerPageIndex * perPage + localIndex;
         if (entryIndex < 0 || entryIndex >= bundlePickerEntries.Count)
         {
@@ -472,7 +418,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private int GetBundlePickerPageCount()
     {
-        int perPage = Mathf.Clamp(bundlePickerEntriesPerPage, 4, 16);
+        int perPage = BundlePickerEntriesPerPage;
         if (bundlePickerEntries.Count <= 0)
         {
             return 1;
@@ -482,12 +428,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
     private void UseDefaultBundleAndClosePicker()
-    {
-        bundlePickerSelectedPath = null;
-        bundlePickerDone = true;
-    }
-
-    private void CancelBundlePicker()
     {
         bundlePickerSelectedPath = null;
         bundlePickerDone = true;

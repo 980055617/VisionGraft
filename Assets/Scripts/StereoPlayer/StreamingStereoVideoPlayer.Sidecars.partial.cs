@@ -27,12 +27,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private readonly Dictionary<int, Dictionary<uint, SidecarSkeleton>> sidecarSkeletonsByFrame = new Dictionary<int, Dictionary<uint, SidecarSkeleton>>();
     private readonly Dictionary<int, Dictionary<uint, OtherObjectProxy>> otherProxiesByFrame = new Dictionary<int, Dictionary<uint, OtherObjectProxy>>();
     private readonly Dictionary<uint, GameObject> otherProxyBoxesByTrack = new Dictionary<uint, GameObject>();
+    private readonly Dictionary<string, int[]> sidecarRootIndicesByCategory = new Dictionary<string, int[]>(StringComparer.OrdinalIgnoreCase);
     private Material otherProxyBoxMaterial;
 
     private void LoadBundleSidecars(string keypoints3dPath, string otherObjectProxiesPath)
     {
         sidecarSkeletonsByFrame.Clear();
         otherProxiesByFrame.Clear();
+        sidecarRootIndicesByCategory.Clear();
 
         LoadKeypoints3dSidecar(keypoints3dPath);
         LoadOtherObjectProxiesSidecar(otherObjectProxiesPath);
@@ -184,6 +186,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             {
                 categoryKpCounts[id] = (ushort)Mathf.Min(ushort.MaxValue, keypoints.Count);
             }
+
+            int[] rootIndices = TryReadRootIndices(cat);
+            if (rootIndices != null)
+            {
+                sidecarRootIndicesByCategory[kv.Key] = rootIndices;
+            }
         }
     }
 
@@ -217,15 +225,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (StringEquals(category, "animal"))
         {
-            List<object> rootIndices = pose != null ? GetList(pose, "rootJointIndices") : null;
-            if (rootIndices != null && rootIndices.Count >= 2)
+            int[] rootIndices = TryReadRootIndices(pose);
+            if (rootIndices == null &&
+                !string.IsNullOrEmpty(category) &&
+                sidecarRootIndicesByCategory.TryGetValue(category, out int[] categoryRootIndices))
             {
-                int idxA = GetInt(rootIndices, 0, -1);
-                int idxB = GetInt(rootIndices, 1, -1);
+                rootIndices = categoryRootIndices;
+            }
+
+            if (rootIndices != null && rootIndices.Length >= 2)
+            {
+                int idxA = rootIndices[0];
+                int idxB = rootIndices[1];
                 if (idxA >= 0 && idxB >= 0 && idxA < joints.Length && idxB < joints.Length)
                 {
                     return (joints[idxA] + joints[idxB]) * 0.5f;
                 }
+            }
+
+            if (joints.Length > 18)
+            {
+                return (joints[7] + joints[18]) * 0.5f;
             }
 
             if (joints.Length > 7)
@@ -235,6 +255,29 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         return Vector3.zero;
+    }
+
+    private int[] TryReadRootIndices(Dictionary<string, object> dict)
+    {
+        List<object> rootIndices = GetList(dict, "rootJointIndices");
+        if (rootIndices == null)
+        {
+            rootIndices = GetList(dict, "root_joint_indices");
+        }
+
+        if (rootIndices == null || rootIndices.Count < 2)
+        {
+            return null;
+        }
+
+        int idxA = GetInt(rootIndices, 0, -1);
+        int idxB = GetInt(rootIndices, 1, -1);
+        if (idxA < 0 || idxB < 0)
+        {
+            return null;
+        }
+
+        return new[] { idxA, idxB };
     }
 
     private void LoadOtherObjectProxiesSidecar(string path)

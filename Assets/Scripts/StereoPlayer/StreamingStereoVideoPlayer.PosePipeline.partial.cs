@@ -10,13 +10,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public int jointCount;
         public Vector3[] jointsWorld;
         public Vector3 camOrigin;
+        public Vector3 rootWorld;
     }
 
     private void TryApplyPersonPosePipeline(GameObject instance, MetaObj obj, Transform screen, int frame)
     {
         try
         {
-            if (!TryBuildPoseWorld(obj, screen, ResolvePoseAxisSign(personBoneAxisSign), out PoseWorldData pose))
+            if (!TryBuildPoseWorld(obj, screen, ResolvePoseAxisSign(personBoneAxisSign), remapSkeletonDepthToScreenRange, out PoseWorldData pose))
             {
                 return;
             }
@@ -72,7 +73,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         try
         {
-            if (!TryBuildPoseWorld(obj, screen, ResolvePoseAxisSign(animalBoneAxisSign), out PoseWorldData pose))
+            if (!TryBuildPoseWorld(obj, screen, ResolvePoseAxisSign(animalBoneAxisSign), false, out PoseWorldData pose))
             {
                 return;
             }
@@ -86,10 +87,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 SmoothJointsWorld(obj.trackId, pose.jointsWorld, obj.jointsVis, Mathf.Clamp01(jointSmoothingAlpha));
             }
 
-            if (!TryGetAnimalSkeletonRootWorld(pose.jointsWorld, obj.jointsVis, pose.jointCount, out Vector3 skeletonRoot))
-            {
-                return;
-            }
+            Vector3 skeletonRoot = pose.rootWorld;
 
             Vector3 yawAxis = screen != null ? screen.up : instance.transform.up;
             ApplyManualYawToJoints(obj.trackId, frame, pose.jointsWorld, obj.jointsVis, skeletonRoot, yawAxis);
@@ -154,7 +152,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return skip;
     }
 
-    private bool TryBuildPoseWorld(MetaObj obj, Transform screen, Vector3 axisSign, out PoseWorldData pose)
+    private bool TryBuildPoseWorld(MetaObj obj, Transform screen, Vector3 axisSign, bool remapDepth, out PoseWorldData pose)
     {
         pose = default(PoseWorldData);
         if (!obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
@@ -179,7 +177,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         Vector3 rootCam = ApplyPoseAxisSign(obj.skeletonRootCam, axisSign);
-        if (remapSkeletonDepthToScreenRange)
+        if (remapDepth)
         {
             Vector3[] jointsCamAbs = new Vector3[jointCount];
             for (int i = 0; i < jointCount; i++)
@@ -203,7 +201,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 {
                     jointCount = jointCount,
                     jointsWorld = remappedWorld,
-                    camOrigin = camOrigin
+                    camOrigin = camOrigin,
+                    rootWorld = camOrigin + (camRotation * (rootCam * uniformDepthScale))
                 };
                 return true;
             }
@@ -221,7 +220,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             jointCount = jointCount,
             jointsWorld = jointsWorld,
-            camOrigin = camOrigin
+            camOrigin = camOrigin,
+            rootWorld = rootBaseWorld
         };
         return true;
     }

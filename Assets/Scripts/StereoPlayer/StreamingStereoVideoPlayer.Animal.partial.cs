@@ -294,6 +294,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private bool TryGetAnimalSkeletonRootWorld(Vector3[] jointsWorld, byte[] vis, int jointCount, out Vector3 rootWorld)
     {
+        if (jointCount > 18 && TryGetMidPoint(jointsWorld, vis, 7, 18, out rootWorld))
+        {
+            return true;
+        }
+
         if (jointCount > 7 && TryGetMidPoint(jointsWorld, vis, 6, 7, out rootWorld))
         {
             return true;

@@ -436,7 +436,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         SkeletonIndices idx = MetrabsSmpl24Indices;
-        if (!TryBuildPoseWorld(obj, screen, ResolvePoseAxisSign(personBoneAxisSign), out PoseWorldData pose) ||
+        if (!TryBuildPoseWorld(obj, screen, ResolvePoseAxisSign(personBoneAxisSign), remapSkeletonDepthToScreenRange, out PoseWorldData pose) ||
             pose.jointCount != 24)
         {
             return false;

@@ -76,7 +76,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     [Header("Animal Bones")]
     public bool enableAnimalLimbApply = false;
     public bool stabilizeAnimalRootYaw = true;
-    public float animalRootYawMaxDegreesPerSecond = 180f;
     [Range(0f, 1f)] public float animalRootRotateAlpha = 0.6f;
     public Vector3 animalModelForwardLocal = Vector3.right;
     public Vector3 animalModelUpLocal = Vector3.up;

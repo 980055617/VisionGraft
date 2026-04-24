@@ -18,7 +18,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         // Animal pose application only runs for the "animal" category path.
-        // Keep root heading as yaw-only against world-up.
+        // Root orientation follows the full body basis instead of yaw-only heading.
         TryApplyAnimalRootOrientation(instanceRoot, jointsWorld, vis, Mathf.Clamp01(animalRootRotateAlpha));
         AlignAnimalRootToSkeleton(instanceRoot, cache, skeletonRoot);
 
@@ -41,25 +41,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        if (!TryGetAnimalBodyDirection(jointsWorld, vis, out Vector3 bodyForward))
+        if (!TryGetAnimalBodyBasis(jointsWorld, vis, instanceRoot, out Vector3 bodyForward, out Vector3 bodyUp, out Vector3 facingHint))
         {
             return;
         }
 
-        Vector3 up = Vector3.up;
-        Vector3 planarForward = Vector3.ProjectOnPlane(bodyForward, up);
-        if (planarForward.sqrMagnitude < 0.000001f)
-        {
-            planarForward = bodyForward.normalized;
-        }
-        else
-        {
-            planarForward.Normalize();
-        }
+        Vector3 worldUp = Vector3.up;
+        Vector3 stabilizedForward = bodyForward;
+        Vector3 stabilizedUp = bodyUp;
 
         if (stabilizeAnimalRootYaw)
         {
-            planarForward = StabilizeAnimalYawForward(instanceRoot, up, planarForward);
+            StabilizeAnimalRootBasis(instanceRoot, worldUp, bodyForward, bodyUp, facingHint, out stabilizedForward, out stabilizedUp);
         }
 
         Vector3 modelForward = animalModelForwardLocal.sqrMagnitude > 0.000001f
@@ -70,65 +63,233 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             : Vector3.up;
 
         Quaternion modelBasis = Quaternion.LookRotation(modelForward, modelUp);
-        Quaternion targetBasis = Quaternion.LookRotation(planarForward, up);
+        Quaternion targetBasis = Quaternion.LookRotation(stabilizedForward, stabilizedUp);
         Quaternion targetRootRot = targetBasis * Quaternion.Inverse(modelBasis);
         instanceRoot.rotation = Quaternion.Slerp(instanceRoot.rotation, targetRootRot, Mathf.Clamp01(rotateAlpha));
     }
 
-    private Vector3 StabilizeAnimalYawForward(Transform root, Vector3 up, Vector3 forward)
+    private void StabilizeAnimalRootBasis(Transform root, Vector3 worldUp, Vector3 forward, Vector3 bodyUp, Vector3 facingHint, out Vector3 stabilizedForward, out Vector3 stabilizedUp)
     {
+        stabilizedForward = forward;
+        stabilizedUp = bodyUp;
         if (root == null)
         {
-            return forward;
+            return;
+        }
+
+        int currentFrame = Time.frameCount;
+        bool seenRecently =
+            animalRootYawLastSeenFrameByRoot.TryGetValue(root, out int lastSeenFrame) &&
+            currentFrame - lastSeenFrame <= 1;
+        animalRootYawLastSeenFrameByRoot[root] = currentFrame;
+
+        Vector3 planarForward = Vector3.ProjectOnPlane(forward, worldUp);
+        if (planarForward.sqrMagnitude <= 0.000001f)
+        {
+            return;
+        }
+        planarForward.Normalize();
+
+        if (!seenRecently)
+        {
+            ResetAnimalRootBasisFilters(root, planarForward, bodyUp, worldUp);
+            stabilizedForward = forward;
+            stabilizedUp = bodyUp;
+            return;
         }
 
         Vector3 prevForward = Vector3.zero;
         if (!animalRootYawForwardByRoot.TryGetValue(root, out prevForward) || prevForward.sqrMagnitude < 0.000001f)
         {
-            prevForward = Vector3.ProjectOnPlane(root.forward, up);
+            prevForward = Vector3.ProjectOnPlane(root.forward, worldUp);
         }
         if (prevForward.sqrMagnitude < 0.000001f)
         {
-            return forward;
+            ResetAnimalRootBasisFilters(root, planarForward, bodyUp, worldUp);
+            return;
         }
         prevForward.Normalize();
 
-        Vector3 candA = Vector3.ProjectOnPlane(forward, up);
-        if (candA.sqrMagnitude < 0.000001f)
-        {
-            return forward;
-        }
-        candA.Normalize();
-
+        Vector3 candA = planarForward;
         Vector3 candB = -candA;
-        Vector3 chosen = Vector3.Dot(prevForward, candA) >= Vector3.Dot(prevForward, candB) ? candA : candB;
+        Vector3 chosenForward;
+        Vector3 planarHint = Vector3.ProjectOnPlane(facingHint, worldUp);
+        if (planarHint.sqrMagnitude > 0.000001f)
+        {
+            planarHint.Normalize();
+            chosenForward = Vector3.Dot(candA, planarHint) >= Vector3.Dot(candB, planarHint) ? candA : candB;
+        }
+        else
+        {
+            chosenForward = Vector3.Dot(prevForward, candA) >= Vector3.Dot(prevForward, candB) ? candA : candB;
+        }
 
         float dt = Time.deltaTime > 0.0001f ? Time.deltaTime : (1f / 60f);
-        float maxStep = Mathf.Max(1f, animalRootYawMaxDegreesPerSecond) * dt;
-        float signedAngle = Vector3.SignedAngle(prevForward, chosen, up);
-        float clampedAngle = Mathf.Clamp(signedAngle, -maxStep, maxStep);
-        Vector3 stabilized = Quaternion.AngleAxis(clampedAngle, up) * prevForward;
-        if (stabilized.sqrMagnitude < 0.000001f)
+        OneEuroVector3Filter forwardFilter = GetOrCreateAnimalRootVector3Filter(animalRootForwardFilters, root);
+        Vector3 filteredForward = forwardFilter.Filter(chosenForward, dt);
+        filteredForward = Vector3.ProjectOnPlane(filteredForward, worldUp);
+        if (filteredForward.sqrMagnitude <= 0.000001f)
         {
-            stabilized = chosen;
+            filteredForward = chosenForward;
         }
-        stabilized.Normalize();
-        animalRootYawForwardByRoot[root] = stabilized;
-        return stabilized;
+        filteredForward.Normalize();
+        animalRootYawForwardByRoot[root] = filteredForward;
+
+        Vector3 projectedUp = Vector3.ProjectOnPlane(bodyUp, filteredForward);
+        if (projectedUp.sqrMagnitude <= 0.000001f)
+        {
+            projectedUp = Vector3.ProjectOnPlane(root.up, filteredForward);
+        }
+        if (projectedUp.sqrMagnitude <= 0.000001f)
+        {
+            projectedUp = Vector3.ProjectOnPlane(worldUp, filteredForward);
+        }
+        if (projectedUp.sqrMagnitude <= 0.000001f)
+        {
+            stabilizedForward = filteredForward;
+            stabilizedUp = bodyUp;
+            return;
+        }
+        projectedUp.Normalize();
+
+        OneEuroVector3Filter upFilter = GetOrCreateAnimalRootVector3Filter(animalRootUpFilters, root);
+        Vector3 filteredUp = upFilter.Filter(projectedUp, dt);
+        filteredUp = Vector3.ProjectOnPlane(filteredUp, filteredForward);
+        if (filteredUp.sqrMagnitude <= 0.000001f)
+        {
+            filteredUp = projectedUp;
+        }
+        filteredUp.Normalize();
+
+        Vector3 right = Vector3.Cross(filteredForward, filteredUp);
+        if (right.sqrMagnitude <= 0.000001f)
+        {
+            stabilizedForward = filteredForward;
+            stabilizedUp = filteredUp;
+            return;
+        }
+        right.Normalize();
+        filteredUp = Vector3.Cross(right, filteredForward).normalized;
+
+        stabilizedForward = filteredForward;
+        stabilizedUp = filteredUp;
     }
 
-    private bool TryGetAnimalBodyDirection(Vector3[] jointsWorld, byte[] vis, out Vector3 forward)
+    private void ResetAnimalRootBasisFilters(Transform root, Vector3 planarForward, Vector3 bodyUp, Vector3 worldUp)
     {
-        forward = Vector3.zero;
-        bool hasRear = TryGetJointPoint(jointsWorld, vis, 6, out Vector3 rearHub);   // TailBase(hip)
-        bool hasWithers = TryGetJointPoint(jointsWorld, vis, 7, out Vector3 withers);
+        animalRootYawForwardByRoot[root] = planarForward;
+        GetOrCreateAnimalRootVector3Filter(animalRootForwardFilters, root).Reset(planarForward);
 
-        if (hasRear && hasWithers)
+        Vector3 resetUp = Vector3.ProjectOnPlane(bodyUp, planarForward);
+        if (resetUp.sqrMagnitude <= 0.000001f)
         {
-            forward = (withers - rearHub).normalized;
+            resetUp = Vector3.ProjectOnPlane(worldUp, planarForward);
+        }
+        if (resetUp.sqrMagnitude > 0.000001f)
+        {
+            resetUp.Normalize();
+            GetOrCreateAnimalRootVector3Filter(animalRootUpFilters, root).Reset(resetUp);
+        }
+    }
+
+    private OneEuroVector3Filter GetOrCreateAnimalRootVector3Filter(System.Collections.Generic.Dictionary<Transform, OneEuroVector3Filter> filters, Transform root)
+    {
+        if (filters.TryGetValue(root, out OneEuroVector3Filter existing) && existing != null)
+        {
+            return existing;
         }
 
-        return forward.sqrMagnitude > 0.000001f;
+        OneEuroVector3Filter created = new OneEuroVector3Filter(
+            AnimalRootOneEuroMinCutoffHz,
+            AnimalRootOneEuroBeta,
+            AnimalRootOneEuroDerivativeCutoffHz);
+        filters[root] = created;
+        return created;
+    }
+
+    private bool TryGetAnimalBodyBasis(Vector3[] jointsWorld, byte[] vis, Transform instanceRoot, out Vector3 forward, out Vector3 up, out Vector3 facingHint)
+    {
+        forward = Vector3.zero;
+        up = Vector3.zero;
+        facingHint = Vector3.zero;
+        bool hasPelvis = TryGetJointPoint(jointsWorld, vis, 7, out Vector3 pelvisHub);
+        bool hasWithers = TryGetJointPoint(jointsWorld, vis, 18, out Vector3 withersHub);
+        bool hasHeadRoot = TryGetJointPoint(jointsWorld, vis, 24, out Vector3 headRoot);
+
+        if (hasPelvis && hasWithers)
+        {
+            forward = (withersHub - pelvisHub).normalized;
+        }
+
+        if (forward.sqrMagnitude <= 0.000001f)
+        {
+            return false;
+        }
+
+        if (hasWithers && hasHeadRoot)
+        {
+            facingHint = (headRoot - withersHub).normalized;
+            if (facingHint.sqrMagnitude > 0.000001f && Vector3.Dot(forward, facingHint) < 0f)
+            {
+                forward = -forward;
+            }
+        }
+
+        bool hasLeftShoulder = TryGetJointPoint(jointsWorld, vis, 12, out Vector3 leftShoulder);
+        bool hasRightShoulder = TryGetJointPoint(jointsWorld, vis, 13, out Vector3 rightShoulder);
+        bool hasLeftHip = TryGetJointPoint(jointsWorld, vis, 10, out Vector3 leftHip);
+        bool hasRightHip = TryGetJointPoint(jointsWorld, vis, 11, out Vector3 rightHip);
+
+        Vector3 rightAxis = Vector3.zero;
+        if (hasLeftShoulder && hasRightShoulder)
+        {
+            rightAxis += (rightShoulder - leftShoulder);
+        }
+        if (hasLeftHip && hasRightHip)
+        {
+            rightAxis += (rightHip - leftHip);
+        }
+
+        if (rightAxis.sqrMagnitude > 0.000001f)
+        {
+            rightAxis.Normalize();
+            Vector3 upA = Vector3.Cross(rightAxis, forward);
+            Vector3 upB = -upA;
+            Vector3 preferredUp = instanceRoot != null ? instanceRoot.up : Vector3.up;
+            if (preferredUp.sqrMagnitude < 0.000001f)
+            {
+                preferredUp = Vector3.up;
+            }
+
+            up = Vector3.Dot(upA, preferredUp) >= Vector3.Dot(upB, preferredUp) ? upA : upB;
+        }
+
+        if (up.sqrMagnitude <= 0.000001f)
+        {
+            Vector3 fallbackUp = instanceRoot != null ? instanceRoot.up : Vector3.up;
+            if (fallbackUp.sqrMagnitude <= 0.000001f)
+            {
+                fallbackUp = Vector3.up;
+            }
+
+            up = Vector3.ProjectOnPlane(fallbackUp, forward);
+        }
+
+        if (up.sqrMagnitude <= 0.000001f)
+        {
+            return false;
+        }
+
+        up.Normalize();
+        Vector3 right = Vector3.Cross(forward, up);
+        if (right.sqrMagnitude <= 0.000001f)
+        {
+            return false;
+        }
+
+        right.Normalize();
+        up = Vector3.Cross(right, forward).normalized;
+        return up.sqrMagnitude > 0.000001f;
     }
 
     private bool TryGetAnimalSkeletonRootWorld(Vector3[] jointsWorld, byte[] vis, int jointCount, out Vector3 rootWorld)

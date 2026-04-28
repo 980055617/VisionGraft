@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
@@ -32,8 +32,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         RectTransform rect = root.GetComponent<RectTransform>();
         rect.sizeDelta = new Vector2(RuntimeControlsDefaultCanvasWidth, RuntimeControlsDefaultCanvasHeight);
         rect.localScale = new Vector3(
-            controlsBarSizeMeters.x / RuntimeControlsDefaultCanvasWidth,
-            controlsBarSizeMeters.y / RuntimeControlsDefaultCanvasHeight,
+            ControlsBarSizeMeters.x / RuntimeControlsDefaultCanvasWidth,
+            ControlsBarSizeMeters.y / RuntimeControlsDefaultCanvasHeight,
             1f);
 
         GameObject panelObj = new GameObject("Panel");

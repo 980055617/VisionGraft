@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
@@ -46,11 +46,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         float z01 = Mathf.Clamp01(zRaw01);
         float screenDist = Mathf.Max(0.001f, screenDistanceMeters);
-        float eps = Mathf.Max(0f, epsilonMeters);
-        float popout = Mathf.Max(0f, popoutRangeMeters) * z01;
+        float eps = Mathf.Max(0f, EpsilonMeters);
+        float popout = Mathf.Max(0f, PopoutRangeMeters) * z01;
 
         float zPlacement = screenDist - eps - popout;
-        zPlacement = Mathf.Max(zPlacement, Mathf.Max(0.001f, minDistanceFromHeadMeters));
+        zPlacement = Mathf.Max(zPlacement, Mathf.Max(0.001f, MinDistanceFromHeadMeters));
         zPlacement = Mathf.Min(zPlacement, screenDist - 0.0001f);
         return Mathf.Max(0.001f, zPlacement);
     }

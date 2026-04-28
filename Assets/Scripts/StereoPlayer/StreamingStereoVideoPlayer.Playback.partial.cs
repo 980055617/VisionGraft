@@ -4,15 +4,15 @@ using UnityEngine;
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
     // Depends on: meta frame cache, track instance state, manifest/screen helpers, and manual-yaw partials
-    // Provides: FollowTick pipeline, target selection, replaceable model apply, TryApplySkeleton entry
+    // Provides: model display pipeline, target selection, replaceable model apply, TryApplySkeleton entry
 
-    public void FollowTick()
+    public void DisplayModelTick()
     {
-        if (!useMetaFollow || !metaLoaded)
+        if (!displayModel || !metaLoaded)
         {
             return;
         }
-        if (!HasAnyReplacePrefabConfigured())
+        if (!HasAnyDisplayPrefabConfigured())
         {
             return;
         }
@@ -24,7 +24,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         int displayedFrame = lastFrameReadyFrame;
         int frame = GetCurrentFrameIndex();
-        int metaFrameUsed = useFrameReadySync ? displayedFrame : frame;
+        int metaFrameUsed = UseFrameReadySync ? displayedFrame : frame;
 
         if (!TryReadFrameObjects(metaFrameUsed, metaFrameObjects) || metaFrameObjects.Count == 0)
         {
@@ -34,87 +34,74 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         frame = metaFrameUsed;
         ApplyOtherProxyBoxesForFrame(metaFrameObjects, frame);
 
-        if (TryApplyConfiguredTrackPrefabs(frame))
+        if (TryApplyDisplayedTracks(frame))
         {
             return;
         }
 
-        MetaObj target = metaFrameObjects[0];
-        if (followTrackId >= 0)
+        MetaObj target = SelectAutoDisplayTarget(metaFrameObjects);
+        int autoTrackId = (int)target.trackId;
+        if (autoTrackId != lastAutoTrackId)
         {
-            bool found = false;
-            for (int i = 0; i < metaFrameObjects.Count; i++)
-            {
-                if (metaFrameObjects[i].trackId == (uint)followTrackId)
-                {
-                    target = metaFrameObjects[i];
-                    found = true;
-                    break;
-                }
-            }
-
-            if (!found)
-            {
-                return;
-            }
-        }
-        else
-        {
-            target = SelectAutoFollowTarget(metaFrameObjects);
-            followTrackId = (int)target.trackId;
-
-            if (followTrackId != lastAutoTrackId)
-            {
-                lastAutoTrackId = followTrackId;
-            }
+            lastAutoTrackId = autoTrackId;
         }
 
         ApplyMetaTarget(target, frame);
     }
 
 
-    private bool HasAnyReplacePrefabConfigured()
+    private bool HasAnyDisplayPrefabConfigured()
     {
         if (replacePrefab != null)
         {
             return true;
         }
 
-        if (!useTrackPrefabOverrides)
-        {
-            return false;
-        }
-
-        return track0Prefab != null || track1Prefab != null;
+        return track0Prefab != null || track1Prefab != null || track2Prefab != null;
     }
 
 
-    private bool TryApplyConfiguredTrackPrefabs(int frame)
+    private bool TryApplyDisplayedTracks(int frame)
     {
-        if (!useTrackPrefabOverrides || (!HasAnyReplacePrefabConfigured()))
+        if (displayTrackIds == null || displayTrackIds.Length == 0)
         {
             return false;
         }
 
-        bool foundTrack0 = TryApplyTargetByTrackId(0u, frame);
-        bool foundTrack1 = TryApplyTargetByTrackId(1u, frame);
-        bool appliedAny = foundTrack0 || foundTrack1;
-        if (!appliedAny)
+        HashSet<uint> selectedTracks = new HashSet<uint>();
+        HashSet<uint> appliedTracks = new HashSet<uint>();
+        for (int i = 0; i < displayTrackIds.Length; i++)
         {
-            return false;
+            int displayTrackId = displayTrackIds[i];
+            if (displayTrackId < 0)
+            {
+                continue;
+            }
+
+            uint trackId = (uint)displayTrackId;
+            selectedTracks.Add(trackId);
+            if (TryApplyTargetByTrackId(trackId, frame))
+            {
+                appliedTracks.Add(trackId);
+            }
         }
 
-        if (!foundTrack0 && trackInstances.TryGetValue(0u, out GameObject track0Instance) && track0Instance != null)
-        {
-            track0Instance.SetActive(false);
-        }
+        HideUnselectedTrackInstances(appliedTracks);
+        return selectedTracks.Count > 0;
+    }
 
-        if (!foundTrack1 && trackInstances.TryGetValue(1u, out GameObject track1Instance) && track1Instance != null)
-        {
-            track1Instance.SetActive(false);
-        }
 
-        return true;
+    private void HideUnselectedTrackInstances(HashSet<uint> selectedTracks)
+    {
+        foreach (KeyValuePair<uint, GameObject> kv in trackInstances)
+        {
+            if (selectedTracks.Contains(kv.Key) || kv.Value == null)
+            {
+                continue;
+            }
+
+            kv.Value.SetActive(false);
+        }
     }
 
 
@@ -170,7 +157,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private MetaObj SelectAutoFollowTarget(List<MetaObj> objs)
+    private MetaObj SelectAutoDisplayTarget(List<MetaObj> objs)
     {
         float eyeW = manifest != null ? manifest.eye_w : 0f;
         float eyeH = manifest != null ? manifest.eye_h : 0f;
@@ -250,17 +237,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private GameObject ResolveTrackPrefab(uint trackId)
     {
-        if (useTrackPrefabOverrides)
+        if (trackId == 0u && track0Prefab != null)
         {
-            if (trackId == 0u && track0Prefab != null)
-            {
-                return track0Prefab;
-            }
+            return track0Prefab;
+        }
 
-            if (trackId == 1u && track1Prefab != null)
-            {
-                return track1Prefab;
-            }
+        if (trackId == 1u && track1Prefab != null)
+        {
+            return track1Prefab;
+        }
+
+        if (trackId == 2u && track2Prefab != null)
+        {
+            return track2Prefab;
         }
 
         if (replacePrefab != null)
@@ -345,17 +334,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 instance.transform.position += instance.transform.up * offsetWorld;
             }
 
-            if (alignModelToBBoxBottom && model != null)
+            if (AlignModelToBBoxBottom && model != null)
             {
                 Vector3 up = screen != null ? screen.up : Vector3.up;
-                float vBottom = vEye + bboxHAdjusted * bboxAnchorVToBottom;
+                float vBottom = vEye + bboxHAdjusted * BboxAnchorVToBottom;
                 vBottom = Mathf.Clamp(vBottom, 0f, manifest.eye_h - 1f);
                 Vector3 bottomWorld = AnchorUvZToWorldPinhole(screen, uEye, vBottom, obj.anchorZ);
-                bottomWorld += up * modelBottomExtraOffsetMeters;
+                bottomWorld += up * ModelBottomExtraOffsetMeters;
                 float modelBottomOffset = model.baseBottomOffsetLocal * lossy.y;
                 Vector3 modelBottomWorld = instance.transform.position - up * modelBottomOffset;
                 Vector3 delta = bottomWorld - modelBottomWorld;
-                if (bottomAlignVerticalOnly)
+                if (BottomAlignVerticalOnly)
                 {
                     float d = Vector3.Dot(delta, up);
                     instance.transform.position += up * d;
@@ -366,7 +355,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 }
             }
 
-            if (enableHeadHeightScaleCorrection && model != null && IsCategoryPerson(obj.categoryId))
+            if (EnableHeadHeightScaleCorrection && model != null && IsCategoryPerson(obj.categoryId))
             {
                 TryApplyHumanoidHeadHeightScaleCorrection(instance.transform, model, obj, screen: screen, baseScale: baseScale, uniformScale: uniformScale);
             }
@@ -380,7 +369,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             instance.transform.position += instance.transform.up * offsetWorld;
         }
 
-        if (enableHeadHeightScaleCorrection && model != null && IsCategoryPerson(obj.categoryId))
+        if (EnableHeadHeightScaleCorrection && model != null && IsCategoryPerson(obj.categoryId))
         {
             TryApplyHumanoidHeadHeightScaleCorrection(instance.transform, model, obj, screen: screen, baseScale: baseScale, uniformScale: targetUniform);
         }
@@ -416,8 +405,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         float ratio = targetHeadFromFoot / currentHeadFromFoot;
-        float clampedRatio = Mathf.Clamp(ratio, headHeightScaleMin, headHeightScaleMax);
-        float blendedRatio = Mathf.Lerp(1f, clampedRatio, Mathf.Clamp01(headHeightScaleAlpha));
+        float clampedRatio = Mathf.Clamp(ratio, HeadHeightScaleMin, HeadHeightScaleMax);
+        float blendedRatio = Mathf.Lerp(1f, clampedRatio, Mathf.Clamp01(HeadHeightScaleAlpha));
         float correctedUniformScale = uniformScale * blendedRatio;
         root.localScale = baseScale * correctedUniformScale;
 
@@ -436,7 +425,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         SkeletonIndices idx = MetrabsSmpl24Indices;
-        if (!TryBuildPoseWorld(obj, screen, ResolvePoseAxisSign(personBoneAxisSign), remapSkeletonDepthToScreenRange, out PoseWorldData pose) ||
+        if (!TryBuildPersonPoseWorld(obj, screen, out PoseWorldData pose) ||
             pose.jointCount != 24)
         {
             return false;

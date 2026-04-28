@@ -38,13 +38,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 up = basis.up;
         GetScreenSizeMeters(basis, out _, out float screenHeightMeters, out _);
         float halfScreenH = Mathf.Abs(screenHeightMeters) * 0.5f;
-        float halfBarH = Mathf.Abs(controlsBarSizeMeters.y) * 0.5f;
-        float downFromCenter = halfScreenH + controlsBarGapMeters + halfBarH - controlsBarOffsetMeters.y;
+        float halfBarH = Mathf.Abs(ControlsBarSizeMeters.y) * 0.5f;
+        float downFromCenter = halfScreenH + ControlsBarGapMeters + halfBarH - ControlsBarOffsetMeters.y;
         runtimeControlsRoot.transform.position =
             center
-            + right * controlsBarOffsetMeters.x
+            + right * ControlsBarOffsetMeters.x
             - up * downFromCenter
-            + toHead * controlsBarForwardOffsetMeters;
+            + toHead * ControlsBarForwardOffsetMeters;
         runtimeControlsRoot.transform.rotation = basis.rotation;
         ApplyRuntimeControlsSizing();
 
@@ -88,7 +88,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             toHead = -basis.forward;
         }
 
-        float basisWidth = controlsBarSizeMeters.x;
+        float basisWidth = ControlsBarSizeMeters.x;
         if (baseScreen != null)
         {
             GetScreenSizeMeters(baseScreen, out float screenWidthMeters, out _, out _);
@@ -96,13 +96,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         float halfBarW = Mathf.Abs(basisWidth) * 0.5f;
-        float halfPanelW = Mathf.Abs(settingsPanelSizeMeters.x) * 0.5f;
-        float rightFromBar = halfBarW + settingsPanelGapMeters + halfPanelW + settingsPanelOffsetMeters.x;
-        float forwardFromScreen = Mathf.Max(settingsPanelForwardOffsetMeters, 0.06f);
+        float halfPanelW = Mathf.Abs(SettingsPanelSizeMeters.x) * 0.5f;
+        float rightFromBar = halfBarW + SettingsPanelGapMeters + halfPanelW + SettingsPanelOffsetMeters.x;
+        float forwardFromScreen = Mathf.Max(SettingsPanelForwardOffsetMeters, 0.06f);
         runtimeSettingsRoot.transform.position =
             basis.position
             + basis.right * rightFromBar
-            + basis.up * settingsPanelOffsetMeters.y
+            + basis.up * SettingsPanelOffsetMeters.y
             + toHead * forwardFromScreen;
         Quaternion panelRotation = basis.rotation;
         if (head != null)
@@ -136,8 +136,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
 
             rect.localScale = new Vector3(
-                settingsPanelSizeMeters.x / size.x,
-                settingsPanelSizeMeters.y / size.y,
+                SettingsPanelSizeMeters.x / size.x,
+                SettingsPanelSizeMeters.y / size.y,
                 1f);
         }
     }
@@ -199,8 +199,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         rect.localScale = new Vector3(
-            controlsBarSizeMeters.x / size.x,
-            controlsBarSizeMeters.y / size.y,
+            ControlsBarSizeMeters.x / size.x,
+            ControlsBarSizeMeters.y / size.y,
             1f);
     }
 
@@ -547,7 +547,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void HandleRuntimePauseInput()
     {
-        if (!enablePauseHotkey)
+        if (!EnablePauseHotkey)
         {
             return;
         }

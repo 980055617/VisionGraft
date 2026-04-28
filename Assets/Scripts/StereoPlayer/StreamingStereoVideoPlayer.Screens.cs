@@ -605,8 +605,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         fovxDeg = 0f;
         if (useRuntimeFovxOverride)
         {
-            float min = Mathf.Min(runtimeFovxMinDeg, runtimeFovxMaxDeg);
-            float max = Mathf.Max(runtimeFovxMinDeg, runtimeFovxMaxDeg);
+            float min = Mathf.Min(RuntimeFovxMinDeg, RuntimeFovxMaxDeg);
+            float max = Mathf.Max(RuntimeFovxMinDeg, RuntimeFovxMaxDeg);
             fovxDeg = Mathf.Clamp(runtimeFovxDeg, min, max);
             return true;
         }

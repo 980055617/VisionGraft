@@ -7,14 +7,6 @@ using UnityEngine;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
-    private struct SidecarSkeleton
-    {
-        public ushort kpCount;
-        public Vector3[] jointsCam;
-        public byte[] jointsVis;
-        public Vector3 rootCam;
-    }
-
     private struct OtherObjectProxy
     {
         public bool hasAnchorCameraXyz;
@@ -24,25 +16,50 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public Vector3 proxySize;
     }
 
-    private readonly Dictionary<int, Dictionary<uint, SidecarSkeleton>> sidecarSkeletonsByFrame = new Dictionary<int, Dictionary<uint, SidecarSkeleton>>();
-    private readonly Dictionary<int, Dictionary<uint, OtherObjectProxy>> otherProxiesByFrame = new Dictionary<int, Dictionary<uint, OtherObjectProxy>>();
-    private readonly Dictionary<uint, GameObject> otherProxyBoxesByTrack = new Dictionary<uint, GameObject>();
-    private readonly Dictionary<string, int[]> sidecarRootIndicesByCategory = new Dictionary<string, int[]>(StringComparer.OrdinalIgnoreCase);
-    private Material otherProxyBoxMaterial;
-
-    private void LoadBundleSidecars(string keypoints3dPath, string otherObjectProxiesPath)
+    private struct AnimalControlPose
     {
-        sidecarSkeletonsByFrame.Clear();
-        otherProxiesByFrame.Clear();
-        sidecarRootIndicesByCategory.Clear();
-
-        LoadKeypoints3dSidecar(keypoints3dPath);
-        LoadOtherObjectProxiesSidecar(otherObjectProxiesPath);
-
-        Debug.Log($"SVB sidecars loaded: keypointFrames={sidecarSkeletonsByFrame.Count}, otherProxyFrames={otherProxiesByFrame.Count}");
+        public ushort kpCount;
+        public Vector3[] jointsCamAbs;
+        public byte[] jointsVis;
+        public bool hasWithersCamAbs;
+        public Vector3 withersCamAbs;
+        public bool hasHeadRootCamAbs;
+        public Vector3 headRootCamAbs;
+        public bool hasHeadTipCamAbs;
+        public Vector3 headTipCamAbs;
+        public Vector3 rootCamAbs;
+        public bool hasTailBaseCamAbs;
+        public Vector3 tailBaseCamAbs;
+        public bool hasTailTipCamAbs;
+        public Vector3 tailTipCamAbs;
+        public bool hasForwardHintCamAbs;
+        public Vector3 forwardHintCamAbs;
+        public bool hasUpHintCamAbs;
+        public Vector3 upHintCamAbs;
+        public Vector3[] frontLeftLegChainCamAbs;
+        public Vector3[] frontRightLegChainCamAbs;
+        public Vector3[] rearLeftLegChainCamAbs;
+        public Vector3[] rearRightLegChainCamAbs;
+        public Vector3[] headChainCamAbs;
+        public Vector3[] tailChainCamAbs;
     }
 
-    private void LoadKeypoints3dSidecar(string path)
+    private readonly Dictionary<int, Dictionary<uint, AnimalControlPose>> animalControlPosesByFrame = new Dictionary<int, Dictionary<uint, AnimalControlPose>>();
+    private readonly Dictionary<int, Dictionary<uint, OtherObjectProxy>> otherProxiesByFrame = new Dictionary<int, Dictionary<uint, OtherObjectProxy>>();
+    private readonly Dictionary<uint, GameObject> otherProxyBoxesByTrack = new Dictionary<uint, GameObject>();
+    private Material otherProxyBoxMaterial;
+
+    private void LoadBundleSidecars(string animalControlTargetsPath, string otherObjectProxiesPath)
+    {
+        animalControlPosesByFrame.Clear();
+        otherProxiesByFrame.Clear();
+        LoadAnimalControlTargetsSidecar(animalControlTargetsPath);
+        LoadOtherObjectProxiesSidecar(otherObjectProxiesPath);
+
+        Debug.Log($"SVB sidecars loaded: animalControlFrames={animalControlPosesByFrame.Count}, otherProxyFrames={otherProxiesByFrame.Count}");
+    }
+
+    private void LoadAnimalControlTargetsSidecar(string path)
     {
         if (string.IsNullOrEmpty(path) || !File.Exists(path))
         {
@@ -57,8 +74,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             {
                 return;
             }
-
-            ReadSidecarCategories(root);
 
             List<object> frames = GetList(root, "frames");
             if (frames == null)
@@ -86,11 +101,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     continue;
                 }
 
-                Dictionary<uint, SidecarSkeleton> byTrack = null;
+                Dictionary<uint, AnimalControlPose> byTrack = null;
                 for (int o = 0; o < objects.Count; o++)
                 {
                     Dictionary<string, object> obj = objects[o] as Dictionary<string, object>;
-                    if (obj == null)
+                    if (obj == null || !StringEquals(GetString(obj, "category"), "animal"))
                     {
                         continue;
                     }
@@ -101,183 +116,150 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                         continue;
                     }
 
-                    string category = GetString(obj, "category");
-                    Dictionary<string, object> pose = GetDict(obj, "pose");
-                    List<object> keypoints = pose != null ? GetList(pose, "keypoints3d") : null;
-                    if (keypoints == null || keypoints.Count == 0)
+                    Dictionary<string, object> targets = GetDict(obj, "targets");
+                    Dictionary<string, object> rootTarget = GetDict(targets, "root");
+                    if (!TryReadVector3(GetList(rootTarget, "position"), 1f, out Vector3 rootCamAbs))
+                    {
+                        continue;
+                    }
+                    rootCamAbs = NormalizeAnimalControlCam(rootCamAbs);
+
+                    Vector3[] jointsCamAbs = new Vector3[26];
+                    byte[] jointsVis = new byte[26];
+                    Dictionary<string, object> chains = GetDict(obj, "chains");
+                    if (chains == null)
                     {
                         continue;
                     }
 
-                    float unitScale = ResolveSidecarUnitScale(pose);
-                    Vector3[] joints = new Vector3[keypoints.Count];
-                    byte[] vis = new byte[keypoints.Count];
-                    for (int k = 0; k < keypoints.Count; k++)
+                    TryReadAnimalControlTarget(targets, "withers", out bool hasWithersCamAbs, out Vector3 withersCamAbs);
+                    TryReadAnimalControlTarget(targets, "headRoot", out bool hasHeadRootCamAbs, out Vector3 headRootCamAbs);
+                    TryReadAnimalControlTarget(targets, "headTip", out bool hasHeadTipCamAbs, out Vector3 headTipCamAbs);
+                    TryReadAnimalControlTarget(targets, "tailBase", out bool hasTailBaseCamAbs, out Vector3 tailBaseCamAbs);
+                    TryReadAnimalControlTarget(targets, "tailTip", out bool hasTailTipCamAbs, out Vector3 tailTipCamAbs);
+                    TryReadAnimalControlTarget(targets, "forwardHint", out bool hasForwardHintCamAbs, out Vector3 forwardHintCamAbs);
+                    TryReadAnimalControlTarget(targets, "upHint", out bool hasUpHintCamAbs, out Vector3 upHintCamAbs);
+
+                    Vector3[] frontLeftLegChainCamAbs = ReadAnimalControlChain(chains, "frontLeftLeg");
+                    Vector3[] frontRightLegChainCamAbs = ReadAnimalControlChain(chains, "frontRightLeg");
+                    Vector3[] rearLeftLegChainCamAbs = ReadAnimalControlChain(chains, "rearLeftLeg");
+                    Vector3[] rearRightLegChainCamAbs = ReadAnimalControlChain(chains, "rearRightLeg");
+                    Vector3[] headChainCamAbs = ReadAnimalControlChain(chains, "head");
+                    Vector3[] tailChainCamAbs = ReadAnimalControlChain(chains, "tail");
+
+                    foreach (KeyValuePair<string, object> chainEntry in chains)
                     {
-                        List<object> tuple = keypoints[k] as List<object>;
-                        if (tuple == null || tuple.Count < 3)
+                        Dictionary<string, object> chain = chainEntry.Value as Dictionary<string, object>;
+                        List<object> jointIndices = GetList(chain, "jointIndices");
+                        List<object> positions = GetList(chain, "positions");
+                        if (jointIndices == null || positions == null)
                         {
-                            joints[k] = Vector3.zero;
-                            vis[k] = 0;
                             continue;
                         }
 
-                        joints[k] = new Vector3(
-                            GetFloat(tuple, 0) * unitScale,
-                            GetFloat(tuple, 1) * unitScale,
-                            GetFloat(tuple, 2) * unitScale);
-                        vis[k] = tuple.Count >= 4 && GetFloat(tuple, 3) <= 0f ? (byte)0 : (byte)1;
-                    }
+                        int count = Mathf.Min(jointIndices.Count, positions.Count);
+                        for (int c = 0; c < count; c++)
+                        {
+                            int jointIndex = GetInt(jointIndices, c, -1);
+                            if (jointIndex < 0 || jointIndex >= jointsCamAbs.Length)
+                            {
+                                continue;
+                            }
 
-                    Vector3 rootOffset = ResolveSidecarRootOffset(category, pose, joints, unitScale);
-                    for (int k = 0; k < joints.Length; k++)
-                    {
-                        joints[k] -= rootOffset;
+                            if (!TryReadVector3(positions[c] as List<object>, 1f, out Vector3 position))
+                            {
+                                continue;
+                            }
+
+                            jointsCamAbs[jointIndex] = NormalizeAnimalControlCam(position);
+                            jointsVis[jointIndex] = 1;
+                        }
                     }
 
                     if (byTrack == null)
                     {
-                        byTrack = new Dictionary<uint, SidecarSkeleton>();
-                        sidecarSkeletonsByFrame[frameIndex] = byTrack;
+                        byTrack = new Dictionary<uint, AnimalControlPose>();
+                        animalControlPosesByFrame[frameIndex] = byTrack;
                     }
 
-                    byTrack[trackId] = new SidecarSkeleton
+                    byTrack[trackId] = new AnimalControlPose
                     {
-                        kpCount = (ushort)Mathf.Min(ushort.MaxValue, joints.Length),
-                        jointsCam = joints,
-                        jointsVis = vis,
-                        rootCam = rootOffset
+                        kpCount = (ushort)jointsCamAbs.Length,
+                        jointsCamAbs = jointsCamAbs,
+                        jointsVis = jointsVis,
+                        hasWithersCamAbs = hasWithersCamAbs,
+                        withersCamAbs = withersCamAbs,
+                        hasHeadRootCamAbs = hasHeadRootCamAbs,
+                        headRootCamAbs = headRootCamAbs,
+                        hasHeadTipCamAbs = hasHeadTipCamAbs,
+                        headTipCamAbs = headTipCamAbs,
+                        rootCamAbs = rootCamAbs,
+                        hasTailBaseCamAbs = hasTailBaseCamAbs,
+                        tailBaseCamAbs = tailBaseCamAbs,
+                        hasTailTipCamAbs = hasTailTipCamAbs,
+                        tailTipCamAbs = tailTipCamAbs,
+                        hasForwardHintCamAbs = hasForwardHintCamAbs,
+                        forwardHintCamAbs = forwardHintCamAbs,
+                        hasUpHintCamAbs = hasUpHintCamAbs,
+                        upHintCamAbs = upHintCamAbs,
+                        frontLeftLegChainCamAbs = frontLeftLegChainCamAbs,
+                        frontRightLegChainCamAbs = frontRightLegChainCamAbs,
+                        rearLeftLegChainCamAbs = rearLeftLegChainCamAbs,
+                        rearRightLegChainCamAbs = rearRightLegChainCamAbs,
+                        headChainCamAbs = headChainCamAbs,
+                        tailChainCamAbs = tailChainCamAbs
                     };
                 }
             }
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"Failed to load SVB keypoints3d sidecar: {ex.Message}");
+            Debug.LogWarning($"Failed to load SVB animal_control_targets sidecar: {ex.Message}");
         }
     }
 
-    private void ReadSidecarCategories(Dictionary<string, object> root)
+    private static void TryReadAnimalControlTarget(Dictionary<string, object> targets, string key, out bool hasPosition, out Vector3 position)
     {
-        Dictionary<string, object> categories = GetDict(root, "categories");
-        if (categories == null)
+        hasPosition = false;
+        position = Vector3.zero;
+        Dictionary<string, object> target = GetDict(targets, key);
+        if (target == null)
         {
             return;
         }
 
-        foreach (KeyValuePair<string, object> kv in categories)
+        hasPosition = TryReadVector3(GetList(target, "position"), 1f, out position);
+        if (hasPosition)
         {
-            Dictionary<string, object> cat = kv.Value as Dictionary<string, object>;
-            if (cat == null)
-            {
-                continue;
-            }
-
-            byte id = (byte)Mathf.Clamp(GetInt(cat, "id", -1), 0, byte.MaxValue);
-            if (id == 0 && GetInt(cat, "id", -1) < 0)
-            {
-                continue;
-            }
-
-            categoryNames[id] = kv.Key;
-
-            List<object> keypoints = GetList(cat, "keypoints");
-            if (keypoints != null)
-            {
-                categoryKpCounts[id] = (ushort)Mathf.Min(ushort.MaxValue, keypoints.Count);
-            }
-
-            int[] rootIndices = TryReadRootIndices(cat);
-            if (rootIndices != null)
-            {
-                sidecarRootIndicesByCategory[kv.Key] = rootIndices;
-            }
+            position = NormalizeAnimalControlCam(position);
         }
     }
 
-    private float ResolveSidecarUnitScale(Dictionary<string, object> pose)
+    private static Vector3[] ReadAnimalControlChain(Dictionary<string, object> chains, string key)
     {
-        string units = pose != null ? GetString(pose, "units") : null;
-        if (StringEquals(units, "millimeters"))
-        {
-            return 0.001f;
-        }
-
-        return 1f;
-    }
-
-    private Vector3 ResolveSidecarRootOffset(string category, Dictionary<string, object> pose, Vector3[] joints, float unitScale)
-    {
-        if (joints == null || joints.Length == 0)
-        {
-            return Vector3.zero;
-        }
-
-        if (pose != null && TryReadVector3(GetList(pose, "skeletonRoot3d"), unitScale, out Vector3 skeletonRoot3d))
-        {
-            return skeletonRoot3d;
-        }
-
-        if (StringEquals(category, "person"))
-        {
-            return joints[0];
-        }
-
-        if (StringEquals(category, "animal"))
-        {
-            int[] rootIndices = TryReadRootIndices(pose);
-            if (rootIndices == null &&
-                !string.IsNullOrEmpty(category) &&
-                sidecarRootIndicesByCategory.TryGetValue(category, out int[] categoryRootIndices))
-            {
-                rootIndices = categoryRootIndices;
-            }
-
-            if (rootIndices != null && rootIndices.Length >= 2)
-            {
-                int idxA = rootIndices[0];
-                int idxB = rootIndices[1];
-                if (idxA >= 0 && idxB >= 0 && idxA < joints.Length && idxB < joints.Length)
-                {
-                    return (joints[idxA] + joints[idxB]) * 0.5f;
-                }
-            }
-
-            if (joints.Length > 18)
-            {
-                return (joints[7] + joints[18]) * 0.5f;
-            }
-
-            if (joints.Length > 7)
-            {
-                return (joints[6] + joints[7]) * 0.5f;
-            }
-        }
-
-        return Vector3.zero;
-    }
-
-    private int[] TryReadRootIndices(Dictionary<string, object> dict)
-    {
-        List<object> rootIndices = GetList(dict, "rootJointIndices");
-        if (rootIndices == null)
-        {
-            rootIndices = GetList(dict, "root_joint_indices");
-        }
-
-        if (rootIndices == null || rootIndices.Count < 2)
+        Dictionary<string, object> chain = GetDict(chains, key);
+        List<object> positions = GetList(chain, "positions");
+        if (positions == null || positions.Count == 0)
         {
             return null;
         }
 
-        int idxA = GetInt(rootIndices, 0, -1);
-        int idxB = GetInt(rootIndices, 1, -1);
-        if (idxA < 0 || idxB < 0)
+        List<Vector3> parsed = new List<Vector3>(positions.Count);
+        for (int i = 0; i < positions.Count; i++)
         {
-            return null;
+            if (TryReadVector3(positions[i] as List<object>, 1f, out Vector3 point))
+            {
+                parsed.Add(NormalizeAnimalControlCam(point));
+            }
         }
 
-        return new[] { idxA, idxB };
+        return parsed.Count > 0 ? parsed.ToArray() : null;
+    }
+
+    private static Vector3 NormalizeAnimalControlCam(Vector3 value)
+    {
+        // animal_control_targets.json currently ships with Y inverted relative to runtime/meta.bin.
+        return new Vector3(value.x, -value.y, value.z);
     }
 
     private void LoadOtherObjectProxiesSidecar(string path)
@@ -351,26 +333,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void ApplySidecarsToMetaObject(ref MetaObj obj, int frameIndex)
     {
-        if (sidecarSkeletonsByFrame.TryGetValue(frameIndex, out Dictionary<uint, SidecarSkeleton> skeletons) &&
-            skeletons.TryGetValue(obj.trackId, out SidecarSkeleton skeleton))
-        {
-            obj.hasSkeleton = skeleton.kpCount > 0;
-            obj.skeletonKpCount = skeleton.kpCount;
-            obj.jointsCam = skeleton.jointsCam;
-            obj.jointsVis = skeleton.jointsVis;
-            obj.hasSkeletonRootCam = true;
-            obj.skeletonRootCam = skeleton.rootCam;
-        }
-        else if (IsCategoryPerson(obj.categoryId) || IsCategoryAnimal(obj.categoryId))
-        {
-            obj.hasSkeleton = false;
-            obj.skeletonKpCount = 0;
-            obj.jointsCam = null;
-            obj.jointsVis = null;
-            obj.hasSkeletonRootCam = false;
-            obj.skeletonRootCam = Vector3.zero;
-        }
-
         if (otherProxiesByFrame.TryGetValue(frameIndex, out Dictionary<uint, OtherObjectProxy> proxies) &&
             proxies.TryGetValue(obj.trackId, out OtherObjectProxy proxy))
         {
@@ -381,6 +343,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             obj.otherProxyCenter = proxy.hasProxy3d ? proxy.proxyCenter : proxy.anchorCameraXyz;
             obj.otherProxySize = proxy.proxySize;
         }
+    }
+
+    private bool TryGetAnimalControlPose(int frameIndex, uint trackId, out AnimalControlPose pose)
+    {
+        pose = default(AnimalControlPose);
+        return animalControlPosesByFrame.TryGetValue(frameIndex, out Dictionary<uint, AnimalControlPose> byTrack) &&
+               byTrack.TryGetValue(trackId, out pose);
     }
 
     private bool TryOtherProxyWorld(MetaObj obj, Transform screen, out Vector3 centerWorld, out Vector3 sizeMeters)

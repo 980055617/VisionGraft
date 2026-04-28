@@ -42,8 +42,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             uiRect.sizeDelta = new Vector2(RuntimeSettingsDefaultCanvasWidth, RuntimeSettingsDefaultCanvasHeight);
             uiRect.localScale = new Vector3(
-                settingsPanelSizeMeters.x / RuntimeSettingsDefaultCanvasWidth,
-                settingsPanelSizeMeters.y / RuntimeSettingsDefaultCanvasHeight,
+                SettingsPanelSizeMeters.x / RuntimeSettingsDefaultCanvasWidth,
+                SettingsPanelSizeMeters.y / RuntimeSettingsDefaultCanvasHeight,
                 1f);
         }
 
@@ -271,7 +271,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         if (initial <= 0f)
         {
-            initial = runtimeFovxDefaultDeg;
+            initial = RuntimeFovxDefaultDeg;
         }
 
         runtimeFovxDeg = ClampRuntimeFovx(initial);
@@ -282,8 +282,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private float ClampRuntimeFovx(float value)
     {
-        float min = Mathf.Min(runtimeFovxMinDeg, runtimeFovxMaxDeg);
-        float max = Mathf.Max(runtimeFovxMinDeg, runtimeFovxMaxDeg);
+        float min = Mathf.Min(RuntimeFovxMinDeg, RuntimeFovxMaxDeg);
+        float max = Mathf.Max(RuntimeFovxMinDeg, RuntimeFovxMaxDeg);
         return Mathf.Clamp(value, min, max);
     }
 
@@ -291,8 +291,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private float ClampRuntimeScreenDistance(float value)
     {
-        float min = Mathf.Min(runtimeScreenDistanceMinMeters, runtimeScreenDistanceMaxMeters);
-        float max = Mathf.Max(runtimeScreenDistanceMinMeters, runtimeScreenDistanceMaxMeters);
+        float min = Mathf.Min(RuntimeScreenDistanceMinMeters, RuntimeScreenDistanceMaxMeters);
+        float max = Mathf.Max(RuntimeScreenDistanceMinMeters, RuntimeScreenDistanceMaxMeters);
         return Mathf.Clamp(value, min, max);
     }
 
@@ -305,8 +305,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        float min = Mathf.Min(runtimeFovxMinDeg, runtimeFovxMaxDeg);
-        float max = Mathf.Max(runtimeFovxMinDeg, runtimeFovxMaxDeg);
+        float min = Mathf.Min(RuntimeFovxMinDeg, RuntimeFovxMaxDeg);
+        float max = Mathf.Max(RuntimeFovxMinDeg, RuntimeFovxMaxDeg);
         runtimeFovxSlider.minValue = min;
         runtimeFovxSlider.maxValue = max;
     }
@@ -320,8 +320,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        float min = Mathf.Min(runtimeScreenDistanceMinMeters, runtimeScreenDistanceMaxMeters);
-        float max = Mathf.Max(runtimeScreenDistanceMinMeters, runtimeScreenDistanceMaxMeters);
+        float min = Mathf.Min(RuntimeScreenDistanceMinMeters, RuntimeScreenDistanceMaxMeters);
+        float max = Mathf.Max(RuntimeScreenDistanceMinMeters, RuntimeScreenDistanceMaxMeters);
         runtimeScreenDistanceSlider.minValue = min;
         runtimeScreenDistanceSlider.maxValue = max;
     }

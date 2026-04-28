@@ -33,12 +33,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        if (enableYawDepthDisambiguation)
+        if (EnableYawDepthDisambiguation)
         {
-            ApplyYawDepthDisambiguation(jointsWorld, vis, idx, root, camOrigin, Mathf.Clamp01(yawDepthBlend));
+            ApplyYawDepthDisambiguation(jointsWorld, vis, idx, root, camOrigin, Mathf.Clamp01(YawDepthBlend));
         }
 
-        float limbAlpha = Mathf.Clamp01(smpl24LimbIkAlpha * boneApplyAlpha);
+        float limbAlpha = Mathf.Clamp01(Smpl24LimbIkAlpha * boneApplyAlpha);
         bool appliedAny = false;
 
         appliedAny |= ApplySmpl24TwoBoneIk(cache,
@@ -113,7 +113,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        if (enableSkeletonScaleCorrection)
+        if (EnableSkeletonScaleCorrection)
         {
             ApplySmpl24SkeletonScale(root, model, jointsWorld, vis);
         }
@@ -245,13 +245,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         forward.Normalize();
 
-        if (stabilizePersonRootYaw)
+        if (StabilizePersonRootYaw)
         {
             forward = StabilizeHumanoidYawForward(root, up, forward);
         }
 
         Quaternion targetRoot = Quaternion.LookRotation(forward, up);
-        root.rotation = Quaternion.Slerp(root.rotation, targetRoot, Mathf.Clamp01(smpl24RootRotateAlpha));
+        root.rotation = Quaternion.Slerp(root.rotation, targetRoot, Mathf.Clamp01(Smpl24RootRotateAlpha));
     }
 
     private Vector3 StabilizeHumanoidYawForward(Transform root, Vector3 up, Vector3 forward)
@@ -283,7 +283,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 chosen = Vector3.Dot(prevForward, candA) >= Vector3.Dot(prevForward, candB) ? candA : candB;
 
         float dt = Time.deltaTime > 0.0001f ? Time.deltaTime : (1f / 60f);
-        float maxStep = Mathf.Max(1f, personRootYawMaxDegreesPerSecond) * dt;
+        float maxStep = Mathf.Max(1f, PersonRootYawMaxDegreesPerSecond) * dt;
         float signedAngle = Vector3.SignedAngle(prevForward, chosen, up);
         float clampedAngle = Mathf.Clamp(signedAngle, -maxStep, maxStep);
         Vector3 stabilized = Quaternion.AngleAxis(clampedAngle, up) * prevForward;
@@ -434,7 +434,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void ApplySmpl24TorsoAndHead(HumanoidRigCache cache, Vector3[] jointsWorld, byte[] vis)
     {
-        float alpha = Mathf.Clamp01(smpl24SpineAlpha);
+        float alpha = Mathf.Clamp01(Smpl24SpineAlpha);
         if (alpha <= 0f)
         {
             return;

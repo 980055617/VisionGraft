@@ -1,10 +1,10 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
     // Entry point for animal pose application and root orientation.
 
-    private void ApplyAnimalSkeleton(Transform instanceRoot, Animator animator, Vector3[] jointsWorld, byte[] vis, int jointCount, Vector3 skeletonRoot, bool freezeAnimalDistal)
+    private void ApplyAnimalSkeleton(Transform instanceRoot, Animator animator, Vector3[] jointsWorld, byte[] vis, int jointCount, Vector3 skeletonRoot, bool freezeAnimalDistal, bool hasControl, AnimalControlWorldData control)
     {
         if (instanceRoot == null || jointsWorld == null || vis == null || jointCount < 20)
         {
@@ -19,29 +19,30 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         // Animal pose application only runs for the "animal" category path.
         // Root orientation follows the full body basis instead of yaw-only heading.
-        TryApplyAnimalRootOrientation(instanceRoot, jointsWorld, vis, Mathf.Clamp01(animalRootRotateAlpha));
+        TryApplyAnimalRootOrientation(instanceRoot, jointsWorld, vis, Mathf.Clamp01(AnimalRootRotateAlpha), hasControl, control);
         AlignAnimalRootToSkeleton(instanceRoot, cache, skeletonRoot);
 
         float alpha = Mathf.Clamp01(boneApplyAlpha);
 
-        ApplyAnimalHeadPose(cache, jointsWorld, vis, alpha);
+        ApplyAnimalHeadPose(cache, jointsWorld, vis, alpha, hasControl, control);
+        ApplyAnimalTailPose(cache, alpha, hasControl, control);
 
-        if (!enableAnimalLimbApply)
+        if (!EnableAnimalLimbApply)
         {
             return;
         }
 
-        ApplyAnimalLimbPose(cache, jointsWorld, vis, alpha, freezeAnimalDistal);
+        ApplyAnimalLimbPose(cache, jointsWorld, vis, alpha, freezeAnimalDistal, hasControl, control);
     }
 
-    private void TryApplyAnimalRootOrientation(Transform instanceRoot, Vector3[] jointsWorld, byte[] vis, float rotateAlpha)
+    private void TryApplyAnimalRootOrientation(Transform instanceRoot, Vector3[] jointsWorld, byte[] vis, float rotateAlpha, bool hasControl, AnimalControlWorldData control)
     {
         if (instanceRoot == null || jointsWorld == null || vis == null)
         {
             return;
         }
 
-        if (!TryGetAnimalBodyBasis(jointsWorld, vis, instanceRoot, out Vector3 bodyForward, out Vector3 bodyUp, out Vector3 facingHint))
+        if (!TryGetAnimalBodyBasis(jointsWorld, vis, instanceRoot, hasControl, control, out Vector3 bodyForward, out Vector3 bodyUp, out Vector3 facingHint))
         {
             return;
         }
@@ -50,16 +51,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 stabilizedForward = bodyForward;
         Vector3 stabilizedUp = bodyUp;
 
-        if (stabilizeAnimalRootYaw)
+        if (StabilizeAnimalRootYaw)
         {
             StabilizeAnimalRootBasis(instanceRoot, worldUp, bodyForward, bodyUp, facingHint, out stabilizedForward, out stabilizedUp);
         }
 
-        Vector3 modelForward = animalModelForwardLocal.sqrMagnitude > 0.000001f
-            ? animalModelForwardLocal.normalized
+        Vector3 modelForward = AnimalModelForwardLocal.sqrMagnitude > 0.000001f
+            ? AnimalModelForwardLocal.normalized
             : Vector3.right;
-        Vector3 modelUp = animalModelUpLocal.sqrMagnitude > 0.000001f
-            ? animalModelUpLocal.normalized
+        Vector3 modelUp = AnimalModelUpLocal.sqrMagnitude > 0.000001f
+            ? AnimalModelUpLocal.normalized
             : Vector3.up;
 
         Quaternion modelBasis = Quaternion.LookRotation(modelForward, modelUp);
@@ -207,11 +208,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return created;
     }
 
-    private bool TryGetAnimalBodyBasis(Vector3[] jointsWorld, byte[] vis, Transform instanceRoot, out Vector3 forward, out Vector3 up, out Vector3 facingHint)
+    private bool TryGetAnimalBodyBasis(Vector3[] jointsWorld, byte[] vis, Transform instanceRoot, bool hasControl, AnimalControlWorldData control, out Vector3 forward, out Vector3 up, out Vector3 facingHint)
     {
         forward = Vector3.zero;
         up = Vector3.zero;
         facingHint = Vector3.zero;
+        if (hasControl && TryGetAnimalBodyBasisFromControl(control, out forward, out up, out facingHint))
+        {
+            return true;
+        }
+
         bool hasPelvis = TryGetJointPoint(jointsWorld, vis, 7, out Vector3 pelvisHub);
         bool hasWithers = TryGetJointPoint(jointsWorld, vis, 18, out Vector3 withersHub);
         bool hasHeadRoot = TryGetJointPoint(jointsWorld, vis, 24, out Vector3 headRoot);
@@ -292,6 +298,58 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return up.sqrMagnitude > 0.000001f;
     }
 
+    private bool TryGetAnimalBodyBasisFromControl(AnimalControlWorldData control, out Vector3 forward, out Vector3 up, out Vector3 facingHint)
+    {
+        forward = Vector3.zero;
+        up = Vector3.zero;
+        facingHint = Vector3.zero;
+
+        if (control.hasRoot && control.hasForwardHint)
+        {
+            forward = (control.forwardHintWorld - control.rootWorld).normalized;
+        }
+        else if (control.hasRoot && control.hasWithers)
+        {
+            forward = (control.withersWorld - control.rootWorld).normalized;
+        }
+
+        if (control.hasHeadRoot && control.hasHeadTip)
+        {
+            facingHint = (control.headTipWorld - control.headRootWorld).normalized;
+            if (forward.sqrMagnitude > 0.000001f && facingHint.sqrMagnitude > 0.000001f && Vector3.Dot(forward, facingHint) < 0f)
+            {
+                forward = -forward;
+            }
+        }
+
+        if (control.hasRoot && control.hasUpHint)
+        {
+            up = (control.upHintWorld - control.rootWorld).normalized;
+        }
+
+        if (forward.sqrMagnitude <= 0.000001f || up.sqrMagnitude <= 0.000001f)
+        {
+            return false;
+        }
+
+        up = Vector3.ProjectOnPlane(up, forward);
+        if (up.sqrMagnitude <= 0.000001f)
+        {
+            return false;
+        }
+
+        up.Normalize();
+        Vector3 right = Vector3.Cross(forward, up);
+        if (right.sqrMagnitude <= 0.000001f)
+        {
+            return false;
+        }
+
+        right.Normalize();
+        up = Vector3.Cross(right, forward).normalized;
+        return true;
+    }
+
     private bool TryGetAnimalSkeletonRootWorld(Vector3[] jointsWorld, byte[] vis, int jointCount, out Vector3 rootWorld)
     {
         if (jointCount > 18 && TryGetMidPoint(jointsWorld, vis, 7, 18, out rootWorld))
@@ -323,7 +381,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         Transform rigRoot = animator != null ? animator.transform : instanceRoot;
         AnimalRigCache cache = GetOrBuildAnimalRigCache(rigRoot);
-        if (enableSkeletonScaleCorrection)
+        if (EnableSkeletonScaleCorrection)
         {
             ApplyAnimalSkeletonScale(instanceRoot, jointsWorld, vis, jointCount);
         }

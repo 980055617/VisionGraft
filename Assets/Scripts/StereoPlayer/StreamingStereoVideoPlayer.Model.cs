@@ -24,10 +24,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private readonly Dictionary<Transform, OneEuroVector3Filter> animalRootUpFilters = new Dictionary<Transform, OneEuroVector3Filter>();
     private readonly Dictionary<Animator, HumanoidRigCache> humanoidCaches = new Dictionary<Animator, HumanoidRigCache>();
     private readonly Dictionary<Transform, AnimalRigCache> animalRigCaches = new Dictionary<Transform, AnimalRigCache>();
-    private static readonly int[] AnimalLeftFrontChain = { 7, 8, 12, 16 };
-    private static readonly int[] AnimalRightFrontChain = { 7, 9, 13, 17 };
-    private static readonly int[] AnimalLeftRearChain = { 6, 10, 14, 18 };
-    private static readonly int[] AnimalRightRearChain = { 6, 11, 15, 19 };
+    private static readonly int[] AnimalLeftFrontChain = { 18, 13, 9, 15 };
+    private static readonly int[] AnimalRightFrontChain = { 18, 12, 8, 14 };
+    private static readonly int[] AnimalLeftRearChain = { 7, 11, 17, 6 };
+    private static readonly int[] AnimalRightRearChain = { 7, 10, 16, 5 };
     private struct SkeletonIndices
     {
         public int nose;

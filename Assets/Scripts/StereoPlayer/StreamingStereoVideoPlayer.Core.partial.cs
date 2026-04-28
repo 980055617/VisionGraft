@@ -86,7 +86,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         float perEyeWidth = manifest != null && manifest.eye_w > 0 ? manifest.eye_w : w * 0.5f;
         float aspect = perEyeWidth / h;
-        Vector3 screenScale = new Vector3(aspect * baseHeight, baseHeight, 1f);
+        Vector3 screenScale = new Vector3(aspect * BaseHeight, BaseHeight, 1f);
 
         if (leftScreen != null)
         {
@@ -109,7 +109,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void LateUpdate()
     {
-        if (!forceScreensInFrontOfViewCamera)
+        if (!ForceScreensInFrontOfViewCamera)
         {
             return;
         }
@@ -149,10 +149,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (TryPick(out PickResult pick))
         {
-            TrySelectFollowTrackFromPick(pick);
+            TrySelectDisplayTrackFromPick(pick);
         }
 
-        FollowTick();
+        DisplayModelTick();
         DetectRuntimeRecenterFallback();
         HandleRuntimePauseInput();
         RefreshRuntimeSettingsPerFrame();
@@ -197,7 +197,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void OnTrackingOriginUpdated(XRInputSubsystem _)
     {
-        if (forceStationaryTrackingOrigin)
+        if (ForceStationaryTrackingOrigin)
         {
             for (int i = 0; i < xrInputSubsystems.Count; i++)
             {
@@ -215,7 +215,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void TryApplyPreferredTrackingOriginMode(XRInputSubsystem xr)
     {
-        if (!forceStationaryTrackingOrigin || xr == null)
+        if (!ForceStationaryTrackingOrigin || xr == null)
         {
             return;
         }
@@ -232,7 +232,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void DetectRuntimeRecenterFallback()
     {
-        if (forceScreensInFrontOfViewCamera)
+        if (ForceScreensInFrontOfViewCamera)
         {
             headPosePrimed = false;
             return;
@@ -267,7 +267,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void RecenterScreensToCurrentFacing()
     {
-        if (forceScreensInFrontOfViewCamera)
+        if (ForceScreensInFrontOfViewCamera)
         {
             return;
         }

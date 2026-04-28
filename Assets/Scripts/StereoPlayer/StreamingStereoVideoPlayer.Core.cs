@@ -11,17 +11,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const string BundleVideoEntryName = "video.mp4";
     private const string BundleManifestEntryName = "manifest.json";
     private const string BundleMetaEntryName = "meta.bin";
-    private const string BundleKeypoints3dEntryName = "source/keypoints3d.json";
+    private const string BundleAnimalControlTargetsEntryName = "source/animal_control_targets.json";
     private const string BundleOtherObjectProxiesEntryName = "source/other_object_proxies.json";
     private const string ExtractedVideoFileName = "video.mp4";
     private const string ExtractedManifestFileName = "manifest.json";
     private const string ExtractedMetaFileName = "meta.bin";
-    private const string ExtractedKeypoints3dFileName = "keypoints3d.json";
+    private const string ExtractedAnimalControlTargetsFileName = "animal_control_targets.json";
     private const string ExtractedOtherObjectProxiesFileName = "other_object_proxies.json";
 
-    [Header("Screens")]
     private Transform leftScreen;
     private Transform rightScreen;
+
+    [Header("Screens")]
     public GameObject leftScreenPrefab;
     public GameObject rightScreenPrefab;
 
@@ -30,95 +31,86 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public float screenDistanceMeters = 2.0f;
     public Vector3 screenOffsetMeters = Vector3.zero;
     public bool fitScreenToFov = false;
-    [Header("Depth Popout")]
-    public float popoutRangeMeters = 0.35f;
-    public float epsilonMeters = 0.02f;
-    public float minDistanceFromHeadMeters = 0.25f;
 
+    [Header("Model Debug")]
+    [FormerlySerializedAs("useMetaFollow")]
+    public bool displayModel = true;
+    public int[] displayTrackIds = { 0, 1 };
     public GameObject replacePrefab;
-    [Header("Track Prefab Overrides")]
-    public bool useTrackPrefabOverrides = true;
     public GameObject track0Prefab;
     public GameObject track1Prefab;
-    [Header("Follow (Meta)")]
-    public bool useMetaFollow = true;
-    public bool useFrameReadySync = false;
-    public int followTrackId = -1; // -1 = auto
-    public bool followNearestToClick = true;
-    public float followSelectThresholdPixels = 80f;
-
-    [Header("Video Layout")]
-    public float baseHeight = 1f;
+    public GameObject track2Prefab;
 
     [Header("Bones")]
     public bool enableBoneApply = true;
     public float boneApplyAlpha = 1f;
     public bool enableJointSmoothing = true;
     [Range(0f, 1f)] public float jointSmoothingAlpha = 0.35f;
-    [Header("Pose Pipelines")]
-    public Vector3 personBoneAxisSign = new Vector3(1f, -1f, 1f);
-    public Vector3 animalBoneAxisSign = Vector3.one;
-    public bool remapSkeletonDepthToScreenRange = true;
-    public bool enableSkeletonScaleCorrection = false;
-    public float skeletonScaleMin = 0.2f;
-    public float skeletonScaleMax = 5f;
-    public float skeletonScaleRelativeMin = 0.75f;
-    public float skeletonScaleRelativeMax = 1.25f;
-    public bool stabilizePersonRootYaw = true;
-    public float personRootYawMaxDegreesPerSecond = 180f;
-    [Range(0f, 1f)] public float smpl24RootRotateAlpha = 0.85f;
-    [Range(0f, 1f)] public float smpl24LimbIkAlpha = 0.9f;
-    [Range(0f, 1f)] public float smpl24SpineAlpha = 0.35f;
-    [Header("Bones Depth Assist")]
-    public bool enableYawDepthDisambiguation = true;
-    public float yawDepthOffsetMeters = 0.045f;
-    [Range(0f, 1f)] public float yawDepthBlend = 1f;
-    [Header("Animal Bones")]
-    public bool enableAnimalLimbApply = false;
-    public bool stabilizeAnimalRootYaw = true;
-    [Range(0f, 1f)] public float animalRootRotateAlpha = 0.6f;
-    public Vector3 animalModelForwardLocal = Vector3.right;
-    public Vector3 animalModelUpLocal = Vector3.up;
-    [FormerlySerializedAs("enableDogDistalFreezeOnHighSkip")]
-    public bool enableAnimalDistalFreezeOnHighSkip = true;
-    [FormerlySerializedAs("dogDistalFreezeSkipThreshold")]
-    [Range(0, 16)] public int animalDistalFreezeSkipThreshold = 6;
 
-    [Header("Runtime Flags")]
-    public bool forceScreensInFrontOfViewCamera = false;
-    public bool forceStationaryTrackingOrigin = true;
-    public bool alignModelToBBoxBottom = true;
-    public float bboxAnchorVToBottom = 0.5f;
-    public float modelBottomExtraOffsetMeters = 0f;
-    public bool bottomAlignVerticalOnly = true;
     [Header("Other Proxy")]
     public bool showOtherProxyBoxes = true;
     public Color otherProxyBoxColor = new Color(1f, 0.78f, 0.18f, 0.32f);
-    [Header("Humanoid Height Fit")]
-    public bool enableHeadHeightScaleCorrection = true;
-    [Range(0f, 1f)] public float headHeightScaleAlpha = 0.35f;
-    public float headHeightScaleMin = 0.75f;
-    public float headHeightScaleMax = 1.35f;
 
     [Header("Runtime Controls")]
     public bool enableRuntimeControls = true;
     public GameObject runtimeControlsPrefab;
-    public Vector2 controlsBarOffsetMeters = Vector2.zero;
-    public float controlsBarGapMeters = 0.06f;
-    public float controlsBarForwardOffsetMeters = 0.01f;
-    public Vector2 controlsBarSizeMeters = new Vector2(0.6f, 0.1f);
-    public bool enablePauseHotkey = true;
 
-    [Header("Runtime FOVx Tuning")]
-    public float runtimeFovxMinDeg = 40f;
-    public float runtimeFovxMaxDeg = 140f;
-    public float runtimeFovxDefaultDeg = 90f;
-    public float runtimeScreenDistanceMinMeters = 0.5f;
-    public float runtimeScreenDistanceMaxMeters = 3.0f;
-    public Vector2 settingsPanelSizeMeters = new Vector2(0.78f, 0.5f);
-    public Vector2 settingsPanelOffsetMeters = Vector2.zero;
-    public float settingsPanelGapMeters = 0.08f;
-    public float settingsPanelForwardOffsetMeters = 0.01f;
+    private const float PopoutRangeMeters = 0.35f;
+    private const float EpsilonMeters = 0.02f;
+    private const float MinDistanceFromHeadMeters = 0.25f;
+    private const float BaseHeight = 1f;
+    private static readonly bool UseFrameReadySync = false;
+    private static readonly bool SelectDisplayTrackFromClick = true;
+    private const float DisplayTrackSelectThresholdPixels = 80f;
+
+    private static readonly bool EnableSkeletonScaleCorrection = false;
+    private const float SkeletonScaleMin = 0.2f;
+    private const float SkeletonScaleMax = 5f;
+    private const float SkeletonScaleRelativeMin = 0.75f;
+    private const float SkeletonScaleRelativeMax = 1.25f;
+    private static readonly bool StabilizePersonRootYaw = true;
+    private const float PersonRootYawMaxDegreesPerSecond = 180f;
+    private const float Smpl24RootRotateAlpha = 0.85f;
+    private const float Smpl24LimbIkAlpha = 0.9f;
+    private const float Smpl24SpineAlpha = 0.35f;
+    private static readonly bool EnableYawDepthDisambiguation = true;
+    private const float YawDepthOffsetMeters = 0.045f;
+    private const float YawDepthBlend = 1f;
+
+    private static readonly bool EnableAnimalLimbApply = true;
+    private static readonly bool StabilizeAnimalRootYaw = true;
+    private const float AnimalRootRotateAlpha = 0.6f;
+    private static readonly Vector3 AnimalModelForwardLocal = new Vector3(0f, 0f, -1f);
+    private static readonly Vector3 AnimalModelUpLocal = Vector3.up;
+    private static readonly bool EnableAnimalDistalFreezeOnHighSkip = true;
+    private const int AnimalDistalFreezeSkipThreshold = 6;
+
+    private static readonly bool ForceScreensInFrontOfViewCamera = false;
+    private static readonly bool ForceStationaryTrackingOrigin = true;
+    private static readonly bool AlignModelToBBoxBottom = true;
+    private const float BboxAnchorVToBottom = 0.5f;
+    private const float ModelBottomExtraOffsetMeters = 0f;
+    private static readonly bool BottomAlignVerticalOnly = true;
+
+    private static readonly bool EnableHeadHeightScaleCorrection = true;
+    private const float HeadHeightScaleAlpha = 0.35f;
+    private const float HeadHeightScaleMin = 0.75f;
+    private const float HeadHeightScaleMax = 1.35f;
+
+    private static readonly Vector2 ControlsBarOffsetMeters = Vector2.zero;
+    private const float ControlsBarGapMeters = 0.06f;
+    private const float ControlsBarForwardOffsetMeters = 0.01f;
+    private static readonly Vector2 ControlsBarSizeMeters = new Vector2(0.6f, 0.1f);
+    private static readonly bool EnablePauseHotkey = true;
+    private const float RuntimeFovxMinDeg = 40f;
+    private const float RuntimeFovxMaxDeg = 140f;
+    private const float RuntimeFovxDefaultDeg = 90f;
+    private const float RuntimeScreenDistanceMinMeters = 0.5f;
+    private const float RuntimeScreenDistanceMaxMeters = 3.0f;
+    private static readonly Vector2 SettingsPanelSizeMeters = new Vector2(0.78f, 0.5f);
+    private static readonly Vector2 SettingsPanelOffsetMeters = Vector2.zero;
+    private const float SettingsPanelGapMeters = 0.08f;
+    private const float SettingsPanelForwardOffsetMeters = 0.01f;
 
     private VideoPlayer vp;
     private ManifestData manifest;

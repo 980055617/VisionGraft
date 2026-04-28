@@ -2,14 +2,52 @@
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
-    private void ApplyAnimalHeadPose(AnimalRigCache cache, Vector3[] jointsWorld, byte[] vis, float alpha)
+    private void ApplyAnimalHeadPose(AnimalRigCache cache, Vector3[] jointsWorld, byte[] vis, float alpha, bool hasControl, AnimalControlWorldData control)
     {
-        // Head uses a single fixed segment (Throat -> Nose) for both neck and head.
-        ApplyAnimalBonesFromSegment(cache, cache.neck, cache.head, jointsWorld, vis, 5, 4, alpha * 0.65f, alpha * 0.65f);
+        if (hasControl)
+        {
+            if (control.hasWithers && control.hasHeadRoot)
+            {
+                ApplyAnimalBoneFromPoints(cache, cache.neck, control.withersWorld, control.headRootWorld, alpha * 0.65f);
+            }
+
+            if (control.hasHeadRoot && control.hasHeadTip)
+            {
+                ApplyAnimalBoneFromPoints(cache, cache.head, control.headRootWorld, control.headTipWorld, alpha * 0.65f);
+                return;
+            }
+        }
+
+        ApplyAnimalBonesFromSegment(cache, cache.neck, cache.head, jointsWorld, vis, 24, 2, alpha * 0.65f, alpha * 0.65f);
     }
 
-    private void ApplyAnimalLimbPose(AnimalRigCache cache, Vector3[] jointsWorld, byte[] vis, float alpha, bool freezeAnimalDistal)
+    private void ApplyAnimalTailPose(AnimalRigCache cache, float alpha, bool hasControl, AnimalControlWorldData control)
     {
+        if (!hasControl || cache.tailBase == null)
+        {
+            return;
+        }
+
+        if (control.hasTailBase && control.hasTailTip)
+        {
+            ApplyAnimalBoneFromPoints(cache, cache.tailBase, control.tailBaseWorld, control.tailTipWorld, alpha * 0.5f);
+            return;
+        }
+
+        ApplyAnimalBoneFromChain(cache, cache.tailBase, null, null, control.tailWorld, alpha * 0.5f, false);
+    }
+
+    private void ApplyAnimalLimbPose(AnimalRigCache cache, Vector3[] jointsWorld, byte[] vis, float alpha, bool freezeAnimalDistal, bool hasControl, AnimalControlWorldData control)
+    {
+        if (hasControl)
+        {
+            ApplyAnimalBoneFromChain(cache, cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw, control.frontLeftLegWorld, alpha, false);
+            ApplyAnimalBoneFromChain(cache, cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw, control.frontRightLegWorld, alpha, false);
+            ApplyAnimalBoneFromChain(cache, cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, control.rearLeftLegWorld, alpha, !freezeAnimalDistal);
+            ApplyAnimalBoneFromChain(cache, cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, control.rearRightLegWorld, alpha, !freezeAnimalDistal);
+            return;
+        }
+
         // Front limbs use the same chain mapping but keep distal paw untouched.
         ApplyAnimalLimbByChain(cache, cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw, jointsWorld, vis, AnimalLeftFrontChain, alpha, false);
         ApplyAnimalLimbByChain(cache, cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw, jointsWorld, vis, AnimalRightFrontChain, alpha, false);
@@ -38,6 +76,39 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (paw != null && applyDistal)
         {
             ApplyAnimalBoneFromJoints(cache, paw, jointsWorld, vis, chain[2], chain[3], alpha * 0.7f);
+        }
+    }
+
+    private void ApplyAnimalBoneFromChain(AnimalRigCache cache, Transform upper, Transform lower, Transform paw, Vector3[] chainWorld, float alpha, bool applyDistal)
+    {
+        if (chainWorld == null || chainWorld.Length < 2)
+        {
+            return;
+        }
+
+        int upperStart = 0;
+        int lowerStart = 1;
+        int distalStart = 2;
+        if (chainWorld.Length >= 5)
+        {
+            upperStart = 1;
+            lowerStart = 2;
+            distalStart = 3;
+        }
+
+        if (upper != null && upperStart + 1 < chainWorld.Length)
+        {
+            ApplyAnimalBoneFromPoints(cache, upper, chainWorld[upperStart], chainWorld[upperStart + 1], alpha * 0.9f);
+        }
+
+        if (lower != null && lowerStart + 1 < chainWorld.Length)
+        {
+            ApplyAnimalBoneFromPoints(cache, lower, chainWorld[lowerStart], chainWorld[lowerStart + 1], alpha * 0.85f);
+        }
+
+        if (paw != null && applyDistal && distalStart + 1 < chainWorld.Length)
+        {
+            ApplyAnimalBoneFromPoints(cache, paw, chainWorld[distalStart], chainWorld[distalStart + 1], alpha * 0.7f);
         }
     }
 }

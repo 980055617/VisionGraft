@@ -436,13 +436,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return null;
     }
 
-    private void TrySelectFollowTrackFromPick(PickResult pick)
+    private void TrySelectDisplayTrackFromPick(PickResult pick)
     {
-        if (!useMetaFollow || !followNearestToClick || !metaLoaded)
+        if (!displayModel || !SelectDisplayTrackFromClick || !metaLoaded)
         {
             return;
         }
-        if (followTrackId >= 0)
+        if (displayTrackIds != null && displayTrackIds.Length > 0)
         {
             return;
         }
@@ -453,7 +453,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        float bestDistSq = followSelectThresholdPixels * followSelectThresholdPixels;
+        float bestDistSq = DisplayTrackSelectThresholdPixels * DisplayTrackSelectThresholdPixels;
         int bestTrack = -1;
         for (int i = 0; i < metaFrameObjects.Count; i++)
         {
@@ -470,7 +470,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (bestTrack >= 0)
         {
-            followTrackId = bestTrack;
+            displayTrackIds = new[] { bestTrack };
         }
     }
 }

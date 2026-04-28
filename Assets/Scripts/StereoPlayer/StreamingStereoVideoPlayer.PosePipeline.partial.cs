@@ -4,20 +4,51 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
     // Category-level pose dispatch lives here. Person and animal pipelines should stay separate;
     // shared helpers are limited to raw camera-pose to world-pose conversion.
+    private static readonly Vector3 AnimalPoseAxisSign = Vector3.one;
 
     private struct PoseWorldData
     {
         public int jointCount;
         public Vector3[] jointsWorld;
+        public Vector3[] jointsCam;
+        public byte[] jointVis;
+        public bool hasAnimalControl;
+        public AnimalControlWorldData animalControl;
         public Vector3 camOrigin;
         public Vector3 rootWorld;
+    }
+
+    private struct AnimalControlWorldData
+    {
+        public bool hasRoot;
+        public Vector3 rootWorld;
+        public bool hasWithers;
+        public Vector3 withersWorld;
+        public bool hasHeadRoot;
+        public Vector3 headRootWorld;
+        public bool hasHeadTip;
+        public Vector3 headTipWorld;
+        public bool hasTailBase;
+        public Vector3 tailBaseWorld;
+        public bool hasTailTip;
+        public Vector3 tailTipWorld;
+        public bool hasForwardHint;
+        public Vector3 forwardHintWorld;
+        public bool hasUpHint;
+        public Vector3 upHintWorld;
+        public Vector3[] frontLeftLegWorld;
+        public Vector3[] frontRightLegWorld;
+        public Vector3[] rearLeftLegWorld;
+        public Vector3[] rearRightLegWorld;
+        public Vector3[] headWorld;
+        public Vector3[] tailWorld;
     }
 
     private void TryApplyPersonPosePipeline(GameObject instance, MetaObj obj, Transform screen, int frame)
     {
         try
         {
-            if (!TryBuildPoseWorld(obj, screen, ResolvePoseAxisSign(personBoneAxisSign), remapSkeletonDepthToScreenRange, out PoseWorldData pose))
+            if (!TryBuildPersonPoseWorld(obj, screen, out PoseWorldData pose))
             {
                 return;
             }
@@ -31,16 +62,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
             if (enableJointSmoothing)
             {
-                SmoothJointsWorld(obj.trackId, pose.jointsWorld, obj.jointsVis, Mathf.Clamp01(jointSmoothingAlpha));
+                SmoothJointsWorld(obj.trackId, pose.jointsWorld, pose.jointVis, Mathf.Clamp01(jointSmoothingAlpha));
             }
 
-            if (!TryGetSmpl24RootWorld(pose.jointsWorld, obj.jointsVis, out Vector3 skeletonRoot))
+            if (!TryGetSmpl24RootWorld(pose.jointsWorld, pose.jointVis, out Vector3 skeletonRoot))
             {
                 return;
             }
 
             Vector3 yawAxis = screen != null ? screen.up : instance.transform.up;
-            ApplyManualYawToJoints(obj.trackId, frame, pose.jointsWorld, obj.jointsVis, skeletonRoot, yawAxis);
+            ApplyManualYawToJoints(obj.trackId, frame, pose.jointsWorld, pose.jointVis, skeletonRoot, yawAxis);
 
             Animator animator = instance.GetComponentInChildren<Animator>();
             HumanoidRigCache cache = null;
@@ -50,7 +81,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
 
             ReplaceableModel model = instance.GetComponent<ReplaceableModel>();
-            TryApplySmpl24HumanoidPlacement(instance.transform, model, cache, pose.jointsWorld, obj.jointsVis);
+            TryApplySmpl24HumanoidPlacement(instance.transform, model, cache, pose.jointsWorld, pose.jointVis);
 
             if (!enableBoneApply)
             {
@@ -62,7 +93,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 return;
             }
 
-            TryApplySmpl24HumanoidIk(instance.transform, cache, pose.jointsWorld, obj.jointsVis, pose.camOrigin, idx);
+            TryApplySmpl24HumanoidIk(instance.transform, cache, pose.jointsWorld, pose.jointVis, pose.camOrigin, idx);
         }
         catch
         {
@@ -73,33 +104,35 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         try
         {
-            if (!TryBuildPoseWorld(obj, screen, ResolvePoseAxisSign(animalBoneAxisSign), false, out PoseWorldData pose))
+            if (!TryBuildAnimalPoseWorld(obj, screen, frame, out PoseWorldData pose))
             {
                 return;
             }
 
             bool freezeAnimalDistal =
-                enableAnimalDistalFreezeOnHighSkip &&
-                CountAnimalSkipSegments(pose.jointCount, obj.jointsVis, obj.jointsCam) >= Mathf.Max(0, animalDistalFreezeSkipThreshold);
+                EnableAnimalDistalFreezeOnHighSkip &&
+                (pose.hasAnimalControl
+                    ? CountAnimalControlSkipSegments(pose.animalControl)
+                    : CountAnimalSkipSegments(pose.jointCount, pose.jointVis, pose.jointsCam)) >= Mathf.Max(0, AnimalDistalFreezeSkipThreshold);
 
             if (enableJointSmoothing)
             {
-                SmoothJointsWorld(obj.trackId, pose.jointsWorld, obj.jointsVis, Mathf.Clamp01(jointSmoothingAlpha));
+                SmoothJointsWorld(obj.trackId, pose.jointsWorld, pose.jointVis, Mathf.Clamp01(jointSmoothingAlpha));
             }
 
             Vector3 skeletonRoot = pose.rootWorld;
 
             Vector3 yawAxis = screen != null ? screen.up : instance.transform.up;
-            ApplyManualYawToJoints(obj.trackId, frame, pose.jointsWorld, obj.jointsVis, skeletonRoot, yawAxis);
+            ApplyManualYawToJoints(obj.trackId, frame, pose.jointsWorld, pose.jointVis, skeletonRoot, yawAxis);
 
             Animator animator = instance.GetComponentInChildren<Animator>();
             if (!enableBoneApply)
             {
-                ApplyAnimalSkeletonPlacement(instance.transform, animator, pose.jointsWorld, obj.jointsVis, pose.jointCount, skeletonRoot);
+                ApplyAnimalSkeletonPlacement(instance.transform, animator, pose.jointsWorld, pose.jointVis, pose.jointCount, skeletonRoot);
                 return;
             }
 
-            ApplyAnimalSkeleton(instance.transform, animator, pose.jointsWorld, obj.jointsVis, pose.jointCount, skeletonRoot, freezeAnimalDistal);
+            ApplyAnimalSkeleton(instance.transform, animator, pose.jointsWorld, pose.jointVis, pose.jointCount, skeletonRoot, freezeAnimalDistal, pose.hasAnimalControl, pose.animalControl);
         }
         catch
         {
@@ -152,7 +185,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return skip;
     }
 
-    private bool TryBuildPoseWorld(MetaObj obj, Transform screen, Vector3 axisSign, bool remapDepth, out PoseWorldData pose)
+    private bool TryBuildPersonPoseWorld(MetaObj obj, Transform screen, out PoseWorldData pose)
     {
         pose = default(PoseWorldData);
         if (!obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
@@ -166,7 +199,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        if (!obj.hasSkeletonRootCam || !IsManifestJointsSpaceRootRelative())
+        if (!TryGetAnchorWorld(obj, screen, out Vector3 anchorWorld))
         {
             return false;
         }
@@ -176,64 +209,231 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        Vector3 rootCam = ApplyPoseAxisSign(obj.skeletonRootCam, axisSign);
-        if (remapDepth)
-        {
-            Vector3[] jointsCamAbs = new Vector3[jointCount];
-            for (int i = 0; i < jointCount; i++)
-            {
-                jointsCamAbs[i] = rootCam + ApplyPoseAxisSign(obj.jointsCam[i], axisSign);
-            }
-
-            if (TryGetVisibleCameraDepthRange(jointsCamAbs, obj.jointsVis, jointCount, out float sourceNear, out float sourceFar) &&
-                TryGetDisplayDepthRange(out float displayNear, out float displayFar))
-            {
-                float targetRootZ = RemapDepthScalar(rootCam.z, sourceNear, sourceFar, displayNear, displayFar);
-                float uniformDepthScale = Mathf.Abs(rootCam.z) > 0.0001f ? targetRootZ / rootCam.z : 1f;
-                Vector3[] remappedWorld = new Vector3[jointCount];
-                for (int i = 0; i < jointCount; i++)
-                {
-                    Vector3 remappedCam = jointsCamAbs[i] * uniformDepthScale;
-                    remappedWorld[i] = camOrigin + (camRotation * remappedCam);
-                }
-
-                pose = new PoseWorldData
-                {
-                    jointCount = jointCount,
-                    jointsWorld = remappedWorld,
-                    camOrigin = camOrigin,
-                    rootWorld = camOrigin + (camRotation * (rootCam * uniformDepthScale))
-                };
-                return true;
-            }
-        }
-
-        Vector3 rootBaseWorld = camOrigin + (camRotation * rootCam);
         Vector3[] jointsWorld = new Vector3[jointCount];
         for (int i = 0; i < jointCount; i++)
         {
-            Vector3 joint = ApplyPoseAxisSign(obj.jointsCam[i], axisSign);
-            jointsWorld[i] = rootBaseWorld + (camRotation * joint);
+            jointsWorld[i] = anchorWorld + (camRotation * obj.jointsCam[i]);
         }
 
         pose = new PoseWorldData
         {
             jointCount = jointCount,
             jointsWorld = jointsWorld,
+            jointsCam = obj.jointsCam,
+            jointVis = obj.jointsVis,
             camOrigin = camOrigin,
-            rootWorld = rootBaseWorld
+            rootWorld = anchorWorld
         };
         return true;
     }
 
-    private Vector3 ResolvePoseAxisSign(Vector3 axisSign)
+    private bool TryBuildAnimalPoseWorld(MetaObj obj, Transform screen, int frame, out PoseWorldData pose)
     {
-        if (axisSign.sqrMagnitude > 0.000001f)
+        pose = default(PoseWorldData);
+        if (TryGetAnimalControlPose(frame, obj.trackId, out AnimalControlPose controlPose))
         {
-            return axisSign;
+            if (!TryGetPinholeBasis(screen, out Vector3 controlCamOrigin, out Quaternion controlCamRotation))
+            {
+                return false;
+            }
+
+            int controlJointCount = controlPose.kpCount;
+            if (controlJointCount <= 0 || controlPose.jointsCamAbs == null || controlPose.jointsVis == null)
+            {
+                return false;
+            }
+
+            Vector3[] controlJointsWorld = new Vector3[controlJointCount];
+            Vector3[] controlJointsCam = new Vector3[controlJointCount];
+            for (int i = 0; i < controlJointCount; i++)
+            {
+                Vector3 jointCam = ApplyPoseAxisSign(controlPose.jointsCamAbs[i], AnimalPoseAxisSign);
+                controlJointsCam[i] = jointCam;
+                controlJointsWorld[i] = controlCamOrigin + (controlCamRotation * jointCam);
+            }
+
+            pose = new PoseWorldData
+            {
+                jointCount = controlJointCount,
+                jointsWorld = controlJointsWorld,
+                jointsCam = controlJointsCam,
+                jointVis = controlPose.jointsVis,
+                hasAnimalControl = true,
+                animalControl = BuildAnimalControlWorldData(controlPose, controlCamOrigin, controlCamRotation),
+                camOrigin = controlCamOrigin,
+                rootWorld = controlCamOrigin + (controlCamRotation * ApplyPoseAxisSign(controlPose.rootCamAbs, AnimalPoseAxisSign))
+            };
+            return true;
         }
 
-        return Vector3.one;
+        if (!obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
+        {
+            return false;
+        }
+
+        int jointCount = obj.skeletonKpCount;
+        if (jointCount <= 0 || obj.jointsCam.Length < jointCount || obj.jointsVis.Length < jointCount)
+        {
+            return false;
+        }
+
+        if (!TryGetAnchorWorld(obj, screen, out Vector3 anchorWorld))
+        {
+            return false;
+        }
+
+        if (!TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
+        {
+            return false;
+        }
+
+        Vector3[] jointsWorld = new Vector3[jointCount];
+        Vector3[] jointsCam = new Vector3[jointCount];
+        for (int i = 0; i < jointCount; i++)
+        {
+            Vector3 jointCam = ApplyPoseAxisSign(obj.jointsCam[i], AnimalPoseAxisSign);
+            jointsCam[i] = jointCam;
+            jointsWorld[i] = anchorWorld + (camRotation * jointCam);
+        }
+
+        pose = new PoseWorldData
+        {
+            jointCount = jointCount,
+            jointsWorld = jointsWorld,
+            jointsCam = jointsCam,
+            jointVis = obj.jointsVis,
+            hasAnimalControl = false,
+            camOrigin = camOrigin,
+            rootWorld = anchorWorld
+        };
+        return true;
+    }
+
+    private AnimalControlWorldData BuildAnimalControlWorldData(AnimalControlPose controlPose, Vector3 camOrigin, Quaternion camRotation)
+    {
+        AnimalControlWorldData world = new AnimalControlWorldData
+        {
+            hasRoot = true,
+            rootWorld = camOrigin + (camRotation * ApplyPoseAxisSign(controlPose.rootCamAbs, AnimalPoseAxisSign)),
+            hasWithers = controlPose.hasWithersCamAbs,
+            hasHeadRoot = controlPose.hasHeadRootCamAbs,
+            hasHeadTip = controlPose.hasHeadTipCamAbs,
+            hasTailBase = controlPose.hasTailBaseCamAbs,
+            hasTailTip = controlPose.hasTailTipCamAbs,
+            hasForwardHint = controlPose.hasForwardHintCamAbs,
+            hasUpHint = controlPose.hasUpHintCamAbs
+        };
+
+        if (controlPose.hasWithersCamAbs)
+        {
+            world.withersWorld = camOrigin + (camRotation * ApplyPoseAxisSign(controlPose.withersCamAbs, AnimalPoseAxisSign));
+        }
+        if (controlPose.hasHeadRootCamAbs)
+        {
+            world.headRootWorld = camOrigin + (camRotation * ApplyPoseAxisSign(controlPose.headRootCamAbs, AnimalPoseAxisSign));
+        }
+        if (controlPose.hasHeadTipCamAbs)
+        {
+            world.headTipWorld = camOrigin + (camRotation * ApplyPoseAxisSign(controlPose.headTipCamAbs, AnimalPoseAxisSign));
+        }
+        if (controlPose.hasTailBaseCamAbs)
+        {
+            world.tailBaseWorld = camOrigin + (camRotation * ApplyPoseAxisSign(controlPose.tailBaseCamAbs, AnimalPoseAxisSign));
+        }
+        if (controlPose.hasTailTipCamAbs)
+        {
+            world.tailTipWorld = camOrigin + (camRotation * ApplyPoseAxisSign(controlPose.tailTipCamAbs, AnimalPoseAxisSign));
+        }
+        if (controlPose.hasForwardHintCamAbs)
+        {
+            world.forwardHintWorld = camOrigin + (camRotation * ApplyPoseAxisSign(controlPose.forwardHintCamAbs, AnimalPoseAxisSign));
+        }
+        if (controlPose.hasUpHintCamAbs)
+        {
+            world.upHintWorld = camOrigin + (camRotation * ApplyPoseAxisSign(controlPose.upHintCamAbs, AnimalPoseAxisSign));
+        }
+
+        world.frontLeftLegWorld = TransformAnimalControlChain(controlPose.frontLeftLegChainCamAbs, camOrigin, camRotation);
+        world.frontRightLegWorld = TransformAnimalControlChain(controlPose.frontRightLegChainCamAbs, camOrigin, camRotation);
+        world.rearLeftLegWorld = TransformAnimalControlChain(controlPose.rearLeftLegChainCamAbs, camOrigin, camRotation);
+        world.rearRightLegWorld = TransformAnimalControlChain(controlPose.rearRightLegChainCamAbs, camOrigin, camRotation);
+        world.headWorld = TransformAnimalControlChain(controlPose.headChainCamAbs, camOrigin, camRotation);
+        world.tailWorld = TransformAnimalControlChain(controlPose.tailChainCamAbs, camOrigin, camRotation);
+        return world;
+    }
+
+    private Vector3[] TransformAnimalControlChain(Vector3[] chainCamAbs, Vector3 camOrigin, Quaternion camRotation)
+    {
+        if (chainCamAbs == null || chainCamAbs.Length == 0)
+        {
+            return null;
+        }
+
+        Vector3[] chainWorld = new Vector3[chainCamAbs.Length];
+        for (int i = 0; i < chainCamAbs.Length; i++)
+        {
+            chainWorld[i] = camOrigin + (camRotation * ApplyPoseAxisSign(chainCamAbs[i], AnimalPoseAxisSign));
+        }
+
+        return chainWorld;
+    }
+
+    private int CountAnimalControlSkipSegments(AnimalControlWorldData control)
+    {
+        int skip = 0;
+        skip += CountAnimalControlChainSkips(control.frontLeftLegWorld);
+        skip += CountAnimalControlChainSkips(control.frontRightLegWorld);
+        skip += CountAnimalControlChainSkips(control.rearLeftLegWorld);
+        skip += CountAnimalControlChainSkips(control.rearRightLegWorld);
+        return skip;
+    }
+
+    private static int CountAnimalControlChainSkips(Vector3[] chainWorld)
+    {
+        if (chainWorld == null || chainWorld.Length < 4)
+        {
+            return 3;
+        }
+
+        int segmentCount = chainWorld.Length >= 5 ? 3 : chainWorld.Length - 1;
+        int start = chainWorld.Length >= 5 ? 1 : 0;
+        int skip = 0;
+        for (int i = 0; i < segmentCount; i++)
+        {
+            Vector3 a = chainWorld[start + i];
+            Vector3 b = chainWorld[start + i + 1];
+            if ((b - a).sqrMagnitude <= 0.000001f)
+            {
+                skip++;
+            }
+        }
+        return skip;
+    }
+
+    private bool TryGetAnchorWorld(MetaObj obj, Transform screen, out Vector3 anchorWorld)
+    {
+        anchorWorld = Vector3.zero;
+        Transform resolvedScreen = screen;
+        int uEye = obj.anchorU;
+        if (!ResolveAnchorToScreen(obj.anchorU, out Transform anchorScreen, out uEye, out _))
+        {
+            return false;
+        }
+
+        if (resolvedScreen == null)
+        {
+            resolvedScreen = anchorScreen;
+        }
+
+        if (resolvedScreen == null || manifest == null)
+        {
+            return false;
+        }
+
+        float uEyeF = Mathf.Clamp(uEye, 0f, manifest.eye_w - 1f);
+        float vEyeF = Mathf.Clamp(obj.anchorV, 0f, manifest.eye_h - 1f);
+        anchorWorld = AnchorUvZToWorldPinhole(resolvedScreen, uEyeF, vEyeF, obj.anchorZ);
+        return true;
     }
 
     private static Vector3 ApplyPoseAxisSign(Vector3 point, Vector3 axisSign)
@@ -241,74 +441,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return new Vector3(point.x * axisSign.x, point.y * axisSign.y, point.z * axisSign.z);
     }
 
-    private bool TryGetDisplayDepthRange(out float nearDepth, out float farDepth)
-    {
-        nearDepth = Mathf.Max(0.001f, minDistanceFromHeadMeters);
-        farDepth = Mathf.Max(0.001f, screenDistanceMeters - Mathf.Max(0f, epsilonMeters));
-        if (farDepth <= nearDepth + 0.001f)
-        {
-            farDepth = nearDepth + 0.001f;
-        }
-        return true;
-    }
-
-    private static bool TryGetVisibleCameraDepthRange(Vector3[] pointsCam, byte[] vis, int jointCount, out float nearDepth, out float farDepth)
-    {
-        nearDepth = 0f;
-        farDepth = 0f;
-        if (pointsCam == null || vis == null || jointCount <= 0)
-        {
-            return false;
-        }
-
-        bool hasAny = false;
-        int count = Mathf.Min(jointCount, Mathf.Min(pointsCam.Length, vis.Length));
-        for (int i = 0; i < count; i++)
-        {
-            if (vis[i] == 0)
-            {
-                continue;
-            }
-
-            float z = pointsCam[i].z;
-            if (float.IsNaN(z) || float.IsInfinity(z))
-            {
-                continue;
-            }
-
-            if (!hasAny)
-            {
-                nearDepth = z;
-                farDepth = z;
-                hasAny = true;
-            }
-            else
-            {
-                nearDepth = Mathf.Min(nearDepth, z);
-                farDepth = Mathf.Max(farDepth, z);
-            }
-        }
-
-        return hasAny;
-    }
-
-    private static float RemapDepthScalar(float depth, float sourceNear, float sourceFar, float displayNear, float displayFar)
-    {
-        float sourceSpan = sourceFar - sourceNear;
-        float t = sourceSpan > 0.0001f
-            ? Mathf.InverseLerp(sourceNear, sourceFar, depth)
-            : 0.5f;
-        return Mathf.Lerp(displayNear, displayFar, Mathf.Clamp01(t));
-    }
-
     private float ClampSkeletonUniformScale(float uniform, float referenceUniform = 0f)
     {
-        float min = Mathf.Max(0.0001f, skeletonScaleMin);
-        float max = Mathf.Max(min, skeletonScaleMax);
+        float min = Mathf.Max(0.0001f, SkeletonScaleMin);
+        float max = Mathf.Max(min, SkeletonScaleMax);
         if (referenceUniform > 0.0001f)
         {
-            float relMin = Mathf.Max(0.0001f, skeletonScaleRelativeMin);
-            float relMax = Mathf.Max(relMin, skeletonScaleRelativeMax);
+            float relMin = Mathf.Max(0.0001f, SkeletonScaleRelativeMin);
+            float relMax = Mathf.Max(relMin, SkeletonScaleRelativeMax);
             min = Mathf.Max(min, referenceUniform * relMin);
             max = Mathf.Min(max, referenceUniform * relMax);
         }

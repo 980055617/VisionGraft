@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
@@ -126,8 +126,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        float blend = blendOverride >= 0f ? Mathf.Clamp01(blendOverride) : Mathf.Clamp01(yawDepthBlend);
-        float baseOffset = Mathf.Max(0f, yawDepthOffsetMeters) * blend;
+        float blend = blendOverride >= 0f ? Mathf.Clamp01(blendOverride) : Mathf.Clamp01(YawDepthBlend);
+        float baseOffset = Mathf.Max(0f, YawDepthOffsetMeters) * blend;
         if (baseOffset <= 0.0001f)
         {
             return;

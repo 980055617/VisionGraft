@@ -1034,106 +1034,30 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a7a7d80f1bb79764cb9887a7df33b3c3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  showBundlePickerOnStart: 1
-  fallbackToStreamingBundleWhenCanceled: 1
+  showBundlePickerOnStart: 0
   bundlePickerInitialDirectory: /storage/emulated/0/Android/data/com.UnityTechnologies.com.unity.template.urpblank/files
-  bundlePickerDistanceMeters: 1.1
-  bundlePickerOffsetMeters: {x: 0, y: 0}
-  bundlePickerSizeMeters: {x: 1.05, y: 0.82}
-  bundlePickerEntriesPerPage: 8
-  bundlePickerFlipHorizontal: 1
   bundlePickerCanvasWithInteractionRayPrefab: {fileID: 3675716834162371033, guid: 19be18d74f8608a4583c4c6c4e6e8723, type: 3}
   bundleFileName: bundle.svb
-  bundleVideoEntryName: video.mp4
-  bundleManifestEntryName: manifest.json
-  bundleMetaEntryName: meta.bin
-  extractedVideoFileName: video.mp4
-  extractedManifestFileName: manifest.json
-  extractedMetaFileName: meta.bin
   leftScreenPrefab: {fileID: 6079509281990213153, guid: 582b2d98cd3eb1a44a5e56de8e2ee377, type: 3}
   rightScreenPrefab: {fileID: 9016292340697211618, guid: 365d37eaa3296bf4091b48eb6e78b62f, type: 3}
-  markerOffset: 0.02
   headTransform: {fileID: 773190241}
   screenDistanceMeters: 1
   screenOffsetMeters: {x: 0, y: 0, z: 0}
-  legacyVirtualOrigin: 0
   fitScreenToFov: 1
-  popoutRangeMeters: 0.7
-  epsilonMeters: 0.02
-  minDistanceFromHeadMeters: 0.25
-  testModelPrefab: {fileID: 3348292547451869151, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
+  displayModel: 1
+  displayTrackIds: 0000000001000000
   replacePrefab: {fileID: 3348292547451869151, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
-  useTrackPrefabOverrides: 1
-  track0Prefab: {fileID: 3348292547451869151, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
+  track0Prefab: {fileID: 919132149155446097, guid: b1ee22354922bee4392b525a6cdcceb9, type: 3}
   track1Prefab: {fileID: 110392412574568067, guid: 39611dd7dc0e5e846b6d10d1df540e12, type: 3}
-  testPixel: {x: -1, y: -1}
-  testDepthMeters: 0.5
-  spawnTestModelOnPrepared: 1
-  destroyPreviousTestModel: 1
-  testModelSizeMeters: 0.05
-  testModelOffsetMeters: {x: 0.1, y: 0}
-  useMetaFollow: 1
-  useFrameReadySync: 0
-  followTrackId: 0
-  followNearestToClick: 1
-  followSelectThresholdPixels: 80
-  enableFollow: 1
-  followAmplitudePixels: 30
-  followSpeed: 1
-  sideBySide: 1
-  baseHeight: 1
+  track2Prefab: {fileID: 0}
   enableBoneApply: 1
   boneApplyAlpha: 1
-  useExtendedBoneMap: 1
-  torsoBoneApplyAlpha: 0.35
-  headBoneApplyAlpha: 0.35
-  shoulderBoneApplyAlpha: 0.45
   enableJointSmoothing: 1
   jointSmoothingAlpha: 0.35
-  boneRootRelThreshold: 0.2
-  boneAxisSign: {x: 1, y: 1, z: 1}
-  fallbackQuantJointScale: 1
-  alignFeetToAnkles: 1
-  footAlignAlpha: 1
-  enableFootRootCorrection: 0
-  enableYawDepthDisambiguation: 1
-  yawDepthOffsetMeters: 0.045
-  yawDepthBlend: 1
-  enableAnimalLimbApply: 1
-  enableAnimalSpineApply: 1
-  animalRootRotateAlpha: 0.6
-  animalModelForwardLocal: {x: 0, y: 0, z: -1}
-  animalModelUpLocal: {x: 0, y: 1, z: 0}
-  forceScreensInFrontOfViewCamera: 0
-  forceStationaryTrackingOrigin: 1
-  enableDogDistalFreezeOnHighSkip: 1
-  dogDistalFreezeSkipThreshold: 6
-  alignModelToBBoxBottom: 1
-  bboxAnchorVToBottom: 0.5
-  modelBottomExtraOffsetMeters: -0.015
-  bottomAlignVerticalOnly: 1
-  enableHeadHeightScaleCorrection: 1
-  headHeightScaleAlpha: 0.35
-  headHeightScaleMin: 0.75
-  headHeightScaleMax: 1.35
+  showOtherProxyBoxes: 0
+  otherProxyBoxColor: {r: 1, g: 0.78, b: 0.18, a: 0.32}
   enableRuntimeControls: 1
   runtimeControlsPrefab: {fileID: 3675716834162371033, guid: 19be18d74f8608a4583c4c6c4e6e8723, type: 3}
-  controlsBarOffsetMeters: {x: 0, y: -0.12}
-  controlsBarGapMeters: 0
-  controlsBarForwardOffsetMeters: 0.03
-  controlsBarSizeMeters: {x: 1.2, y: 0.34}
-  enablePauseHotkey: 1
-  useRuntimeFovxOverride: 0
-  runtimeFovxDeg: 90
-  runtimeFovxMinDeg: 40
-  runtimeFovxMaxDeg: 140
-  runtimeFovxDefaultDeg: 90
-  runtimeScreenDistanceMinMeters: 0.5
-  runtimeScreenDistanceMaxMeters: 3
-  settingsPanelSizeMeters: {x: 0.78, y: 0.5}
-  settingsPanelOffsetMeters: {x: 0, y: 0}
-  settingsPanelGapMeters: 0.08
-  settingsPanelForwardOffsetMeters: 0.01
 --- !u!114 &1029322083431137655
 MonoBehaviour:
   m_ObjectHideFlags: 0

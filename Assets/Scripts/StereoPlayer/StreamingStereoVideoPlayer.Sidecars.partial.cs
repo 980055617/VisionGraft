@@ -122,7 +122,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     {
                         continue;
                     }
-                    rootCamAbs = NormalizeAnimalControlCam(rootCamAbs);
 
                     Vector3[] jointsCamAbs = new Vector3[26];
                     byte[] jointsVis = new byte[26];
@@ -132,20 +131,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                         continue;
                     }
 
-                    TryReadAnimalControlTarget(targets, "withers", out bool hasWithersCamAbs, out Vector3 withersCamAbs);
-                    TryReadAnimalControlTarget(targets, "headRoot", out bool hasHeadRootCamAbs, out Vector3 headRootCamAbs);
-                    TryReadAnimalControlTarget(targets, "headTip", out bool hasHeadTipCamAbs, out Vector3 headTipCamAbs);
-                    TryReadAnimalControlTarget(targets, "tailBase", out bool hasTailBaseCamAbs, out Vector3 tailBaseCamAbs);
-                    TryReadAnimalControlTarget(targets, "tailTip", out bool hasTailTipCamAbs, out Vector3 tailTipCamAbs);
-                    TryReadAnimalControlTarget(targets, "forwardHint", out bool hasForwardHintCamAbs, out Vector3 forwardHintCamAbs);
-                    TryReadAnimalControlTarget(targets, "upHint", out bool hasUpHintCamAbs, out Vector3 upHintCamAbs);
+                    TryReadAnimalControlTarget(targets, "withers", rootCamAbs, out bool hasWithersCamAbs, out Vector3 withersCamAbs);
+                    TryReadAnimalControlTarget(targets, "headRoot", rootCamAbs, out bool hasHeadRootCamAbs, out Vector3 headRootCamAbs);
+                    TryReadAnimalControlTarget(targets, "headTip", rootCamAbs, out bool hasHeadTipCamAbs, out Vector3 headTipCamAbs);
+                    TryReadAnimalControlTarget(targets, "tailBase", rootCamAbs, out bool hasTailBaseCamAbs, out Vector3 tailBaseCamAbs);
+                    TryReadAnimalControlTarget(targets, "tailTip", rootCamAbs, out bool hasTailTipCamAbs, out Vector3 tailTipCamAbs);
+                    TryReadAnimalControlTarget(targets, "forwardHint", rootCamAbs, out bool hasForwardHintCamAbs, out Vector3 forwardHintCamAbs);
+                    TryReadAnimalControlTarget(targets, "upHint", rootCamAbs, out bool hasUpHintCamAbs, out Vector3 upHintCamAbs);
 
-                    Vector3[] frontLeftLegChainCamAbs = ReadAnimalControlChain(chains, "frontLeftLeg");
-                    Vector3[] frontRightLegChainCamAbs = ReadAnimalControlChain(chains, "frontRightLeg");
-                    Vector3[] rearLeftLegChainCamAbs = ReadAnimalControlChain(chains, "rearLeftLeg");
-                    Vector3[] rearRightLegChainCamAbs = ReadAnimalControlChain(chains, "rearRightLeg");
-                    Vector3[] headChainCamAbs = ReadAnimalControlChain(chains, "head");
-                    Vector3[] tailChainCamAbs = ReadAnimalControlChain(chains, "tail");
+                    Vector3[] frontLeftLegChainCamAbs = ReadAnimalControlChain(chains, "frontLeftLeg", rootCamAbs);
+                    Vector3[] frontRightLegChainCamAbs = ReadAnimalControlChain(chains, "frontRightLeg", rootCamAbs);
+                    Vector3[] rearLeftLegChainCamAbs = ReadAnimalControlChain(chains, "rearLeftLeg", rootCamAbs);
+                    Vector3[] rearRightLegChainCamAbs = ReadAnimalControlChain(chains, "rearRightLeg", rootCamAbs);
+                    Vector3[] headChainCamAbs = ReadAnimalControlChain(chains, "head", rootCamAbs);
+                    Vector3[] tailChainCamAbs = ReadAnimalControlChain(chains, "tail", rootCamAbs);
 
                     foreach (KeyValuePair<string, object> chainEntry in chains)
                     {
@@ -171,7 +170,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                                 continue;
                             }
 
-                            jointsCamAbs[jointIndex] = NormalizeAnimalControlCam(position);
+                            jointsCamAbs[jointIndex] = NormalizeAnimalControlCam(position, rootCamAbs);
                             jointsVis[jointIndex] = 1;
                         }
                     }
@@ -218,7 +217,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
     }
 
-    private static void TryReadAnimalControlTarget(Dictionary<string, object> targets, string key, out bool hasPosition, out Vector3 position)
+    private static void TryReadAnimalControlTarget(Dictionary<string, object> targets, string key, Vector3 rootCamAbs, out bool hasPosition, out Vector3 position)
     {
         hasPosition = false;
         position = Vector3.zero;
@@ -231,11 +230,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         hasPosition = TryReadVector3(GetList(target, "position"), 1f, out position);
         if (hasPosition)
         {
-            position = NormalizeAnimalControlCam(position);
+            position = NormalizeAnimalControlCam(position, rootCamAbs);
         }
     }
 
-    private static Vector3[] ReadAnimalControlChain(Dictionary<string, object> chains, string key)
+    private static Vector3[] ReadAnimalControlChain(Dictionary<string, object> chains, string key, Vector3 rootCamAbs)
     {
         Dictionary<string, object> chain = GetDict(chains, key);
         List<object> positions = GetList(chain, "positions");
@@ -249,17 +248,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             if (TryReadVector3(positions[i] as List<object>, 1f, out Vector3 point))
             {
-                parsed.Add(NormalizeAnimalControlCam(point));
+                parsed.Add(NormalizeAnimalControlCam(point, rootCamAbs));
             }
         }
 
         return parsed.Count > 0 ? parsed.ToArray() : null;
     }
 
-    private static Vector3 NormalizeAnimalControlCam(Vector3 value)
+    private static Vector3 NormalizeAnimalControlCam(Vector3 value, Vector3 rootCamAbs)
     {
-        // animal_control_targets.json currently ships with Y inverted relative to runtime/meta.bin.
-        return new Vector3(value.x, -value.y, value.z);
+        Vector3 relative = value - rootCamAbs;
+        relative.y = -relative.y;
+        return rootCamAbs + relative;
     }
 
     private void LoadOtherObjectProxiesSidecar(string path)

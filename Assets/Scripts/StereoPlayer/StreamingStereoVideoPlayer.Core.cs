@@ -88,7 +88,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private static readonly bool ForceScreensInFrontOfViewCamera = false;
     private static readonly bool ForceStationaryTrackingOrigin = true;
     private static readonly bool AlignModelToBBoxBottom = true;
-    private const float BboxAnchorVToBottom = 0.5f;
     private const float ModelBottomExtraOffsetMeters = 0f;
     private static readonly bool BottomAlignVerticalOnly = true;
 

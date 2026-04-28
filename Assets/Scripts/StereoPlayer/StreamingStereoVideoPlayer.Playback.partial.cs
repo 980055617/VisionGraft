@@ -152,6 +152,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             float targetHeight = ComputeTargetHeightMeters(bboxHAdjusted, target.anchorZ);
             ApplyReplaceableModelTransform(instance, anchorWorld, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxWAdjusted, bboxHAdjusted, screen);
             TryApplySkeleton(instance, target, screen, frame);
+            FitDisplayedModelToBBox(instance, target, screen, bboxHAdjusted);
             return;
         }
     }
@@ -337,8 +338,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (AlignModelToBBoxBottom && model != null)
             {
                 Vector3 up = screen != null ? screen.up : Vector3.up;
-                float vBottom = vEye + bboxHAdjusted * BboxAnchorVToBottom;
-                vBottom = Mathf.Clamp(vBottom, 0f, manifest.eye_h - 1f);
+                float vBottom = ResolveBBoxBottomVEye(obj);
                 Vector3 bottomWorld = AnchorUvZToWorldPinhole(screen, uEye, vBottom, obj.anchorZ);
                 bottomWorld += up * ModelBottomExtraOffsetMeters;
                 float modelBottomOffset = model.baseBottomOffsetLocal * lossy.y;
@@ -373,6 +373,179 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             TryApplyHumanoidHeadHeightScaleCorrection(instance.transform, model, obj, screen: screen, baseScale: baseScale, uniformScale: targetUniform);
         }
+    }
+
+
+    private float ResolveBBoxBottomVEye(MetaObj obj)
+    {
+        if (manifest == null || manifest.eye_h <= 0)
+        {
+            return obj.anchorV;
+        }
+
+        float vBottom = obj.bboxY + obj.bboxH;
+        if (obj.bboxH <= 0)
+        {
+            vBottom = obj.anchorV;
+        }
+
+        return Mathf.Clamp(vBottom, 0f, manifest.eye_h - 1f);
+    }
+
+
+    private void FitDisplayedModelToBBox(GameObject instance, MetaObj obj, Transform screen, float bboxH)
+    {
+        if (instance == null || manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
+        {
+            return;
+        }
+
+        if (!IsCategoryPerson(obj.categoryId) && !IsCategoryAnimal(obj.categoryId))
+        {
+            return;
+        }
+
+        if (bboxH <= 0f)
+        {
+            return;
+        }
+
+        if (!TryProjectRendererBoundsToEyeHeight(instance, screen, out float projectedTopV, out float projectedBottomV, out float projectedHeight, out float depthMeters))
+        {
+            return;
+        }
+
+        float scaleToFitHeight = bboxH / Mathf.Max(0.0001f, projectedHeight);
+        float fitScale = Mathf.Min(1f, scaleToFitHeight);
+        if (fitScale < 0.999f)
+        {
+            instance.transform.localScale *= fitScale;
+            if (!TryProjectRendererBoundsToEyeHeight(instance, screen, out projectedTopV, out projectedBottomV, out projectedHeight, out depthMeters))
+            {
+                return;
+            }
+        }
+
+        AlignProjectedModelBottomToBBox(instance.transform, screen, projectedBottomV, depthMeters, ResolveBBoxBottomVEye(obj));
+    }
+
+
+    private bool TryProjectRendererBoundsToEyeHeight(GameObject instance, Transform screen, out float topV, out float bottomV, out float heightPixels, out float depthMeters)
+    {
+        topV = 0f;
+        bottomV = 0f;
+        heightPixels = 0f;
+        depthMeters = 0f;
+        if (instance == null || manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
+        {
+            return false;
+        }
+
+        if (!TryGetProjectionIntrinsics(out _, out float fy, out _, out float cyPixels))
+        {
+            return false;
+        }
+
+        if (!TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
+        {
+            return false;
+        }
+
+        Bounds bounds;
+        if (!TryGetRendererWorldBounds(instance, out bounds))
+        {
+            return false;
+        }
+
+        Quaternion worldToCam = Quaternion.Inverse(camRotation);
+        Vector3 centerCam = worldToCam * (bounds.center - camOrigin);
+        depthMeters = Mathf.Max(0.001f, centerCam.z);
+
+        Vector3 camUp = camRotation * Vector3.up;
+        Vector3 extents = bounds.extents;
+        float verticalExtent =
+            Mathf.Abs(Vector3.Dot(new Vector3(extents.x, 0f, 0f), camUp)) +
+            Mathf.Abs(Vector3.Dot(new Vector3(0f, extents.y, 0f), camUp)) +
+            Mathf.Abs(Vector3.Dot(new Vector3(0f, 0f, extents.z), camUp));
+        if (verticalExtent <= 0.000001f)
+        {
+            return false;
+        }
+
+        Vector3 topCam = worldToCam * ((bounds.center + camUp * verticalExtent) - camOrigin);
+        Vector3 bottomCam = worldToCam * ((bounds.center - camUp * verticalExtent) - camOrigin);
+        if (topCam.z <= 0.001f || bottomCam.z <= 0.001f)
+        {
+            return false;
+        }
+
+        topV = ((cyPixels / manifest.eye_h) - (topCam.y * fy / topCam.z) * 0.5f) * manifest.eye_h;
+        bottomV = ((cyPixels / manifest.eye_h) - (bottomCam.y * fy / bottomCam.z) * 0.5f) * manifest.eye_h;
+        if (bottomV < topV)
+        {
+            float tmp = topV;
+            topV = bottomV;
+            bottomV = tmp;
+        }
+
+        heightPixels = bottomV - topV;
+        return heightPixels > 0.0001f;
+    }
+
+
+    private static bool TryGetRendererWorldBounds(GameObject instance, out Bounds bounds)
+    {
+        bounds = default(Bounds);
+        if (instance == null)
+        {
+            return false;
+        }
+
+        Renderer[] renderers = instance.GetComponentsInChildren<Renderer>(true);
+        bool hasAny = false;
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            Renderer renderer = renderers[i];
+            if (renderer == null || !renderer.enabled)
+            {
+                continue;
+            }
+
+            if (!hasAny)
+            {
+                bounds = renderer.bounds;
+                hasAny = true;
+            }
+            else
+            {
+                bounds.Encapsulate(renderer.bounds);
+            }
+        }
+
+        return hasAny;
+    }
+
+
+    private void AlignProjectedModelBottomToBBox(Transform root, Transform screen, float projectedBottomV, float depthMeters, float targetBottomV)
+    {
+        if (root == null || manifest == null || manifest.eye_h <= 0)
+        {
+            return;
+        }
+
+        if (!TryGetProjectionIntrinsics(out _, out float fy, out _, out _))
+        {
+            return;
+        }
+
+        if (!TryGetPinholeBasis(screen, out _, out Quaternion camRotation))
+        {
+            return;
+        }
+
+        float deltaV = targetBottomV - projectedBottomV;
+        float deltaCamY = -(deltaV * 2f / manifest.eye_h) * (depthMeters / fy);
+        root.position += camRotation * new Vector3(0f, deltaCamY, 0f);
     }
 
 

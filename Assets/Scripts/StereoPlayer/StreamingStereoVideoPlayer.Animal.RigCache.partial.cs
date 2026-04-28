@@ -28,18 +28,21 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         cache.spine = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3", "body" }, "body", "spine", "chest", "back");
         cache.tailBase = FindBoneByTokens(bones, "tail.002", "tail");
 
-        cache.leftFrontUpper = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3_L.001", "arm.001.L" }, "arm.001.l");
-        cache.leftFrontLower = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3_L.002", "arm.002.L" }, "arm.002.l");
-        cache.leftFrontPaw = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3_L.003", "arm.003.L" }, "arm.003.l");
-        cache.rightFrontUpper = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3_R.001", "arm.001.R" }, "arm.001.r");
-        cache.rightFrontLower = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3_R.002", "arm.002.R" }, "arm.002.r");
-        cache.rightFrontPaw = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3_R.003", "arm.003.R" }, "arm.003.r");
-        cache.leftRearUpper = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.001_L.001", "foot.001.L" }, "foot.001.l", "foot.002.l");
-        cache.leftRearLower = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.001_L.002", "foot.002.L" }, "foot.002.l", "foot.003.l");
-        cache.leftRearPaw = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.001_L.003", "foot.003.L" }, "foot.003.l", "foot.004.l");
-        cache.rightRearUpper = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.001_R.001", "foot.001.R" }, "foot.001.r", "foot.002.r");
-        cache.rightRearLower = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.001_R.002", "foot.002.R" }, "foot.002.r", "foot.003.r");
-        cache.rightRearPaw = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.001_R.003", "foot.003.R" }, "foot.003.r", "foot.004.r");
+        FillAnimalSpineFallbacks(cache, root, bones);
+
+        cache.leftFrontUpper = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3_L.001", "arm.001.L", "DEF-front_thigh.L" }, "arm.001.l", "def-front_thigh.l");
+        cache.leftFrontLower = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3_L.002", "arm.002.L", "DEF-front_shin.L" }, "arm.002.l", "def-front_shin.l");
+        cache.leftFrontPaw = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3_L.003", "arm.003.L", "DEF-front_foot.L" }, "arm.003.l", "def-front_foot.l", "def-front_toe.l");
+        cache.rightFrontUpper = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3_R.001", "arm.001.R", "DEF-front_thigh.R" }, "arm.001.r", "def-front_thigh.r");
+        cache.rightFrontLower = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3_R.002", "arm.002.R", "DEF-front_shin.R" }, "arm.002.r", "def-front_shin.r");
+        cache.rightFrontPaw = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3_R.003", "arm.003.R", "DEF-front_foot.R" }, "arm.003.r", "def-front_foot.r", "def-front_toe.r");
+        cache.leftRearUpper = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.001_L.001", "foot.001.L", "DEF-thigh.L" }, "foot.001.l", "foot.002.l", "def-thigh.l");
+        cache.leftRearLower = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.001_L.002", "foot.002.L", "DEF-shin.L" }, "foot.002.l", "foot.003.l", "def-shin.l");
+        cache.leftRearPaw = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.001_L.003", "foot.003.L", "DEF-foot.L" }, "foot.003.l", "foot.004.l", "def-foot.l", "def-toe.l");
+        cache.rightRearUpper = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.001_R.001", "foot.001.R", "DEF-thigh.R" }, "foot.001.r", "foot.002.r", "def-thigh.r");
+        cache.rightRearLower = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.001_R.002", "foot.002.R", "DEF-shin.R" }, "foot.002.r", "foot.003.r", "def-shin.r");
+        cache.rightRearPaw = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.001_R.003", "foot.003.R", "DEF-foot.R" }, "foot.003.r", "foot.004.r", "def-foot.r", "def-toe.r");
+        ResolveAnimalModelBasis(root, cache);
 
         PrimeAnimalBinds(
             cache,
@@ -70,6 +73,121 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             cache.rightRearUpper != null;
         animalRigCaches[root] = cache;
         return cache;
+    }
+
+    private void ResolveAnimalModelBasis(Transform root, AnimalRigCache cache)
+    {
+        if (root == null || cache == null)
+        {
+            return;
+        }
+
+        Vector3 frontCenter;
+        Vector3 rearCenter;
+        if (TryAverageAnimalBonePosition(cache.leftFrontUpper, cache.rightFrontUpper, out frontCenter) &&
+            TryAverageAnimalBonePosition(cache.leftRearUpper, cache.rightRearUpper, out rearCenter))
+        {
+            Vector3 forwardWorld = frontCenter - rearCenter;
+            if (forwardWorld.sqrMagnitude > 0.000001f)
+            {
+                cache.modelForwardLocal = root.InverseTransformDirection(forwardWorld).normalized;
+            }
+        }
+
+        if (cache.modelForwardLocal.sqrMagnitude <= 0.000001f)
+        {
+            cache.modelForwardLocal = AnimalModelForwardLocal.sqrMagnitude > 0.000001f
+                ? AnimalModelForwardLocal.normalized
+                : Vector3.forward;
+        }
+
+        cache.modelUpLocal = AnimalModelUpLocal.sqrMagnitude > 0.000001f
+            ? AnimalModelUpLocal.normalized
+            : Vector3.up;
+    }
+
+    private static bool TryAverageAnimalBonePosition(Transform left, Transform right, out Vector3 center)
+    {
+        if (left != null && right != null)
+        {
+            center = (left.position + right.position) * 0.5f;
+            return true;
+        }
+
+        Transform single = left != null ? left : right;
+        if (single != null)
+        {
+            center = single.position;
+            return true;
+        }
+
+        center = Vector3.zero;
+        return false;
+    }
+
+    private void FillAnimalSpineFallbacks(AnimalRigCache cache, Transform root, Transform[] bones)
+    {
+        if (cache == null || root == null || bones == null)
+        {
+            return;
+        }
+
+        System.Collections.Generic.List<Transform> spineBones = new System.Collections.Generic.List<Transform>();
+        for (int i = 0; i < bones.Length; i++)
+        {
+            Transform bone = bones[i];
+            if (bone == null)
+            {
+                continue;
+            }
+
+            string name = bone.name.ToLowerInvariant();
+            if (name == "def-spine" || name.StartsWith("def-spine."))
+            {
+                spineBones.Add(ResolveLikelyRigBone(bone));
+            }
+        }
+
+        if (spineBones.Count == 0)
+        {
+            return;
+        }
+
+        Vector3 forwardLocal = AnimalModelForwardLocal.sqrMagnitude > 0.000001f
+            ? AnimalModelForwardLocal.normalized
+            : Vector3.forward;
+        Vector3 forwardWorld = root.TransformDirection(forwardLocal);
+        if (forwardWorld.sqrMagnitude <= 0.000001f)
+        {
+            forwardWorld = root.forward;
+        }
+        forwardWorld.Normalize();
+
+        spineBones.Sort((a, b) =>
+            Vector3.Dot(a.position - root.position, forwardWorld)
+                .CompareTo(Vector3.Dot(b.position - root.position, forwardWorld)));
+
+        Transform back = spineBones[0];
+        Transform front = spineBones[spineBones.Count - 1];
+        Transform neck = spineBones[Mathf.Max(0, spineBones.Count - 2)];
+        Transform body = spineBones[Mathf.Clamp(spineBones.Count / 2, 0, spineBones.Count - 1)];
+
+        if (cache.spine == null)
+        {
+            cache.spine = body;
+        }
+        if (cache.neck == null)
+        {
+            cache.neck = neck;
+        }
+        if (cache.head == null)
+        {
+            cache.head = front;
+        }
+        if (cache.tailBase == null && back != cache.head)
+        {
+            cache.tailBase = back;
+        }
     }
 
     private Transform FindAnimalBone(Transform[] bones, string[] exactNames, params string[] tokens)

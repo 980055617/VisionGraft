@@ -82,6 +82,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const float AnimalRootRotateAlpha = 0.6f;
     private static readonly Vector3 AnimalModelForwardLocal = new Vector3(0f, 0f, -1f);
     private static readonly Vector3 AnimalModelUpLocal = Vector3.up;
+    private static readonly bool DisableAnimalAnimatorController = true;
     private static readonly bool EnableAnimalDistalFreezeOnHighSkip = true;
     private const int AnimalDistalFreezeSkipThreshold = 6;
 

@@ -126,6 +126,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             ApplyManualYawToJoints(obj.trackId, frame, pose.jointsWorld, pose.jointVis, skeletonRoot, yawAxis);
 
             Animator animator = instance.GetComponentInChildren<Animator>();
+            DisableAnimalAnimatorPlayback(animator);
             if (!enableBoneApply)
             {
                 ApplyAnimalSkeletonPlacement(instance.transform, animator, pose.jointsWorld, pose.jointVis, pose.jointCount, skeletonRoot);
@@ -137,6 +138,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         catch
         {
         }
+    }
+
+    private void DisableAnimalAnimatorPlayback(Animator animator)
+    {
+        if (!DisableAnimalAnimatorController || animator == null)
+        {
+            return;
+        }
+
+        if (animator.runtimeAnimatorController != null)
+        {
+            animator.runtimeAnimatorController = null;
+            animator.Rebind();
+            animator.Update(0f);
+        }
+
+        animator.enabled = false;
     }
 
     private static bool IsAnimalSegmentUsable(int idxA, int idxB, int jointCount, byte[] vis, Vector3[] jointsCam)

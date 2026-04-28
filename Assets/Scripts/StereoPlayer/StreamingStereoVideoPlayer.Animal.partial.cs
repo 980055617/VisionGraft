@@ -19,7 +19,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         // Animal pose application only runs for the "animal" category path.
         // Root orientation follows the full body basis instead of yaw-only heading.
-        TryApplyAnimalRootOrientation(instanceRoot, jointsWorld, vis, Mathf.Clamp01(AnimalRootRotateAlpha), hasControl, control);
+        TryApplyAnimalRootOrientation(instanceRoot, cache, jointsWorld, vis, Mathf.Clamp01(AnimalRootRotateAlpha), hasControl, control);
         AlignAnimalRootToSkeleton(instanceRoot, cache, skeletonRoot);
 
         float alpha = Mathf.Clamp01(boneApplyAlpha);
@@ -35,7 +35,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         ApplyAnimalLimbPose(cache, jointsWorld, vis, alpha, freezeAnimalDistal, hasControl, control);
     }
 
-    private void TryApplyAnimalRootOrientation(Transform instanceRoot, Vector3[] jointsWorld, byte[] vis, float rotateAlpha, bool hasControl, AnimalControlWorldData control)
+    private void TryApplyAnimalRootOrientation(Transform instanceRoot, AnimalRigCache cache, Vector3[] jointsWorld, byte[] vis, float rotateAlpha, bool hasControl, AnimalControlWorldData control)
     {
         if (instanceRoot == null || jointsWorld == null || vis == null)
         {
@@ -56,11 +56,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             StabilizeAnimalRootBasis(instanceRoot, worldUp, bodyForward, bodyUp, facingHint, out stabilizedForward, out stabilizedUp);
         }
 
-        Vector3 modelForward = AnimalModelForwardLocal.sqrMagnitude > 0.000001f
-            ? AnimalModelForwardLocal.normalized
+        Vector3 modelForwardLocal = cache != null && cache.modelForwardLocal.sqrMagnitude > 0.000001f
+            ? cache.modelForwardLocal
+            : AnimalModelForwardLocal;
+        Vector3 modelUpLocal = cache != null && cache.modelUpLocal.sqrMagnitude > 0.000001f
+            ? cache.modelUpLocal
+            : AnimalModelUpLocal;
+
+        Vector3 modelForward = modelForwardLocal.sqrMagnitude > 0.000001f
+            ? modelForwardLocal.normalized
             : Vector3.right;
-        Vector3 modelUp = AnimalModelUpLocal.sqrMagnitude > 0.000001f
-            ? AnimalModelUpLocal.normalized
+        Vector3 modelUp = modelUpLocal.sqrMagnitude > 0.000001f
+            ? modelUpLocal.normalized
             : Vector3.up;
 
         Quaternion modelBasis = Quaternion.LookRotation(modelForward, modelUp);

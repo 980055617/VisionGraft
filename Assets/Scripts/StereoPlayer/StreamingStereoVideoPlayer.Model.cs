@@ -22,6 +22,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private readonly Dictionary<Transform, int> animalRootYawLastSeenFrameByRoot = new Dictionary<Transform, int>();
     private readonly Dictionary<Transform, OneEuroVector3Filter> animalRootForwardFilters = new Dictionary<Transform, OneEuroVector3Filter>();
     private readonly Dictionary<Transform, OneEuroVector3Filter> animalRootUpFilters = new Dictionary<Transform, OneEuroVector3Filter>();
+    private readonly Dictionary<Transform, OneEuroVector3Filter> animalLimbTargetFilters = new Dictionary<Transform, OneEuroVector3Filter>();
+    private readonly Dictionary<Transform, OneEuroVector3Filter> animalRootPositionFilters = new Dictionary<Transform, OneEuroVector3Filter>();
     private readonly Dictionary<Animator, HumanoidRigCache> humanoidCaches = new Dictionary<Animator, HumanoidRigCache>();
     private readonly Dictionary<Transform, AnimalRigCache> animalRigCaches = new Dictionary<Transform, AnimalRigCache>();
     private static readonly int[] AnimalLeftFrontChain = { 18, 13, 9, 15 };

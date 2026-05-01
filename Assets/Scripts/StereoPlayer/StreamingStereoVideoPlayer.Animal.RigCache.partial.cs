@@ -23,8 +23,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // er.L/R->Bone.009_L/R.001,
         // arm.001/002/003.L/R->Bone_L/R.001/002/003,
         // foot.001/002/003.L/R->Bone.001_L/R.001/002/003.
-        cache.neck = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.007", "neck" }, "neck");
-        cache.head = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.009", "head.001" }, "head");
+        cache.neck = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.007", "neck", "DEF-spine.010" }, "neck");
+        cache.head = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.009", "head.001", "DEF-spine.011" }, "head");
         cache.spine = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3", "body" }, "body", "spine", "chest", "back");
         cache.tailBase = FindBoneByTokens(bones, "tail.002", "tail");
 

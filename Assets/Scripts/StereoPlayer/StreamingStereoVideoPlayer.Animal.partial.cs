@@ -12,7 +12,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         AnimalRigCache cache = ApplyAnimalSkeletonPlacement(instanceRoot, animator, jointsWorld, vis, jointCount, skeletonRoot);
-        if (!cache.ready)
+        if (cache == null || !cache.ready)
         {
             return;
         }
@@ -20,7 +20,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // Animal pose application only runs for the "animal" category path.
         // Root orientation follows the full body basis instead of yaw-only heading.
         TryApplyAnimalRootOrientation(instanceRoot, cache, jointsWorld, vis, Mathf.Clamp01(AnimalRootRotateAlpha), hasControl, control);
-        AlignAnimalRootToSkeleton(instanceRoot, cache, skeletonRoot);
+        AlignAnimalRootToSkeleton(instanceRoot, cache, skeletonRoot, true);
 
         float alpha = Mathf.Clamp01(boneApplyAlpha);
 
@@ -56,6 +56,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             StabilizeAnimalRootBasis(instanceRoot, worldUp, bodyForward, bodyUp, facingHint, out stabilizedForward, out stabilizedUp);
         }
 
+        StabilizeAnimalRootPitchRoll(worldUp, stabilizedForward, stabilizedUp, out stabilizedForward, out stabilizedUp);
+
         Vector3 modelForwardLocal = cache != null && cache.modelForwardLocal.sqrMagnitude > 0.000001f
             ? cache.modelForwardLocal
             : AnimalModelForwardLocal;
@@ -74,6 +76,51 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Quaternion targetBasis = Quaternion.LookRotation(stabilizedForward, stabilizedUp);
         Quaternion targetRootRot = targetBasis * Quaternion.Inverse(modelBasis);
         instanceRoot.rotation = Quaternion.Slerp(instanceRoot.rotation, targetRootRot, Mathf.Clamp01(rotateAlpha));
+    }
+
+    private void StabilizeAnimalRootPitchRoll(Vector3 worldUp, Vector3 forward, Vector3 up, out Vector3 stabilizedForward, out Vector3 stabilizedUp)
+    {
+        stabilizedForward = forward;
+        stabilizedUp = up;
+
+        Vector3 planarForward = Vector3.ProjectOnPlane(forward, worldUp);
+        if (planarForward.sqrMagnitude <= 0.000001f)
+        {
+            return;
+        }
+        planarForward.Normalize();
+
+        float tiltBlend = Mathf.Clamp01(AnimalRootPitchRollBlend);
+        Vector3 blendedForward = Vector3.Slerp(planarForward, forward.normalized, tiltBlend);
+        if (blendedForward.sqrMagnitude <= 0.000001f)
+        {
+            blendedForward = planarForward;
+        }
+        blendedForward.Normalize();
+
+        Vector3 blendedUp = Vector3.Slerp(worldUp, up.sqrMagnitude > 0.000001f ? up.normalized : worldUp, tiltBlend);
+        blendedUp = Vector3.ProjectOnPlane(blendedUp, blendedForward);
+        if (blendedUp.sqrMagnitude <= 0.000001f)
+        {
+            blendedUp = Vector3.ProjectOnPlane(worldUp, blendedForward);
+        }
+        if (blendedUp.sqrMagnitude <= 0.000001f)
+        {
+            stabilizedForward = blendedForward;
+            stabilizedUp = worldUp;
+            return;
+        }
+
+        blendedUp.Normalize();
+        Vector3 right = Vector3.Cross(blendedForward, blendedUp);
+        if (right.sqrMagnitude > 0.000001f)
+        {
+            right.Normalize();
+            blendedUp = Vector3.Cross(right, blendedForward).normalized;
+        }
+
+        stabilizedForward = blendedForward;
+        stabilizedUp = blendedUp;
     }
 
     private void StabilizeAnimalRootBasis(Transform root, Vector3 worldUp, Vector3 forward, Vector3 bodyUp, Vector3 facingHint, out Vector3 stabilizedForward, out Vector3 stabilizedUp)
@@ -392,9 +439,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             ApplyAnimalSkeletonScale(instanceRoot, jointsWorld, vis, jointCount);
         }
-        if (cache.ready)
+        if (cache != null && cache.ready)
         {
-            AlignAnimalRootToSkeleton(instanceRoot, cache, skeletonRoot);
+            AlignAnimalRootToSkeleton(instanceRoot, cache, skeletonRoot, false);
         }
         else
         {
@@ -429,14 +476,39 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         root.localScale = model.baseLocalScale * uniform;
     }
 
-    private void AlignAnimalRootToSkeleton(Transform instanceRoot, AnimalRigCache cache, Vector3 skeletonRoot)
+    private void AlignAnimalRootToSkeleton(Transform instanceRoot, AnimalRigCache cache, Vector3 skeletonRoot, bool smooth)
     {
-        if (instanceRoot == null)
+        if (instanceRoot == null || cache == null)
         {
             return;
         }
 
-        instanceRoot.position += skeletonRoot - ResolveAnimalPlacementBone(cache).position;
+        Vector3 targetPosition = instanceRoot.position + skeletonRoot - ResolveAnimalPlacementBone(cache).position;
+        if (smooth)
+        {
+            targetPosition = SmoothAnimalRootPosition(instanceRoot, targetPosition);
+        }
+
+        instanceRoot.position = targetPosition;
+    }
+
+    private Vector3 SmoothAnimalRootPosition(Transform root, Vector3 targetPosition)
+    {
+        if (root == null)
+        {
+            return targetPosition;
+        }
+
+        float dt = Time.deltaTime > 0.0001f ? Time.deltaTime : (1f / 60f);
+        if (!animalRootPositionFilters.TryGetValue(root, out OneEuroVector3Filter filter) || filter == null)
+        {
+            filter = new OneEuroVector3Filter(1.6f, 0.08f, 1.0f);
+            animalRootPositionFilters[root] = filter;
+            filter.Reset(targetPosition);
+            return targetPosition;
+        }
+
+        return filter.Filter(targetPosition, dt);
     }
 
     private static Transform ResolveAnimalPlacementBone(AnimalRigCache cache)

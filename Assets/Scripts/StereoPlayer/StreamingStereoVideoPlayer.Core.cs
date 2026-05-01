@@ -80,6 +80,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private static readonly bool EnableAnimalLimbApply = true;
     private static readonly bool StabilizeAnimalRootYaw = true;
     private const float AnimalRootRotateAlpha = 0.6f;
+    private const float AnimalRootPitchRollBlend = 0.18f;
     private static readonly Vector3 AnimalModelForwardLocal = new Vector3(0f, 0f, -1f);
     private static readonly Vector3 AnimalModelUpLocal = Vector3.up;
     private static readonly bool DisableAnimalAnimatorController = true;

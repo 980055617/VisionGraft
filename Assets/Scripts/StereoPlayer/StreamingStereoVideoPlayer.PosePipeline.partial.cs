@@ -12,36 +12,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public Vector3[] jointsWorld;
         public Vector3[] jointsCam;
         public byte[] jointVis;
-        public bool hasAnimalControl;
-        public AnimalControlWorldData animalControl;
         public Vector3 camOrigin;
         public Vector3 rootWorld;
-    }
-
-    private struct AnimalControlWorldData
-    {
-        public bool hasRoot;
-        public Vector3 rootWorld;
-        public bool hasWithers;
-        public Vector3 withersWorld;
-        public bool hasHeadRoot;
-        public Vector3 headRootWorld;
-        public bool hasHeadTip;
-        public Vector3 headTipWorld;
-        public bool hasTailBase;
-        public Vector3 tailBaseWorld;
-        public bool hasTailTip;
-        public Vector3 tailTipWorld;
-        public bool hasForwardHint;
-        public Vector3 forwardHintWorld;
-        public bool hasUpHint;
-        public Vector3 upHintWorld;
-        public Vector3[] frontLeftLegWorld;
-        public Vector3[] frontRightLegWorld;
-        public Vector3[] rearLeftLegWorld;
-        public Vector3[] rearRightLegWorld;
-        public Vector3[] headWorld;
-        public Vector3[] tailWorld;
     }
 
     private void TryApplyPersonPosePipeline(GameObject instance, MetaObj obj, Transform screen, int frame)
@@ -83,17 +55,25 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             ReplaceableModel model = instance.GetComponent<ReplaceableModel>();
             TryApplySmpl24HumanoidPlacement(instance.transform, model, cache, pose.jointsWorld, pose.jointVis);
 
+            if (TryApplyHumanInteractivePreIk(instance, obj.trackId, screen))
+            {
+                return;
+            }
+
             if (!enableBoneApply)
             {
+                ApplyHumanInteractiveOverlay(instance, obj.trackId);
                 return;
             }
 
             if (cache == null || !cache.ready)
             {
+                ApplyHumanInteractiveOverlay(instance, obj.trackId);
                 return;
             }
 
             TryApplySmpl24HumanoidIk(instance.transform, cache, pose.jointsWorld, pose.jointVis, pose.camOrigin, idx);
+            ApplyHumanInteractiveOverlay(instance, obj.trackId);
         }
         catch
         {
@@ -104,7 +84,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         try
         {
-            if (!TryBuildAnimalPoseWorld(obj, screen, frame, out PoseWorldData pose))
+            if (!TryBuildAnimalPoseWorld(obj, screen, frame, out AnimalPoseWorldData pose))
             {
                 return;
             }
@@ -124,16 +104,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
             Vector3 yawAxis = screen != null ? screen.up : instance.transform.up;
             ApplyManualYawToJoints(obj.trackId, frame, pose.jointsWorld, pose.jointVis, skeletonRoot, yawAxis);
+            ApplyAnimalInteractiveMotion(obj.trackId, instance.transform, screen, ref pose);
 
             Animator animator = instance.GetComponentInChildren<Animator>();
             DisableAnimalAnimatorPlayback(animator);
-            if (!enableBoneApply)
-            {
-                ApplyAnimalSkeletonPlacement(instance.transform, animator, pose.jointsWorld, pose.jointVis, pose.jointCount, skeletonRoot);
-                return;
-            }
 
-            ApplyAnimalSkeleton(instance.transform, animator, pose.jointsWorld, pose.jointVis, pose.jointCount, skeletonRoot, freezeAnimalDistal, pose.hasAnimalControl, pose.animalControl);
+            animalPoseApplier.Apply(new AnimalPoseRequest
+            {
+                instanceRoot = instance.transform,
+                animator = animator,
+                pose = pose,
+                settings = BuildAnimalPoseSettings(),
+                freezeAnimalDistal = freezeAnimalDistal,
+                enableBoneApply = enableBoneApply
+            });
         }
         catch
         {
@@ -245,9 +229,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return true;
     }
 
-    private bool TryBuildAnimalPoseWorld(MetaObj obj, Transform screen, int frame, out PoseWorldData pose)
+    private bool TryBuildAnimalPoseWorld(MetaObj obj, Transform screen, int frame, out AnimalPoseWorldData pose)
     {
-        pose = default(PoseWorldData);
+        pose = default(AnimalPoseWorldData);
         if (TryGetAnimalControlPose(frame, obj.trackId, out AnimalControlPose controlPose))
         {
             if (!TryGetPinholeBasis(screen, out Vector3 controlCamOrigin, out Quaternion controlCamRotation))
@@ -270,7 +254,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 controlJointsWorld[i] = controlCamOrigin + (controlCamRotation * jointCam);
             }
 
-            pose = new PoseWorldData
+            pose = new AnimalPoseWorldData
             {
                 jointCount = controlJointCount,
                 jointsWorld = controlJointsWorld,
@@ -314,7 +298,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             jointsWorld[i] = anchorWorld + (camRotation * jointCam);
         }
 
-        pose = new PoseWorldData
+        pose = new AnimalPoseWorldData
         {
             jointCount = jointCount,
             jointsWorld = jointsWorld,
@@ -546,5 +530,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         return hasAny;
+    }
+
+    private AnimalPoseSettings BuildAnimalPoseSettings()
+    {
+        return new AnimalPoseSettings
+        {
+            boneApplyAlpha = boneApplyAlpha,
+            enableAnimalLimbApply = EnableAnimalLimbApply,
+            stabilizeAnimalRootYaw = StabilizeAnimalRootYaw,
+            animalRootRotateAlpha = AnimalRootRotateAlpha,
+            animalRootPitchRollBlend = AnimalRootPitchRollBlend,
+            animalModelForwardLocal = AnimalModelForwardLocal,
+            animalModelUpLocal = AnimalModelUpLocal,
+            enableSkeletonScaleCorrection = EnableSkeletonScaleCorrection,
+            skeletonScaleMin = SkeletonScaleMin,
+            skeletonScaleMax = SkeletonScaleMax,
+            skeletonScaleRelativeMin = SkeletonScaleRelativeMin,
+            skeletonScaleRelativeMax = SkeletonScaleRelativeMax
+        };
     }
 }

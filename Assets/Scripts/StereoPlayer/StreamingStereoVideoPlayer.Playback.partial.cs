@@ -84,6 +84,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             {
                 appliedTracks.Add(trackId);
             }
+            else if (TryApplyInteractiveFrameOutTrack(trackId, frame))
+            {
+                appliedTracks.Add(trackId);
+            }
         }
 
         HideUnselectedTrackInstances(appliedTracks);
@@ -151,8 +155,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             rotationPinhole = ApplyManualTrackYawOffset(target.trackId, frame, rotationPinhole, screen != null ? screen.up : Vector3.up);
             float targetHeight = ComputeTargetHeightMeters(bboxHAdjusted, target.anchorZ);
             ApplyReplaceableModelTransform(instance, anchorWorld, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxWAdjusted, bboxHAdjusted, screen);
+            UpdateInteractiveMotionSchedule(instance, target, screen, frame);
             TryApplySkeleton(instance, target, screen, frame);
-            FitDisplayedModelToBBox(instance, target, screen, bboxHAdjusted);
+            if (!IsInteractiveMotionReplacing(target.trackId))
+            {
+                FitDisplayedModelToBBox(instance, target, screen, bboxHAdjusted);
+            }
             return;
         }
     }
@@ -208,6 +216,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 Destroy(existing);
                 trackInstances.Remove(trackId);
                 trackPrefabSources.Remove(trackId);
+                lockedModelLocalScaleByTrack.Remove(trackId);
             }
             else
             {
@@ -319,6 +328,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        bool lockScale = IsCategoryPerson(obj.categoryId) || IsCategoryAnimal(obj.categoryId);
+
         if (TryGetFocalLengths(out float fxScale, out float fyScale))
         {
             float bboxWorldW = (2f * bboxWAdjusted / manifest.eye_w) * (obj.anchorZ / fxScale);
@@ -327,7 +338,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             float scaleW = baseBounds.x > 0f ? bboxWorldW / baseBounds.x : targetUniform;
             float scaleH = baseBounds.y > 0f ? bboxWorldH / baseBounds.y : targetUniform;
             float uniformScale = IsCategoryAnimal(obj.categoryId) ? Mathf.Min(scaleW, scaleH) : scaleH;
-            instance.transform.localScale = baseScale * uniformScale;
+            Vector3 desiredScale = baseScale * uniformScale;
+            instance.transform.localScale = lockScale
+                ? GetOrLockModelLocalScale(obj.trackId, desiredScale)
+                : desiredScale;
             Vector3 lossy = instance.transform.lossyScale;
             if (model != null && model.anchor == null && model.alignToGround)
             {
@@ -355,24 +369,30 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 }
             }
 
-            if (EnableHeadHeightScaleCorrection && model != null && IsCategoryPerson(obj.categoryId))
-            {
-                TryApplyHumanoidHeadHeightScaleCorrection(instance.transform, model, obj, screen: screen, baseScale: baseScale, uniformScale: uniformScale);
-            }
             return;
         }
 
-        instance.transform.localScale = baseScale * targetUniform;
+        Vector3 fallbackScale = baseScale * targetUniform;
+        instance.transform.localScale = lockScale
+            ? GetOrLockModelLocalScale(obj.trackId, fallbackScale)
+            : fallbackScale;
         if (model != null && model.anchor == null && model.alignToGround)
         {
             float offsetWorld = model.baseBottomOffsetLocal * instance.transform.lossyScale.y;
             instance.transform.position += instance.transform.up * offsetWorld;
         }
+    }
 
-        if (EnableHeadHeightScaleCorrection && model != null && IsCategoryPerson(obj.categoryId))
+
+    private Vector3 GetOrLockModelLocalScale(uint trackId, Vector3 desiredLocalScale)
+    {
+        if (lockedModelLocalScaleByTrack.TryGetValue(trackId, out Vector3 lockedScale))
         {
-            TryApplyHumanoidHeadHeightScaleCorrection(instance.transform, model, obj, screen: screen, baseScale: baseScale, uniformScale: targetUniform);
+            return lockedScale;
         }
+
+        lockedModelLocalScaleByTrack[trackId] = desiredLocalScale;
+        return desiredLocalScale;
     }
 
 
@@ -413,17 +433,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (!TryProjectRendererBoundsToEyeHeight(instance, screen, out float projectedTopV, out float projectedBottomV, out float projectedHeight, out float depthMeters))
         {
             return;
-        }
-
-        float scaleToFitHeight = bboxH / Mathf.Max(0.0001f, projectedHeight);
-        float fitScale = Mathf.Min(1f, scaleToFitHeight);
-        if (fitScale < 0.999f)
-        {
-            instance.transform.localScale *= fitScale;
-            if (!TryProjectRendererBoundsToEyeHeight(instance, screen, out projectedTopV, out projectedBottomV, out projectedHeight, out depthMeters))
-            {
-                return;
-            }
         }
 
         AlignProjectedModelBottomToBBox(instance.transform, screen, projectedBottomV, depthMeters, ResolveBBoxBottomVEye(obj));
@@ -548,79 +557,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         root.position += camRotation * new Vector3(0f, deltaCamY, 0f);
     }
 
-
-    private void TryApplyHumanoidHeadHeightScaleCorrection(Transform root, ReplaceableModel model, MetaObj obj, Transform screen, Vector3 baseScale, float uniformScale)
-    {
-        if (root == null || model == null || !obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
-        {
-            return;
-        }
-
-        if (!TryGetHeadTargetWorld(obj, screen, out Vector3 headTargetWorld))
-        {
-            return;
-        }
-
-        Vector3 up = screen != null ? screen.up : root.up;
-        if (up.sqrMagnitude < 0.000001f)
-        {
-            up = Vector3.up;
-        }
-        up.Normalize();
-
-        float bottomOffsetWorld = model.baseBottomOffsetLocal * root.lossyScale.y;
-        Vector3 footWorld = root.position - up * bottomOffsetWorld;
-        float currentHeadFromFoot = (model.baseHeightMeters * root.lossyScale.y);
-        float targetHeadFromFoot = Vector3.Dot(headTargetWorld - footWorld, up);
-        if (currentHeadFromFoot <= 0.0001f || targetHeadFromFoot <= 0.0001f)
-        {
-            return;
-        }
-
-        float ratio = targetHeadFromFoot / currentHeadFromFoot;
-        float clampedRatio = Mathf.Clamp(ratio, HeadHeightScaleMin, HeadHeightScaleMax);
-        float blendedRatio = Mathf.Lerp(1f, clampedRatio, Mathf.Clamp01(HeadHeightScaleAlpha));
-        float correctedUniformScale = uniformScale * blendedRatio;
-        root.localScale = baseScale * correctedUniformScale;
-
-        // Keep feet fixed while applying height correction.
-        float correctedBottomOffsetWorld = model.baseBottomOffsetLocal * root.lossyScale.y;
-        root.position = footWorld + up * correctedBottomOffsetWorld;
-    }
-
-
-    private bool TryGetHeadTargetWorld(MetaObj obj, Transform screen, out Vector3 headTargetWorld)
-    {
-        headTargetWorld = Vector3.zero;
-        if (!obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
-        {
-            return false;
-        }
-
-        SkeletonIndices idx = MetrabsSmpl24Indices;
-        if (!TryBuildPersonPoseWorld(obj, screen, out PoseWorldData pose) ||
-            pose.jointCount != 24)
-        {
-            return false;
-        }
-
-        if (idx.leftShoulder < 0 || idx.rightShoulder < 0 ||
-            idx.leftShoulder >= pose.jointCount || idx.rightShoulder >= pose.jointCount ||
-            idx.leftShoulder >= obj.jointsVis.Length || idx.rightShoulder >= obj.jointsVis.Length ||
-            obj.jointsVis[idx.leftShoulder] == 0 || obj.jointsVis[idx.rightShoulder] == 0)
-        {
-            return false;
-        }
-
-        Vector3 shouldersMid = (pose.jointsWorld[idx.leftShoulder] + pose.jointsWorld[idx.rightShoulder]) * 0.5f;
-        if (!TryGetHeadTarget(pose.jointsWorld, obj.jointsVis, shouldersMid, idx, out Vector3 head))
-        {
-            return false;
-        }
-
-        headTargetWorld = head;
-        return true;
-    }
 
     private void TryApplySkeleton(GameObject instance, MetaObj obj, Transform screen, int frame)
     {

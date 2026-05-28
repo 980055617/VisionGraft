@@ -55,6 +55,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool enableRuntimeControls = true;
     public GameObject runtimeControlsPrefab;
 
+    [Header("Interactive Motion")]
+    public bool enableInteractiveMotion = true;
+    public AnimationClip[] humanInteractiveClips;
+    public float interactiveMotionMinIntervalSeconds = 6f;
+    public float interactiveMotionMaxIntervalSeconds = 14f;
+    public float interactiveMotionDurationSeconds = 5.5f;
+    public float interactiveMotionBlendSeconds = 1.2f;
+    public float interactiveApproachDistanceMeters = 0.25f;
+
     private const float PopoutRangeMeters = 0.35f;
     private const float EpsilonMeters = 0.02f;
     private const float MinDistanceFromHeadMeters = 0.25f;
@@ -92,11 +101,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private static readonly bool AlignModelToBBoxBottom = true;
     private const float ModelBottomExtraOffsetMeters = 0f;
     private static readonly bool BottomAlignVerticalOnly = true;
-
-    private static readonly bool EnableHeadHeightScaleCorrection = true;
-    private const float HeadHeightScaleAlpha = 0.35f;
-    private const float HeadHeightScaleMin = 0.75f;
-    private const float HeadHeightScaleMax = 1.35f;
 
     private static readonly Vector2 ControlsBarOffsetMeters = Vector2.zero;
     private const float ControlsBarGapMeters = 0.06f;

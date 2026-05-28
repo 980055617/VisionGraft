@@ -25,6 +25,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private Text runtimeTrackYawValueText;
     private Text runtimeTrackFrontGuideText;
     private Text runtimeTrackKeyInfoText;
+    private Text runtimeInteractiveMotionValueText;
     private bool runtimeSettingsOpen;
     private bool runtimeFovxInitialized;
     private bool suppressRuntimeProgressCallback;
@@ -77,6 +78,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             UpdateRuntimeSettingsPlacement();
             UpdateRuntimeScreenDistanceUiState();
             UpdateRuntimeTrackRotationUiState();
+            UpdateRuntimeInteractiveMotionUiState();
         }
     }
 

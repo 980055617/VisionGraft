@@ -100,6 +100,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         resetYaw.onClick.RemoveListener(OnRuntimeTrackYawResetClicked);
         resetYaw.onClick.AddListener(OnRuntimeTrackYawResetClicked);
 
+        CreateLabel(panelObj.transform, "InteractiveMotionLabel", "Motion", 0.12f, 0.70f, 40, TextAnchor.MiddleLeft);
+        runtimeInteractiveMotionValueText = CreateLabel(panelObj.transform, "InteractiveMotionValue", string.Empty, 0.72f, 0.70f, 36, TextAnchor.MiddleRight);
+        Button motionToggle = CreateSmallButton(panelObj.transform, "InteractiveMotionToggleButton", new Vector2(315f, 105f), "Toggle");
+        motionToggle.onClick.RemoveListener(OnRuntimeInteractiveMotionToggleClicked);
+        motionToggle.onClick.AddListener(OnRuntimeInteractiveMotionToggleClicked);
+
         CreateLabel(panelObj.transform, "YawLabel", "Yaw", 0.12f, 0.12f, 44, TextAnchor.MiddleLeft);
         runtimeTrackYawValueText = CreateLabel(panelObj.transform, "YawValue", "0.0 deg", 0.88f, 0.12f, 40, TextAnchor.MiddleRight);
         runtimeTrackYawSlider = CreateSlider(panelObj.transform, "TrackYawSlider", 0.12f);
@@ -113,6 +119,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         UpdateRuntimeTrackRotationUiState();
+        UpdateRuntimeInteractiveMotionUiState();
 
         return settingsRootObj;
     }

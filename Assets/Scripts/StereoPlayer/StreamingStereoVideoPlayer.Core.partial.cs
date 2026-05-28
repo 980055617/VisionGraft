@@ -23,6 +23,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private void OnDestroy()
     {
         UnsubscribeRecenterEvents();
+        DisposeInteractiveMotion();
     }
 
 

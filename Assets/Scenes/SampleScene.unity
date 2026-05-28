@@ -1047,8 +1047,8 @@ MonoBehaviour:
   displayModel: 1
   displayTrackIds: 0000000001000000
   replacePrefab: {fileID: 3348292547451869151, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
-  track0Prefab: {fileID: 919132149155446097, guid: b1ee22354922bee4392b525a6cdcceb9, type: 3}
-  track1Prefab: {fileID: 110392412574568067, guid: 39611dd7dc0e5e846b6d10d1df540e12, type: 3}
+  track0Prefab: {fileID: 3348292547451869151, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
+  track1Prefab: {fileID: 4248197375101405997, guid: 2658abc5fee3a7548a90543920743983, type: 3}
   track2Prefab: {fileID: 0}
   enableBoneApply: 1
   boneApplyAlpha: 1
@@ -1058,6 +1058,20 @@ MonoBehaviour:
   otherProxyBoxColor: {r: 1, g: 0.78, b: 0.18, a: 0.32}
   enableRuntimeControls: 1
   runtimeControlsPrefab: {fileID: 3675716834162371033, guid: 19be18d74f8608a4583c4c6c4e6e8723, type: 3}
+  enableInteractiveMotion: 1
+  humanInteractiveClips:
+  - {fileID: -203655887218126122, guid: e6eecc3fd4d4a4145a91ea9763a6c382, type: 3}
+  - {fileID: -203655887218126122, guid: 24ba1f0f1a335744fbc564c2739d1ca2, type: 3}
+  - {fileID: -203655887218126122, guid: 0e463dcbe29b06c4b90e96f55d703f69, type: 3}
+  - {fileID: -203655887218126122, guid: dca5e96eb574c95418d2907e29745b86, type: 3}
+  - {fileID: -203655887218126122, guid: 476d139a39a5a9749841377f289048c7, type: 3}
+  - {fileID: -203655887218126122, guid: a3ff864cf9bda90469ddde7a5a63a1e3, type: 3}
+  - {fileID: -203655887218126122, guid: f48165954a1dc834c8312f4ab2d8325d, type: 3}
+  interactiveMotionMinIntervalSeconds: 6
+  interactiveMotionMaxIntervalSeconds: 14
+  interactiveMotionDurationSeconds: 2.4
+  interactiveMotionBlendSeconds: 0.45
+  interactiveApproachDistanceMeters: 0.45
 --- !u!114 &1029322083431137655
 MonoBehaviour:
   m_ObjectHideFlags: 0

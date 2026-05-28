@@ -257,6 +257,30 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
 
 
+    private void OnRuntimeInteractiveMotionToggleClicked()
+    {
+        enableInteractiveMotion = !enableInteractiveMotion;
+        if (!enableInteractiveMotion)
+        {
+            StopAllInteractiveMotion();
+        }
+        UpdateRuntimeInteractiveMotionUiState();
+    }
+
+
+
+    private void UpdateRuntimeInteractiveMotionUiState()
+    {
+        if (runtimeInteractiveMotionValueText == null)
+        {
+            return;
+        }
+
+        runtimeInteractiveMotionValueText.text = enableInteractiveMotion ? "ON" : "OFF";
+    }
+
+
+
     private void UpdateRuntimeTrackRotationUiState()
     {
         if (runtimeTrackSelectionText == null && runtimeTrackYawSlider == null && runtimeTrackYawValueText == null &&
@@ -375,6 +399,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         UpdateRuntimeScreenDistanceUiState();
         UpdateRuntimeTrackRotationUiState();
+        UpdateRuntimeInteractiveMotionUiState();
         UpdateManualYawGuide(true);
     }
 

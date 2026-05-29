@@ -157,7 +157,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             ApplyReplaceableModelTransform(instance, anchorWorld, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxWAdjusted, bboxHAdjusted, screen);
             UpdateInteractiveMotionSchedule(instance, target, screen, frame);
             TryApplySkeleton(instance, target, screen, frame);
-            if (!IsInteractiveMotionReplacing(target.trackId))
+            if (ShouldFitDisplayedModelToBBoxDuringInteractiveMotion(
+                IsInteractiveMotionReplacing(target.trackId),
+                IsHumanoidInteractiveMotionInPlace(target.trackId)) &&
+                !ShouldUseHumanSmplRootPlacement(target, frame))
             {
                 FitDisplayedModelToBBox(instance, target, screen, bboxHAdjusted);
             }
@@ -438,6 +441,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         AlignProjectedModelBottomToBBox(instance.transform, screen, projectedBottomV, depthMeters, ResolveBBoxBottomVEye(obj));
     }
 
+    private bool ShouldUseHumanSmplRootPlacement(MetaObj obj, int frame)
+    {
+        if (!IsCategoryPerson(obj.categoryId))
+        {
+            return false;
+        }
+
+        bool hasHumanSmplTranslation =
+            TryGetHumanSmplPose(frame, obj.trackId, out HumanSmplPose pose) &&
+            pose.hasTransl;
+        return ShouldUseHumanSmplRootPlacementPolicy(true, hasHumanSmplTranslation);
+    }
 
     private bool TryProjectRendererBoundsToEyeHeight(GameObject instance, Transform screen, out float topV, out float bottomV, out float heightPixels, out float depthMeters)
     {

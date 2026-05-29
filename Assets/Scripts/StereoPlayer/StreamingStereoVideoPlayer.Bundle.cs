@@ -69,6 +69,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         string extractedMetaPath = Path.Combine(cacheDir, ExtractedMetaFileName);
         string extractedAnimalControlTargetsPath = Path.Combine(cacheDir, ExtractedAnimalControlTargetsFileName);
         string extractedOtherObjectProxiesPath = Path.Combine(cacheDir, ExtractedOtherObjectProxiesFileName);
+        string extractedHumanSmplPath = Path.Combine(cacheDir, ExtractedHumanSmplFileName);
 
         // Always extract fresh files after cache clear.
         {
@@ -104,6 +105,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     {
                         yield break;
                     }
+
+                    ExtractZipEntry(za, BundleHumanSmplEntryName, extractedHumanSmplPath);
                 }
             }
             catch
@@ -123,6 +126,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         LoadMeta(extractedMetaPath);
         LoadBundleSidecars(extractedAnimalControlTargetsPath, extractedOtherObjectProxiesPath);
+        LoadHumanSmplSidecar(extractedHumanSmplPath);
 
         string normalizedVideoPath = extractedVideoPath.Replace("\\", "/");
         vp.url = normalizedVideoPath;

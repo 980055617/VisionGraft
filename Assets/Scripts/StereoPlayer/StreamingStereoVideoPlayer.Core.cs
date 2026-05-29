@@ -13,11 +13,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const string BundleMetaEntryName = "meta.bin";
     private const string BundleAnimalControlTargetsEntryName = "source/animal_control_targets.json";
     private const string BundleOtherObjectProxiesEntryName = "source/other_object_proxies.json";
+    private const string BundleHumanSmplEntryName = "source/human_smpl_from_sam2.json";
     private const string ExtractedVideoFileName = "video.mp4";
     private const string ExtractedManifestFileName = "manifest.json";
     private const string ExtractedMetaFileName = "meta.bin";
     private const string ExtractedAnimalControlTargetsFileName = "animal_control_targets.json";
     private const string ExtractedOtherObjectProxiesFileName = "other_object_proxies.json";
+    private const string ExtractedHumanSmplFileName = "human_smpl_from_sam2.json";
 
     private Transform leftScreen;
     private Transform rightScreen;
@@ -82,6 +84,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const float Smpl24RootRotateAlpha = 0.85f;
     private const float Smpl24LimbIkAlpha = 0.9f;
     private const float Smpl24SpineAlpha = 0.35f;
+    private static readonly bool EnableHumanSmplMotion = true;
+    private const float HumanSmplRotationAlpha = 0.65f;
+    private static readonly bool HumanSmplFlipY = true;
     private static readonly bool EnableYawDepthDisambiguation = true;
     private const float YawDepthOffsetMeters = 0.045f;
     private const float YawDepthBlend = 1f;

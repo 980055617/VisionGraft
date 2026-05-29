@@ -282,6 +282,36 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             state.mode == InteractiveMotionMode.Replacement;
     }
 
+    private bool IsHumanoidInteractiveMotionInPlace(uint trackId)
+    {
+        return enableInteractiveMotion &&
+            interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) &&
+            state != null &&
+            state.active &&
+            state.subject == InteractiveMotionSubject.Person &&
+            state.mode != InteractiveMotionMode.Replacement;
+    }
+
+    public static bool ShouldFitDisplayedModelToBBoxDuringInteractiveMotion(bool isReplacing, bool isHumanoidInPlace)
+    {
+        return !isReplacing && !isHumanoidInPlace;
+    }
+
+    public static bool ShouldPreserveHumanoidInteractiveRootPosition(bool allowHipsTranslation)
+    {
+        return !allowHipsTranslation;
+    }
+
+    public static Vector3 ResolveHumanoidInteractiveRootPosition(
+        Vector3 currentPosition,
+        Vector3 startPosition,
+        bool allowHipsTranslation)
+    {
+        return ShouldPreserveHumanoidInteractiveRootPosition(allowHipsTranslation)
+            ? startPosition
+            : currentPosition;
+    }
+
     private bool TryApplyHumanInteractivePreIk(GameObject instance, uint trackId, Transform screen)
     {
         if (!enableInteractiveMotion ||
@@ -693,11 +723,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             playback.clip == null)
         {
             ApplyFallbackHumanWave(instance, state);
+            bool fallbackAllowsHipsTranslation = state.mode == InteractiveMotionMode.Replacement;
+            if (ShouldPreserveHumanoidInteractiveRootPosition(fallbackAllowsHipsTranslation) && instance != null)
+            {
+                instance.transform.position = ResolveHumanoidInteractiveRootPosition(
+                    instance.transform.position,
+                    state.startPosition,
+                    fallbackAllowsHipsTranslation);
+            }
             return;
         }
 
         float elapsed = Mathf.Max(0f, Time.time - state.startTime);
         float weight = InteractiveEnvelope(elapsed, state.duration);
+        Vector3 instancePositionBeforePlayback = instance != null ? instance.transform.position : Vector3.zero;
+        Transform animatorTransform = playback.animator != null ? playback.animator.transform : null;
+        Vector3 animatorLocalPositionBeforePlayback = animatorTransform != null ? animatorTransform.localPosition : Vector3.zero;
         CaptureHumanoidPose(playback.bones, playback.beforeLocalRotations, playback.beforeLocalPositions);
 
         double time = elapsed;
@@ -713,7 +754,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         playback.graph.Evaluate(Time.deltaTime > 0.0001f ? Time.deltaTime : (1f / 60f));
 
         CaptureHumanoidPose(playback.bones, playback.animatedLocalRotations, playback.animatedLocalPositions);
-        BlendHumanoidPose(playback.bones, playback.beforeLocalRotations, playback.beforeLocalPositions, playback.animatedLocalRotations, playback.animatedLocalPositions, weight);
+        bool allowHipsTranslation = state.mode == InteractiveMotionMode.Replacement;
+        BlendHumanoidPose(playback.bones, playback.beforeLocalRotations, playback.beforeLocalPositions, playback.animatedLocalRotations, playback.animatedLocalPositions, weight, allowHipsTranslation);
+        if (ShouldPreserveHumanoidInteractiveRootPosition(allowHipsTranslation) && instance != null)
+        {
+            instance.transform.position = ResolveHumanoidInteractiveRootPosition(
+                instancePositionBeforePlayback,
+                state.startPosition,
+                allowHipsTranslation);
+            if (animatorTransform != null)
+            {
+                animatorTransform.localPosition = animatorLocalPositionBeforePlayback;
+            }
+        }
     }
 
     private static bool IsWalkingHumanClip(AnimationClip clip)
@@ -775,7 +828,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Dictionary<HumanBodyBones, Vector3> basePositions,
         Dictionary<HumanBodyBones, Quaternion> animatedRotations,
         Dictionary<HumanBodyBones, Vector3> animatedPositions,
-        float weight)
+        float weight,
+        bool allowHipsTranslation)
     {
         float t = Mathf.Clamp01(weight);
         foreach (KeyValuePair<HumanBodyBones, Transform> kv in bones)
@@ -796,13 +850,28 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 basePositions.TryGetValue(kv.Key, out Vector3 basePosition) &&
                 animatedPositions.TryGetValue(kv.Key, out Vector3 animatedPosition))
             {
-                bone.localPosition = Vector3.Lerp(basePosition, animatedPosition, t);
+                bone.localPosition = ResolveHumanoidInteractiveLocalPosition(kv.Key, basePosition, animatedPosition, t, allowHipsTranslation);
             }
             else if (basePositions.TryGetValue(kv.Key, out Vector3 preservedPosition))
             {
                 bone.localPosition = preservedPosition;
             }
         }
+    }
+
+    public static Vector3 ResolveHumanoidInteractiveLocalPosition(
+        HumanBodyBones boneId,
+        Vector3 basePosition,
+        Vector3 animatedPosition,
+        float weight,
+        bool allowHipsTranslation)
+    {
+        if (boneId != HumanBodyBones.Hips || !allowHipsTranslation)
+        {
+            return basePosition;
+        }
+
+        return Vector3.Lerp(basePosition, animatedPosition, Mathf.Clamp01(weight));
     }
 
     private void ApplyFallbackHumanWave(GameObject instance, InteractiveMotionState state)

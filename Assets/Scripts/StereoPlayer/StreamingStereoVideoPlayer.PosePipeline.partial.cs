@@ -25,9 +25,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 return;
             }
 
-            if (pose.jointCount != 24)
+            HumanSmplPose smplPose = default(HumanSmplPose);
+            bool hasHumanSmplPose = TryGetHumanSmplPose(frame, obj.trackId, out smplPose);
+
+            if (pose.jointCount < 24)
             {
                 return;
+            }
+
+            if (hasHumanSmplPose && pose.jointCount >= 44)
+            {
+                RemapHmr2Body25ToSmpl24(ref pose);
             }
 
             SkeletonIndices idx = MetrabsSmpl24Indices;
@@ -45,15 +53,44 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Vector3 yawAxis = screen != null ? screen.up : instance.transform.up;
             ApplyManualYawToJoints(obj.trackId, frame, pose.jointsWorld, pose.jointVis, skeletonRoot, yawAxis);
 
+            bool hasSmplRootRotation = false;
+            Quaternion smplRootRotation = Quaternion.identity;
+            if (hasHumanSmplPose && ShouldUseHumanSmplRootOrientation())
+            {
+                if (TryGetHumanSmplRootRotation(screen, smplPose, out smplRootRotation))
+                {
+                    smplRootRotation = ApplyManualTrackYawOffset(
+                        obj.trackId,
+                        frame,
+                        smplRootRotation,
+                        screen != null ? screen.up : Vector3.up);
+                    hasSmplRootRotation = true;
+                }
+            }
+
             Animator animator = instance.GetComponentInChildren<Animator>();
             HumanoidRigCache cache = null;
             if (animator != null && animator.isHuman)
             {
                 cache = GetOrBuildHumanoidCache(animator);
             }
+            bool canApplyHumanSmplPose =
+                enableBoneApply &&
+                EnableHumanSmplMotion &&
+                hasHumanSmplPose &&
+                cache != null &&
+                cache.ready;
 
             ReplaceableModel model = instance.GetComponent<ReplaceableModel>();
-            TryApplySmpl24HumanoidPlacement(instance.transform, model, cache, pose.jointsWorld, pose.jointVis);
+            TryApplySmpl24HumanoidPlacement(
+                instance.transform,
+                model,
+                cache,
+                pose.jointsWorld,
+                pose.jointVis,
+                true,
+                hasSmplRootRotation,
+                smplRootRotation);
 
             if (TryApplyHumanInteractivePreIk(instance, obj.trackId, screen))
             {
@@ -72,12 +109,79 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 return;
             }
 
+            if (canApplyHumanSmplPose && ShouldApplyHumanSmplBeforeLimbIk())
+            {
+                TryApplyHumanSmplRotationOverlay(cache, smplPose);
+            }
             TryApplySmpl24HumanoidIk(instance.transform, cache, pose.jointsWorld, pose.jointVis, pose.camOrigin, idx);
             ApplyHumanInteractiveOverlay(instance, obj.trackId);
         }
         catch
         {
         }
+    }
+
+    private static void RemapHmr2Body25ToSmpl24(ref PoseWorldData pose)
+    {
+        if (pose.jointsWorld == null || pose.jointVis == null || pose.jointsWorld.Length < 25 || pose.jointVis.Length < 25)
+        {
+            return;
+        }
+
+        Vector3[] remappedWorld = new Vector3[24];
+        Vector3[] remappedCam = new Vector3[24];
+        byte[] remappedVis = new byte[24];
+
+        CopyHmr2Body25Joint(pose, 8, remappedWorld, remappedCam, remappedVis, SmplPelvis);
+        CopyHmr2Body25Joint(pose, 12, remappedWorld, remappedCam, remappedVis, SmplLeftHip);
+        CopyHmr2Body25Joint(pose, 9, remappedWorld, remappedCam, remappedVis, SmplRightHip);
+        CopyHmr2Body25Joint(pose, 13, remappedWorld, remappedCam, remappedVis, SmplLeftKnee);
+        CopyHmr2Body25Joint(pose, 10, remappedWorld, remappedCam, remappedVis, SmplRightKnee);
+        CopyHmr2Body25Joint(pose, 14, remappedWorld, remappedCam, remappedVis, SmplLeftAnkle);
+        CopyHmr2Body25Joint(pose, 11, remappedWorld, remappedCam, remappedVis, SmplRightAnkle);
+        CopyHmr2Body25Joint(pose, 19, remappedWorld, remappedCam, remappedVis, SmplLeftFoot);
+        CopyHmr2Body25Joint(pose, 22, remappedWorld, remappedCam, remappedVis, SmplRightFoot);
+        CopyHmr2Body25Joint(pose, 1, remappedWorld, remappedCam, remappedVis, SmplNeck);
+        CopyHmr2Body25Joint(pose, 0, remappedWorld, remappedCam, remappedVis, SmplHead);
+        CopyHmr2Body25Joint(pose, 5, remappedWorld, remappedCam, remappedVis, SmplLeftShoulder);
+        CopyHmr2Body25Joint(pose, 2, remappedWorld, remappedCam, remappedVis, SmplRightShoulder);
+        CopyHmr2Body25Joint(pose, 6, remappedWorld, remappedCam, remappedVis, SmplLeftElbow);
+        CopyHmr2Body25Joint(pose, 3, remappedWorld, remappedCam, remappedVis, SmplRightElbow);
+        CopyHmr2Body25Joint(pose, 7, remappedWorld, remappedCam, remappedVis, SmplLeftWrist);
+        CopyHmr2Body25Joint(pose, 4, remappedWorld, remappedCam, remappedVis, SmplRightWrist);
+
+        pose.jointCount = 24;
+        pose.jointsWorld = remappedWorld;
+        pose.jointsCam = remappedCam;
+        pose.jointVis = remappedVis;
+    }
+
+    private static void CopyHmr2Body25Joint(PoseWorldData pose, int sourceIndex, Vector3[] dstWorld, Vector3[] dstCam, byte[] dstVis, int dstIndex)
+    {
+        if (sourceIndex < 0 || dstIndex < 0 ||
+            sourceIndex >= pose.jointsWorld.Length ||
+            sourceIndex >= pose.jointVis.Length ||
+            dstIndex >= dstWorld.Length ||
+            dstIndex >= dstVis.Length)
+        {
+            return;
+        }
+
+        Vector3 world = pose.jointsWorld[sourceIndex];
+        if (world.sqrMagnitude <= 0.000001f ||
+            float.IsNaN(world.x) || float.IsInfinity(world.x) ||
+            float.IsNaN(world.y) || float.IsInfinity(world.y) ||
+            float.IsNaN(world.z) || float.IsInfinity(world.z))
+        {
+            return;
+        }
+
+        dstWorld[dstIndex] = world;
+        if (pose.jointsCam != null && sourceIndex < pose.jointsCam.Length && dstIndex < dstCam.Length)
+        {
+            dstCam[dstIndex] = pose.jointsCam[sourceIndex];
+        }
+        dstVis[dstIndex] = 1;
     }
 
     private void TryApplyAnimalPosePipeline(GameObject instance, MetaObj obj, Transform screen, int frame)

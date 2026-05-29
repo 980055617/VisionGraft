@@ -41,7 +41,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float limbAlpha = Mathf.Clamp01(Smpl24LimbIkAlpha * boneApplyAlpha);
         bool appliedAny = false;
 
+        string rootKey = root.GetInstanceID().ToString();
         appliedAny |= ApplySmpl24TwoBoneIk(cache,
+            rootKey,
+            "LeftArm",
             HumanBodyBones.LeftUpperArm,
             HumanBodyBones.LeftLowerArm,
             HumanBodyBones.LeftHand,
@@ -53,6 +56,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             limbAlpha);
 
         appliedAny |= ApplySmpl24TwoBoneIk(cache,
+            rootKey,
+            "RightArm",
             HumanBodyBones.RightUpperArm,
             HumanBodyBones.RightLowerArm,
             HumanBodyBones.RightHand,
@@ -64,6 +69,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             limbAlpha);
 
         appliedAny |= ApplySmpl24TwoBoneIk(cache,
+            rootKey,
+            "LeftLeg",
             HumanBodyBones.LeftUpperLeg,
             HumanBodyBones.LeftLowerLeg,
             HumanBodyBones.LeftFoot,
@@ -75,6 +82,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             limbAlpha);
 
         appliedAny |= ApplySmpl24TwoBoneIk(cache,
+            rootKey,
+            "RightLeg",
             HumanBodyBones.RightUpperLeg,
             HumanBodyBones.RightLowerLeg,
             HumanBodyBones.RightFoot,
@@ -101,7 +110,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return TryGetMidPoint(jointsWorld, vis, SmplLeftHip, SmplRightHip, out rootWorld);
     }
 
-    private bool TryApplySmpl24HumanoidPlacement(Transform root, ReplaceableModel model, HumanoidRigCache cache, Vector3[] jointsWorld, byte[] vis)
+    private bool TryApplySmpl24HumanoidPlacement(
+        Transform root,
+        ReplaceableModel model,
+        HumanoidRigCache cache,
+        Vector3[] jointsWorld,
+        byte[] vis,
+        bool resetLocalRotations = true,
+        bool hasRootRotationOverride = false,
+        Quaternion rootRotationOverride = default(Quaternion))
     {
         if (root == null || jointsWorld == null || vis == null || jointsWorld.Length < 24 || vis.Length < 24)
         {
@@ -117,11 +134,21 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             ApplySmpl24SkeletonScale(root, model, jointsWorld, vis);
         }
-        TryApplySmpl24RootOrientation(root, jointsWorld, vis);
+        if (hasRootRotationOverride && IsFinite(rootRotationOverride))
+        {
+            root.rotation = Quaternion.Slerp(root.rotation, rootRotationOverride, Mathf.Clamp01(Smpl24RootRotateAlpha));
+        }
+        else
+        {
+            TryApplySmpl24RootOrientation(root, jointsWorld, vis);
+        }
 
         if (cache != null && cache.ready)
         {
-            ResetHumanoidLocalRotations(cache);
+            if (resetLocalRotations)
+            {
+                ResetHumanoidLocalRotations(cache);
+            }
             AlignHumanoidHipsToSmplRoot(root, cache, skeletonRoot);
         }
         else
@@ -309,6 +336,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private bool ApplySmpl24TwoBoneIk(
         HumanoidRigCache cache,
+        string rootKey,
+        string limbKey,
         HumanBodyBones upperId,
         HumanBodyBones lowerId,
         HumanBodyBones endId,
@@ -333,7 +362,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        if (!TrySolveHumanoidTwoBoneMidPoint(upper, lower, end, rootHint, midHint, target, out Vector3 solvedMid))
+        if (!TrySolveHumanoidTwoBoneTargets(upper, lower, end, rootHint, midHint, target, BuildHumanoidLimbKey(rootKey, limbKey), out Vector3 solvedMid, out Vector3 solvedEnd))
         {
             ApplyHumanoidBoneToward(upper, lower, midHint, alpha * 0.85f);
             ApplyHumanoidBoneToward(lower, end, target, alpha * 0.7f);
@@ -341,20 +370,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         ApplyHumanoidBoneToward(upper, lower, solvedMid, alpha);
-        ApplyHumanoidBoneToward(lower, end, target, alpha * 0.95f);
+        ApplyHumanoidBoneToward(lower, end, solvedEnd, alpha * 0.95f);
         return true;
     }
 
-    private bool TrySolveHumanoidTwoBoneMidPoint(
+    private bool TrySolveHumanoidTwoBoneTargets(
         Transform upper,
         Transform lower,
         Transform end,
         Vector3 rootHint,
         Vector3 midHint,
         Vector3 target,
-        out Vector3 solvedMid)
+        string bendCacheKey,
+        out Vector3 solvedMid,
+        out Vector3 solvedEnd)
     {
         solvedMid = Vector3.zero;
+        solvedEnd = Vector3.zero;
         if (upper == null || lower == null || end == null)
         {
             return false;
@@ -368,30 +400,130 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        Vector3 toTarget = target - root;
-        float d = toTarget.magnitude;
-        if (d <= 0.0001f)
+        Vector3 toTargetRaw = target - root;
+        float rawDistance = toTargetRaw.magnitude;
+        if (rawDistance <= 0.0001f)
         {
             return false;
         }
 
         float maxReach = Mathf.Max(0.001f, l1 + l2 - 0.0001f);
         float minReach = Mathf.Abs(l1 - l2) + 0.0001f;
+        float d = ResolveHumanoidTwoBoneTargetDistance(rootHint, midHint, target, l1, l2, rawDistance);
         d = Mathf.Clamp(d, minReach, maxReach);
-        Vector3 dir = toTarget.normalized;
+        Vector3 dir = toTargetRaw.normalized;
+        solvedEnd = ResolveHumanoidTwoBoneEndTarget(root, target, d);
 
         float cosA = (l1 * l1 + d * d - l2 * l2) / (2f * l1 * d);
         cosA = Mathf.Clamp(cosA, -1f, 1f);
         float sinA = Mathf.Sqrt(Mathf.Max(0f, 1f - cosA * cosA));
 
-        Vector3 bendNormal = Vector3.Cross(midHint - rootHint, target - midHint);
+        if (!TryResolveHumanoidTwoBoneBendDirection(rootHint, midHint, target, dir, upper.up, upper.right, out Vector3 bendDir))
+        {
+            return false;
+        }
+
+        bendDir = StabilizeHumanoidLimbBendDirection(bendCacheKey, bendDir);
+        if (bendDir.sqrMagnitude < 0.000001f)
+        {
+            return false;
+        }
+        bendDir.Normalize();
+
+        solvedMid = root + dir * (cosA * l1) + bendDir * (sinA * l1);
+        return true;
+    }
+
+    private static string BuildHumanoidLimbKey(string rootKey, string limbKey)
+    {
+        return string.IsNullOrEmpty(rootKey) ? limbKey : rootKey + ":" + limbKey;
+    }
+
+    private Vector3 StabilizeHumanoidLimbBendDirection(string key, Vector3 direction)
+    {
+        if (direction.sqrMagnitude < 0.000001f)
+        {
+            return direction;
+        }
+
+        direction.Normalize();
+        if (string.IsNullOrEmpty(key))
+        {
+            return direction;
+        }
+
+        if (humanoidLimbBendDirectionByKey.TryGetValue(key, out Vector3 previous) && previous.sqrMagnitude > 0.000001f)
+        {
+            direction = StabilizeHumanoidBendNormal(previous, direction);
+        }
+
+        humanoidLimbBendDirectionByKey[key] = direction;
+        return direction;
+    }
+
+    public static float ResolveHumanoidTwoBoneTargetDistance(
+        Vector3 sourceRoot,
+        Vector3 sourceMid,
+        Vector3 sourceEnd,
+        float modelUpperLength,
+        float modelLowerLength,
+        float rawModelTargetDistance)
+    {
+        if (modelUpperLength <= 0.0001f || modelLowerLength <= 0.0001f || rawModelTargetDistance <= 0.0001f)
+        {
+            return rawModelTargetDistance;
+        }
+
+        float sourceUpper = Vector3.Distance(sourceRoot, sourceMid);
+        float sourceLower = Vector3.Distance(sourceMid, sourceEnd);
+        float sourceReach = sourceUpper + sourceLower;
+        float sourceDistance = Vector3.Distance(sourceRoot, sourceEnd);
+        if (sourceReach <= 0.0001f || sourceDistance <= 0.0001f)
+        {
+            return rawModelTargetDistance;
+        }
+
+        float sourceRatio = Mathf.Clamp01(sourceDistance / sourceReach);
+        float modelReach = modelUpperLength + modelLowerLength;
+        float normalizedDistance = modelReach * sourceRatio;
+        return Mathf.Min(rawModelTargetDistance, normalizedDistance);
+    }
+
+    public static Vector3 ResolveHumanoidTwoBoneEndTarget(Vector3 modelRoot, Vector3 rawTarget, float resolvedDistance)
+    {
+        Vector3 toTarget = rawTarget - modelRoot;
+        if (toTarget.sqrMagnitude <= 0.00000001f || resolvedDistance <= 0.0001f)
+        {
+            return rawTarget;
+        }
+
+        return modelRoot + toTarget.normalized * resolvedDistance;
+    }
+
+    public static bool TryResolveHumanoidTwoBoneBendDirection(
+        Vector3 sourceRoot,
+        Vector3 sourceMid,
+        Vector3 sourceEnd,
+        Vector3 targetDirection,
+        Vector3 fallbackA,
+        Vector3 fallbackB,
+        out Vector3 bendDirection)
+    {
+        bendDirection = Vector3.zero;
+        if (targetDirection.sqrMagnitude < 0.000001f)
+        {
+            return false;
+        }
+
+        Vector3 dir = targetDirection.normalized;
+        Vector3 bendNormal = Vector3.Cross(sourceMid - sourceRoot, sourceEnd - sourceMid);
         if (bendNormal.sqrMagnitude < 0.000001f)
         {
-            bendNormal = Vector3.Cross(upper.up, dir);
+            bendNormal = Vector3.Cross(fallbackA, dir);
         }
         if (bendNormal.sqrMagnitude < 0.000001f)
         {
-            bendNormal = Vector3.Cross(upper.right, dir);
+            bendNormal = Vector3.Cross(fallbackB, dir);
         }
         if (bendNormal.sqrMagnitude < 0.000001f)
         {
@@ -399,17 +531,34 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         bendNormal.Normalize();
 
-        Vector3 bendDir = Vector3.Cross(bendNormal, dir);
-        if (bendDir.sqrMagnitude < 0.000001f)
+        bendDirection = Vector3.Cross(dir, bendNormal);
+        if (bendDirection.sqrMagnitude < 0.000001f)
         {
             return false;
         }
-        bendDir.Normalize();
 
-        Vector3 candA = root + dir * (cosA * l1) + bendDir * (sinA * l1);
-        Vector3 candB = root + dir * (cosA * l1) - bendDir * (sinA * l1);
-        solvedMid = Vector3.Distance(candA, midHint) <= Vector3.Distance(candB, midHint) ? candA : candB;
+        bendDirection.Normalize();
         return true;
+    }
+
+    public static Vector3 StabilizeHumanoidBendNormal(Vector3 previous, Vector3 current)
+    {
+        if (current.sqrMagnitude < 0.000001f)
+        {
+            return current;
+        }
+
+        current.Normalize();
+        if (previous.sqrMagnitude > 0.000001f)
+        {
+            previous.Normalize();
+            if (Vector3.Dot(previous, current) < 0f)
+            {
+                current = -current;
+            }
+        }
+
+        return current;
     }
 
     private bool ApplyHumanoidBoneToward(Transform bone, Transform aimChild, Vector3 targetPoint, float alpha)

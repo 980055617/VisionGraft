@@ -86,13 +86,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         bundlePickerRoot = CreateBundlePickerRootObject();
         SetLayerRecursively(bundlePickerRoot, 5); // UI layer
         Canvas canvas = RuntimeCanvasComponentFactory.EnsureCanvas(bundlePickerRoot);
-        RuntimeCanvasWriter.ApplyWorldSpaceCamera(canvas, GetViewCamera());
+        UiComponentWriter.ApplyWorldSpaceCamera(canvas, GetViewCamera());
         RuntimeCanvasComponentFactory.EnsureGraphicRaycaster(bundlePickerRoot, false);
         EnsureCanvasRaycasters(bundlePickerRoot);
 
         RectTransform canvasRect = bundlePickerRoot.GetComponent<RectTransform>();
-        RuntimeUiTransformWriter.ApplySizeDelta(canvasRect, new Vector2(canvasW, canvasH));
-        RuntimeUiTransformWriter.ApplyLocalScale(
+        TransformWriter.ApplySizeDelta(canvasRect, new Vector2(canvasW, canvasH));
+        TransformWriter.ApplyLocalScale(
             canvasRect,
             new Vector3(
                 Mathf.Max(0.01f, BundlePickerSizeMeters.x) / canvasW,
@@ -101,14 +101,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         Transform contentRoot = ResolveBundlePickerContentRoot(bundlePickerRoot);
         RectTransform panelRect = RuntimeUiElementFactory.CreateRectChild("Panel", contentRoot, out GameObject panelObj);
-        RuntimeUiTransformWriter.ApplyStretchRect(
+        TransformWriter.ApplyStretchRect(
             panelRect,
             Vector2.zero,
             Vector2.one,
             Vector2.zero,
             Vector2.zero);
         Image panelImage = RuntimeUiElementFactory.AddImage(panelObj);
-        RuntimeGraphicWriter.ApplyColor(panelImage, new Color(0.08f, 0.09f, 0.11f, 0.92f));
+        UiComponentWriter.ApplyGraphicColor(panelImage, new Color(0.08f, 0.09f, 0.11f, 0.92f));
 
         CreateBundlePickerText(panelObj.transform, "Title", "Select bundle.svb", new Vector2(0f, 390f), new Vector2(1050f, 70f), 54, TextAnchor.MiddleCenter, Color.white);
         bundlePickerPathText = CreateBundlePickerText(panelObj.transform, "Path", string.Empty, new Vector2(0f, 325f), new Vector2(1060f, 62f), 28, TextAnchor.MiddleLeft, new Color(0.9f, 0.95f, 1f, 1f));
@@ -151,7 +151,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (bundlePickerRoot != null)
         {
             RuntimeUnityEventBinding.ClearButtonListenersInChildren(bundlePickerRoot);
-            GameObjectLifecycleWriter.DestroyObject(bundlePickerRoot);
+            SceneObjectWriter.DestroyObject(bundlePickerRoot);
             bundlePickerRoot = null;
         }
     }
@@ -164,7 +164,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         Canvas canvas = bundlePickerRoot.GetComponent<Canvas>();
-        RuntimeCanvasWriter.ApplyWorldCameraIfMissing(canvas, GetViewCamera());
+        UiComponentWriter.ApplyWorldCameraIfMissing(canvas, GetViewCamera());
 
         Transform head = GetViewOrHeadTransform();
         if (head == null)
@@ -195,7 +195,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             rot *= Quaternion.Euler(0f, 180f, 0f);
         }
-        RuntimeUiTransformWriter.ApplyWorldPose(bundlePickerRoot.transform, pos, rot);
+        TransformWriter.ApplyPose(bundlePickerRoot.transform, pos, rot);
         bundlePickerPlacementLocked = true;
     }
 
@@ -278,11 +278,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (bundlePickerPathText != null)
         {
-            RuntimeTextWriter.ApplyContent(bundlePickerPathText, $"Path: {bundlePickerCurrentDirectory}");
+            UiComponentWriter.ApplyTextContent(bundlePickerPathText, $"Path: {bundlePickerCurrentDirectory}");
         }
         if (bundlePickerStatusText != null)
         {
-            RuntimeTextWriter.ApplyContent(
+            UiComponentWriter.ApplyTextContent(
                 bundlePickerStatusText,
                 string.IsNullOrEmpty(status) ? $"Found {bundlePickerEntries.Count} entries" : status);
         }
@@ -315,35 +315,35 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     {
                         name = entry.path;
                     }
-                    RuntimeTextWriter.ApplyContent(label, entry.isDirectory ? $"[DIR] {name}" : name);
-                    RuntimeTextWriter.ApplyStyle(label, label.font, label.fontSize, TextAnchor.MiddleLeft, label.color);
+                    UiComponentWriter.ApplyTextContent(label, entry.isDirectory ? $"[DIR] {name}" : name);
+                    UiComponentWriter.ApplyTextStyle(label, label.font, label.fontSize, TextAnchor.MiddleLeft, label.color);
                 }
 
-                GameObjectLifecycleWriter.ApplyActive(button.gameObject, true);
-                RuntimeSelectableWriter.ApplyInteractable(button, true);
+                SceneObjectWriter.ApplyActive(button.gameObject, true);
+                UiComponentWriter.ApplyInteractable(button, true);
             }
             else
             {
                 if (label != null)
                 {
-                    RuntimeTextWriter.ApplyContent(label, string.Empty);
+                    UiComponentWriter.ApplyTextContent(label, string.Empty);
                 }
-                GameObjectLifecycleWriter.ApplyActive(button.gameObject, false);
+                SceneObjectWriter.ApplyActive(button.gameObject, false);
             }
         }
 
         int pageCount = GetBundlePickerPageCount();
         if (bundlePickerPageText != null)
         {
-            RuntimeTextWriter.ApplyContent(bundlePickerPageText, $"Page {bundlePickerPageIndex + 1}/{Mathf.Max(1, pageCount)}");
+            UiComponentWriter.ApplyTextContent(bundlePickerPageText, $"Page {bundlePickerPageIndex + 1}/{Mathf.Max(1, pageCount)}");
         }
         if (bundlePickerPrevButton != null)
         {
-            RuntimeSelectableWriter.ApplyInteractable(bundlePickerPrevButton, bundlePickerPageIndex > 0);
+            UiComponentWriter.ApplyInteractable(bundlePickerPrevButton, bundlePickerPageIndex > 0);
         }
         if (bundlePickerNextButton != null)
         {
-            RuntimeSelectableWriter.ApplyInteractable(bundlePickerNextButton, bundlePickerPageIndex < pageCount - 1);
+            UiComponentWriter.ApplyInteractable(bundlePickerNextButton, bundlePickerPageIndex < pageCount - 1);
         }
     }
 
@@ -448,12 +448,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         RectTransform rect = RuntimeUiElementFactory.CreateRectChild(name, parent, out GameObject obj);
         SetLayerRecursively(obj, 5); // UI layer
-        RuntimeUiTransformWriter.ApplyCenteredRect(rect, anchoredPos, size);
+        TransformWriter.ApplyCenteredRect(rect, anchoredPos, size);
 
         Text text = RuntimeUiElementFactory.AddText(obj);
-        RuntimeTextWriter.ApplyStyle(text, GetRuntimeUiFont(), fontSize, alignment, color);
-        RuntimeTextWriter.ApplyContent(text, initialText);
-        RuntimeTextWriter.ApplyInteraction(text, false);
+        UiComponentWriter.ApplyTextStyle(text, GetRuntimeUiFont(), fontSize, alignment, color);
+        UiComponentWriter.ApplyTextContent(text, initialText);
+        UiComponentWriter.ApplyTextInteraction(text, false);
         return text;
     }
 
@@ -461,10 +461,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         RectTransform rect = RuntimeUiElementFactory.CreateRectChild(name, parent, out GameObject obj);
         SetLayerRecursively(obj, 5); // UI layer
-        RuntimeUiTransformWriter.ApplyCenteredRect(rect, anchoredPos, size);
+        TransformWriter.ApplyCenteredRect(rect, anchoredPos, size);
 
         Image image = RuntimeUiElementFactory.AddImage(obj);
-        RuntimeGraphicWriter.ApplyColor(image, new Color(0.22f, 0.26f, 0.34f, 0.95f));
+        UiComponentWriter.ApplyGraphicColor(image, new Color(0.22f, 0.26f, 0.34f, 0.95f));
 
         Button button = RuntimeUiElementFactory.AddButton(obj);
         ColorBlock colors = button.colors;
@@ -473,15 +473,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         colors.pressedColor = new Color(0.16f, 0.20f, 0.28f, 1f);
         colors.selectedColor = colors.highlightedColor;
         colors.disabledColor = new Color(0.18f, 0.18f, 0.18f, 0.6f);
-        RuntimeGraphicWriter.ApplyColors(button, colors);
-        RuntimeGraphicWriter.ApplyTargetGraphic(button, image);
+        UiComponentWriter.ApplySelectableColors(button, colors);
+        UiComponentWriter.ApplyTargetGraphic(button, image);
         if (onClick != null)
         {
             RuntimeUnityEventBinding.Bind(button, onClick);
         }
 
         RectTransform textRect = RuntimeUiElementFactory.CreateRectChild("Label", obj.transform, out GameObject textObj);
-        RuntimeUiTransformWriter.ApplyStretchRect(
+        TransformWriter.ApplyStretchRect(
             textRect,
             Vector2.zero,
             Vector2.one,
@@ -489,9 +489,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             new Vector2(-14f, 0f));
 
         Text text = RuntimeUiElementFactory.AddText(textObj);
-        RuntimeTextWriter.ApplyStyle(text, GetRuntimeUiFont(), 30, alignment, Color.white);
-        RuntimeTextWriter.ApplyContent(text, label);
-        RuntimeTextWriter.ApplyInteraction(text, false);
+        UiComponentWriter.ApplyTextStyle(text, GetRuntimeUiFont(), 30, alignment, Color.white);
+        UiComponentWriter.ApplyTextContent(text, label);
+        UiComponentWriter.ApplyTextInteraction(text, false);
         SetLayerRecursively(obj, 5); // include label child
 
         return button;

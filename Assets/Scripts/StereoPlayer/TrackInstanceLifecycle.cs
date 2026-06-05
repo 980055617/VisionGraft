@@ -20,7 +20,7 @@ public static class TrackInstanceLifecycle
         {
             if (prefabSources.TryGetValue(trackId, out GameObject source) && source != prefab)
             {
-                GameObjectLifecycleWriter.DestroyObject(existing);
+                SceneObjectWriter.DestroyObject(existing);
                 instances.Remove(trackId);
                 prefabSources.Remove(trackId);
                 lockedModelLocalScaleByTrack.Remove(trackId);

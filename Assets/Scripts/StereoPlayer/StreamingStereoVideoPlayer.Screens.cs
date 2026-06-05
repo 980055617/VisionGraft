@@ -20,7 +20,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         if (screenSlot != null)
         {
-            GameObjectLifecycleWriter.DestroyObject(screenSlot.gameObject);
+            SceneObjectWriter.DestroyObject(screenSlot.gameObject);
             screenSlot = null;
         }
 
@@ -48,12 +48,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 quadMesh = Resources.GetBuiltinResource<Mesh>("Quad.fbx");
             }
 
-            ScreenMeshWriter.ApplySharedMesh(meshFilter, quadMesh);
+            SceneObjectWriter.ApplySharedMesh(meshFilter, quadMesh);
         }
 
         var renderer = RuntimeScreenComponentFactory.EnsureMeshRenderer(screen.gameObject);
 
-        ScreenMeshWriter.ApplyRendererEnabled(renderer, true);
+        SceneObjectWriter.ApplyRendererEnabled(renderer, true);
         EnsureUnlitMaterial(renderer);
         return renderer;
     }
@@ -88,12 +88,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
 
             // Keep screen hit area tightly matched to the rendered quad.
-            GameObjectLifecycleWriter.DestroyObject(collider);
+            SceneObjectWriter.DestroyObject(collider);
         }
 
         meshCollider ??= RuntimeScreenComponentFactory.EnsureMeshCollider(screen.gameObject);
 
-        ScreenColliderWriter.ApplyMeshCollider(meshCollider, meshFilter.sharedMesh);
+        SceneObjectWriter.ApplyMeshCollider(meshCollider, meshFilter.sharedMesh);
     }
 
     private void EnsureUnlitMaterial(Renderer renderer)
@@ -128,7 +128,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (shader != null)
         {
             mat = new Material(shader);
-            ScreenMaterialWriter.ApplyMaterial(renderer, mat);
+            SceneObjectWriter.ApplyMaterial(renderer, mat);
         }
     }
 
@@ -172,7 +172,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         var uniqueMat = new Material(baseMat);
-        ScreenMaterialWriter.ApplyMaterial(renderer, uniqueMat);
+        SceneObjectWriter.ApplyMaterial(renderer, uniqueMat);
         return uniqueMat;
     }
 
@@ -203,8 +203,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        ScreenMaterialWriter.ApplyTexture(leftMat, leftTexProp, player.texture);
-        ScreenMaterialWriter.ApplyTexture(rightMat, rightTexProp, player.texture);
+        SceneObjectWriter.ApplyTexture(leftMat, leftTexProp, player.texture);
+        SceneObjectWriter.ApplyTexture(rightMat, rightTexProp, player.texture);
     }
 
     private void ApplyStereoUvSettings(Material mat, int eyeMode)
@@ -262,12 +262,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (leftScreen != null)
         {
-            ScreenTransformWriter.ApplyPose(leftScreen, placement.leftPosition, placement.rotation);
+            TransformWriter.ApplyPose(leftScreen, placement.leftPosition, placement.rotation);
         }
 
         if (rightScreen != null)
         {
-            ScreenTransformWriter.ApplyPose(rightScreen, placement.rightPosition, placement.rotation);
+            TransformWriter.ApplyPose(rightScreen, placement.rightPosition, placement.rotation);
         }
 
         FixFacingIfNeeded(leftScreen, head);
@@ -325,7 +325,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (dotBefore < 0f)
         {
-            ScreenTransformWriter.RotateSelf(screen, 0f, 180f, 0f);
+            TransformWriter.RotateSelf(screen, 0f, 180f, 0f);
         }
     }
 
@@ -387,7 +387,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 scale = screen.localScale;
         scale.x = targetWidth / meshWidth;
         scale.y = targetHeight / meshHeight;
-        ScreenTransformWriter.ApplyLocalScale(screen, scale);
+        TransformWriter.ApplyLocalScale(screen, scale);
     }
 
     private Vector3 EyePixelToWorldOnScreen(int u, int v, Transform screen, float eyeW, float eyeH, float offsetMeters)

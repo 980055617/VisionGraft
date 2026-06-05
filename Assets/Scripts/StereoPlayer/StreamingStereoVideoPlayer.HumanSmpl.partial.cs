@@ -444,7 +444,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 Transform bone = targets[i].Key;
                 if (bone != null)
                 {
-                    PoseTransformWriter.ApplyLocalRotation(
+                    TransformWriter.ApplyLocalRotation(
                         bone,
                         Quaternion.Slerp(bone.localRotation, targets[i].Value, alpha));
                 }
@@ -557,7 +557,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        PoseTransformWriter.ApplyLocalRotation(
+        TransformWriter.ApplyLocalRotation(
             bone,
             Quaternion.Slerp(bone.localRotation, targetLocal, alpha));
         return true;
@@ -604,7 +604,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        PoseTransformWriter.ApplyLocalRotation(
+        TransformWriter.ApplyLocalRotation(
             bone,
             bone.localRotation * Quaternion.Slerp(Quaternion.identity, twist, alpha));
         return true;

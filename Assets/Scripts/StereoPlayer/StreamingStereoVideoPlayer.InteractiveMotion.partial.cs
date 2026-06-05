@@ -231,7 +231,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        GameObjectLifecycleWriter.ApplyActive(instance, true);
+        SceneObjectWriter.ApplyActive(instance, true);
         if (state.subject == InteractiveMotionSubject.Animal)
         {
             ApplyAnimalFrameOutTransform(trackId, instance, state.lastScreen, frame, tick.now);
@@ -1534,8 +1534,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        PoseAnimatorWriter.ApplyEnabled(animator, true);
-        PoseAnimatorWriter.ApplyRootMotion(animator, false);
+        SceneObjectWriter.ApplyAnimatorEnabled(animator, true);
+        SceneObjectWriter.ApplyRootMotion(animator, false);
         PlayableGraph graph = PlayableGraph.Create("InteractiveMotion_" + trackId);
         graph.SetTimeUpdateMode(DirectorUpdateMode.Manual);
         AnimationClipPlayable playable = AnimationClipPlayable.Create(graph, clip);
@@ -1543,7 +1543,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         playable.SetApplyPlayableIK(false);
         AnimationPlayableOutput output = AnimationPlayableOutput.Create(graph, "Animation", animator);
         output.SetSourcePlayable(playable);
-        PoseAnimatorWriter.ApplyPlay(graph);
+        SceneObjectWriter.ApplyPlay(graph);
         interactiveClipPlaybackByTrack[trackId] = new InteractiveClipPlayback
         {
             graph = graph,
@@ -1619,7 +1619,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             if (ShouldRestoreAnimatorLocalTransformSeparately(animatorTransform, instance.transform))
             {
-                PoseTransformWriter.ApplyLocalPose(
+                TransformWriter.ApplyLocalPose(
                     animatorTransform,
                     animatorLocalPositionBeforePlayback,
                     animatorLocalRotationBeforePlayback);
@@ -1780,20 +1780,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (baseRotations.TryGetValue(kv.Key, out Quaternion baseRotation) &&
                 animatedRotations.TryGetValue(kv.Key, out Quaternion animatedRotation))
             {
-                PoseTransformWriter.ApplyLocalRotation(bone, Quaternion.Slerp(baseRotation, animatedRotation, t));
+                TransformWriter.ApplyLocalRotation(bone, Quaternion.Slerp(baseRotation, animatedRotation, t));
             }
 
             if (kv.Key == HumanBodyBones.Hips &&
                 basePositions.TryGetValue(kv.Key, out Vector3 basePosition) &&
                 animatedPositions.TryGetValue(kv.Key, out Vector3 animatedPosition))
             {
-                PoseTransformWriter.ApplyLocalPosition(
+                TransformWriter.ApplyLocalPosition(
                     bone,
                     ResolveHumanoidInteractiveLocalPosition(kv.Key, basePosition, animatedPosition, t, allowHipsTranslation));
             }
             else if (basePositions.TryGetValue(kv.Key, out Vector3 preservedPosition))
             {
-                PoseTransformWriter.ApplyLocalPosition(bone, preservedPosition);
+                TransformWriter.ApplyLocalPosition(bone, preservedPosition);
             }
         }
     }
@@ -1837,10 +1837,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float t = Mathf.Clamp01(elapsed / Mathf.Max(0.001f, state.duration));
         float weight = InteractiveEnvelope(elapsed, state.duration);
         float wave = Mathf.Sin(t * Mathf.PI * 8f) * weight;
-        PoseTransformWriter.ApplyLocalRotation(
+        TransformWriter.ApplyLocalRotation(
             upper,
             upper.localRotation * Quaternion.Euler(-45f * weight, 0f, 25f * weight));
-        PoseTransformWriter.ApplyLocalRotation(
+        TransformWriter.ApplyLocalRotation(
             lower,
             lower.localRotation * Quaternion.Euler(0f, 0f, 35f * wave));
     }

@@ -46,7 +46,7 @@ public static class ManualYawGuideFactory
         Collider collider = target.GetComponent<Collider>();
         if (collider != null)
         {
-            GameObjectLifecycleWriter.DestroyObject(collider);
+            SceneObjectWriter.DestroyObject(collider);
         }
     }
 

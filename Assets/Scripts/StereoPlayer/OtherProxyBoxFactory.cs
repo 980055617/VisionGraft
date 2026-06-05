@@ -10,13 +10,13 @@ public static class OtherProxyBoxFactory
         Collider collider = box.GetComponent<Collider>();
         if (collider != null)
         {
-            GameObjectLifecycleWriter.DestroyObject(collider);
+            SceneObjectWriter.DestroyObject(collider);
         }
 
         Renderer renderer = box.GetComponent<Renderer>();
         if (renderer != null && material != null)
         {
-            ScreenMaterialWriter.ApplyMaterial(renderer, material);
+            SceneObjectWriter.ApplyMaterial(renderer, material);
         }
 
         return box;

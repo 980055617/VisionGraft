@@ -23,15 +23,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         GameObject root = RuntimeUiRootFactory.Create("RuntimeControlsBar", null);
         Canvas canvas = RuntimeCanvasComponentFactory.EnsureCanvas(root);
-        RuntimeCanvasWriter.ApplyWorldSpaceCamera(canvas, GetViewCamera());
+        UiComponentWriter.ApplyWorldSpaceCamera(canvas, GetViewCamera());
         RuntimeCanvasComponentFactory.EnsureGraphicRaycaster(root, false);
         EnsureCanvasRaycasters(root);
 
         RectTransform rect = root.GetComponent<RectTransform>();
-        RuntimeUiTransformWriter.ApplySizeDelta(
+        TransformWriter.ApplySizeDelta(
             rect,
             new Vector2(RuntimeControlsDefaultCanvasWidth, RuntimeControlsDefaultCanvasHeight));
-        RuntimeUiTransformWriter.ApplyLocalScale(
+        TransformWriter.ApplyLocalScale(
             rect,
             new Vector3(
                 ControlsBarSizeMeters.x / RuntimeControlsDefaultCanvasWidth,
@@ -39,14 +39,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 1f));
 
         RectTransform panelRect = RuntimeUiElementFactory.CreateRectChild("Panel", root.transform, out GameObject panelObj);
-        RuntimeUiTransformWriter.ApplyStretchRect(
+        TransformWriter.ApplyStretchRect(
             panelRect,
             Vector2.zero,
             Vector2.one,
             Vector2.zero,
             Vector2.zero);
         Image panelImage = RuntimeUiElementFactory.AddImage(panelObj);
-        RuntimeGraphicWriter.ApplyColor(panelImage, new Color(0f, 0f, 0f, 0.45f));
+        UiComponentWriter.ApplyGraphicColor(panelImage, new Color(0f, 0f, 0f, 0.45f));
 
         Button pauseButton = CreateBarButton(panelObj.transform, "PauseToggleButton", new Vector2(-180f, -38f));
         runtimePauseButtonText = GetButtonText(pauseButton);
@@ -72,20 +72,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private Button CreateBarButton(Transform parent, string name, Vector2 anchoredPos)
     {
         RectTransform buttonRect = RuntimeUiElementFactory.CreateRectChild(name, parent, out GameObject buttonObj);
-        RuntimeUiTransformWriter.ApplyCenteredRect(buttonRect, anchoredPos, new Vector2(300f, 120f));
+        TransformWriter.ApplyCenteredRect(buttonRect, anchoredPos, new Vector2(300f, 120f));
 
         Image buttonImage = RuntimeUiElementFactory.AddImage(buttonObj);
-        RuntimeGraphicWriter.ApplyColor(buttonImage, new Color(0.13f, 0.13f, 0.13f, 0.9f));
+        UiComponentWriter.ApplyGraphicColor(buttonImage, new Color(0.13f, 0.13f, 0.13f, 0.9f));
         Button button = RuntimeUiElementFactory.AddButton(buttonObj);
-        RuntimeGraphicWriter.ApplyTargetGraphic(button, buttonImage);
+        UiComponentWriter.ApplyTargetGraphic(button, buttonImage);
         ColorBlock colors = button.colors;
         colors.normalColor = new Color(0.13f, 0.13f, 0.13f, 0.9f);
         colors.highlightedColor = new Color(0.2f, 0.2f, 0.2f, 0.95f);
         colors.pressedColor = new Color(0.08f, 0.08f, 0.08f, 1f);
-        RuntimeGraphicWriter.ApplyColors(button, colors);
+        UiComponentWriter.ApplySelectableColors(button, colors);
 
         RectTransform textRect = RuntimeUiElementFactory.CreateRectChild("Label", buttonObj.transform, out GameObject textObj);
-        RuntimeUiTransformWriter.ApplyStretchRect(
+        TransformWriter.ApplyStretchRect(
             textRect,
             Vector2.zero,
             Vector2.one,
@@ -93,8 +93,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Vector2.zero);
 
         Text text = RuntimeUiElementFactory.AddText(textObj);
-        RuntimeTextWriter.ApplyStyle(text, GetRuntimeUiFont(), 52, TextAnchor.MiddleCenter, Color.white);
-        RuntimeTextWriter.ApplyContent(text, name.Contains("Settings") ? "Settings" : "Pause");
+        UiComponentWriter.ApplyTextStyle(text, GetRuntimeUiFont(), 52, TextAnchor.MiddleCenter, Color.white);
+        UiComponentWriter.ApplyTextContent(text, name.Contains("Settings") ? "Settings" : "Pause");
 
         return button;
     }
@@ -178,14 +178,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (canvas == null)
         {
             canvas = RuntimeCanvasComponentFactory.EnsureCanvas(root);
-            RuntimeCanvasWriter.ApplyWorldSpaceCamera(canvas, GetViewCamera());
+            UiComponentWriter.ApplyWorldSpaceCamera(canvas, GetViewCamera());
             RuntimeCanvasComponentFactory.EnsureGraphicRaycaster(root, false);
         }
 
         RectTransform canvasRect = canvas.GetComponent<RectTransform>();
         if (canvasRect != null && canvasRect.sizeDelta == Vector2.zero)
         {
-            RuntimeUiTransformWriter.ApplySizeDelta(
+            TransformWriter.ApplySizeDelta(
                 canvasRect,
                 new Vector2(RuntimeControlsDefaultCanvasWidth, RuntimeControlsDefaultCanvasHeight));
         }
@@ -267,18 +267,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         RectTransform sliderRect = RuntimeUiElementFactory.CreateRectChild("ProgressSlider", parent, out GameObject sliderObj);
-        RuntimeUiTransformWriter.ApplyCenteredRect(sliderRect, new Vector2(0f, 56f), new Vector2(780f, 42f));
+        TransformWriter.ApplyCenteredRect(sliderRect, new Vector2(0f, 56f), new Vector2(780f, 42f));
 
         Image background = RuntimeUiElementFactory.AddImage(sliderObj);
-        RuntimeGraphicWriter.ApplyColor(background, new Color(1f, 1f, 1f, 0.2f));
+        UiComponentWriter.ApplyGraphicColor(background, new Color(1f, 1f, 1f, 0.2f));
         Slider slider = RuntimeUiElementFactory.AddSlider(sliderObj);
-        RuntimeSliderWriter.ApplyDirection(slider, Slider.Direction.LeftToRight);
-        RuntimeGraphicWriter.ApplyTargetGraphic(slider, background);
-        RuntimeSliderWriter.ApplyRange(slider, 0f, 1f);
-        RuntimeSliderWriter.ApplyValueWithoutNotify(slider, 0f);
+        UiComponentWriter.ApplySliderDirection(slider, Slider.Direction.LeftToRight);
+        UiComponentWriter.ApplyTargetGraphic(slider, background);
+        UiComponentWriter.ApplySliderRange(slider, 0f, 1f);
+        UiComponentWriter.ApplySliderValueWithoutNotify(slider, 0f);
 
         RectTransform fillAreaRect = RuntimeUiElementFactory.CreateRectChild("Fill Area", sliderObj.transform, out GameObject fillArea);
-        RuntimeUiTransformWriter.ApplyStretchRect(
+        TransformWriter.ApplyStretchRect(
             fillAreaRect,
             new Vector2(0f, 0.2f),
             new Vector2(1f, 0.8f),
@@ -287,9 +287,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         GameObject fillObj = RuntimeUiElementFactory.CreateChild("Fill", fillArea.transform);
         Image fillImage = RuntimeUiElementFactory.AddImage(fillObj);
-        RuntimeGraphicWriter.ApplyColor(fillImage, new Color(0.22f, 0.72f, 1f, 0.95f));
+        UiComponentWriter.ApplyGraphicColor(fillImage, new Color(0.22f, 0.72f, 1f, 0.95f));
         RectTransform fillRect = fillObj.GetComponent<RectTransform>();
-        RuntimeUiTransformWriter.ApplyStretchRect(
+        TransformWriter.ApplyStretchRect(
             fillRect,
             new Vector2(0f, 0f),
             new Vector2(1f, 1f),
@@ -297,7 +297,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Vector2.zero);
 
         RectTransform handleAreaRect = RuntimeUiElementFactory.CreateRectChild("Handle Slide Area", sliderObj.transform, out GameObject handleArea);
-        RuntimeUiTransformWriter.ApplyStretchRect(
+        TransformWriter.ApplyStretchRect(
             handleAreaRect,
             Vector2.zero,
             Vector2.one,
@@ -306,18 +306,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         GameObject handleObj = RuntimeUiElementFactory.CreateChild("Handle", handleArea.transform);
         Image handleImage = RuntimeUiElementFactory.AddImage(handleObj);
-        RuntimeGraphicWriter.ApplyColor(handleImage, new Color(0.95f, 0.95f, 0.95f, 1f));
+        UiComponentWriter.ApplyGraphicColor(handleImage, new Color(0.95f, 0.95f, 0.95f, 1f));
         RectTransform handleRect = handleObj.GetComponent<RectTransform>();
-        RuntimeUiTransformWriter.ApplySizeDelta(handleRect, new Vector2(22f, 40f));
+        TransformWriter.ApplySizeDelta(handleRect, new Vector2(22f, 40f));
 
-        RuntimeSliderWriter.ApplyRects(slider, fillRect, handleRect);
+        UiComponentWriter.ApplySliderRects(slider, fillRect, handleRect);
 
         RectTransform textRect = RuntimeUiElementFactory.CreateRectChild("ProgressText", parent, out GameObject textObj);
-        RuntimeUiTransformWriter.ApplyCenteredRect(textRect, new Vector2(0f, 88f), new Vector2(420f, 30f));
+        TransformWriter.ApplyCenteredRect(textRect, new Vector2(0f, 88f), new Vector2(420f, 30f));
 
         Text text = RuntimeUiElementFactory.AddText(textObj);
-        RuntimeTextWriter.ApplyStyle(text, GetRuntimeUiFont(), 24, TextAnchor.MiddleCenter, Color.white);
-        RuntimeTextWriter.ApplyContent(text, "00:00 / 00:00");
+        UiComponentWriter.ApplyTextStyle(text, GetRuntimeUiFont(), 24, TextAnchor.MiddleCenter, Color.white);
+        UiComponentWriter.ApplyTextContent(text, "00:00 / 00:00");
     }
 
 
@@ -334,7 +334,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             RectTransform r = pause.transform as RectTransform;
             if (r != null)
             {
-                RuntimeUiTransformWriter.ApplyAnchoredPosition(r, new Vector2(-180f, -62f));
+                TransformWriter.ApplyAnchoredPosition(r, new Vector2(-180f, -62f));
             }
         }
 
@@ -344,7 +344,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             RectTransform r = settings.transform as RectTransform;
             if (r != null)
             {
-                RuntimeUiTransformWriter.ApplyAnchoredPosition(r, new Vector2(180f, -62f));
+                TransformWriter.ApplyAnchoredPosition(r, new Vector2(180f, -62f));
             }
         }
 
@@ -354,7 +354,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             RectTransform r = progress.transform as RectTransform;
             if (r != null)
             {
-                RuntimeUiTransformWriter.ApplyAnchoredPosition(r, new Vector2(0f, 56f));
+                TransformWriter.ApplyAnchoredPosition(r, new Vector2(0f, 56f));
             }
         }
 
@@ -364,7 +364,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             RectTransform r = progressText.transform as RectTransform;
             if (r != null)
             {
-                RuntimeUiTransformWriter.ApplyAnchoredPosition(r, new Vector2(0f, 88f));
+                TransformWriter.ApplyAnchoredPosition(r, new Vector2(0f, 88f));
             }
         }
     }

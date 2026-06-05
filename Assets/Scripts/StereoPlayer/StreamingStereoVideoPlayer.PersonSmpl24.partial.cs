@@ -354,7 +354,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             if (cache.bones.TryGetValue(kv.Key, out Transform bone) && bone != null)
             {
-                PoseTransformWriter.ApplyLocalRotation(bone, kv.Value);
+                TransformWriter.ApplyLocalRotation(bone, kv.Value);
             }
         }
     }
@@ -602,7 +602,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         Quaternion delta = Quaternion.FromToRotation(currentDir.normalized, targetDir.normalized);
         Quaternion targetRot = delta * bone.rotation;
-        PoseTransformWriter.ApplyWorldRotation(
+        TransformWriter.ApplyWorldRotation(
             bone,
             Quaternion.Slerp(bone.rotation, targetRot, Mathf.Clamp01(alpha)));
         return true;

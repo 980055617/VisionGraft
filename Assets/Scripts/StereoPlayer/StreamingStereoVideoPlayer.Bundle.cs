@@ -81,32 +81,32 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 {
                     LogBundleEntries(za);
 
-                    if (!ExtractBundleEntry(za, BundleVideoEntryName, extractedVideoPath, SpatialVideoBundleEntryRequirement.Required))
+                    if (!BundleExtractor.ExtractWithRequirement(za, BundleVideoEntryName, extractedVideoPath, SpatialVideoBundleEntryRequirement.Required))
                     {
                         yield break;
                     }
 
-                    if (!ExtractBundleEntry(za, BundleManifestEntryName, extractedManifestPath, SpatialVideoBundleEntryRequirement.Required))
+                    if (!BundleExtractor.ExtractWithRequirement(za, BundleManifestEntryName, extractedManifestPath, SpatialVideoBundleEntryRequirement.Required))
                     {
                         yield break;
                     }
 
-                    if (!ExtractBundleEntry(za, BundleMetaEntryName, extractedMetaPath, SpatialVideoBundleEntryRequirement.Required))
+                    if (!BundleExtractor.ExtractWithRequirement(za, BundleMetaEntryName, extractedMetaPath, SpatialVideoBundleEntryRequirement.Required))
                     {
                         yield break;
                     }
 
-                    if (!ExtractBundleEntry(za, BundleAnimalControlTargetsEntryName, extractedAnimalControlTargetsPath, SpatialVideoBundleEntryRequirement.Optional))
+                    if (!BundleExtractor.ExtractWithRequirement(za, BundleAnimalControlTargetsEntryName, extractedAnimalControlTargetsPath, SpatialVideoBundleEntryRequirement.Optional))
                     {
                         yield break;
                     }
 
-                    if (!ExtractBundleEntry(za, BundleOtherObjectProxiesEntryName, extractedOtherObjectProxiesPath, SpatialVideoBundleEntryRequirement.Optional))
+                    if (!BundleExtractor.ExtractWithRequirement(za, BundleOtherObjectProxiesEntryName, extractedOtherObjectProxiesPath, SpatialVideoBundleEntryRequirement.Optional))
                     {
                         yield break;
                     }
 
-                    ExtractBundleEntry(za, BundleHumanSmplEntryName, extractedHumanSmplPath, SpatialVideoBundleEntryRequirement.Optional);
+                    BundleExtractor.ExtractWithRequirement(za, BundleHumanSmplEntryName, extractedHumanSmplPath, SpatialVideoBundleEntryRequirement.Optional);
                 }
             }
             catch
@@ -120,7 +120,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             yield break;
         }
 
-        if (!TryLoadManifest(extractedManifestPath))
+        if (!ManifestLoader.TryLoad(extractedManifestPath, out manifest))
         {
             yield break;
         }
@@ -132,33 +132,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         vp.url = normalizedVideoPath;
 
         RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Prepare);
-    }
-
-    private bool ExtractBundleEntry(
-        ZipArchive za,
-        string entryName,
-        string outPath,
-        SpatialVideoBundleEntryRequirement requirement)
-    {
-        bool extracted = ExtractZipEntry(za, entryName, outPath);
-        return SpatialVideoBundleEntries.ShouldContinueAfterExtraction(requirement, extracted);
-    }
-
-    private bool ExtractZipEntry(ZipArchive za, string entryName, string outPath)
-    {
-        var entry = za.GetEntry(entryName);
-        if (entry == null)
-        {
-            return false;
-        }
-
-        using (var entryStream = entry.Open())
-        using (var outStream = new FileStream(outPath, FileMode.Create, FileAccess.Write))
-        {
-            entryStream.CopyTo(outStream);
-        }
-
-        return true;
     }
 
     private void LogBundleEntries(ZipArchive za)
@@ -184,27 +157,4 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
     }
 
-    private bool TryLoadManifest(string manifestPath)
-    {
-        if (!File.Exists(manifestPath))
-        {
-            return false;
-        }
-
-        try
-        {
-            manifest = JsonUtility.FromJson<ManifestData>(File.ReadAllText(manifestPath));
-            return
-                manifest != null &&
-                manifest.quant_pos_scale > 0f &&
-                manifest.quant_joint_scale > 0f &&
-                manifest.joints_space == "camera_xyz_root_relative";
-        }
-        catch
-        {
-            manifest = null;
-        }
-
-        return false;
-    }
 }

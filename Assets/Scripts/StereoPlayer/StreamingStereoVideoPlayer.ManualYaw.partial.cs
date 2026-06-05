@@ -256,14 +256,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             manualYawGuideRoot.transform.SetParent(instance.transform, false);
         }
-        DebugTransformWriter.ApplyLocalTransform(manualYawGuideRoot.transform, Vector3.zero, Quaternion.identity, Vector3.one);
+        TransformWriter.ApplyLocalTransform(manualYawGuideRoot.transform, Vector3.zero, Quaternion.identity, Vector3.one);
 
-        DebugTransformWriter.ApplyLocalTransform(
+        TransformWriter.ApplyLocalTransform(
             manualYawGuideShaft,
             new Vector3(0f, y, len * 0.5f),
             Quaternion.identity,
             new Vector3(0.04f, 0.04f, len));
-        DebugTransformWriter.ApplyLocalTransform(
+        TransformWriter.ApplyLocalTransform(
             manualYawGuideTip,
             new Vector3(0f, y, len),
             Quaternion.identity,
@@ -354,7 +354,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        GameObjectLifecycleWriter.ApplyActive(manualYawGuideRoot, visible);
+        SceneObjectWriter.ApplyActive(manualYawGuideRoot, visible);
     }
 
 

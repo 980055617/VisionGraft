@@ -99,7 +99,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 continue;
             }
 
-            GameObjectLifecycleWriter.ApplyActive(kv.Value, false);
+            SceneObjectWriter.ApplyActive(kv.Value, false);
         }
     }
 
@@ -145,7 +145,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         GameObject instance = GetOrCreateTrackInstance(target.trackId);
         if (instance != null)
         {
-            GameObjectLifecycleWriter.ApplyActive(instance, true);
+            SceneObjectWriter.ApplyActive(instance, true);
             Quaternion rotationPinhole = GetPinholeBasisRotation(screen);
             rotationPinhole = ApplyManualTrackYawOffset(target.trackId, frame, rotationPinhole, screen != null ? screen.up : Vector3.up);
             float targetHeight = ComputeTargetHeightMeters(bboxHAdjusted, target.anchorZ);

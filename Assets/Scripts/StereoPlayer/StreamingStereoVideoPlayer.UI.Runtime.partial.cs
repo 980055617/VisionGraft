@@ -42,13 +42,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             ControlsBarGapMeters,
             ControlsBarOffsetMeters,
             ControlsBarForwardOffsetMeters);
-        RuntimeUiTransformWriter.ApplyWorldPose(runtimeControlsRoot.transform, pose.position, pose.rotation);
+        TransformWriter.ApplyPose(runtimeControlsRoot.transform, pose.position, pose.rotation);
         ApplyRuntimeControlsSizing();
 
         Canvas canvas = GetRuntimeControlsCanvas();
         if (canvas != null)
         {
-            RuntimeCanvasWriter.ApplyWorldCamera(canvas, GetViewCamera());
+            UiComponentWriter.ApplyWorldCamera(canvas, GetViewCamera());
         }
 
         UpdateRuntimeSettingsPlacement();
@@ -99,12 +99,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             SettingsPanelGapMeters,
             SettingsPanelOffsetMeters,
             SettingsPanelForwardOffsetMeters);
-        RuntimeUiTransformWriter.ApplyWorldPose(runtimeSettingsRoot.transform, pose.position, pose.rotation);
+        TransformWriter.ApplyPose(runtimeSettingsRoot.transform, pose.position, pose.rotation);
 
         Canvas canvas = runtimeSettingsRoot.GetComponent<Canvas>();
         if (canvas != null)
         {
-            RuntimeCanvasWriter.ApplyWorldCamera(canvas, GetViewCamera());
+            UiComponentWriter.ApplyWorldCamera(canvas, GetViewCamera());
         }
 
         RectTransform rect = runtimeSettingsRoot.GetComponent<RectTransform>();
@@ -114,10 +114,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (size.x <= 0f || size.y <= 0f)
             {
                 size = new Vector2(RuntimeSettingsDefaultCanvasWidth, RuntimeSettingsDefaultCanvasHeight);
-                RuntimeUiTransformWriter.ApplySizeDelta(rect, size);
+                TransformWriter.ApplySizeDelta(rect, size);
             }
 
-            RuntimeUiTransformWriter.ApplyLocalScale(
+            TransformWriter.ApplyLocalScale(
                 rect,
                 new Vector3(
                     SettingsPanelSizeMeters.x / size.x,
@@ -179,10 +179,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (size.x <= 0f || size.y <= 0f)
         {
             size = new Vector2(RuntimeControlsDefaultCanvasWidth, RuntimeControlsDefaultCanvasHeight);
-            RuntimeUiTransformWriter.ApplySizeDelta(rect, size);
+            TransformWriter.ApplySizeDelta(rect, size);
         }
 
-        RuntimeUiTransformWriter.ApplyLocalScale(
+        TransformWriter.ApplyLocalScale(
             rect,
             new Vector3(
                 ControlsBarSizeMeters.x / size.x,
@@ -262,7 +262,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        RuntimeTextWriter.ApplyContent(runtimeInteractiveMotionValueText, enableInteractiveMotion ? "ON" : "OFF");
+        UiComponentWriter.ApplyTextContent(runtimeInteractiveMotionValueText, enableInteractiveMotion ? "ON" : "OFF");
     }
 
 
@@ -281,26 +281,26 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             if (runtimeTrackSelectionText != null)
             {
-                RuntimeTextWriter.ApplyContent(runtimeTrackSelectionText, "none");
+                UiComponentWriter.ApplyTextContent(runtimeTrackSelectionText, "none");
             }
             if (runtimeTrackYawValueText != null)
             {
-                RuntimeTextWriter.ApplyContent(runtimeTrackYawValueText, "0.0 deg");
+                UiComponentWriter.ApplyTextContent(runtimeTrackYawValueText, "0.0 deg");
             }
             if (runtimeTrackYawSlider != null)
             {
                 suppressRuntimeTrackYawCallback = true;
-                RuntimeSliderWriter.ApplyValueWithoutNotify(runtimeTrackYawSlider, 0f);
+                UiComponentWriter.ApplySliderValueWithoutNotify(runtimeTrackYawSlider, 0f);
                 suppressRuntimeTrackYawCallback = false;
-                RuntimeSelectableWriter.ApplyInteractable(runtimeTrackYawSlider, false);
+                UiComponentWriter.ApplyInteractable(runtimeTrackYawSlider, false);
             }
             if (runtimeTrackFrontGuideText != null)
             {
-                RuntimeTextWriter.ApplyContent(runtimeTrackFrontGuideText, "Arrow above head = FRONT  |  +:left  -:right");
+                UiComponentWriter.ApplyTextContent(runtimeTrackFrontGuideText, "Arrow above head = FRONT  |  +:left  -:right");
             }
             if (runtimeTrackKeyInfoText != null)
             {
-                RuntimeTextWriter.ApplyContent(runtimeTrackKeyInfoText, "Keys:0  Frame:0");
+                UiComponentWriter.ApplyTextContent(runtimeTrackKeyInfoText, "Keys:0  Frame:0");
             }
             return;
         }
@@ -311,26 +311,26 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float yaw = GetManualYawOffsetDegForTrack(trackId);
         if (runtimeTrackSelectionText != null)
         {
-            RuntimeTextWriter.ApplyContent(runtimeTrackSelectionText, trackId.ToString());
+            UiComponentWriter.ApplyTextContent(runtimeTrackSelectionText, trackId.ToString());
         }
         if (runtimeTrackYawValueText != null)
         {
-            RuntimeTextWriter.ApplyContent(runtimeTrackYawValueText, yaw.ToString("F1") + " deg");
+            UiComponentWriter.ApplyTextContent(runtimeTrackYawValueText, yaw.ToString("F1") + " deg");
         }
         if (runtimeTrackYawSlider != null)
         {
-            RuntimeSelectableWriter.ApplyInteractable(runtimeTrackYawSlider, true);
+            UiComponentWriter.ApplyInteractable(runtimeTrackYawSlider, true);
             suppressRuntimeTrackYawCallback = true;
-            RuntimeSliderWriter.ApplyValueWithoutNotify(runtimeTrackYawSlider, yaw);
+            UiComponentWriter.ApplySliderValueWithoutNotify(runtimeTrackYawSlider, yaw);
             suppressRuntimeTrackYawCallback = false;
         }
         if (runtimeTrackFrontGuideText != null)
         {
-            RuntimeTextWriter.ApplyContent(runtimeTrackFrontGuideText, "Arrow above head = FRONT  |  +:left  -:right");
+            UiComponentWriter.ApplyTextContent(runtimeTrackFrontGuideText, "Arrow above head = FRONT  |  +:left  -:right");
         }
         if (runtimeTrackKeyInfoText != null)
         {
-            RuntimeTextWriter.ApplyContent(runtimeTrackKeyInfoText, "Keys:" + keyCount + "  Frame:" + frame + (hasKeyAtCurrent ? " [key]" : " [interp]"));
+            UiComponentWriter.ApplyTextContent(runtimeTrackKeyInfoText, "Keys:" + keyCount + "  Frame:" + frame + (hasKeyAtCurrent ? " [key]" : " [interp]"));
         }
     }
 
@@ -353,7 +353,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             UpdateRuntimeScreenDistanceSliderRange();
             suppressRuntimeScreenDistanceCallback = true;
-            RuntimeSliderWriter.ApplyValueWithoutNotify(runtimeScreenDistanceSlider, clamped);
+            UiComponentWriter.ApplySliderValueWithoutNotify(runtimeScreenDistanceSlider, clamped);
             suppressRuntimeScreenDistanceCallback = false;
         }
 
@@ -414,11 +414,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (vp == null)
         {
             suppressRuntimeProgressCallback = true;
-            RuntimeSliderWriter.ApplyValueWithoutNotify(runtimeProgressSlider, 0f);
+            UiComponentWriter.ApplySliderValueWithoutNotify(runtimeProgressSlider, 0f);
             suppressRuntimeProgressCallback = false;
             if (runtimeProgressText != null)
             {
-                RuntimeTextWriter.ApplyContent(runtimeProgressText, "00:00 / 00:00");
+                UiComponentWriter.ApplyTextContent(runtimeProgressText, "00:00 / 00:00");
             }
             return;
         }
@@ -441,12 +441,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             GetCurrentPlaybackFrame());
 
         suppressRuntimeProgressCallback = true;
-        RuntimeSliderWriter.ApplyValueWithoutNotify(runtimeProgressSlider, progress.normalized);
+        UiComponentWriter.ApplySliderValueWithoutNotify(runtimeProgressSlider, progress.normalized);
         suppressRuntimeProgressCallback = false;
 
         if (runtimeProgressText != null)
         {
-            RuntimeTextWriter.ApplyContent(runtimeProgressText, progress.clockText);
+            UiComponentWriter.ApplyTextContent(runtimeProgressText, progress.clockText);
         }
     }
 
@@ -567,7 +567,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        RuntimeTextWriter.ApplyContent(runtimePauseButtonText, (vp != null && vp.isPlaying) ? "Pause" : "Resume");
+        UiComponentWriter.ApplyTextContent(runtimePauseButtonText, (vp != null && vp.isPlaying) ? "Pause" : "Resume");
     }
 
 

@@ -375,8 +375,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
 
             GameObject box = GetOrCreateOtherProxyBox(obj.trackId);
-            GameObjectLifecycleWriter.ApplyActive(box, true);
-            DebugTransformWriter.ApplyWorldPoseAndScale(
+            SceneObjectWriter.ApplyActive(box, true);
+            TransformWriter.ApplyWorldPoseAndScale(
                 box.transform,
                 centerWorld,
                 GetPinholeBasisRotation(screen),
@@ -388,7 +388,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             if (kv.Value != null && !visible.Contains(kv.Key))
             {
-                GameObjectLifecycleWriter.ApplyActive(kv.Value, false);
+                SceneObjectWriter.ApplyActive(kv.Value, false);
             }
         }
     }

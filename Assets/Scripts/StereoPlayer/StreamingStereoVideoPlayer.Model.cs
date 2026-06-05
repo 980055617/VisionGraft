@@ -17,6 +17,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private readonly Dictionary<Transform, Vector3> personRootYawForwardByRoot = new Dictionary<Transform, Vector3>();
     private readonly Dictionary<string, Vector3> humanoidLimbBendDirectionByKey = new Dictionary<string, Vector3>();
     private readonly Dictionary<Animator, HumanoidRigCache> humanoidCaches = new Dictionary<Animator, HumanoidRigCache>();
-    private readonly AnimalPoseApplier animalPoseApplier = new AnimalPoseApplier();
+    private readonly AnimalPoseApplier animalPoseApplier = new AnimalPoseApplier(AnimalFilterConfig.Default);
 }
 

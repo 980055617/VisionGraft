@@ -28,7 +28,7 @@ public static class InteractionSdkRayCanvasAdapter
 
         if (screen is RectTransform screenRect)
         {
-            RuntimeUiTransformWriter.ApplySizeDelta(screenRect, new Vector2(targetWidth, targetHeight));
+            TransformWriter.ApplySizeDelta(screenRect, new Vector2(targetWidth, targetHeight));
         }
 
         Transform interactionRoot = FindDeepChildByName(screen, InteractionRootName);
@@ -102,7 +102,7 @@ public static class InteractionSdkRayCanvasAdapter
 
         if (surface is RectTransform rect)
         {
-            RuntimeUiTransformWriter.ApplyFullStretchSurfaceRect(rect);
+            TransformWriter.ApplyFullStretchSurfaceRect(rect);
         }
 
         Component[] components = surface.GetComponentsInChildren<Component>(true);

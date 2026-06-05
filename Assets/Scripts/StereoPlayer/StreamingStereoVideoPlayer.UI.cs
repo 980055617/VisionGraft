@@ -39,11 +39,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             if (runtimeControlsRoot != null)
             {
-                GameObjectLifecycleWriter.ApplyActive(runtimeControlsRoot, false);
+                SceneObjectWriter.ApplyActive(runtimeControlsRoot, false);
             }
             if (runtimeSettingsRoot != null)
             {
-                GameObjectLifecycleWriter.ApplyActive(runtimeSettingsRoot, false);
+                SceneObjectWriter.ApplyActive(runtimeSettingsRoot, false);
             }
             SetScreenColliderBlockForSettings(false);
             return;
@@ -60,7 +60,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (runtimeControlsRoot != null)
         {
-            GameObjectLifecycleWriter.ApplyActive(runtimeControlsRoot, true);
+            SceneObjectWriter.ApplyActive(runtimeControlsRoot, true);
             ApplyRuntimeControlsSizing();
             UpdateRuntimeControlsPlacement();
             UpdatePauseButtonLabel();
@@ -70,7 +70,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (runtimeSettingsRoot != null)
         {
-            GameObjectLifecycleWriter.ApplyActive(runtimeSettingsRoot, runtimeSettingsOpen);
+            SceneObjectWriter.ApplyActive(runtimeSettingsRoot, runtimeSettingsOpen);
             SetScreenColliderBlockForSettings(runtimeSettingsOpen);
             UpdateRuntimeSettingsPlacement();
             UpdateRuntimeScreenDistanceUiState();

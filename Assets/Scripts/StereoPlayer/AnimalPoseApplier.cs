@@ -3,16 +3,14 @@ using UnityEngine;
 
 public sealed class AnimalPoseApplier
 {
-    private const float AnimalRootOneEuroMinCutoffHz = 1.0f;
-    private const float AnimalRootOneEuroBeta = 0.15f;
-    private const float AnimalRootOneEuroDerivativeCutoffHz = 1.0f;
-    private readonly Dictionary<Transform, Vector3> animalRootYawForwardByRoot = new Dictionary<Transform, Vector3>();
-    private readonly Dictionary<Transform, int> animalRootYawLastSeenFrameByRoot = new Dictionary<Transform, int>();
-    private readonly Dictionary<Transform, RuntimeOneEuroVector3Filter> animalRootForwardFilters = new Dictionary<Transform, RuntimeOneEuroVector3Filter>();
-    private readonly Dictionary<Transform, RuntimeOneEuroVector3Filter> animalRootUpFilters = new Dictionary<Transform, RuntimeOneEuroVector3Filter>();
-    private readonly Dictionary<Transform, RuntimeOneEuroVector3Filter> animalLimbTargetFilters = new Dictionary<Transform, RuntimeOneEuroVector3Filter>();
-    private readonly Dictionary<Transform, RuntimeOneEuroVector3Filter> animalRootPositionFilters = new Dictionary<Transform, RuntimeOneEuroVector3Filter>();
+    private readonly AnimalMotionFilter motionFilter;
     private readonly Dictionary<Transform, AnimalRigCache> animalRigCaches = new Dictionary<Transform, AnimalRigCache>();
+
+    public AnimalPoseApplier(AnimalFilterConfig filterConfig = default)
+    {
+        AnimalFilterConfig resolved = filterConfig.minCutoffHz <= 0f ? AnimalFilterConfig.Default : filterConfig;
+        motionFilter = new AnimalMotionFilter(resolved);
+    }
 
     public void Apply(AnimalPoseRequest request)
     {
@@ -108,10 +106,8 @@ public sealed class AnimalPoseApplier
         }
 
         int currentFrame = tick.frameCount;
-        bool seenRecently =
-            animalRootYawLastSeenFrameByRoot.TryGetValue(root, out int lastSeenFrame) &&
-            RuntimeClock.WasSeenRecently(currentFrame, lastSeenFrame, 1);
-        animalRootYawLastSeenFrameByRoot[root] = currentFrame;
+        bool seenRecently = motionFilter.WasSeenRecently(root, currentFrame);
+        motionFilter.MarkRootSeen(root, currentFrame);
 
         Vector3 planarForward = Vector3.ProjectOnPlane(forward, worldUp);
         if (planarForward.sqrMagnitude <= 0.000001f)
@@ -122,19 +118,19 @@ public sealed class AnimalPoseApplier
 
         if (!seenRecently)
         {
-            ResetAnimalRootBasisFilters(root, planarForward, bodyUp, worldUp);
+            motionFilter.ResetRootBasis(root, planarForward, bodyUp, worldUp);
             stabilizedForward = forward;
             stabilizedUp = bodyUp;
             return;
         }
 
-        if (!animalRootYawForwardByRoot.TryGetValue(root, out Vector3 prevForward) || prevForward.sqrMagnitude < 0.000001f)
+        if (!motionFilter.TryGetPrevRootForward(root, out Vector3 prevForward))
         {
             prevForward = Vector3.ProjectOnPlane(root.forward, worldUp);
         }
         if (prevForward.sqrMagnitude < 0.000001f)
         {
-            ResetAnimalRootBasisFilters(root, planarForward, bodyUp, worldUp);
+            motionFilter.ResetRootBasis(root, planarForward, bodyUp, worldUp);
             return;
         }
         prevForward.Normalize();
@@ -154,15 +150,14 @@ public sealed class AnimalPoseApplier
         }
 
         float dt = tick.deltaTime;
-        RuntimeOneEuroVector3Filter forwardFilter = GetOrCreateAnimalRootVector3Filter(animalRootForwardFilters, root);
-        Vector3 filteredForward = forwardFilter.Filter(chosenForward, dt);
+        Vector3 filteredForward = motionFilter.FilterRootForward(root, chosenForward, dt);
         filteredForward = Vector3.ProjectOnPlane(filteredForward, worldUp);
         if (filteredForward.sqrMagnitude <= 0.000001f)
         {
             filteredForward = chosenForward;
         }
         filteredForward.Normalize();
-        animalRootYawForwardByRoot[root] = filteredForward;
+        motionFilter.SetRootForward(root, filteredForward);
 
         Vector3 projectedUp = Vector3.ProjectOnPlane(bodyUp, filteredForward);
         if (projectedUp.sqrMagnitude <= 0.000001f)
@@ -181,8 +176,7 @@ public sealed class AnimalPoseApplier
         }
         projectedUp.Normalize();
 
-        RuntimeOneEuroVector3Filter upFilter = GetOrCreateAnimalRootVector3Filter(animalRootUpFilters, root);
-        Vector3 filteredUp = upFilter.Filter(projectedUp, dt);
+        Vector3 filteredUp = motionFilter.FilterRootUp(root, projectedUp, dt);
         filteredUp = Vector3.ProjectOnPlane(filteredUp, filteredForward);
         if (filteredUp.sqrMagnitude <= 0.000001f)
         {
@@ -202,38 +196,6 @@ public sealed class AnimalPoseApplier
 
         stabilizedForward = filteredForward;
         stabilizedUp = filteredUp;
-    }
-
-    private void ResetAnimalRootBasisFilters(Transform root, Vector3 planarForward, Vector3 bodyUp, Vector3 worldUp)
-    {
-        animalRootYawForwardByRoot[root] = planarForward;
-        GetOrCreateAnimalRootVector3Filter(animalRootForwardFilters, root).Reset(planarForward);
-
-        Vector3 resetUp = Vector3.ProjectOnPlane(bodyUp, planarForward);
-        if (resetUp.sqrMagnitude <= 0.000001f)
-        {
-            resetUp = Vector3.ProjectOnPlane(worldUp, planarForward);
-        }
-        if (resetUp.sqrMagnitude > 0.000001f)
-        {
-            resetUp.Normalize();
-            GetOrCreateAnimalRootVector3Filter(animalRootUpFilters, root).Reset(resetUp);
-        }
-    }
-
-    private static RuntimeOneEuroVector3Filter GetOrCreateAnimalRootVector3Filter(Dictionary<Transform, RuntimeOneEuroVector3Filter> filters, Transform root)
-    {
-        if (filters.TryGetValue(root, out RuntimeOneEuroVector3Filter existing) && existing != null)
-        {
-            return existing;
-        }
-
-        RuntimeOneEuroVector3Filter created = new RuntimeOneEuroVector3Filter(
-            AnimalRootOneEuroMinCutoffHz,
-            AnimalRootOneEuroBeta,
-            AnimalRootOneEuroDerivativeCutoffHz);
-        filters[root] = created;
-        return created;
     }
 
     private static bool TryGetAnimalBodyBasis(Vector3[] jointsWorld, byte[] vis, Transform instanceRoot, bool hasControl, AnimalControlWorldData control, out Vector3 forward, out Vector3 up, out Vector3 facingHint)
@@ -352,15 +314,7 @@ public sealed class AnimalPoseApplier
             return targetPosition;
         }
 
-        if (!animalRootPositionFilters.TryGetValue(root, out RuntimeOneEuroVector3Filter filter) || filter == null)
-        {
-            filter = new RuntimeOneEuroVector3Filter(1.6f, 0.08f, 1.0f);
-            animalRootPositionFilters[root] = filter;
-            filter.Reset(targetPosition);
-            return targetPosition;
-        }
-
-        return filter.Filter(targetPosition, deltaTime);
+        return motionFilter.FilterRootPosition(root, targetPosition, deltaTime);
     }
 
     private static Transform ResolveAnimalPlacementBone(AnimalRigCache cache)
@@ -624,15 +578,7 @@ public sealed class AnimalPoseApplier
             return target;
         }
 
-        if (!animalLimbTargetFilters.TryGetValue(key, out RuntimeOneEuroVector3Filter filter) || filter == null)
-        {
-            filter = new RuntimeOneEuroVector3Filter(minCutoffHz, beta, 1.0f);
-            animalLimbTargetFilters[key] = filter;
-            filter.Reset(target);
-            return target;
-        }
-
-        return filter.Filter(target, deltaTime);
+        return motionFilter.FilterLimbTarget(key, target, minCutoffHz, beta, deltaTime);
     }
 
     private void RegisterAnimalAimChild(AnimalRigCache cache, Transform bone, Transform aimChild)
@@ -722,7 +668,7 @@ public sealed class AnimalPoseApplier
             float dot = Vector3.Dot(currentDir, targetDir);
             if (dot > -0.98f)
             {
-                PoseTransformWriter.ApplyWorldRotation(
+                TransformWriter.ApplyWorldRotation(
                     bone,
                     Quaternion.Slerp(bone.rotation, targetWorld, Mathf.Clamp01(alpha)));
                 return true;
@@ -747,7 +693,7 @@ public sealed class AnimalPoseApplier
         }
 
         Quaternion targetLocal = Quaternion.FromToRotation(bindDirLocal, targetLocalDir) * bindRotLocal;
-        PoseTransformWriter.ApplyLocalRotation(
+        TransformWriter.ApplyLocalRotation(
             bone,
             Quaternion.Slerp(bone.localRotation, targetLocal, Mathf.Clamp01(alpha)));
         return true;

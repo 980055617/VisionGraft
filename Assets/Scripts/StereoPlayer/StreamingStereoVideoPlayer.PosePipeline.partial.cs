@@ -235,7 +235,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             animator.Update(0f);
         }
 
-        PoseAnimatorWriter.ApplyEnabled(animator, false);
+        SceneObjectWriter.ApplyAnimatorEnabled(animator, false);
     }
 
     private static bool IsAnimalSegmentUsable(int idxA, int idxB, int jointCount, byte[] vis, Vector3[] jointsCam)

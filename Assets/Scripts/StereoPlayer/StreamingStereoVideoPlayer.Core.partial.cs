@@ -74,12 +74,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (leftScreen != null)
         {
-            ScreenTransformWriter.ApplyLocalScale(leftScreen, screenScale);
+            TransformWriter.ApplyLocalScale(leftScreen, screenScale);
         }
 
         if (rightScreen != null)
         {
-            ScreenTransformWriter.ApplyLocalScale(rightScreen, screenScale);
+            TransformWriter.ApplyLocalScale(rightScreen, screenScale);
         }
 
         PlaceScreens();
@@ -130,12 +130,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (leftScreen != null)
         {
-            ScreenTransformWriter.ApplyPose(leftScreen, pose.position, pose.rotation);
+            TransformWriter.ApplyPose(leftScreen, pose.position, pose.rotation);
         }
 
         if (rightScreen != null)
         {
-            ScreenTransformWriter.ApplyPose(rightScreen, pose.position, pose.rotation);
+            TransformWriter.ApplyPose(rightScreen, pose.position, pose.rotation);
         }
     }
 

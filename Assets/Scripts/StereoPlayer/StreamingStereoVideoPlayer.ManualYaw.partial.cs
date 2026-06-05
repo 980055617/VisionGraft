@@ -188,13 +188,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private float GetManualYawOffsetDegForTrack(uint trackId)
     {
-        return EvaluateManualYawOffsetDegForFrame(trackId, GetCurrentFrameIndex());
+        return EvaluateManualYawOffsetDegForFrame(trackId, GetCurrentPlaybackFrame());
     }
 
 
     private void SetManualYawOffsetDegForTrack(uint trackId, float yawDeg)
     {
-        int frame = GetCurrentFrameIndex();
+        int frame = GetCurrentPlaybackFrame();
         if (!manualYawKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> keys) || keys == null)
         {
             keys = new SortedDictionary<int, float>();
@@ -223,7 +223,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        return keys.ContainsKey(GetCurrentFrameIndex());
+        return keys.ContainsKey(GetCurrentPlaybackFrame());
     }
 
 
@@ -256,16 +256,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             manualYawGuideRoot.transform.SetParent(instance.transform, false);
         }
-        manualYawGuideRoot.transform.localPosition = Vector3.zero;
-        manualYawGuideRoot.transform.localRotation = Quaternion.identity;
-        manualYawGuideRoot.transform.localScale = Vector3.one;
+        DebugTransformWriter.ApplyLocalTransform(manualYawGuideRoot.transform, Vector3.zero, Quaternion.identity, Vector3.one);
 
-        manualYawGuideShaft.localPosition = new Vector3(0f, y, len * 0.5f);
-        manualYawGuideShaft.localRotation = Quaternion.identity;
-        manualYawGuideShaft.localScale = new Vector3(0.04f, 0.04f, len);
-        manualYawGuideTip.localPosition = new Vector3(0f, y, len);
-        manualYawGuideTip.localRotation = Quaternion.identity;
-        manualYawGuideTip.localScale = new Vector3(0.14f, 0.14f, 0.14f);
+        DebugTransformWriter.ApplyLocalTransform(
+            manualYawGuideShaft,
+            new Vector3(0f, y, len * 0.5f),
+            Quaternion.identity,
+            new Vector3(0.04f, 0.04f, len));
+        DebugTransformWriter.ApplyLocalTransform(
+            manualYawGuideTip,
+            new Vector3(0f, y, len),
+            Quaternion.identity,
+            new Vector3(0.14f, 0.14f, 0.14f));
         SetManualYawGuideVisible(true);
     }
 
@@ -319,71 +321,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        manualYawGuideRoot = new GameObject("ManualYawGuide");
-        manualYawGuideShaft = GameObject.CreatePrimitive(PrimitiveType.Cube).transform;
-        manualYawGuideShaft.name = "Shaft";
-        manualYawGuideShaft.SetParent(manualYawGuideRoot.transform, false);
-        RemoveGuideCollider(manualYawGuideShaft.gameObject);
-        TintGuideMesh(manualYawGuideShaft.gameObject, new Color(1f, 0.1f, 0.1f, 1f));
-
-        manualYawGuideTip = GameObject.CreatePrimitive(PrimitiveType.Sphere).transform;
-        manualYawGuideTip.name = "Tip";
-        manualYawGuideTip.SetParent(manualYawGuideRoot.transform, false);
-        RemoveGuideCollider(manualYawGuideTip.gameObject);
-        TintGuideMesh(manualYawGuideTip.gameObject, new Color(1f, 0.35f, 0.35f, 1f));
+        ManualYawGuideFactory.Guide guide = ManualYawGuideFactory.Create();
+        manualYawGuideRoot = guide.root;
+        manualYawGuideShaft = guide.shaft;
+        manualYawGuideTip = guide.tip;
 
         SetManualYawGuideVisible(false);
-    }
-
-
-    private static void RemoveGuideCollider(GameObject go)
-    {
-        if (go == null)
-        {
-            return;
-        }
-
-        Collider c = go.GetComponent<Collider>();
-        if (c != null)
-        {
-            Destroy(c);
-        }
-    }
-
-
-    private static void TintGuideMesh(GameObject go, Color color)
-    {
-        if (go == null)
-        {
-            return;
-        }
-
-        Renderer r = go.GetComponent<Renderer>();
-        if (r == null)
-        {
-            return;
-        }
-
-        Material m = r.material;
-        if (m == null)
-        {
-            return;
-        }
-
-        if (m.HasProperty("_BaseColor"))
-        {
-            m.SetColor("_BaseColor", color);
-        }
-        if (m.HasProperty("_Color"))
-        {
-            m.SetColor("_Color", color);
-        }
-
-        if (m.HasProperty("_EmissionColor"))
-        {
-            m.EnableKeyword("_EMISSION");
-            m.SetColor("_EmissionColor", color * 0.7f);
-        }
     }
 
 
@@ -411,7 +354,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        manualYawGuideRoot.SetActive(visible);
+        GameObjectLifecycleWriter.ApplyActive(manualYawGuideRoot, visible);
     }
 
 

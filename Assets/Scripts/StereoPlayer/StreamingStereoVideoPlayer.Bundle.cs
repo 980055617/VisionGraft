@@ -81,32 +81,32 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 {
                     LogBundleEntries(za);
 
-                    if (!ExtractZipEntry(za, BundleVideoEntryName, extractedVideoPath))
+                    if (!ExtractBundleEntry(za, BundleVideoEntryName, extractedVideoPath, SpatialVideoBundleEntryRequirement.Required))
                     {
                         yield break;
                     }
 
-                    if (!ExtractZipEntry(za, BundleManifestEntryName, extractedManifestPath))
+                    if (!ExtractBundleEntry(za, BundleManifestEntryName, extractedManifestPath, SpatialVideoBundleEntryRequirement.Required))
                     {
                         yield break;
                     }
 
-                    if (!ExtractZipEntry(za, BundleMetaEntryName, extractedMetaPath))
+                    if (!ExtractBundleEntry(za, BundleMetaEntryName, extractedMetaPath, SpatialVideoBundleEntryRequirement.Required))
                     {
                         yield break;
                     }
 
-                    if (!ExtractZipEntry(za, BundleAnimalControlTargetsEntryName, extractedAnimalControlTargetsPath))
+                    if (!ExtractBundleEntry(za, BundleAnimalControlTargetsEntryName, extractedAnimalControlTargetsPath, SpatialVideoBundleEntryRequirement.Optional))
                     {
                         yield break;
                     }
 
-                    if (!ExtractZipEntry(za, BundleOtherObjectProxiesEntryName, extractedOtherObjectProxiesPath))
+                    if (!ExtractBundleEntry(za, BundleOtherObjectProxiesEntryName, extractedOtherObjectProxiesPath, SpatialVideoBundleEntryRequirement.Optional))
                     {
                         yield break;
                     }
 
-                    ExtractZipEntry(za, BundleHumanSmplEntryName, extractedHumanSmplPath);
+                    ExtractBundleEntry(za, BundleHumanSmplEntryName, extractedHumanSmplPath, SpatialVideoBundleEntryRequirement.Optional);
                 }
             }
             catch
@@ -131,7 +131,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         string normalizedVideoPath = extractedVideoPath.Replace("\\", "/");
         vp.url = normalizedVideoPath;
 
-        vp.Prepare();
+        RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Prepare);
+    }
+
+    private bool ExtractBundleEntry(
+        ZipArchive za,
+        string entryName,
+        string outPath,
+        SpatialVideoBundleEntryRequirement requirement)
+    {
+        bool extracted = ExtractZipEntry(za, entryName, outPath);
+        return SpatialVideoBundleEntries.ShouldContinueAfterExtraction(requirement, extracted);
     }
 
     private bool ExtractZipEntry(ZipArchive za, string entryName, string outPath)

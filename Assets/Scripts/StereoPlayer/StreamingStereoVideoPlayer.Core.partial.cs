@@ -23,6 +23,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private void OnDestroy()
     {
         UnsubscribeRecenterEvents();
+        UnsubscribeVideoPlayerEvents();
+        UnbindRuntimeControls();
         DisposeInteractiveMotion();
     }
 
@@ -35,29 +37,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             yield break;
         }
 
-        vp.source = VideoSource.Url;
-        vp.isLooping = true;
-        vp.renderMode = VideoRenderMode.APIOnly;
-        vp.timeUpdateMode = VideoTimeUpdateMode.UnscaledGameTime;
-        vp.playbackSpeed = 1f;
-        vp.sendFrameReadyEvents = true;
-        vp.frameReady += (player, frame) =>
-        {
-            if (frame < 0)
-            {
-                lastFrameReadyFrame = -1;
-            }
-            else if (frame > int.MaxValue)
-            {
-                lastFrameReadyFrame = int.MaxValue;
-            }
-            else
-            {
-                lastFrameReadyFrame = (int)frame;
-            }
-            ApplyVideoFrameTexture(player);
-        };
-
+        RuntimePlaybackController.ConfigureForApiPlayback(vp);
+        vp.frameReady -= OnVideoFrameReady;
+        vp.frameReady += OnVideoFrameReady;
+        vp.prepareCompleted -= OnPrepared;
         vp.prepareCompleted += OnPrepared;
 
         if (showBundlePickerOnStart)
@@ -81,7 +64,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (w <= 0 || h <= 0)
         {
-            vp.Play();
+            RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
             return;
         }
 
@@ -91,20 +74,39 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (leftScreen != null)
         {
-            leftScreen.localScale = screenScale;
+            ScreenTransformWriter.ApplyLocalScale(leftScreen, screenScale);
         }
 
         if (rightScreen != null)
         {
-            rightScreen.localScale = screenScale;
+            ScreenTransformWriter.ApplyLocalScale(rightScreen, screenScale);
         }
 
         PlaceScreens();
         EnsureRuntimeControls();
 
-        vp.Play();
+        RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
         UpdatePauseButtonLabel();
         vp.prepareCompleted -= OnPrepared;
+    }
+
+
+    private void UnsubscribeVideoPlayerEvents()
+    {
+        if (vp == null)
+        {
+            return;
+        }
+
+        vp.frameReady -= OnVideoFrameReady;
+        vp.prepareCompleted -= OnPrepared;
+    }
+
+
+    private void OnVideoFrameReady(VideoPlayer player, long frame)
+    {
+        lastFrameReadyFrame = RuntimePlaybackTimeline.NormalizeFrameReadyFrame(frame);
+        ApplyVideoFrameTexture(player);
     }
 
 
@@ -121,43 +123,74 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        Vector3 camPos = cam.transform.position;
-        Vector3 camFwd = cam.transform.forward;
-        Vector3 screenPos = camPos + camFwd * screenDistanceMeters;
-        Quaternion screenRot = Quaternion.LookRotation((camPos - screenPos).normalized, Vector3.up);
+        StereoScreenPlacement.ForcedPose pose = StereoScreenPlacement.ResolveForcedInFrontPose(
+            cam.transform.position,
+            cam.transform.forward,
+            screenDistanceMeters);
 
         if (leftScreen != null)
         {
-            leftScreen.position = screenPos;
-            leftScreen.rotation = screenRot;
+            ScreenTransformWriter.ApplyPose(leftScreen, pose.position, pose.rotation);
         }
 
         if (rightScreen != null)
         {
-            rightScreen.position = screenPos;
-            rightScreen.rotation = screenRot;
+            ScreenTransformWriter.ApplyPose(rightScreen, pose.position, pose.rotation);
         }
     }
 
 
     private void Update()
     {
-        if (bundlePickerActive)
+        StreamingStereoUpdateFlow.Decision decision = StreamingStereoUpdateFlow.Resolve(bundlePickerActive);
+        if (decision.updateBundlePickerPlacement)
         {
-            UpdateBundlePickerPlacement();
+            UpdateBundlePickerTick();
             return;
         }
 
-        if (TryPick(out PickResult pick))
+        if (decision.updateRuntimePlayback)
         {
-            TrySelectDisplayTrackFromPick(pick);
+            UpdateRuntimePlaybackTick();
         }
+    }
 
+
+    private void UpdateBundlePickerTick()
+    {
+        UpdateBundlePickerPlacement();
+    }
+
+
+    private void UpdateRuntimePlaybackTick()
+    {
+        UpdatePickingTick();
         DisplayModelTick();
         DetectRuntimeRecenterFallback();
         HandleRuntimePauseInput();
         RefreshRuntimeSettingsPerFrame();
         UpdateRuntimeProgressUi();
+    }
+
+
+    private void UpdatePickingTick()
+    {
+        if (TryPick(out PickResult pick))
+        {
+            TrySelectDisplayTrackFromPick(pick);
+        }
+    }
+
+
+    private RuntimeClock.TickContext GetRuntimeTickContext()
+    {
+        return RuntimeClock.ResolveTickContext(Time.time, Time.deltaTime, Time.frameCount);
+    }
+
+
+    private float GetRuntimeUnscaledDeltaTime()
+    {
+        return Time.unscaledDeltaTime;
     }
 
 

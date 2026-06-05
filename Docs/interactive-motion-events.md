@@ -8,10 +8,16 @@ Interactive motion events are optional behaviors inserted during stereo video pl
 - Replacement events sync to the tracked model at the start and blend back toward tracking at the end.
 - Overlay events keep the tracked root placement and add a local gesture on top of the current pose.
 - Frame-out handling keeps a selected track active briefly when tracking data disappears and runs a replacement-style motion from the last known tracked transform.
+- Animal frame-out motion runs only while the track is absent. When the next frame-in for the same track can be found in metadata, the offscreen path is timed to that future frame and ends at the future frame-in anchor. The path first prefers the screen edge the last bounding box touched, then falls back to recent anchor-pixel movement mapped through the active pinhole projection basis, then turns back toward the frame-in position before normal tracking resumes. The offscreen excursion distance is derived from a fixed animal frame-out speed rather than a minimum jump distance, and no vertical bob is added to the root.
+- Frame-out starts from the last displayed root after bbox fitting, not the pre-fit skeleton root. Otherwise the model can jump upward exactly when tracking disappears.
+- Animal frame-out rotation is relative to the last tracked animal root rotation. The path direction controls only the yaw delta, so the offscreen turn should not discard the model's tracked orientation or spin through an unrelated absolute `LookRotation`.
+- Animal frame-out pathing keeps moving outward for most of the hidden interval and only returns during the final segment before frame-in. This keeps the facing direction stable and avoids returning too early while the track is still absent.
 - In-frame Human events are mostly in-place gestures. Approach motion is intentionally occasional so the subject does not walk toward the viewer every time.
 - Replacement motion preserves the tracked vertical height while blending, so returning to tracking should not cause a visible height pop.
 - Human clips blend their bone rotations in and out instead of snapping directly to the authored clip.
-- Human events rebuild the root rotation as an upright yaw rotation and bias it toward the viewer, so a crouched tracked pose should not make the inserted animation lean diagonally.
+- Human in-place clips run the normal bbox fit once on the first applied animation frame, then pin that corrected root position at full animation weight. During blend-in and blend-out the root is released back toward the current tracked placement, so transitions do not look stuck while the main gesture still happens in place.
+- Human clip playback must restore the already-resolved root world transform after sampling the PlayableGraph. Imported humanoid clips may write to the Animator/root transform even when root motion is disabled; this applies to both in-place clips and walking/approach clips.
+- Human in-place and FaceViewer events rebuild the root rotation as an upright yaw rotation facing the viewer while keeping the pinned root position, so a crouched tracked pose should not make the inserted animation lean diagonally.
 - Human gesture clips play once by default. Clips whose names contain `walk`, `run`, `step`, or `approach` are treated as walking-style clips and may loop during approach events.
 
 ## Human Tracks
@@ -27,7 +33,7 @@ Configure clips from the `StreamingStereoVideoPlayer` inspector:
 
 At runtime, the player uses Playables to sample the selected clip on the track's child `Animator`. If no clip is assigned, the system falls back to a simple right-arm wave so the feature can still be tested.
 
-The implementation enforces a minimum motion duration and blend time even if older scene data contains faster values. This keeps approach events human-paced rather than snapping forward and back. In-place clips keep the tracked root position and only blend the humanoid pose.
+The implementation enforces a minimum motion duration and blend time even if older scene data contains faster values. This keeps approach events human-paced rather than snapping forward and back. In-place clips pin the corrected root position and only blend the humanoid pose.
 
 ## Animal Tracks
 
@@ -35,12 +41,15 @@ Animal tracks use built-in motion presets instead of imported clips. This avoids
 
 Current presets:
 
-- `LookAtViewer`: steers the head target toward the viewer.
+- `LookAtViewer`: currently resolves as a limited body turn toward the viewer instead of directly twisting the head, because model-specific head/neck aim axes are not stable enough for aggressive head-only retargeting.
+- `BodyTurnViewer`: blends the animal root yaw up to 35 degrees toward the viewer by modifying the animal forward hint while leaving head, limb, and tail solving under `AnimalPoseApplier`.
 - `TailWag`: offsets the tail tip side-to-side when animal control targets are available.
 - `PawWave`: raises and waves the front-right paw target.
 - `ApproachViewer`: replacement-style root motion toward the viewer, blended back to tracking.
 
 Animal presets are applied before `AnimalPoseApplier` consumes the pose, so the existing root placement, head, tail, and limb solving remain the final authority.
+Body turn is intentionally limited to a partial yaw turn first, rather than fully facing the viewer, because full root replacement can conflict with tracked walking direction.
+Animal preset selection is weighted toward lighter reactions: `LookAtViewer` 35%, `TailWag` 25%, `PawWave` 20%, `BodyTurnViewer` 15%, and `ApproachViewer` 5%.
 
 ## Implementation Map
 

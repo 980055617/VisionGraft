@@ -102,7 +102,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private bool TryGetSmpl24RootWorld(Vector3[] jointsWorld, byte[] vis, out Vector3 rootWorld)
     {
-        if (TryGetJointPoint(jointsWorld, vis, SmplPelvis, out rootWorld))
+        if (TrackedJointPoints.TryGet(jointsWorld, vis, SmplPelvis, out rootWorld))
         {
             return true;
         }
@@ -136,7 +136,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         if (hasRootRotationOverride && IsFinite(rootRotationOverride))
         {
-            root.rotation = Quaternion.Slerp(root.rotation, rootRotationOverride, Mathf.Clamp01(Smpl24RootRotateAlpha));
+            TrackPlacementWriter.Apply(
+                root,
+                TrackPlacementCommand.RotationOnly(
+                    root.position,
+                    Quaternion.Slerp(root.rotation, rootRotationOverride, Mathf.Clamp01(Smpl24RootRotateAlpha)),
+                    root.localScale));
         }
         else
         {
@@ -153,7 +158,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         else
         {
-            root.position = skeletonRoot;
+            TrackPlacementWriter.Apply(
+                root,
+                TrackPlacementCommand.PositionOnly(
+                    skeletonRoot,
+                    root.rotation,
+                    root.localScale));
         }
 
         return true;
@@ -174,7 +184,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         float bboxReferenceUniform = ResolveCurrentUniformScale(root, model);
         float uniform = ClampSkeletonUniformScale((skeletonHeight / modelHeight) * model.userScale, bboxReferenceUniform);
-        root.localScale = model.baseLocalScale * uniform;
+        TrackPlacementWriter.Apply(
+            root,
+            TrackPlacementCommand.LocalScaleOnly(
+                root.position,
+                root.rotation,
+                model.baseLocalScale * uniform));
     }
 
     private bool TryGetSmpl24SkeletonHeight(Vector3[] jointsWorld, byte[] vis, out float height)
@@ -199,7 +214,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         int count = Mathf.Min(24, Mathf.Min(jointsWorld.Length, vis.Length));
         for (int i = 0; i < count; i++)
         {
-            if (!TryGetJointPoint(jointsWorld, vis, i, out Vector3 p))
+            if (!TrackedJointPoints.TryGet(jointsWorld, vis, i, out Vector3 p))
             {
                 continue;
             }
@@ -231,19 +246,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (cache.bones.TryGetValue(HumanBodyBones.Hips, out Transform hips) && hips != null)
         {
-            root.position += skeletonRoot - hips.position;
+            TrackPlacementWriter.ApplyAnchorPosition(root, hips, skeletonRoot);
             return;
         }
 
-        root.position = skeletonRoot;
+        TrackPlacementWriter.Apply(
+            root,
+            TrackPlacementCommand.PositionOnly(
+                skeletonRoot,
+                root.rotation,
+                root.localScale));
     }
 
     private void TryApplySmpl24RootOrientation(Transform root, Vector3[] jointsWorld, byte[] vis)
     {
-        if (!TryGetJointPoint(jointsWorld, vis, SmplLeftHip, out Vector3 leftHip) ||
-            !TryGetJointPoint(jointsWorld, vis, SmplRightHip, out Vector3 rightHip) ||
-            !TryGetJointPoint(jointsWorld, vis, SmplLeftShoulder, out Vector3 leftShoulder) ||
-            !TryGetJointPoint(jointsWorld, vis, SmplRightShoulder, out Vector3 rightShoulder))
+        if (!TrackedJointPoints.TryGet(jointsWorld, vis, SmplLeftHip, out Vector3 leftHip) ||
+            !TrackedJointPoints.TryGet(jointsWorld, vis, SmplRightHip, out Vector3 rightHip) ||
+            !TrackedJointPoints.TryGet(jointsWorld, vis, SmplLeftShoulder, out Vector3 leftShoulder) ||
+            !TrackedJointPoints.TryGet(jointsWorld, vis, SmplRightShoulder, out Vector3 rightShoulder))
         {
             return;
         }
@@ -278,7 +298,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         Quaternion targetRoot = Quaternion.LookRotation(forward, up);
-        root.rotation = Quaternion.Slerp(root.rotation, targetRoot, Mathf.Clamp01(Smpl24RootRotateAlpha));
+        TrackPlacementWriter.Apply(
+            root,
+            TrackPlacementCommand.RotationOnly(
+                root.position,
+                Quaternion.Slerp(root.rotation, targetRoot, Mathf.Clamp01(Smpl24RootRotateAlpha)),
+                root.localScale));
     }
 
     private Vector3 StabilizeHumanoidYawForward(Transform root, Vector3 up, Vector3 forward)
@@ -309,7 +334,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 candB = -candA;
         Vector3 chosen = Vector3.Dot(prevForward, candA) >= Vector3.Dot(prevForward, candB) ? candA : candB;
 
-        float dt = Time.deltaTime > 0.0001f ? Time.deltaTime : (1f / 60f);
+        float dt = GetRuntimeTickContext().deltaTime;
         float maxStep = Mathf.Max(1f, PersonRootYawMaxDegreesPerSecond) * dt;
         float signedAngle = Vector3.SignedAngle(prevForward, chosen, up);
         float clampedAngle = Mathf.Clamp(signedAngle, -maxStep, maxStep);
@@ -329,7 +354,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             if (cache.bones.TryGetValue(kv.Key, out Transform bone) && bone != null)
             {
-                bone.localRotation = kv.Value;
+                PoseTransformWriter.ApplyLocalRotation(bone, kv.Value);
             }
         }
     }
@@ -355,9 +380,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        if (!TryGetJointPoint(jointsWorld, vis, rootIdx, out Vector3 rootHint) ||
-            !TryGetJointPoint(jointsWorld, vis, midIdx, out Vector3 midHint) ||
-            !TryGetJointPoint(jointsWorld, vis, targetIdx, out Vector3 target))
+        if (!TrackedJointPoints.TryGet(jointsWorld, vis, rootIdx, out Vector3 rootHint) ||
+            !TrackedJointPoints.TryGet(jointsWorld, vis, midIdx, out Vector3 midHint) ||
+            !TrackedJointPoints.TryGet(jointsWorld, vis, targetIdx, out Vector3 target))
         {
             return false;
         }
@@ -577,7 +602,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         Quaternion delta = Quaternion.FromToRotation(currentDir.normalized, targetDir.normalized);
         Quaternion targetRot = delta * bone.rotation;
-        bone.rotation = Quaternion.Slerp(bone.rotation, targetRot, Mathf.Clamp01(alpha));
+        PoseTransformWriter.ApplyWorldRotation(
+            bone,
+            Quaternion.Slerp(bone.rotation, targetRot, Mathf.Clamp01(alpha)));
         return true;
     }
 
@@ -597,8 +624,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             ApplySmpl24BoneToPoint(cache, HumanBodyBones.UpperChest, HumanBodyBones.Neck, shouldersMid, alpha * 0.65f);
         }
 
-        if (TryGetJointPoint(jointsWorld, vis, SmplNeck, out Vector3 neck) &&
-            TryGetJointPoint(jointsWorld, vis, SmplHead, out Vector3 head))
+        if (TrackedJointPoints.TryGet(jointsWorld, vis, SmplNeck, out Vector3 neck) &&
+            TrackedJointPoints.TryGet(jointsWorld, vis, SmplHead, out Vector3 head))
         {
             ApplySmpl24BoneToPoint(cache, HumanBodyBones.Neck, HumanBodyBones.Head, head, alpha * 0.75f);
             ApplySmpl24BoneToPoint(cache, HumanBodyBones.Head, HumanBodyBones.LastBone, head + (head - neck), alpha * 0.5f);
@@ -607,12 +634,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void ApplySmpl24Feet(HumanoidRigCache cache, Vector3[] jointsWorld, byte[] vis, float alpha)
     {
-        if (TryGetJointPoint(jointsWorld, vis, SmplLeftFoot, out Vector3 leftFoot))
+        if (TrackedJointPoints.TryGet(jointsWorld, vis, SmplLeftFoot, out Vector3 leftFoot))
         {
             ApplySmpl24BoneToPoint(cache, HumanBodyBones.LeftFoot, HumanBodyBones.LeftToes, leftFoot, alpha);
         }
 
-        if (TryGetJointPoint(jointsWorld, vis, SmplRightFoot, out Vector3 rightFoot))
+        if (TrackedJointPoints.TryGet(jointsWorld, vis, SmplRightFoot, out Vector3 rightFoot))
         {
             ApplySmpl24BoneToPoint(cache, HumanBodyBones.RightFoot, HumanBodyBones.RightToes, rightFoot, alpha);
         }

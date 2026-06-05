@@ -33,20 +33,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private bool suppressRuntimeTrackYawCallback;
     private int runtimeSettingsPlacementLockDepth;
     private readonly List<InputDevice> xrInputDevices = new List<InputDevice>();
-    private static System.Type trackedDeviceGraphicRaycasterType;
-    private static bool trackedDeviceGraphicRaycasterTypeResolved;
-
     private void EnsureRuntimeControls()
     {
         if (!enableRuntimeControls)
         {
             if (runtimeControlsRoot != null)
             {
-                runtimeControlsRoot.SetActive(false);
+                GameObjectLifecycleWriter.ApplyActive(runtimeControlsRoot, false);
             }
             if (runtimeSettingsRoot != null)
             {
-                runtimeSettingsRoot.SetActive(false);
+                GameObjectLifecycleWriter.ApplyActive(runtimeSettingsRoot, false);
             }
             SetScreenColliderBlockForSettings(false);
             return;
@@ -63,7 +60,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (runtimeControlsRoot != null)
         {
-            runtimeControlsRoot.SetActive(true);
+            GameObjectLifecycleWriter.ApplyActive(runtimeControlsRoot, true);
             ApplyRuntimeControlsSizing();
             UpdateRuntimeControlsPlacement();
             UpdatePauseButtonLabel();
@@ -73,12 +70,38 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (runtimeSettingsRoot != null)
         {
-            runtimeSettingsRoot.SetActive(runtimeSettingsOpen);
+            GameObjectLifecycleWriter.ApplyActive(runtimeSettingsRoot, runtimeSettingsOpen);
             SetScreenColliderBlockForSettings(runtimeSettingsOpen);
             UpdateRuntimeSettingsPlacement();
             UpdateRuntimeScreenDistanceUiState();
             UpdateRuntimeTrackRotationUiState();
             UpdateRuntimeInteractiveMotionUiState();
+        }
+    }
+
+    private void UnbindRuntimeControls()
+    {
+        if (runtimeControlsRoot != null)
+        {
+            Button pauseButton = FindButton(runtimeControlsRoot, "pause");
+            if (pauseButton == null)
+            {
+                pauseButton = runtimeControlsRoot.GetComponentInChildren<Button>(true);
+            }
+            UnbindRuntimeButton(pauseButton, TogglePausePlayback);
+            UnbindRuntimeButton(FindButton(runtimeControlsRoot, "setting"), ToggleRuntimeSettingsPanel);
+            UnbindRuntimeSlider(FindSlider(runtimeControlsRoot, "progressslider"), OnRuntimeProgressSliderChanged);
+        }
+
+        if (runtimeSettingsRoot != null)
+        {
+            UnbindRuntimeSlider(runtimeFovxSlider, OnRuntimeFovxSliderChanged);
+            UnbindRuntimeSlider(runtimeScreenDistanceSlider, OnRuntimeScreenDistanceSliderChanged);
+            UnbindRuntimeSlider(runtimeTrackYawSlider, OnRuntimeTrackYawSliderChanged);
+            UnbindRuntimeButton(FindButton(runtimeSettingsRoot, "trackprev"), OnRuntimeTrackPrevClicked);
+            UnbindRuntimeButton(FindButton(runtimeSettingsRoot, "tracknext"), OnRuntimeTrackNextClicked);
+            UnbindRuntimeButton(FindButton(runtimeSettingsRoot, "trackyawreset"), OnRuntimeTrackYawResetClicked);
+            UnbindRuntimeButton(FindButton(runtimeSettingsRoot, "interactivemotiontoggle"), OnRuntimeInteractiveMotionToggleClicked);
         }
     }
 

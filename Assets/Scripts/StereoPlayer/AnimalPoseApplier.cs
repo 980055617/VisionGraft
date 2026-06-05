@@ -3,21 +3,15 @@ using UnityEngine;
 
 public sealed class AnimalPoseApplier
 {
-    private const float InvalidJointSqrMagnitudeEpsilon = 1e-10f;
     private const float AnimalRootOneEuroMinCutoffHz = 1.0f;
     private const float AnimalRootOneEuroBeta = 0.15f;
     private const float AnimalRootOneEuroDerivativeCutoffHz = 1.0f;
-    private static readonly int[] AnimalLeftFrontChain = { 18, 13, 9, 15 };
-    private static readonly int[] AnimalRightFrontChain = { 18, 12, 8, 14 };
-    private static readonly int[] AnimalLeftRearChain = { 7, 11, 17, 6 };
-    private static readonly int[] AnimalRightRearChain = { 7, 10, 16, 5 };
-
     private readonly Dictionary<Transform, Vector3> animalRootYawForwardByRoot = new Dictionary<Transform, Vector3>();
     private readonly Dictionary<Transform, int> animalRootYawLastSeenFrameByRoot = new Dictionary<Transform, int>();
-    private readonly Dictionary<Transform, OneEuroVector3Filter> animalRootForwardFilters = new Dictionary<Transform, OneEuroVector3Filter>();
-    private readonly Dictionary<Transform, OneEuroVector3Filter> animalRootUpFilters = new Dictionary<Transform, OneEuroVector3Filter>();
-    private readonly Dictionary<Transform, OneEuroVector3Filter> animalLimbTargetFilters = new Dictionary<Transform, OneEuroVector3Filter>();
-    private readonly Dictionary<Transform, OneEuroVector3Filter> animalRootPositionFilters = new Dictionary<Transform, OneEuroVector3Filter>();
+    private readonly Dictionary<Transform, RuntimeOneEuroVector3Filter> animalRootForwardFilters = new Dictionary<Transform, RuntimeOneEuroVector3Filter>();
+    private readonly Dictionary<Transform, RuntimeOneEuroVector3Filter> animalRootUpFilters = new Dictionary<Transform, RuntimeOneEuroVector3Filter>();
+    private readonly Dictionary<Transform, RuntimeOneEuroVector3Filter> animalLimbTargetFilters = new Dictionary<Transform, RuntimeOneEuroVector3Filter>();
+    private readonly Dictionary<Transform, RuntimeOneEuroVector3Filter> animalRootPositionFilters = new Dictionary<Transform, RuntimeOneEuroVector3Filter>();
     private readonly Dictionary<Transform, AnimalRigCache> animalRigCaches = new Dictionary<Transform, AnimalRigCache>();
 
     public void Apply(AnimalPoseRequest request)
@@ -29,26 +23,27 @@ public sealed class AnimalPoseApplier
             return;
         }
 
-        AnimalRigCache cache = ApplyAnimalSkeletonPlacement(instanceRoot, request.animator, pose.jointsWorld, pose.jointVis, pose.jointCount, pose.rootWorld, request.settings);
+        RuntimeClock.TickContext tick = request.tickContext;
+        AnimalRigCache cache = ApplyAnimalSkeletonPlacement(instanceRoot, request.animator, pose.jointsWorld, pose.jointVis, pose.jointCount, pose.rootWorld, request.settings, tick);
         if (!request.enableBoneApply || cache == null || !cache.ready)
         {
             return;
         }
 
-        TryApplyAnimalRootOrientation(instanceRoot, cache, pose.jointsWorld, pose.jointVis, Mathf.Clamp01(request.settings.animalRootRotateAlpha), pose.hasAnimalControl, pose.animalControl, request.settings);
-        AlignAnimalRootToSkeleton(instanceRoot, cache, pose.rootWorld, true);
+        TryApplyAnimalRootOrientation(instanceRoot, cache, pose.jointsWorld, pose.jointVis, Mathf.Clamp01(request.settings.animalRootRotateAlpha), pose.hasAnimalControl, pose.animalControl, request.settings, tick);
+        AlignAnimalRootToSkeleton(instanceRoot, cache, pose.rootWorld, true, tick);
 
         float alpha = Mathf.Clamp01(request.settings.boneApplyAlpha);
-        ApplyAnimalHeadPose(cache, pose.jointsWorld, pose.jointVis, alpha, pose.hasAnimalControl, pose.animalControl);
-        ApplyAnimalTailPose(cache, alpha, pose.hasAnimalControl, pose.animalControl);
+        ApplyAnimalHeadPose(cache, pose.jointsWorld, pose.jointVis, alpha, pose.hasAnimalControl, pose.animalControl, tick);
+        ApplyAnimalTailPose(cache, alpha, pose.hasAnimalControl, pose.animalControl, tick);
 
         if (request.settings.enableAnimalLimbApply)
         {
-            ApplyAnimalLimbPose(cache, pose.jointsWorld, pose.jointVis, alpha, request.freezeAnimalDistal, pose.hasAnimalControl, pose.animalControl);
+            ApplyAnimalLimbPose(cache, pose.jointsWorld, pose.jointVis, alpha, request.freezeAnimalDistal, pose.hasAnimalControl, pose.animalControl, tick);
         }
     }
 
-    private void TryApplyAnimalRootOrientation(Transform instanceRoot, AnimalRigCache cache, Vector3[] jointsWorld, byte[] vis, float rotateAlpha, bool hasControl, AnimalControlWorldData control, AnimalPoseSettings settings)
+    private void TryApplyAnimalRootOrientation(Transform instanceRoot, AnimalRigCache cache, Vector3[] jointsWorld, byte[] vis, float rotateAlpha, bool hasControl, AnimalControlWorldData control, AnimalPoseSettings settings, RuntimeClock.TickContext tick)
     {
         if (instanceRoot == null || jointsWorld == null || vis == null)
         {
@@ -66,7 +61,7 @@ public sealed class AnimalPoseApplier
 
         if (settings.stabilizeAnimalRootYaw)
         {
-            StabilizeAnimalRootBasis(instanceRoot, worldUp, bodyForward, bodyUp, facingHint, out stabilizedForward, out stabilizedUp);
+            StabilizeAnimalRootBasis(instanceRoot, worldUp, bodyForward, bodyUp, facingHint, tick, out stabilizedForward, out stabilizedUp);
         }
 
         StabilizeAnimalRootPitchRoll(worldUp, stabilizedForward, stabilizedUp, settings.animalRootPitchRollBlend, out stabilizedForward, out stabilizedUp);
@@ -84,55 +79,26 @@ public sealed class AnimalPoseApplier
         Quaternion modelBasis = Quaternion.LookRotation(modelForward, modelUp);
         Quaternion targetBasis = Quaternion.LookRotation(stabilizedForward, stabilizedUp);
         Quaternion targetRootRot = targetBasis * Quaternion.Inverse(modelBasis);
-        instanceRoot.rotation = Quaternion.Slerp(instanceRoot.rotation, targetRootRot, Mathf.Clamp01(rotateAlpha));
+        TrackPlacementWriter.Apply(
+            instanceRoot,
+            TrackPlacementCommand.RotationOnly(
+                instanceRoot.position,
+                Quaternion.Slerp(instanceRoot.rotation, targetRootRot, Mathf.Clamp01(rotateAlpha)),
+                instanceRoot.localScale));
     }
 
     private static void StabilizeAnimalRootPitchRoll(Vector3 worldUp, Vector3 forward, Vector3 up, float pitchRollBlend, out Vector3 stabilizedForward, out Vector3 stabilizedUp)
     {
-        stabilizedForward = forward;
-        stabilizedUp = up;
-
-        Vector3 planarForward = Vector3.ProjectOnPlane(forward, worldUp);
-        if (planarForward.sqrMagnitude <= 0.000001f)
-        {
-            return;
-        }
-        planarForward.Normalize();
-
-        float tiltBlend = Mathf.Clamp01(pitchRollBlend);
-        Vector3 blendedForward = Vector3.Slerp(planarForward, forward.normalized, tiltBlend);
-        if (blendedForward.sqrMagnitude <= 0.000001f)
-        {
-            blendedForward = planarForward;
-        }
-        blendedForward.Normalize();
-
-        Vector3 blendedUp = Vector3.Slerp(worldUp, up.sqrMagnitude > 0.000001f ? up.normalized : worldUp, tiltBlend);
-        blendedUp = Vector3.ProjectOnPlane(blendedUp, blendedForward);
-        if (blendedUp.sqrMagnitude <= 0.000001f)
-        {
-            blendedUp = Vector3.ProjectOnPlane(worldUp, blendedForward);
-        }
-        if (blendedUp.sqrMagnitude <= 0.000001f)
-        {
-            stabilizedForward = blendedForward;
-            stabilizedUp = worldUp;
-            return;
-        }
-
-        blendedUp.Normalize();
-        Vector3 right = Vector3.Cross(blendedForward, blendedUp);
-        if (right.sqrMagnitude > 0.000001f)
-        {
-            right.Normalize();
-            blendedUp = Vector3.Cross(right, blendedForward).normalized;
-        }
-
-        stabilizedForward = blendedForward;
-        stabilizedUp = blendedUp;
+        AnimalRootBasisMath.StabilizePitchRoll(
+            worldUp,
+            forward,
+            up,
+            pitchRollBlend,
+            out stabilizedForward,
+            out stabilizedUp);
     }
 
-    private void StabilizeAnimalRootBasis(Transform root, Vector3 worldUp, Vector3 forward, Vector3 bodyUp, Vector3 facingHint, out Vector3 stabilizedForward, out Vector3 stabilizedUp)
+    private void StabilizeAnimalRootBasis(Transform root, Vector3 worldUp, Vector3 forward, Vector3 bodyUp, Vector3 facingHint, RuntimeClock.TickContext tick, out Vector3 stabilizedForward, out Vector3 stabilizedUp)
     {
         stabilizedForward = forward;
         stabilizedUp = bodyUp;
@@ -141,10 +107,10 @@ public sealed class AnimalPoseApplier
             return;
         }
 
-        int currentFrame = Time.frameCount;
+        int currentFrame = tick.frameCount;
         bool seenRecently =
             animalRootYawLastSeenFrameByRoot.TryGetValue(root, out int lastSeenFrame) &&
-            currentFrame - lastSeenFrame <= 1;
+            RuntimeClock.WasSeenRecently(currentFrame, lastSeenFrame, 1);
         animalRootYawLastSeenFrameByRoot[root] = currentFrame;
 
         Vector3 planarForward = Vector3.ProjectOnPlane(forward, worldUp);
@@ -187,8 +153,8 @@ public sealed class AnimalPoseApplier
             chosenForward = Vector3.Dot(prevForward, candA) >= Vector3.Dot(prevForward, candB) ? candA : candB;
         }
 
-        float dt = Time.deltaTime > 0.0001f ? Time.deltaTime : (1f / 60f);
-        OneEuroVector3Filter forwardFilter = GetOrCreateAnimalRootVector3Filter(animalRootForwardFilters, root);
+        float dt = tick.deltaTime;
+        RuntimeOneEuroVector3Filter forwardFilter = GetOrCreateAnimalRootVector3Filter(animalRootForwardFilters, root);
         Vector3 filteredForward = forwardFilter.Filter(chosenForward, dt);
         filteredForward = Vector3.ProjectOnPlane(filteredForward, worldUp);
         if (filteredForward.sqrMagnitude <= 0.000001f)
@@ -215,7 +181,7 @@ public sealed class AnimalPoseApplier
         }
         projectedUp.Normalize();
 
-        OneEuroVector3Filter upFilter = GetOrCreateAnimalRootVector3Filter(animalRootUpFilters, root);
+        RuntimeOneEuroVector3Filter upFilter = GetOrCreateAnimalRootVector3Filter(animalRootUpFilters, root);
         Vector3 filteredUp = upFilter.Filter(projectedUp, dt);
         filteredUp = Vector3.ProjectOnPlane(filteredUp, filteredForward);
         if (filteredUp.sqrMagnitude <= 0.000001f)
@@ -255,14 +221,14 @@ public sealed class AnimalPoseApplier
         }
     }
 
-    private static OneEuroVector3Filter GetOrCreateAnimalRootVector3Filter(Dictionary<Transform, OneEuroVector3Filter> filters, Transform root)
+    private static RuntimeOneEuroVector3Filter GetOrCreateAnimalRootVector3Filter(Dictionary<Transform, RuntimeOneEuroVector3Filter> filters, Transform root)
     {
-        if (filters.TryGetValue(root, out OneEuroVector3Filter existing) && existing != null)
+        if (filters.TryGetValue(root, out RuntimeOneEuroVector3Filter existing) && existing != null)
         {
             return existing;
         }
 
-        OneEuroVector3Filter created = new OneEuroVector3Filter(
+        RuntimeOneEuroVector3Filter created = new RuntimeOneEuroVector3Filter(
             AnimalRootOneEuroMinCutoffHz,
             AnimalRootOneEuroBeta,
             AnimalRootOneEuroDerivativeCutoffHz);
@@ -280,139 +246,22 @@ public sealed class AnimalPoseApplier
             return true;
         }
 
-        bool hasPelvis = TryGetJointPoint(jointsWorld, vis, 7, out Vector3 pelvisHub);
-        bool hasWithers = TryGetJointPoint(jointsWorld, vis, 18, out Vector3 withersHub);
-        bool hasHeadRoot = TryGetJointPoint(jointsWorld, vis, 24, out Vector3 headRoot);
-
-        if (hasPelvis && hasWithers)
-        {
-            forward = (withersHub - pelvisHub).normalized;
-        }
-
-        if (forward.sqrMagnitude <= 0.000001f)
-        {
-            return false;
-        }
-
-        if (hasWithers && hasHeadRoot)
-        {
-            facingHint = (headRoot - withersHub).normalized;
-            if (facingHint.sqrMagnitude > 0.000001f && Vector3.Dot(forward, facingHint) < 0f)
-            {
-                forward = -forward;
-            }
-        }
-
-        bool hasLeftShoulder = TryGetJointPoint(jointsWorld, vis, 12, out Vector3 leftShoulder);
-        bool hasRightShoulder = TryGetJointPoint(jointsWorld, vis, 13, out Vector3 rightShoulder);
-        bool hasLeftHip = TryGetJointPoint(jointsWorld, vis, 10, out Vector3 leftHip);
-        bool hasRightHip = TryGetJointPoint(jointsWorld, vis, 11, out Vector3 rightHip);
-
-        Vector3 rightAxis = Vector3.zero;
-        if (hasLeftShoulder && hasRightShoulder)
-        {
-            rightAxis += (rightShoulder - leftShoulder);
-        }
-        if (hasLeftHip && hasRightHip)
-        {
-            rightAxis += (rightHip - leftHip);
-        }
-
-        if (rightAxis.sqrMagnitude > 0.000001f)
-        {
-            rightAxis.Normalize();
-            Vector3 upA = Vector3.Cross(rightAxis, forward);
-            Vector3 upB = -upA;
-            Vector3 preferredUp = instanceRoot != null ? instanceRoot.up : Vector3.up;
-            if (preferredUp.sqrMagnitude < 0.000001f)
-            {
-                preferredUp = Vector3.up;
-            }
-
-            up = Vector3.Dot(upA, preferredUp) >= Vector3.Dot(upB, preferredUp) ? upA : upB;
-        }
-
-        if (up.sqrMagnitude <= 0.000001f)
-        {
-            Vector3 fallbackUp = instanceRoot != null ? instanceRoot.up : Vector3.up;
-            if (fallbackUp.sqrMagnitude <= 0.000001f)
-            {
-                fallbackUp = Vector3.up;
-            }
-
-            up = Vector3.ProjectOnPlane(fallbackUp, forward);
-        }
-
-        if (up.sqrMagnitude <= 0.000001f)
-        {
-            return false;
-        }
-
-        up.Normalize();
-        Vector3 right = Vector3.Cross(forward, up);
-        if (right.sqrMagnitude <= 0.000001f)
-        {
-            return false;
-        }
-
-        right.Normalize();
-        up = Vector3.Cross(right, forward).normalized;
-        return up.sqrMagnitude > 0.000001f;
+        Vector3 preferredUp = instanceRoot != null ? instanceRoot.up : Vector3.up;
+        return AnimalBodyBasisResolver.TryResolveFromJoints(
+            jointsWorld,
+            vis,
+            preferredUp,
+            out forward,
+            out up,
+            out facingHint);
     }
 
-    private static bool TryGetAnimalBodyBasisFromControl(AnimalControlWorldData control, out Vector3 forward, out Vector3 up, out Vector3 facingHint)
+    public static bool TryGetAnimalBodyBasisFromControl(AnimalControlWorldData control, out Vector3 forward, out Vector3 up, out Vector3 facingHint)
     {
-        forward = Vector3.zero;
-        up = Vector3.zero;
-        facingHint = Vector3.zero;
-
-        if (control.hasRoot && control.hasForwardHint)
-        {
-            forward = (control.forwardHintWorld - control.rootWorld).normalized;
-        }
-        else if (control.hasRoot && control.hasWithers)
-        {
-            forward = (control.withersWorld - control.rootWorld).normalized;
-        }
-
-        if (control.hasHeadRoot && control.hasHeadTip)
-        {
-            facingHint = (control.headTipWorld - control.headRootWorld).normalized;
-            if (forward.sqrMagnitude > 0.000001f && facingHint.sqrMagnitude > 0.000001f && Vector3.Dot(forward, facingHint) < 0f)
-            {
-                forward = -forward;
-            }
-        }
-
-        if (control.hasRoot && control.hasUpHint)
-        {
-            up = (control.upHintWorld - control.rootWorld).normalized;
-        }
-
-        if (forward.sqrMagnitude <= 0.000001f || up.sqrMagnitude <= 0.000001f)
-        {
-            return false;
-        }
-
-        up = Vector3.ProjectOnPlane(up, forward);
-        if (up.sqrMagnitude <= 0.000001f)
-        {
-            return false;
-        }
-
-        up.Normalize();
-        Vector3 right = Vector3.Cross(forward, up);
-        if (right.sqrMagnitude <= 0.000001f)
-        {
-            return false;
-        }
-
-        right.Normalize();
-        up = Vector3.Cross(right, forward).normalized;
-        return true;
+        return AnimalBodyBasisResolver.TryResolveFromControl(control, out forward, out up, out facingHint);
     }
 
-    private AnimalRigCache ApplyAnimalSkeletonPlacement(Transform instanceRoot, Animator animator, Vector3[] jointsWorld, byte[] vis, int jointCount, Vector3 skeletonRoot, AnimalPoseSettings settings)
+    private AnimalRigCache ApplyAnimalSkeletonPlacement(Transform instanceRoot, Animator animator, Vector3[] jointsWorld, byte[] vis, int jointCount, Vector3 skeletonRoot, AnimalPoseSettings settings, RuntimeClock.TickContext tick)
     {
         Transform rigRoot = animator != null ? animator.transform : instanceRoot;
         AnimalRigCache cache = GetOrBuildAnimalRigCache(rigRoot, settings);
@@ -422,11 +271,16 @@ public sealed class AnimalPoseApplier
         }
         if (cache != null && cache.ready)
         {
-            AlignAnimalRootToSkeleton(instanceRoot, cache, skeletonRoot, false);
+            AlignAnimalRootToSkeleton(instanceRoot, cache, skeletonRoot, false, tick);
         }
         else
         {
-            instanceRoot.position = skeletonRoot;
+            TrackPlacementWriter.Apply(
+                instanceRoot,
+                TrackPlacementCommand.PositionOnly(
+                    skeletonRoot,
+                    instanceRoot.rotation,
+                    instanceRoot.localScale));
         }
 
         return cache;
@@ -447,70 +301,87 @@ public sealed class AnimalPoseApplier
 
         float skeletonExtent = Mathf.Max(bounds.size.x, Mathf.Max(bounds.size.y, bounds.size.z));
         float modelExtent = Mathf.Max(model.baseBoundsSize.x, model.baseBoundsSize.y);
-        if (skeletonExtent <= 0.0001f || modelExtent <= 0.0001f)
+        float bboxReferenceUniform = ResolveCurrentUniformScale(root, model);
+        if (!AnimalSkeletonScaleResolver.TryResolveUniform(
+            skeletonExtent,
+            modelExtent,
+            model.userScale,
+            bboxReferenceUniform,
+            settings,
+            out float uniform))
         {
             return;
         }
 
-        float bboxReferenceUniform = ResolveCurrentUniformScale(root, model);
-        float uniform = ClampSkeletonUniformScale((skeletonExtent / modelExtent) * model.userScale, bboxReferenceUniform, settings);
-        root.localScale = model.baseLocalScale * uniform;
+        TrackPlacementWriter.Apply(
+            root,
+            TrackPlacementCommand.LocalScaleOnly(
+                root.position,
+                root.rotation,
+                model.baseLocalScale * uniform));
     }
 
-    private void AlignAnimalRootToSkeleton(Transform instanceRoot, AnimalRigCache cache, Vector3 skeletonRoot, bool smooth)
+    private void AlignAnimalRootToSkeleton(Transform instanceRoot, AnimalRigCache cache, Vector3 skeletonRoot, bool smooth, RuntimeClock.TickContext tick)
     {
         if (instanceRoot == null || cache == null)
         {
             return;
         }
 
-        Vector3 targetPosition = instanceRoot.position + skeletonRoot - ResolveAnimalPlacementBone(cache).position;
+        Vector3 targetPosition = TrackPlacementWriter.CalculateAnchorAlignedPosition(
+            instanceRoot,
+            ResolveAnimalPlacementBone(cache),
+            skeletonRoot);
         if (smooth)
         {
-            targetPosition = SmoothAnimalRootPosition(instanceRoot, targetPosition);
+            targetPosition = SmoothAnimalRootPosition(instanceRoot, targetPosition, tick.deltaTime);
         }
 
-        instanceRoot.position = targetPosition;
+        TrackPlacementWriter.Apply(
+            instanceRoot,
+            TrackPlacementCommand.PositionOnly(
+                targetPosition,
+                instanceRoot.rotation,
+                instanceRoot.localScale));
     }
 
-    private Vector3 SmoothAnimalRootPosition(Transform root, Vector3 targetPosition)
+    private Vector3 SmoothAnimalRootPosition(Transform root, Vector3 targetPosition, float deltaTime)
     {
         if (root == null)
         {
             return targetPosition;
         }
 
-        float dt = Time.deltaTime > 0.0001f ? Time.deltaTime : (1f / 60f);
-        if (!animalRootPositionFilters.TryGetValue(root, out OneEuroVector3Filter filter) || filter == null)
+        if (!animalRootPositionFilters.TryGetValue(root, out RuntimeOneEuroVector3Filter filter) || filter == null)
         {
-            filter = new OneEuroVector3Filter(1.6f, 0.08f, 1.0f);
+            filter = new RuntimeOneEuroVector3Filter(1.6f, 0.08f, 1.0f);
             animalRootPositionFilters[root] = filter;
             filter.Reset(targetPosition);
             return targetPosition;
         }
 
-        return filter.Filter(targetPosition, dt);
+        return filter.Filter(targetPosition, deltaTime);
     }
 
     private static Transform ResolveAnimalPlacementBone(AnimalRigCache cache)
     {
-        return cache.spine ?? cache.neck ?? cache.tailBase ?? cache.root;
+        return AnimalPlacementBoneSelector.Select(cache.spine, cache.neck, cache.tailBase, cache.root);
     }
 
-    private void ApplyAnimalHeadPose(AnimalRigCache cache, Vector3[] jointsWorld, byte[] vis, float alpha, bool hasControl, AnimalControlWorldData control)
+    private void ApplyAnimalHeadPose(AnimalRigCache cache, Vector3[] jointsWorld, byte[] vis, float alpha, bool hasControl, AnimalControlWorldData control, RuntimeClock.TickContext tick)
     {
         if (hasControl)
         {
             if (control.hasWithers && control.hasHeadRoot)
             {
-                Vector3 headRoot = SmoothAnimalPoseTarget(cache.neck, control.headRootWorld, 2.0f, 0.08f);
+                Vector3 headRoot = SmoothAnimalPoseTarget(cache.neck, control.headRootWorld, 2.0f, 0.08f, tick.deltaTime);
                 ApplyAnimalBoneFromPoints(cache, cache.neck, control.withersWorld, headRoot, alpha * 0.42f);
             }
 
             if (control.hasHeadRoot && control.hasHeadTip)
             {
-                Vector3 headRoot = SmoothAnimalPoseTarget(cache.neck, control.headRootWorld, 2.0f, 0.08f);
-                Vector3 headTip = SmoothAnimalPoseTarget(cache.head, control.headTipWorld, 2.0f, 0.08f);
+                Vector3 headRoot = SmoothAnimalPoseTarget(cache.neck, control.headRootWorld, 2.0f, 0.08f, tick.deltaTime);
+                Vector3 headTip = SmoothAnimalPoseTarget(cache.head, control.headTipWorld, 2.0f, 0.08f, tick.deltaTime);
                 ApplyAnimalBoneFromPoints(cache, cache.head, headRoot, headTip, alpha * 0.42f);
                 return;
             }
@@ -519,7 +390,7 @@ public sealed class AnimalPoseApplier
         ApplyAnimalBonesFromSegment(cache, cache.neck, cache.head, jointsWorld, vis, 24, 2, alpha * 0.35f, alpha * 0.35f);
     }
 
-    private void ApplyAnimalTailPose(AnimalRigCache cache, float alpha, bool hasControl, AnimalControlWorldData control)
+    private void ApplyAnimalTailPose(AnimalRigCache cache, float alpha, bool hasControl, AnimalControlWorldData control, RuntimeClock.TickContext tick)
     {
         if (!hasControl || cache.tailBase == null)
         {
@@ -528,7 +399,7 @@ public sealed class AnimalPoseApplier
 
         if (control.hasTailBase && control.hasTailTip)
         {
-            Vector3 tailTip = SmoothAnimalPoseTarget(cache.tailBase, control.tailTipWorld, 1.5f, 0.04f);
+            Vector3 tailTip = SmoothAnimalPoseTarget(cache.tailBase, control.tailTipWorld, 1.5f, 0.04f, tick.deltaTime);
             ApplyAnimalBoneFromPoints(cache, cache.tailBase, control.tailBaseWorld, tailTip, alpha * 0.25f);
             return;
         }
@@ -536,21 +407,21 @@ public sealed class AnimalPoseApplier
         ApplyAnimalBoneFromChain(cache, cache.tailBase, null, null, control.tailWorld, alpha * 0.25f, false);
     }
 
-    private void ApplyAnimalLimbPose(AnimalRigCache cache, Vector3[] jointsWorld, byte[] vis, float alpha, bool freezeAnimalDistal, bool hasControl, AnimalControlWorldData control)
+    private void ApplyAnimalLimbPose(AnimalRigCache cache, Vector3[] jointsWorld, byte[] vis, float alpha, bool freezeAnimalDistal, bool hasControl, AnimalControlWorldData control, RuntimeClock.TickContext tick)
     {
         if (hasControl)
         {
-            ApplyAnimalLimbIkFromControlChain(cache, cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw, control.frontLeftLegWorld, alpha, false);
-            ApplyAnimalLimbIkFromControlChain(cache, cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw, control.frontRightLegWorld, alpha, false);
-            ApplyAnimalLimbIkFromControlChain(cache, cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, control.rearLeftLegWorld, alpha, !freezeAnimalDistal);
-            ApplyAnimalLimbIkFromControlChain(cache, cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, control.rearRightLegWorld, alpha, !freezeAnimalDistal);
+            ApplyAnimalLimbIkFromControlChain(cache, cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw, control.frontLeftLegWorld, alpha, false, tick.deltaTime);
+            ApplyAnimalLimbIkFromControlChain(cache, cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw, control.frontRightLegWorld, alpha, false, tick.deltaTime);
+            ApplyAnimalLimbIkFromControlChain(cache, cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, control.rearLeftLegWorld, alpha, !freezeAnimalDistal, tick.deltaTime);
+            ApplyAnimalLimbIkFromControlChain(cache, cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, control.rearRightLegWorld, alpha, !freezeAnimalDistal, tick.deltaTime);
             return;
         }
 
-        ApplyAnimalLimbIkByChain(cache, cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw, jointsWorld, vis, AnimalLeftFrontChain, alpha, false);
-        ApplyAnimalLimbIkByChain(cache, cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw, jointsWorld, vis, AnimalRightFrontChain, alpha, false);
-        ApplyAnimalLimbIkByChain(cache, cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, jointsWorld, vis, AnimalLeftRearChain, alpha, !freezeAnimalDistal);
-        ApplyAnimalLimbIkByChain(cache, cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, jointsWorld, vis, AnimalRightRearChain, alpha, !freezeAnimalDistal);
+        ApplyAnimalLimbIkByChain(cache, cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw, jointsWorld, vis, AnimalPoseJointChains.LeftFront, alpha, false, tick.deltaTime);
+        ApplyAnimalLimbIkByChain(cache, cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw, jointsWorld, vis, AnimalPoseJointChains.RightFront, alpha, false, tick.deltaTime);
+        ApplyAnimalLimbIkByChain(cache, cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, jointsWorld, vis, AnimalPoseJointChains.LeftRear, alpha, !freezeAnimalDistal, tick.deltaTime);
+        ApplyAnimalLimbIkByChain(cache, cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, jointsWorld, vis, AnimalPoseJointChains.RightRear, alpha, !freezeAnimalDistal, tick.deltaTime);
     }
 
     private void ApplyAnimalBonesFromSegment(AnimalRigCache cache, Transform primary, Transform secondary, Vector3[] jointsWorld, byte[] vis, int idxA, int idxB, float primaryAlpha, float secondaryAlpha)
@@ -607,31 +478,31 @@ public sealed class AnimalPoseApplier
         }
     }
 
-    private void ApplyAnimalLimbIkByChain(AnimalRigCache cache, Transform upper, Transform lower, Transform paw, Vector3[] jointsWorld, byte[] vis, int[] chain, float alpha, bool applyDistal)
+    private void ApplyAnimalLimbIkByChain(AnimalRigCache cache, Transform upper, Transform lower, Transform paw, Vector3[] jointsWorld, byte[] vis, int[] chain, float alpha, bool applyDistal, float deltaTime)
     {
         if (chain == null || chain.Length < 4)
         {
             return;
         }
 
-        if (!TryGetJointPoint(jointsWorld, vis, chain[0], out Vector3 root) ||
-            !TryGetJointPoint(jointsWorld, vis, chain[1], out Vector3 mid) ||
-            !TryGetJointPoint(jointsWorld, vis, chain[2], out Vector3 end))
+        if (!TrackedJointPoints.TryGet(jointsWorld, vis, chain[0], out Vector3 root) ||
+            !TrackedJointPoints.TryGet(jointsWorld, vis, chain[1], out Vector3 mid) ||
+            !TrackedJointPoints.TryGet(jointsWorld, vis, chain[2], out Vector3 end))
         {
             ApplyAnimalLimbByChain(cache, upper, lower, paw, jointsWorld, vis, chain, alpha, applyDistal);
             return;
         }
 
         Vector3 distal = end;
-        if (applyDistal && TryGetJointPoint(jointsWorld, vis, chain[3], out Vector3 toe))
+        if (applyDistal && TrackedJointPoints.TryGet(jointsWorld, vis, chain[3], out Vector3 toe))
         {
             distal = toe;
         }
 
-        ApplyAnimalTwoBoneLimbIk(cache, upper, lower, paw, root, mid, end, distal, alpha, applyDistal);
+        ApplyAnimalTwoBoneLimbIk(cache, upper, lower, paw, root, mid, end, distal, alpha, applyDistal, deltaTime);
     }
 
-    private void ApplyAnimalLimbIkFromControlChain(AnimalRigCache cache, Transform upper, Transform lower, Transform paw, Vector3[] chainWorld, float alpha, bool applyDistal)
+    private void ApplyAnimalLimbIkFromControlChain(AnimalRigCache cache, Transform upper, Transform lower, Transform paw, Vector3[] chainWorld, float alpha, bool applyDistal, float deltaTime)
     {
         if (chainWorld == null || chainWorld.Length < 3)
         {
@@ -663,10 +534,10 @@ public sealed class AnimalPoseApplier
             distal = chainWorld[distalIndex];
         }
 
-        ApplyAnimalTwoBoneLimbIk(cache, upper, lower, paw, chainWorld[rootIndex], chainWorld[midIndex], chainWorld[endIndex], distal, alpha, applyDistal);
+        ApplyAnimalTwoBoneLimbIk(cache, upper, lower, paw, chainWorld[rootIndex], chainWorld[midIndex], chainWorld[endIndex], distal, alpha, applyDistal, deltaTime);
     }
 
-    private void ApplyAnimalTwoBoneLimbIk(AnimalRigCache cache, Transform upper, Transform lower, Transform paw, Vector3 observedRoot, Vector3 observedMid, Vector3 observedEnd, Vector3 observedDistal, float alpha, bool applyDistal)
+    private void ApplyAnimalTwoBoneLimbIk(AnimalRigCache cache, Transform upper, Transform lower, Transform paw, Vector3 observedRoot, Vector3 observedMid, Vector3 observedEnd, Vector3 observedDistal, float alpha, bool applyDistal, float deltaTime)
     {
         if (upper == null || lower == null)
         {
@@ -674,7 +545,7 @@ public sealed class AnimalPoseApplier
         }
 
         Vector3 root = upper.position;
-        Vector3 targetEnd = SmoothAnimalPoseTarget(lower, observedEnd, 2.2f, 0.1f);
+        Vector3 targetEnd = SmoothAnimalPoseTarget(lower, observedEnd, 2.2f, 0.1f, deltaTime);
         Vector3 bendHint = observedMid - observedRoot;
         if (bendHint.sqrMagnitude <= 0.000001f)
         {
@@ -694,7 +565,7 @@ public sealed class AnimalPoseApplier
 
         if (paw != null && applyDistal)
         {
-            Vector3 targetDistal = SmoothAnimalPoseTarget(paw, observedDistal, 2.2f, 0.1f);
+            Vector3 targetDistal = SmoothAnimalPoseTarget(paw, observedDistal, 2.2f, 0.1f, deltaTime);
             ApplyAnimalBoneFromPoints(cache, paw, targetEnd, targetDistal, alpha * 0.35f);
         }
     }
@@ -746,23 +617,22 @@ public sealed class AnimalPoseApplier
         return true;
     }
 
-    private Vector3 SmoothAnimalPoseTarget(Transform key, Vector3 target, float minCutoffHz, float beta)
+    private Vector3 SmoothAnimalPoseTarget(Transform key, Vector3 target, float minCutoffHz, float beta, float deltaTime)
     {
         if (key == null)
         {
             return target;
         }
 
-        float dt = Time.deltaTime > 0.0001f ? Time.deltaTime : (1f / 60f);
-        if (!animalLimbTargetFilters.TryGetValue(key, out OneEuroVector3Filter filter) || filter == null)
+        if (!animalLimbTargetFilters.TryGetValue(key, out RuntimeOneEuroVector3Filter filter) || filter == null)
         {
-            filter = new OneEuroVector3Filter(minCutoffHz, beta, 1.0f);
+            filter = new RuntimeOneEuroVector3Filter(minCutoffHz, beta, 1.0f);
             animalLimbTargetFilters[key] = filter;
             filter.Reset(target);
             return target;
         }
 
-        return filter.Filter(target, dt);
+        return filter.Filter(target, deltaTime);
     }
 
     private void RegisterAnimalAimChild(AnimalRigCache cache, Transform bone, Transform aimChild)
@@ -824,7 +694,7 @@ public sealed class AnimalPoseApplier
             return false;
         }
 
-        if (!TryGetJointPoint(jointsWorld, vis, idxA, out Vector3 a) || !TryGetJointPoint(jointsWorld, vis, idxB, out Vector3 b))
+        if (!TrackedJointPoints.TryGet(jointsWorld, vis, idxA, out Vector3 a) || !TrackedJointPoints.TryGet(jointsWorld, vis, idxB, out Vector3 b))
         {
             return false;
         }
@@ -852,7 +722,9 @@ public sealed class AnimalPoseApplier
             float dot = Vector3.Dot(currentDir, targetDir);
             if (dot > -0.98f)
             {
-                bone.rotation = Quaternion.Slerp(bone.rotation, targetWorld, Mathf.Clamp01(alpha));
+                PoseTransformWriter.ApplyWorldRotation(
+                    bone,
+                    Quaternion.Slerp(bone.rotation, targetWorld, Mathf.Clamp01(alpha)));
                 return true;
             }
         }
@@ -875,23 +747,33 @@ public sealed class AnimalPoseApplier
         }
 
         Quaternion targetLocal = Quaternion.FromToRotation(bindDirLocal, targetLocalDir) * bindRotLocal;
-        bone.localRotation = Quaternion.Slerp(bone.localRotation, targetLocal, Mathf.Clamp01(alpha));
+        PoseTransformWriter.ApplyLocalRotation(
+            bone,
+            Quaternion.Slerp(bone.localRotation, targetLocal, Mathf.Clamp01(alpha)));
         return true;
     }
 
     private Transform ResolveAnimalAimChild(AnimalRigCache cache, Transform bone)
     {
-        if (bone != null && cache.aimChildByBone.TryGetValue(bone, out Transform mapped) && mapped != null)
+        if (bone == null)
         {
-            return mapped;
+            return null;
         }
 
-        if (bone != null && bone.childCount > 0)
+        Transform registeredAimChild = null;
+        if (cache.aimChildByBone.TryGetValue(bone, out Transform mapped) && mapped != null)
         {
-            return bone.GetChild(0);
+            registeredAimChild = mapped;
         }
 
-        return null;
+        Transform fallbackFirstChild = bone.childCount > 0 ? bone.GetChild(0) : null;
+
+        return AnimalAimChildSelector.Select(registeredAimChild, fallbackFirstChild);
+    }
+
+    public static bool ShouldUseAnimalAimChildPivotDirection(bool hasRegisteredAimChild, bool isLimbBone)
+    {
+        return AnimalAimDirectionPolicy.ShouldUseChildPivotDirection(hasRegisteredAimChild, isLimbBone);
     }
 
     private bool TryGetBoneCenterDirectionWorld(AnimalRigCache cache, Transform bone, out Vector3 dirWorld)
@@ -902,8 +784,11 @@ public sealed class AnimalPoseApplier
             return false;
         }
 
+        bool hasRegisteredAimChild = cache.aimChildByBone.TryGetValue(bone, out Transform registeredAimChild) &&
+            registeredAimChild != null;
         Transform centerTarget = ResolveAnimalAimChild(cache, bone);
-        if (centerTarget != null && IsAnimalLimbBone(cache, bone))
+        if (centerTarget != null &&
+            ShouldUseAnimalAimChildPivotDirection(hasRegisteredAimChild, IsAnimalLimbBone(cache, bone)))
         {
             Vector3 childPivotDir = centerTarget.position - bone.position;
             if (childPivotDir.sqrMagnitude > 0.000001f)
@@ -1003,25 +888,25 @@ public sealed class AnimalPoseApplier
         cache.root = root;
         Transform[] bones = root.GetComponentsInChildren<Transform>(true);
 
-        cache.neck = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.007", "neck", "DEF-spine.010" }, "neck");
-        cache.head = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.009", "head.001", "DEF-spine.011" }, "head");
-        cache.spine = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3", "body" }, "body", "spine", "chest", "back");
-        cache.tailBase = FindBoneByTokens(bones, "tail.002", "tail");
+        cache.neck = FindAnimalBone(bones, AnimalRigDefinition.Neck);
+        cache.head = FindAnimalBone(bones, AnimalRigDefinition.Head);
+        cache.spine = FindAnimalBone(bones, AnimalRigDefinition.Spine);
+        cache.tailBase = FindBoneByTokens(bones, AnimalRigDefinition.TailBaseTokens);
 
         FillAnimalSpineFallbacks(cache, root, bones, settings);
 
-        cache.leftFrontUpper = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3_L.001", "arm.001.L", "DEF-front_thigh.L" }, "arm.001.l", "def-front_thigh.l");
-        cache.leftFrontLower = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3_L.002", "arm.002.L", "DEF-front_shin.L" }, "arm.002.l", "def-front_shin.l");
-        cache.leftFrontPaw = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3_L.003", "arm.003.L", "DEF-front_foot.L" }, "arm.003.l", "def-front_foot.l", "def-front_toe.l");
-        cache.rightFrontUpper = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3_R.001", "arm.001.R", "DEF-front_thigh.R" }, "arm.001.r", "def-front_thigh.r");
-        cache.rightFrontLower = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3_R.002", "arm.002.R", "DEF-front_shin.R" }, "arm.002.r", "def-front_shin.r");
-        cache.rightFrontPaw = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3_R.003", "arm.003.R", "DEF-front_foot.R" }, "arm.003.r", "def-front_foot.r", "def-front_toe.r");
-        cache.leftRearUpper = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.001_L.001", "foot.001.L", "DEF-thigh.L" }, "foot.001.l", "foot.002.l", "def-thigh.l");
-        cache.leftRearLower = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.001_L.002", "foot.002.L", "DEF-shin.L" }, "foot.002.l", "foot.003.l", "def-shin.l");
-        cache.leftRearPaw = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.001_L.003", "foot.003.L", "DEF-foot.L" }, "foot.003.l", "foot.004.l", "def-foot.l", "def-toe.l");
-        cache.rightRearUpper = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.001_R.001", "foot.001.R", "DEF-thigh.R" }, "foot.001.r", "foot.002.r", "def-thigh.r");
-        cache.rightRearLower = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.001_R.002", "foot.002.R", "DEF-shin.R" }, "foot.002.r", "foot.003.r", "def-shin.r");
-        cache.rightRearPaw = FindAnimalBone(bones, new[] { "\u30DC\u30FC\u30F3.001_R.003", "foot.003.R", "DEF-foot.R" }, "foot.003.r", "foot.004.r", "def-foot.r", "def-toe.r");
+        cache.leftFrontUpper = FindAnimalBone(bones, AnimalRigDefinition.LeftFrontUpper);
+        cache.leftFrontLower = FindAnimalBone(bones, AnimalRigDefinition.LeftFrontLower);
+        cache.leftFrontPaw = FindAnimalBone(bones, AnimalRigDefinition.LeftFrontPaw);
+        cache.rightFrontUpper = FindAnimalBone(bones, AnimalRigDefinition.RightFrontUpper);
+        cache.rightFrontLower = FindAnimalBone(bones, AnimalRigDefinition.RightFrontLower);
+        cache.rightFrontPaw = FindAnimalBone(bones, AnimalRigDefinition.RightFrontPaw);
+        cache.leftRearUpper = FindAnimalBone(bones, AnimalRigDefinition.LeftRearUpper);
+        cache.leftRearLower = FindAnimalBone(bones, AnimalRigDefinition.LeftRearLower);
+        cache.leftRearPaw = FindAnimalBone(bones, AnimalRigDefinition.LeftRearPaw);
+        cache.rightRearUpper = FindAnimalBone(bones, AnimalRigDefinition.RightRearUpper);
+        cache.rightRearLower = FindAnimalBone(bones, AnimalRigDefinition.RightRearLower);
+        cache.rightRearPaw = FindAnimalBone(bones, AnimalRigDefinition.RightRearPaw);
         ResolveAnimalModelBasis(root, cache, settings);
 
         PrimeAnimalBinds(
@@ -1174,6 +1059,11 @@ public sealed class AnimalPoseApplier
         return exact ?? FindBoneByTokens(bones, tokens);
     }
 
+    private Transform FindAnimalBone(Transform[] bones, AnimalBoneRule rule)
+    {
+        return FindAnimalBone(bones, rule.exactNames, rule.tokens);
+    }
+
     private Transform FindBoneByTokens(Transform[] bones, params string[] tokens)
     {
         if (bones == null || tokens == null || tokens.Length == 0)
@@ -1285,94 +1175,14 @@ public sealed class AnimalPoseApplier
         return node;
     }
 
-    private static bool TryGetJointPoint(Vector3[] jointsWorld, byte[] vis, int idx, out Vector3 point)
-    {
-        point = Vector3.zero;
-        if (jointsWorld == null || vis == null)
-        {
-            return false;
-        }
-
-        if (idx < 0 || idx >= jointsWorld.Length || idx >= vis.Length)
-        {
-            return false;
-        }
-
-        byte visFlag = vis[idx];
-        Vector3 p = jointsWorld[idx];
-        if (visFlag == 0)
-        {
-            return false;
-        }
-
-        if (float.IsNaN(p.x) || float.IsInfinity(p.x) ||
-            float.IsNaN(p.y) || float.IsInfinity(p.y) ||
-            float.IsNaN(p.z) || float.IsInfinity(p.z))
-        {
-            return false;
-        }
-
-        if (p.sqrMagnitude <= InvalidJointSqrMagnitudeEpsilon)
-        {
-            return false;
-        }
-
-        point = p;
-        return true;
-    }
-
     private static bool TryGetVisibleJointBounds(Vector3[] jointsWorld, byte[] vis, int jointCount, out Bounds bounds)
     {
-        bounds = default(Bounds);
-        if (jointsWorld == null || vis == null || jointCount <= 0)
-        {
-            return false;
-        }
-
-        bool hasAny = false;
-        int count = Mathf.Min(jointCount, Mathf.Min(jointsWorld.Length, vis.Length));
-        for (int i = 0; i < count; i++)
-        {
-            if (vis[i] == 0)
-            {
-                continue;
-            }
-
-            Vector3 p = jointsWorld[i];
-            if (float.IsNaN(p.x) || float.IsInfinity(p.x) ||
-                float.IsNaN(p.y) || float.IsInfinity(p.y) ||
-                float.IsNaN(p.z) || float.IsInfinity(p.z))
-            {
-                continue;
-            }
-
-            if (!hasAny)
-            {
-                bounds = new Bounds(p, Vector3.zero);
-                hasAny = true;
-            }
-            else
-            {
-                bounds.Encapsulate(p);
-            }
-        }
-
-        return hasAny;
+        return AnimalVisibleJointBounds.TryResolve(jointsWorld, vis, jointCount, out bounds);
     }
 
     private static float ClampSkeletonUniformScale(float uniform, float referenceUniform, AnimalPoseSettings settings)
     {
-        float min = Mathf.Max(0.0001f, settings.skeletonScaleMin);
-        float max = Mathf.Max(min, settings.skeletonScaleMax);
-        if (referenceUniform > 0.0001f)
-        {
-            float relMin = Mathf.Max(0.0001f, settings.skeletonScaleRelativeMin);
-            float relMax = Mathf.Max(relMin, settings.skeletonScaleRelativeMax);
-            min = Mathf.Max(min, referenceUniform * relMin);
-            max = Mathf.Min(max, referenceUniform * relMax);
-        }
-
-        return Mathf.Clamp(uniform, min, max);
+        return AnimalSkeletonScaleResolver.ClampUniform(uniform, referenceUniform, settings);
     }
 
     private static float ResolveCurrentUniformScale(Transform root, ReplaceableModel model)
@@ -1389,220 +1199,7 @@ public sealed class AnimalPoseApplier
 
         Vector3 baseScale = model.baseLocalScale;
         Vector3 localScale = root.localScale;
-        float sum = 0f;
-        int count = 0;
-        if (Mathf.Abs(baseScale.x) > 0.0001f)
-        {
-            sum += Mathf.Abs(localScale.x / baseScale.x);
-            count++;
-        }
-        if (Mathf.Abs(baseScale.y) > 0.0001f)
-        {
-            sum += Mathf.Abs(localScale.y / baseScale.y);
-            count++;
-        }
-        if (Mathf.Abs(baseScale.z) > 0.0001f)
-        {
-            sum += Mathf.Abs(localScale.z / baseScale.z);
-            count++;
-        }
-
-        return count > 0 ? sum / count : 0f;
+        return AnimalSkeletonScaleResolver.ResolveUniformFromScale(localScale, baseScale);
     }
 
-    private sealed class AnimalRigCache
-    {
-        public Transform root;
-        public Transform neck;
-        public Transform head;
-        public Transform spine;
-        public Transform tailBase;
-        public Transform leftFrontUpper;
-        public Transform leftFrontLower;
-        public Transform leftFrontPaw;
-        public Transform rightFrontUpper;
-        public Transform rightFrontLower;
-        public Transform rightFrontPaw;
-        public Transform leftRearUpper;
-        public Transform leftRearLower;
-        public Transform leftRearPaw;
-        public Transform rightRearUpper;
-        public Transform rightRearLower;
-        public Transform rightRearPaw;
-        public Vector3 modelForwardLocal;
-        public Vector3 modelUpLocal;
-        public readonly Dictionary<Transform, Vector3> bindDirLocal = new Dictionary<Transform, Vector3>();
-        public readonly Dictionary<Transform, Quaternion> bindRotLocal = new Dictionary<Transform, Quaternion>();
-        public readonly Dictionary<Transform, Transform> aimChildByBone = new Dictionary<Transform, Transform>();
-        public bool ready;
-    }
-
-    private sealed class LowPassFilter1D
-    {
-        private bool initialized;
-        private float previousValue;
-
-        public float Filter(float value, float alpha)
-        {
-            if (!initialized)
-            {
-                initialized = true;
-                previousValue = value;
-                return value;
-            }
-
-            previousValue = alpha * value + (1f - alpha) * previousValue;
-            return previousValue;
-        }
-
-        public void Reset(float value)
-        {
-            initialized = true;
-            previousValue = value;
-        }
-    }
-
-    private sealed class OneEuroFilter1D
-    {
-        private readonly LowPassFilter1D valueFilter = new LowPassFilter1D();
-        private readonly LowPassFilter1D derivativeFilter = new LowPassFilter1D();
-        private readonly float minCutoff;
-        private readonly float beta;
-        private readonly float derivativeCutoff;
-        private bool initialized;
-        private float previousRawValue;
-
-        public OneEuroFilter1D(float minCutoffHz, float betaValue, float derivativeCutoffHz)
-        {
-            minCutoff = Mathf.Max(0.0001f, minCutoffHz);
-            beta = Mathf.Max(0f, betaValue);
-            derivativeCutoff = Mathf.Max(0.0001f, derivativeCutoffHz);
-        }
-
-        public float Filter(float value, float deltaTime)
-        {
-            float dt = Mathf.Max(0.0001f, deltaTime);
-            if (!initialized)
-            {
-                initialized = true;
-                previousRawValue = value;
-                valueFilter.Reset(value);
-                derivativeFilter.Reset(0f);
-                return value;
-            }
-
-            float derivative = (value - previousRawValue) / dt;
-            previousRawValue = value;
-            float filteredDerivative = derivativeFilter.Filter(derivative, ComputeAlpha(derivativeCutoff, dt));
-            float cutoff = minCutoff + beta * Mathf.Abs(filteredDerivative);
-            return valueFilter.Filter(value, ComputeAlpha(cutoff, dt));
-        }
-
-        public void Reset(float value)
-        {
-            initialized = true;
-            previousRawValue = value;
-            valueFilter.Reset(value);
-            derivativeFilter.Reset(0f);
-        }
-
-        private static float ComputeAlpha(float cutoff, float deltaTime)
-        {
-            float tau = 1f / (2f * Mathf.PI * Mathf.Max(0.0001f, cutoff));
-            return 1f / (1f + tau / Mathf.Max(0.0001f, deltaTime));
-        }
-    }
-
-    private sealed class OneEuroVector3Filter
-    {
-        private readonly OneEuroFilter1D x;
-        private readonly OneEuroFilter1D y;
-        private readonly OneEuroFilter1D z;
-
-        public OneEuroVector3Filter(float minCutoffHz, float betaValue, float derivativeCutoffHz)
-        {
-            x = new OneEuroFilter1D(minCutoffHz, betaValue, derivativeCutoffHz);
-            y = new OneEuroFilter1D(minCutoffHz, betaValue, derivativeCutoffHz);
-            z = new OneEuroFilter1D(minCutoffHz, betaValue, derivativeCutoffHz);
-        }
-
-        public Vector3 Filter(Vector3 value, float deltaTime)
-        {
-            return new Vector3(
-                x.Filter(value.x, deltaTime),
-                y.Filter(value.y, deltaTime),
-                z.Filter(value.z, deltaTime));
-        }
-
-        public void Reset(Vector3 value)
-        {
-            x.Reset(value.x);
-            y.Reset(value.y);
-            z.Reset(value.z);
-        }
-    }
-}
-
-public struct AnimalPoseRequest
-{
-    public Transform instanceRoot;
-    public Animator animator;
-    public AnimalPoseWorldData pose;
-    public AnimalPoseSettings settings;
-    public bool freezeAnimalDistal;
-    public bool enableBoneApply;
-}
-
-public struct AnimalPoseWorldData
-{
-    public int jointCount;
-    public Vector3[] jointsWorld;
-    public Vector3[] jointsCam;
-    public byte[] jointVis;
-    public bool hasAnimalControl;
-    public AnimalControlWorldData animalControl;
-    public Vector3 camOrigin;
-    public Vector3 rootWorld;
-}
-
-public struct AnimalControlWorldData
-{
-    public bool hasRoot;
-    public Vector3 rootWorld;
-    public bool hasWithers;
-    public Vector3 withersWorld;
-    public bool hasHeadRoot;
-    public Vector3 headRootWorld;
-    public bool hasHeadTip;
-    public Vector3 headTipWorld;
-    public bool hasTailBase;
-    public Vector3 tailBaseWorld;
-    public bool hasTailTip;
-    public Vector3 tailTipWorld;
-    public bool hasForwardHint;
-    public Vector3 forwardHintWorld;
-    public bool hasUpHint;
-    public Vector3 upHintWorld;
-    public Vector3[] frontLeftLegWorld;
-    public Vector3[] frontRightLegWorld;
-    public Vector3[] rearLeftLegWorld;
-    public Vector3[] rearRightLegWorld;
-    public Vector3[] headWorld;
-    public Vector3[] tailWorld;
-}
-
-public struct AnimalPoseSettings
-{
-    public float boneApplyAlpha;
-    public bool enableAnimalLimbApply;
-    public bool stabilizeAnimalRootYaw;
-    public float animalRootRotateAlpha;
-    public float animalRootPitchRollBlend;
-    public Vector3 animalModelForwardLocal;
-    public Vector3 animalModelUpLocal;
-    public bool enableSkeletonScaleCorrection;
-    public float skeletonScaleMin;
-    public float skeletonScaleMax;
-    public float skeletonScaleRelativeMin;
-    public float skeletonScaleRelativeMax;
 }

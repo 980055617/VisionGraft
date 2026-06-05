@@ -1,9 +1,10 @@
-using System.Reflection;
 using UnityEngine;
 using UnityEngine.Video;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
+    private const float StereoScreenEyeSeparationMeters = 0.001f;
+
     private void EnsureScreensExist()
     {
         RecreateRuntimeScreen(ref leftScreen, "LeftScreen_Runtime", leftScreenPrefab);
@@ -19,7 +20,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         if (screenSlot != null)
         {
-            Destroy(screenSlot.gameObject);
+            GameObjectLifecycleWriter.DestroyObject(screenSlot.gameObject);
             screenSlot = null;
         }
 
@@ -28,20 +29,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private Transform CreateRuntimeScreen(string runtimeName, GameObject screenPrefab)
     {
-        GameObject screenObj;
-        if (screenPrefab != null)
-        {
-            screenObj = Instantiate(screenPrefab, transform, false);
-            screenObj.name = runtimeName;
-        }
-        else
-        {
-            screenObj = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            screenObj.name = runtimeName;
-            screenObj.transform.SetParent(transform, false);
-        }
-
-        return screenObj != null ? screenObj.transform : null;
+        return RuntimeScreenFactory.Create(runtimeName, screenPrefab, transform);
     }
 
     private Renderer EnsureScreenRenderer(Transform screen)
@@ -51,11 +39,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return null;
         }
 
-        var meshFilter = screen.GetComponent<MeshFilter>();
-        if (meshFilter == null)
-        {
-            meshFilter = screen.gameObject.AddComponent<MeshFilter>();
-        }
+        var meshFilter = RuntimeScreenComponentFactory.EnsureMeshFilter(screen.gameObject);
 
         if (meshFilter.sharedMesh == null)
         {
@@ -64,19 +48,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 quadMesh = Resources.GetBuiltinResource<Mesh>("Quad.fbx");
             }
 
-            if (quadMesh != null)
-            {
-                meshFilter.sharedMesh = quadMesh;
-            }
+            ScreenMeshWriter.ApplySharedMesh(meshFilter, quadMesh);
         }
 
-        var renderer = screen.GetComponent<MeshRenderer>();
-        if (renderer == null)
-        {
-            renderer = screen.gameObject.AddComponent<MeshRenderer>();
-        }
+        var renderer = RuntimeScreenComponentFactory.EnsureMeshRenderer(screen.gameObject);
 
-        renderer.enabled = true;
+        ScreenMeshWriter.ApplyRendererEnabled(renderer, true);
         EnsureUnlitMaterial(renderer);
         return renderer;
     }
@@ -111,21 +88,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
 
             // Keep screen hit area tightly matched to the rendered quad.
-            Destroy(collider);
+            GameObjectLifecycleWriter.DestroyObject(collider);
         }
 
-        if (meshCollider == null)
-        {
-            meshCollider = screen.gameObject.AddComponent<MeshCollider>();
-        }
+        meshCollider ??= RuntimeScreenComponentFactory.EnsureMeshCollider(screen.gameObject);
 
-        if (meshCollider.sharedMesh != meshFilter.sharedMesh)
-        {
-            meshCollider.sharedMesh = meshFilter.sharedMesh;
-        }
-
-        meshCollider.convex = false;
-        meshCollider.isTrigger = false;
+        ScreenColliderWriter.ApplyMeshCollider(meshCollider, meshFilter.sharedMesh);
     }
 
     private void EnsureUnlitMaterial(Renderer renderer)
@@ -160,7 +128,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (shader != null)
         {
             mat = new Material(shader);
-            renderer.material = mat;
+            ScreenMaterialWriter.ApplyMaterial(renderer, mat);
         }
     }
 
@@ -204,7 +172,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         var uniqueMat = new Material(baseMat);
-        renderer.material = uniqueMat;
+        ScreenMaterialWriter.ApplyMaterial(renderer, uniqueMat);
         return uniqueMat;
     }
 
@@ -235,15 +203,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        if (leftMat != null && leftMat.HasProperty(leftTexProp))
-        {
-            leftMat.SetTexture(leftTexProp, player.texture);
-        }
-
-        if (rightMat != null && rightMat.HasProperty(rightTexProp))
-        {
-            rightMat.SetTexture(rightTexProp, player.texture);
-        }
+        ScreenMaterialWriter.ApplyTexture(leftMat, leftTexProp, player.texture);
+        ScreenMaterialWriter.ApplyTexture(rightMat, rightTexProp, player.texture);
     }
 
     private void ApplyStereoUvSettings(Material mat, int eyeMode)
@@ -275,18 +236,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Camera viewCam = GetViewCamera();
         Transform head = viewCam != null ? viewCam.transform : GetHeadTransform();
         LockPinholeBasis(head);
-        Vector3 headPos = head.position;
-        Vector3 headFwd = head.forward;
-        Vector3 center = headPos + headFwd * screenDistanceMeters + head.TransformVector(screenOffsetMeters);
-        Vector3 toHead = (headPos - center).normalized;
-        Quaternion rotation = Quaternion.LookRotation(toHead, head.up);
+        StereoScreenPlacement.Placement placement = StereoScreenPlacement.ResolvePlacement(
+            head.position,
+            head.rotation,
+            screenDistanceMeters,
+            screenOffsetMeters,
+            StereoScreenEyeSeparationMeters);
 
         if (fitScreenToFov && manifest != null && manifest.eye_w > 0 && manifest.eye_h > 0 && TryGetFovxDeg(out float fovxDeg))
         {
-            float distance = Mathf.Max(0.0001f, screenDistanceMeters);
-            float fovxRad = fovxDeg * Mathf.Deg2Rad;
-            float width = 2f * distance * Mathf.Tan(fovxRad * 0.5f);
-            float height = width * (manifest.eye_h / (float)manifest.eye_w);
+            StereoScreenPlacement.ResolveFitSize(
+                screenDistanceMeters,
+                fovxDeg,
+                manifest.eye_w,
+                manifest.eye_h,
+                out float width,
+                out float height);
             ApplyScreenScaleToFitFov(leftScreen, width, height);
             ApplyScreenScaleToFitFov(rightScreen, width, height);
         }
@@ -295,17 +260,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         SyncRayCanvasInteractionSurfaceToScreen(leftScreen);
         SyncRayCanvasInteractionSurfaceToScreen(rightScreen);
 
-        Vector3 rightOffset = head.right * 0.001f;
         if (leftScreen != null)
         {
-            leftScreen.position = center - rightOffset;
-            leftScreen.rotation = rotation;
+            ScreenTransformWriter.ApplyPose(leftScreen, placement.leftPosition, placement.rotation);
         }
 
         if (rightScreen != null)
         {
-            rightScreen.position = center + rightOffset;
-            rightScreen.rotation = rotation;
+            ScreenTransformWriter.ApplyPose(rightScreen, placement.rightPosition, placement.rotation);
         }
 
         FixFacingIfNeeded(leftScreen, head);
@@ -321,123 +283,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         GetScreenMeshLocalBounds(screen, out _, out Vector3 meshSizeLocal);
-        float targetWidth = Mathf.Abs(meshSizeLocal.x);
-        float targetHeight = Mathf.Abs(meshSizeLocal.y);
-        if (targetWidth <= 0.000001f || targetHeight <= 0.000001f)
-        {
-            return;
-        }
-
-        if (screen is RectTransform screenRect)
-        {
-            screenRect.sizeDelta = new Vector2(targetWidth, targetHeight);
-        }
-
-        Transform interactionRoot = FindDeepChildByName(screen, "ISDK_RayCanvasInteraction");
-        if (interactionRoot == null)
-        {
-            return;
-        }
-
-        Transform surface = ResolveInteractionSurfaceTransform(interactionRoot, "_surface");
-        Transform selectSurface = ResolveInteractionSurfaceTransform(interactionRoot, "_selectSurface");
-        if (surface == null)
-        {
-            surface = FindDeepChildByName(interactionRoot, "Surface");
-        }
-
-        SyncSurfaceRectAndClipperSize(surface, targetWidth, targetHeight);
-        if (selectSurface != null && selectSurface != surface)
-        {
-            SyncSurfaceRectAndClipperSize(selectSurface, targetWidth, targetHeight);
-        }
-    }
-
-    private static Transform ResolveInteractionSurfaceTransform(Transform interactionRoot, string fieldName)
-    {
-        if (interactionRoot == null || string.IsNullOrEmpty(fieldName))
-        {
-            return null;
-        }
-
-        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-        Component[] components = interactionRoot.GetComponents<Component>();
-        for (int i = 0; i < components.Length; i++)
-        {
-            Component component = components[i];
-            if (component == null)
-            {
-                continue;
-            }
-
-            FieldInfo field = component.GetType().GetField(fieldName, flags);
-            if (field == null)
-            {
-                continue;
-            }
-
-            object value = field.GetValue(component);
-            if (value is Transform tr)
-            {
-                return tr;
-            }
-
-            if (value is Component comp)
-            {
-                return comp.transform;
-            }
-
-            if (value is GameObject go)
-            {
-                return go.transform;
-            }
-        }
-
-        return null;
-    }
-
-    private static void SyncSurfaceRectAndClipperSize(Transform surface, float width, float height)
-    {
-        if (surface == null)
-        {
-            return;
-        }
-
-        if (surface is RectTransform rect)
-        {
-            rect.anchorMin = Vector2.zero;
-            rect.anchorMax = Vector2.one;
-            rect.pivot = new Vector2(0.5f, 0.5f);
-            rect.anchoredPosition3D = Vector3.zero;
-            rect.offsetMin = Vector2.zero;
-            rect.offsetMax = Vector2.zero;
-        }
-
-        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-        Component[] components = surface.GetComponentsInChildren<Component>(true);
-        for (int i = 0; i < components.Length; i++)
-        {
-            Component component = components[i];
-            if (component == null)
-            {
-                continue;
-            }
-
-            FieldInfo sizeField = component.GetType().GetField("_size", flags);
-            if (sizeField == null || sizeField.FieldType != typeof(Vector3))
-            {
-                continue;
-            }
-
-            Vector3 size = (Vector3)sizeField.GetValue(component);
-            size.x = width;
-            size.y = height;
-            if (size.z <= 0f)
-            {
-                size.z = 0.01f;
-            }
-            sizeField.SetValue(component, size);
-        }
+        InteractionSdkRayCanvasAdapter.SyncSurfaceToScreen(screen, meshSizeLocal);
     }
 
     private static Transform FindDeepChildByName(Transform root, string exactName)
@@ -479,7 +325,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (dotBefore < 0f)
         {
-            screen.Rotate(0f, 180f, 0f, Space.Self);
+            ScreenTransformWriter.RotateSelf(screen, 0f, 180f, 0f);
         }
     }
 
@@ -541,7 +387,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 scale = screen.localScale;
         scale.x = targetWidth / meshWidth;
         scale.y = targetHeight / meshHeight;
-        screen.localScale = scale;
+        ScreenTransformWriter.ApplyLocalScale(screen, scale);
     }
 
     private Vector3 EyePixelToWorldOnScreen(int u, int v, Transform screen, float eyeW, float eyeH, float offsetMeters)
@@ -634,75 +480,28 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private bool TryGetProjectionIntrinsics(out float fx, out float fy, out float cxPixels, out float cyPixels)
     {
-        fx = 0f;
-        fy = 0f;
-        cxPixels = 0f;
-        cyPixels = 0f;
-        if (manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
-        {
-            return false;
-        }
-
-        float w = manifest.eye_w;
-        float h = manifest.eye_h;
-        float cxNorm = 0.5f;
-        float cyNorm = 0.5f;
-        if (manifest.cx > 0f)
-        {
-            cxNorm = manifest.cx > 1f ? manifest.cx / w : manifest.cx;
-        }
-        if (manifest.cy > 0f)
-        {
-            cyNorm = manifest.cy > 1f ? manifest.cy / h : manifest.cy;
-        }
-        cxPixels = Mathf.Clamp01(cxNorm) * w;
-        cyPixels = Mathf.Clamp01(cyNorm) * h;
-
-        if (manifest.fx_norm > 0f && manifest.fy_norm > 0f)
-        {
-            fx = manifest.fx_norm;
-            fy = manifest.fy_norm;
-            return true;
-        }
-
-        if (!TryGetFovxDeg(out float fovxDeg))
-        {
-            return false;
-        }
-
-        float fovxRad = fovxDeg * Mathf.Deg2Rad;
-        fx = 1f / Mathf.Tan(fovxRad * 0.5f);
-        if (manifest.fovy_deg > 0f || manifest.fovy > 0f)
-        {
-            float fovyDeg = manifest.fovy_deg > 0f ? manifest.fovy_deg : manifest.fovy;
-            float fovyRad = fovyDeg * Mathf.Deg2Rad;
-            fy = 1f / Mathf.Tan(fovyRad * 0.5f);
-        }
-        else
-        {
-            fy = fx * (manifest.eye_w / (float)manifest.eye_h);
-        }
-        return fx > 0f && fy > 0f;
+        bool hasFovxDeg = TryGetFovxDeg(out float fovxDeg);
+        return PinholePlacementSpace.TryResolveProjectionIntrinsics(
+            manifest,
+            hasFovxDeg,
+            fovxDeg,
+            out fx,
+            out fy,
+            out cxPixels,
+            out cyPixels);
     }
 
     private Vector3 ReconstructCamLocalFromEyePixel(float uEye, float vEye, float zMeters, float fx, float fy, int eyeW, int eyeH)
     {
-        float cxNorm = 0.5f;
-        float cyNorm = 0.5f;
-        if (manifest != null && manifest.eye_w > 0 && manifest.eye_h > 0)
-        {
-            if (manifest.cx > 0f)
-            {
-                cxNorm = manifest.cx > 1f ? manifest.cx / manifest.eye_w : manifest.cx;
-            }
-            if (manifest.cy > 0f)
-            {
-                cyNorm = manifest.cy > 1f ? manifest.cy / manifest.eye_h : manifest.cy;
-            }
-        }
-        float xNdc = ((uEye / (float)eyeW) - cxNorm) * 2f;
-        float yNdc = (cyNorm - (vEye / (float)eyeH)) * 2f;
-        return new Vector3(xNdc * zMeters / fx, yNdc * zMeters / fy, zMeters);
+        return PinholePlacementSpace.ReconstructCamLocalFromEyePixel(
+            manifest,
+            uEye,
+            vEye,
+            zMeters,
+            fx,
+            fy,
+            eyeW,
+            eyeH);
     }
 
     private void LockPinholeBasis(Transform head)
@@ -801,7 +600,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return Vector3.zero;
         }
 
-        Vector3 camLocal = ReconstructCamLocalFromEyePixel(uEye, vEye, zMeters, fx, fy, manifest.eye_w, manifest.eye_h);
-        return camOrigin + (camRotation * camLocal);
+        return PinholePlacementSpace.EyePixelDepthToWorld(
+            camOrigin,
+            camRotation,
+            manifest,
+            uEye,
+            vEye,
+            zMeters,
+            fx,
+            fy);
     }
 }

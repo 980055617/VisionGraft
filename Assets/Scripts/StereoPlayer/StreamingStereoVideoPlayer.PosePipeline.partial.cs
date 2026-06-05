@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
@@ -6,21 +7,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // shared helpers are limited to raw camera-pose to world-pose conversion.
     private static readonly Vector3 AnimalPoseAxisSign = Vector3.one;
 
-    private struct PoseWorldData
-    {
-        public int jointCount;
-        public Vector3[] jointsWorld;
-        public Vector3[] jointsCam;
-        public byte[] jointVis;
-        public Vector3 camOrigin;
-        public Vector3 rootWorld;
-    }
-
     private void TryApplyPersonPosePipeline(GameObject instance, MetaObj obj, Transform screen, int frame)
     {
         try
         {
-            if (!TryBuildPersonPoseWorld(obj, screen, out PoseWorldData pose))
+            if (!TryBuildPersonPoseWorld(obj, screen, out PersonPoseWorldData pose))
             {
                 return;
             }
@@ -38,7 +29,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 RemapHmr2Body25ToSmpl24(ref pose);
             }
 
-            SkeletonIndices idx = MetrabsSmpl24Indices;
+            SkeletonIndices idx = SkeletonIndexPresets.MetrabsSmpl24;
 
             if (enableJointSmoothing)
             {
@@ -109,19 +100,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 return;
             }
 
-            if (canApplyHumanSmplPose && ShouldApplyHumanSmplBeforeLimbIk())
+            TryApplySmpl24HumanoidIk(instance.transform, cache, pose.jointsWorld, pose.jointVis, pose.camOrigin, idx);
+            if (canApplyHumanSmplPose && ShouldApplyHumanSmplAfterLimbIk())
             {
                 TryApplyHumanSmplRotationOverlay(cache, smplPose);
             }
-            TryApplySmpl24HumanoidIk(instance.transform, cache, pose.jointsWorld, pose.jointVis, pose.camOrigin, idx);
             ApplyHumanInteractiveOverlay(instance, obj.trackId);
         }
-        catch
+        catch (Exception ex)
         {
+            Debug.LogWarning($"SVB human pose pipeline failed: {ex.Message}");
         }
     }
 
-    private static void RemapHmr2Body25ToSmpl24(ref PoseWorldData pose)
+    private static void RemapHmr2Body25ToSmpl24(ref PersonPoseWorldData pose)
     {
         if (pose.jointsWorld == null || pose.jointVis == null || pose.jointsWorld.Length < 25 || pose.jointVis.Length < 25)
         {
@@ -156,7 +148,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         pose.jointVis = remappedVis;
     }
 
-    private static void CopyHmr2Body25Joint(PoseWorldData pose, int sourceIndex, Vector3[] dstWorld, Vector3[] dstCam, byte[] dstVis, int dstIndex)
+    private static void CopyHmr2Body25Joint(PersonPoseWorldData pose, int sourceIndex, Vector3[] dstWorld, Vector3[] dstCam, byte[] dstVis, int dstIndex)
     {
         if (sourceIndex < 0 || dstIndex < 0 ||
             sourceIndex >= pose.jointsWorld.Length ||
@@ -219,6 +211,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 animator = animator,
                 pose = pose,
                 settings = BuildAnimalPoseSettings(),
+                tickContext = GetRuntimeTickContext(),
                 freezeAnimalDistal = freezeAnimalDistal,
                 enableBoneApply = enableBoneApply
             });
@@ -242,7 +235,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             animator.Update(0f);
         }
 
-        animator.enabled = false;
+        PoseAnimatorWriter.ApplyEnabled(animator, false);
     }
 
     private static bool IsAnimalSegmentUsable(int idxA, int idxB, int jointCount, byte[] vis, Vector3[] jointsCam)
@@ -268,32 +261,37 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private static int CountAnimalSkipSegments(int jointCount, byte[] vis, Vector3[] jointsCam)
     {
         int skip = 0;
-        for (int i = 0; i + 1 < AnimalLeftFrontChain.Length; i++)
+        int[] leftFrontChain = AnimalPoseJointChains.LeftFront;
+        int[] rightFrontChain = AnimalPoseJointChains.RightFront;
+        int[] leftRearChain = AnimalPoseJointChains.LeftRear;
+        int[] rightRearChain = AnimalPoseJointChains.RightRear;
+
+        for (int i = 0; i + 1 < leftFrontChain.Length; i++)
         {
-            if (!IsAnimalSegmentUsable(AnimalLeftFrontChain[i], AnimalLeftFrontChain[i + 1], jointCount, vis, jointsCam)) skip++;
+            if (!IsAnimalSegmentUsable(leftFrontChain[i], leftFrontChain[i + 1], jointCount, vis, jointsCam)) skip++;
         }
 
-        for (int i = 0; i + 1 < AnimalRightFrontChain.Length; i++)
+        for (int i = 0; i + 1 < rightFrontChain.Length; i++)
         {
-            if (!IsAnimalSegmentUsable(AnimalRightFrontChain[i], AnimalRightFrontChain[i + 1], jointCount, vis, jointsCam)) skip++;
+            if (!IsAnimalSegmentUsable(rightFrontChain[i], rightFrontChain[i + 1], jointCount, vis, jointsCam)) skip++;
         }
 
-        for (int i = 0; i + 1 < AnimalLeftRearChain.Length; i++)
+        for (int i = 0; i + 1 < leftRearChain.Length; i++)
         {
-            if (!IsAnimalSegmentUsable(AnimalLeftRearChain[i], AnimalLeftRearChain[i + 1], jointCount, vis, jointsCam)) skip++;
+            if (!IsAnimalSegmentUsable(leftRearChain[i], leftRearChain[i + 1], jointCount, vis, jointsCam)) skip++;
         }
 
-        for (int i = 0; i + 1 < AnimalRightRearChain.Length; i++)
+        for (int i = 0; i + 1 < rightRearChain.Length; i++)
         {
-            if (!IsAnimalSegmentUsable(AnimalRightRearChain[i], AnimalRightRearChain[i + 1], jointCount, vis, jointsCam)) skip++;
+            if (!IsAnimalSegmentUsable(rightRearChain[i], rightRearChain[i + 1], jointCount, vis, jointsCam)) skip++;
         }
 
         return skip;
     }
 
-    private bool TryBuildPersonPoseWorld(MetaObj obj, Transform screen, out PoseWorldData pose)
+    private bool TryBuildPersonPoseWorld(MetaObj obj, Transform screen, out PersonPoseWorldData pose)
     {
-        pose = default(PoseWorldData);
+        pose = default(PersonPoseWorldData);
         if (!obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
         {
             return false;
@@ -321,7 +319,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             jointsWorld[i] = anchorWorld + (camRotation * obj.jointsCam[i]);
         }
 
-        pose = new PoseWorldData
+        pose = new PersonPoseWorldData
         {
             jointCount = jointCount,
             jointsWorld = jointsWorld,
@@ -365,7 +363,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 jointsCam = controlJointsCam,
                 jointVis = controlPose.jointsVis,
                 hasAnimalControl = true,
-                animalControl = BuildAnimalControlWorldData(controlPose, controlCamOrigin, controlCamRotation),
+                animalControl = AnimalControlPoseMapper.ToWorldData(controlPose, controlCamOrigin, controlCamRotation, AnimalPoseAxisSign),
                 camOrigin = controlCamOrigin,
                 rootWorld = controlCamOrigin + (controlCamRotation * ApplyPoseAxisSign(controlPose.rootCamAbs, AnimalPoseAxisSign))
             };
@@ -413,75 +411,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             rootWorld = anchorWorld
         };
         return true;
-    }
-
-    private AnimalControlWorldData BuildAnimalControlWorldData(AnimalControlPose controlPose, Vector3 camOrigin, Quaternion camRotation)
-    {
-        AnimalControlWorldData world = new AnimalControlWorldData
-        {
-            hasRoot = true,
-            rootWorld = camOrigin + (camRotation * ApplyPoseAxisSign(controlPose.rootCamAbs, AnimalPoseAxisSign)),
-            hasWithers = controlPose.hasWithersCamAbs,
-            hasHeadRoot = controlPose.hasHeadRootCamAbs,
-            hasHeadTip = controlPose.hasHeadTipCamAbs,
-            hasTailBase = controlPose.hasTailBaseCamAbs,
-            hasTailTip = controlPose.hasTailTipCamAbs,
-            hasForwardHint = controlPose.hasForwardHintCamAbs,
-            hasUpHint = controlPose.hasUpHintCamAbs
-        };
-
-        if (controlPose.hasWithersCamAbs)
-        {
-            world.withersWorld = camOrigin + (camRotation * ApplyPoseAxisSign(controlPose.withersCamAbs, AnimalPoseAxisSign));
-        }
-        if (controlPose.hasHeadRootCamAbs)
-        {
-            world.headRootWorld = camOrigin + (camRotation * ApplyPoseAxisSign(controlPose.headRootCamAbs, AnimalPoseAxisSign));
-        }
-        if (controlPose.hasHeadTipCamAbs)
-        {
-            world.headTipWorld = camOrigin + (camRotation * ApplyPoseAxisSign(controlPose.headTipCamAbs, AnimalPoseAxisSign));
-        }
-        if (controlPose.hasTailBaseCamAbs)
-        {
-            world.tailBaseWorld = camOrigin + (camRotation * ApplyPoseAxisSign(controlPose.tailBaseCamAbs, AnimalPoseAxisSign));
-        }
-        if (controlPose.hasTailTipCamAbs)
-        {
-            world.tailTipWorld = camOrigin + (camRotation * ApplyPoseAxisSign(controlPose.tailTipCamAbs, AnimalPoseAxisSign));
-        }
-        if (controlPose.hasForwardHintCamAbs)
-        {
-            world.forwardHintWorld = camOrigin + (camRotation * ApplyPoseAxisSign(controlPose.forwardHintCamAbs, AnimalPoseAxisSign));
-        }
-        if (controlPose.hasUpHintCamAbs)
-        {
-            world.upHintWorld = camOrigin + (camRotation * ApplyPoseAxisSign(controlPose.upHintCamAbs, AnimalPoseAxisSign));
-        }
-
-        world.frontLeftLegWorld = TransformAnimalControlChain(controlPose.frontLeftLegChainCamAbs, camOrigin, camRotation);
-        world.frontRightLegWorld = TransformAnimalControlChain(controlPose.frontRightLegChainCamAbs, camOrigin, camRotation);
-        world.rearLeftLegWorld = TransformAnimalControlChain(controlPose.rearLeftLegChainCamAbs, camOrigin, camRotation);
-        world.rearRightLegWorld = TransformAnimalControlChain(controlPose.rearRightLegChainCamAbs, camOrigin, camRotation);
-        world.headWorld = TransformAnimalControlChain(controlPose.headChainCamAbs, camOrigin, camRotation);
-        world.tailWorld = TransformAnimalControlChain(controlPose.tailChainCamAbs, camOrigin, camRotation);
-        return world;
-    }
-
-    private Vector3[] TransformAnimalControlChain(Vector3[] chainCamAbs, Vector3 camOrigin, Quaternion camRotation)
-    {
-        if (chainCamAbs == null || chainCamAbs.Length == 0)
-        {
-            return null;
-        }
-
-        Vector3[] chainWorld = new Vector3[chainCamAbs.Length];
-        for (int i = 0; i < chainCamAbs.Length; i++)
-        {
-            chainWorld[i] = camOrigin + (camRotation * ApplyPoseAxisSign(chainCamAbs[i], AnimalPoseAxisSign));
-        }
-
-        return chainWorld;
     }
 
     private int CountAnimalControlSkipSegments(AnimalControlWorldData control)
@@ -638,20 +567,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private AnimalPoseSettings BuildAnimalPoseSettings()
     {
-        return new AnimalPoseSettings
-        {
-            boneApplyAlpha = boneApplyAlpha,
-            enableAnimalLimbApply = EnableAnimalLimbApply,
-            stabilizeAnimalRootYaw = StabilizeAnimalRootYaw,
-            animalRootRotateAlpha = AnimalRootRotateAlpha,
-            animalRootPitchRollBlend = AnimalRootPitchRollBlend,
-            animalModelForwardLocal = AnimalModelForwardLocal,
-            animalModelUpLocal = AnimalModelUpLocal,
-            enableSkeletonScaleCorrection = EnableSkeletonScaleCorrection,
-            skeletonScaleMin = SkeletonScaleMin,
-            skeletonScaleMax = SkeletonScaleMax,
-            skeletonScaleRelativeMin = SkeletonScaleRelativeMin,
-            skeletonScaleRelativeMax = SkeletonScaleRelativeMax
-        };
+        return AnimalPoseSettingsFactory.Create(
+            boneApplyAlpha,
+            EnableAnimalLimbApply,
+            StabilizeAnimalRootYaw,
+            AnimalRootRotateAlpha,
+            AnimalRootPitchRollBlend,
+            AnimalModelForwardLocal,
+            AnimalModelUpLocal,
+            EnableSkeletonScaleCorrection,
+            SkeletonScaleMin,
+            SkeletonScaleMax,
+            SkeletonScaleRelativeMin,
+            SkeletonScaleRelativeMax);
     }
 }

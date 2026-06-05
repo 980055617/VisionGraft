@@ -1,7 +1,4 @@
 using UnityEngine;
-#if ENABLE_INPUT_SYSTEM
-using UnityEngine.InputSystem;
-#endif
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
@@ -77,24 +74,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private bool TryGetClickPosition(out Vector2 mousePos)
     {
-        mousePos = Vector2.zero;
-#if ENABLE_INPUT_SYSTEM
-        if (Mouse.current == null || !Mouse.current.leftButton.wasPressedThisFrame)
-        {
-            return false;
-        }
-
-        mousePos = Mouse.current.position.ReadValue();
-        return true;
-#else
-        if (!Input.GetMouseButtonDown(0))
-        {
-            return false;
-        }
-
-        mousePos = Input.mousePosition;
-        return true;
-#endif
+        return PointerClickInput.TryReadPrimaryClickPosition(out mousePos);
     }
 
     private bool TryPickScreenByRay(Ray ray, out Transform screen, out Vector2 uv, out string hitName, out float hitDistance, out Vector3 hitPoint, out bool hasHitDistance)

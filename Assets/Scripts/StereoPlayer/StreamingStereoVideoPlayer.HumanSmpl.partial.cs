@@ -444,7 +444,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 Transform bone = targets[i].Key;
                 if (bone != null)
                 {
-                    bone.localRotation = Quaternion.Slerp(bone.localRotation, targets[i].Value, alpha);
+                    PoseTransformWriter.ApplyLocalRotation(
+                        bone,
+                        Quaternion.Slerp(bone.localRotation, targets[i].Value, alpha));
                 }
             }
 
@@ -472,7 +474,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 return false;
             }
 
-            float alpha = Mathf.Clamp01(HumanSmplRotationAlpha * boneApplyAlpha);
+            float alpha = ResolveHumanSmplOrientationOverlayAlpha(HumanSmplRotationAlpha, boneApplyAlpha);
             bool appliedAny = false;
 
             appliedAny |= ApplyHumanSmplBoneTwistOverlay(cache, state, pose, HumanBodyBones.LeftUpperArm, HumanBodyBones.LeftLowerArm, 16, alpha * 0.65f);
@@ -555,7 +557,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        bone.localRotation = Quaternion.Slerp(bone.localRotation, targetLocal, alpha);
+        PoseTransformWriter.ApplyLocalRotation(
+            bone,
+            Quaternion.Slerp(bone.localRotation, targetLocal, alpha));
         return true;
     }
 
@@ -600,7 +604,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        bone.localRotation = bone.localRotation * Quaternion.Slerp(Quaternion.identity, twist, alpha);
+        PoseTransformWriter.ApplyLocalRotation(
+            bone,
+            bone.localRotation * Quaternion.Slerp(Quaternion.identity, twist, alpha));
         return true;
     }
 
@@ -657,7 +663,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     public static bool ShouldApplyHumanSmplLowerArmBendRotation()
     {
-        return true;
+        return false;
     }
 
     public static bool ShouldUseHumanSmplRootOrientation()
@@ -672,7 +678,36 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     public static bool ShouldApplyHumanSmplBeforeLimbIk()
     {
+        return false;
+    }
+
+    public static bool ShouldApplyHumanSmplAfterLimbIk()
+    {
         return true;
+    }
+
+    public static bool ShouldUseKeypointIkForHumanBone(bool hasHumanSmplPose, bool hasValidHumanSmplRotationForBone)
+    {
+        return true;
+    }
+
+    public static float ResolveHumanSmplOrientationOverlayAlpha(float smplRotationAlpha, float boneApplyAlpha)
+    {
+        return Mathf.Clamp01(smplRotationAlpha * boneApplyAlpha);
+    }
+
+    public static bool ShouldPreserveRootScreenHeightAfterHumanSkeletonPlacement()
+    {
+        return true;
+    }
+
+    public static Vector3 ResolveRootPositionPreservingScreenHeight(
+        Vector3 currentPosition,
+        Vector3 referencePosition,
+        Vector3 screenUp)
+    {
+        Vector3 up = screenUp.sqrMagnitude > 0.000001f ? screenUp.normalized : Vector3.up;
+        return currentPosition + up * Vector3.Dot(referencePosition - currentPosition, up);
     }
 
     private static bool TryGetSmplJointForHumanBone(HumanBodyBones boneId, out int smplJoint)

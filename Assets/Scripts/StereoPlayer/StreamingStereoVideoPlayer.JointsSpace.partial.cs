@@ -5,47 +5,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // Depends on: joint smoothing cache and skeleton index metadata
     // Provides: joint validity helpers, midpoint/head fallback, smoothing and depth disambiguation
 
-    private bool TryGetJointPoint(Vector3[] jointsWorld, byte[] vis, int idx, out Vector3 point)
-    {
-        point = Vector3.zero;
-        if (jointsWorld == null || vis == null)
-        {
-            return false;
-        }
-
-        if (idx < 0 || idx >= jointsWorld.Length || idx >= vis.Length)
-        {
-            return false;
-        }
-
-        byte visFlag = vis[idx];
-        Vector3 p = jointsWorld[idx];
-        if (visFlag == 0)
-        {
-            return false;
-        }
-
-        if (float.IsNaN(p.x) || float.IsInfinity(p.x) ||
-            float.IsNaN(p.y) || float.IsInfinity(p.y) ||
-            float.IsNaN(p.z) || float.IsInfinity(p.z))
-        {
-            return false;
-        }
-
-        if (p.sqrMagnitude <= InvalidJointSqrMagnitudeEpsilon)
-        {
-            return false;
-        }
-
-        point = p;
-        return true;
-    }
-
-
     private bool TryGetMidPoint(Vector3[] jointsWorld, byte[] vis, int idxA, int idxB, out Vector3 mid)
     {
         mid = Vector3.zero;
-        if (!TryGetJointPoint(jointsWorld, vis, idxA, out Vector3 a) || !TryGetJointPoint(jointsWorld, vis, idxB, out Vector3 b))
+        if (!TrackedJointPoints.TryGet(jointsWorld, vis, idxA, out Vector3 a) || !TrackedJointPoints.TryGet(jointsWorld, vis, idxB, out Vector3 b))
         {
             return false;
         }
@@ -59,7 +22,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         headTarget = Vector3.zero;
 
-        bool hasNose = TryGetJointPoint(jointsWorld, vis, idx.nose, out Vector3 nose);
+        bool hasNose = TrackedJointPoints.TryGet(jointsWorld, vis, idx.nose, out Vector3 nose);
         bool hasEyes = TryGetMidPoint(jointsWorld, vis, idx.leftEye, idx.rightEye, out Vector3 eyesMid);
         if (hasNose && hasEyes)
         {

@@ -22,9 +22,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        int displayedFrame = lastFrameReadyFrame;
-        int frame = GetCurrentFrameIndex();
-        int metaFrameUsed = UseFrameReadySync ? displayedFrame : frame;
+        RuntimePlaybackTimeline.FrameSnapshot frameSnapshot = GetPlaybackFrameSnapshot();
+        int frame = frameSnapshot.currentFrame;
+        int metaFrameUsed = frameSnapshot.displayMetadataFrame;
 
         if (!TryReadFrameObjects(metaFrameUsed, metaFrameObjects) || metaFrameObjects.Count == 0)
         {
@@ -52,12 +52,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private bool HasAnyDisplayPrefabConfigured()
     {
-        if (replacePrefab != null)
-        {
-            return true;
-        }
-
-        return track0Prefab != null || track1Prefab != null || track2Prefab != null;
+        return TrackPrefabResolver.HasAnyConfigured(replacePrefab, track0Prefab, track1Prefab, track2Prefab);
     }
 
 
@@ -104,7 +99,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 continue;
             }
 
-            kv.Value.SetActive(false);
+            GameObjectLifecycleWriter.ApplyActive(kv.Value, false);
         }
     }
 
@@ -150,20 +145,51 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         GameObject instance = GetOrCreateTrackInstance(target.trackId);
         if (instance != null)
         {
-            instance.SetActive(true);
+            GameObjectLifecycleWriter.ApplyActive(instance, true);
             Quaternion rotationPinhole = GetPinholeBasisRotation(screen);
             rotationPinhole = ApplyManualTrackYawOffset(target.trackId, frame, rotationPinhole, screen != null ? screen.up : Vector3.up);
             float targetHeight = ComputeTargetHeightMeters(bboxHAdjusted, target.anchorZ);
             ApplyReplaceableModelTransform(instance, anchorWorld, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxWAdjusted, bboxHAdjusted, screen);
             UpdateInteractiveMotionSchedule(instance, target, screen, frame);
+            bool preserveRootScreenHeightAfterSkeleton =
+                IsCategoryPerson(target.categoryId) &&
+                ShouldPreserveRootScreenHeightAfterHumanSkeletonPlacement();
+            Vector3 preSkeletonRootPosition = instance.transform.position;
             TryApplySkeleton(instance, target, screen, frame);
-            if (ShouldFitDisplayedModelToBBoxDuringInteractiveMotion(
-                IsInteractiveMotionReplacing(target.trackId),
-                IsHumanoidInteractiveMotionInPlace(target.trackId)) &&
-                !ShouldUseHumanSmplRootPlacement(target, frame))
+            if (preserveRootScreenHeightAfterSkeleton)
+            {
+                TrackPlacementWriter.Apply(
+                    instance.transform,
+                    TrackPlacementCommand.PositionOnly(
+                        ResolveRootPositionPreservingScreenHeight(
+                            instance.transform.position,
+                            preSkeletonRootPosition,
+                            screen != null ? screen.up : Vector3.up),
+                        instance.transform.rotation,
+                        instance.transform.localScale));
+            }
+            bool isHumanoidInteractiveMotionInPlace = IsHumanoidInteractiveMotionInPlace(target.trackId);
+            bool shouldUseHumanSmplRootPlacement = ShouldUseHumanSmplRootPlacement(target, frame);
+            bool isHumanoidInteractiveRootPinned = IsHumanoidInteractiveRootPinned(target.trackId);
+            if (isHumanoidInteractiveMotionInPlace && !isHumanoidInteractiveRootPinned)
+            {
+                if (ShouldInitialFitHumanoidInPlaceRootBeforePinning(
+                    isHumanoidInteractiveMotionInPlace,
+                    isHumanoidInteractiveRootPinned,
+                    shouldUseHumanSmplRootPlacement))
+                {
+                    FitDisplayedModelToBBox(instance, target, screen, bboxHAdjusted);
+                }
+                PinHumanoidInteractiveRootAfterBBox(target.trackId, instance, screen);
+            }
+            else if (ShouldFitDisplayedModelToBBoxDuringInteractiveMotion(
+                    IsInteractiveMotionReplacing(target.trackId),
+                    isHumanoidInteractiveMotionInPlace) &&
+                !shouldUseHumanSmplRootPlacement)
             {
                 FitDisplayedModelToBBox(instance, target, screen, bboxHAdjusted);
             }
+            ObserveInteractiveMotionDisplayedRoot(target.trackId, instance);
             return;
         }
     }
@@ -207,76 +233,25 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private GameObject GetOrCreateTrackInstance(uint trackId)
     {
         GameObject prefab = ResolveTrackPrefab(trackId);
-        if (prefab == null)
-        {
-            return null;
-        }
-
-        if (trackInstances.TryGetValue(trackId, out GameObject existing) && existing != null)
-        {
-            if (trackPrefabSources.TryGetValue(trackId, out GameObject source) && source != prefab)
-            {
-                Destroy(existing);
-                trackInstances.Remove(trackId);
-                trackPrefabSources.Remove(trackId);
-                lockedModelLocalScaleByTrack.Remove(trackId);
-            }
-            else
-            {
-                if (selectedManualRotationTrackId < 0)
-                {
-                    selectedManualRotationTrackId = (int)trackId;
-                }
-                return existing;
-            }
-        }
-
-        GameObject instance = Instantiate(prefab, Vector3.zero, Quaternion.identity);
-        instance.name = $"Track_{trackId}";
-        if (instance.GetComponent<ReplaceableModel>() == null)
-        {
-            instance.AddComponent<ReplaceableModel>();
-        }
-
-        trackInstances[trackId] = instance;
-        trackPrefabSources[trackId] = prefab;
-        if (selectedManualRotationTrackId < 0)
-        {
-            selectedManualRotationTrackId = (int)trackId;
-        }
-        return instance;
+        return TrackInstanceLifecycle.GetOrCreate(
+            trackId,
+            prefab,
+            trackInstances,
+            trackPrefabSources,
+            lockedModelLocalScaleByTrack,
+            ref selectedManualRotationTrackId);
     }
 
 
     private GameObject ResolveTrackPrefab(uint trackId)
     {
-        if (trackId == 0u && track0Prefab != null)
-        {
-            return track0Prefab;
-        }
-
-        if (trackId == 1u && track1Prefab != null)
-        {
-            return track1Prefab;
-        }
-
-        if (trackId == 2u && track2Prefab != null)
-        {
-            return track2Prefab;
-        }
-
-        if (replacePrefab != null)
-        {
-            return replacePrefab;
-        }
-
-        return null;
+        return TrackPrefabResolver.Resolve(trackId, replacePrefab, track0Prefab, track1Prefab, track2Prefab);
     }
 
 
     private float ComputeTargetHeightMeters(float bboxH, float zMeters)
     {
-        if (manifest == null || manifest.eye_h <= 0 || bboxH == 0)
+        if (manifest == null)
         {
             return 0f;
         }
@@ -286,7 +261,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return 0f;
         }
 
-        return (2f * bboxH / (float)manifest.eye_h) * (zMeters / fy);
+        return TrackModelPlacement.ResolveTargetHeightMeters(bboxH, manifest.eye_h, zMeters, fy);
     }
 
 
@@ -300,57 +275,57 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         ReplaceableModel model = instance.GetComponent<ReplaceableModel>();
         float modelHeight = model != null ? model.GetModelHeightMeters() : 0f;
         float userScale = model != null ? model.userScale : 1f;
-        float targetUniform = modelHeight > 0f && targetHeightMeters > 0f
-            ? (targetHeightMeters / modelHeight) * userScale
-            : userScale;
         Vector3 baseScale = model != null ? model.baseLocalScale : Vector3.one;
+        Vector2 baseBounds = model != null ? model.baseBoundsSize : Vector2.zero;
+        bool isOther = IsCategoryOther(obj.categoryId);
+        bool isAnimal = IsCategoryAnimal(obj.categoryId);
+        bool lockScale = IsCategoryPerson(obj.categoryId) || isAnimal;
+        bool hasFocalLengths = TryGetFocalLengths(out float fxScale, out float fyScale);
+        Vector3 desiredScale = TrackModelPlacement.ResolveDesiredLocalScale(new TrackModelPlacement.ScaleRequest(
+            baseScale,
+            baseBounds,
+            obj.otherProxySize,
+            userScale,
+            modelHeight,
+            targetHeightMeters,
+            bboxWAdjusted,
+            bboxHAdjusted,
+            obj.anchorZ,
+            fxScale,
+            fyScale,
+            manifest != null ? manifest.eye_w : 0,
+            manifest != null ? manifest.eye_h : 0,
+            isOther,
+            obj.hasOtherProxySize,
+            isAnimal,
+            hasFocalLengths));
 
-        instance.transform.SetPositionAndRotation(world, rotation);
+        TrackPlacementWriter.ApplyAnchoredPose(
+            instance.transform,
+            world,
+            rotation,
+            instance.transform.localScale,
+            model != null ? model.anchor : null);
 
-        if (model != null && model.anchor != null)
+        if (isOther && obj.hasOtherProxySize && obj.otherProxySize.sqrMagnitude > 0.000001f)
         {
-            Vector3 anchorWorld = model.anchor.position;
-            Vector3 rootWorld = instance.transform.position;
-            Vector3 delta = anchorWorld - rootWorld;
-            instance.transform.position = world - delta;
-        }
-
-        if (IsCategoryOther(obj.categoryId) && obj.hasOtherProxySize && obj.otherProxySize.sqrMagnitude > 0.000001f)
-        {
-            Vector3 proxySize = AbsVector(obj.otherProxySize);
-            Vector2 baseBounds = model != null ? model.baseBoundsSize : Vector2.zero;
-            float scaleW = baseBounds.x > 0.000001f ? proxySize.x / baseBounds.x : targetUniform;
-            float scaleH = baseBounds.y > 0.000001f ? proxySize.y / baseBounds.y : targetUniform;
-            float proxyUniform = Mathf.Max(scaleW, scaleH) * userScale;
-            if (proxyUniform <= 0.000001f)
-            {
-                proxyUniform = targetUniform;
-            }
-
-            instance.transform.localScale = baseScale * proxyUniform;
+            TrackPlacementWriter.Apply(
+                instance.transform,
+                TrackPlacementCommand.LocalScaleOnly(
+                    instance.transform.position,
+                    instance.transform.rotation,
+                    desiredScale));
             return;
         }
 
-        bool lockScale = IsCategoryPerson(obj.categoryId) || IsCategoryAnimal(obj.categoryId);
-
-        if (TryGetFocalLengths(out float fxScale, out float fyScale))
+        if (hasFocalLengths)
         {
-            float bboxWorldW = (2f * bboxWAdjusted / manifest.eye_w) * (obj.anchorZ / fxScale);
-            float bboxWorldH = (2f * bboxHAdjusted / manifest.eye_h) * (obj.anchorZ / fyScale);
-            Vector2 baseBounds = model != null ? model.baseBoundsSize : Vector2.zero;
-            float scaleW = baseBounds.x > 0f ? bboxWorldW / baseBounds.x : targetUniform;
-            float scaleH = baseBounds.y > 0f ? bboxWorldH / baseBounds.y : targetUniform;
-            float uniformScale = IsCategoryAnimal(obj.categoryId) ? Mathf.Min(scaleW, scaleH) : scaleH;
-            Vector3 desiredScale = baseScale * uniformScale;
-            instance.transform.localScale = lockScale
-                ? GetOrLockModelLocalScale(obj.trackId, desiredScale)
-                : desiredScale;
+            TrackPlacementWriter.ApplyLocalScaleWithGroundAlignment(
+                instance.transform,
+                lockScale ? GetOrLockModelLocalScale(obj.trackId, desiredScale) : desiredScale,
+                model != null && model.anchor == null && model.alignToGround,
+                model != null ? model.baseBottomOffsetLocal : 0f);
             Vector3 lossy = instance.transform.lossyScale;
-            if (model != null && model.anchor == null && model.alignToGround)
-            {
-                float offsetWorld = model.baseBottomOffsetLocal * lossy.y;
-                instance.transform.position += instance.transform.up * offsetWorld;
-            }
 
             if (AlignModelToBBoxBottom && model != null)
             {
@@ -359,31 +334,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 Vector3 bottomWorld = AnchorUvZToWorldPinhole(screen, uEye, vBottom, obj.anchorZ);
                 bottomWorld += up * ModelBottomExtraOffsetMeters;
                 float modelBottomOffset = model.baseBottomOffsetLocal * lossy.y;
-                Vector3 modelBottomWorld = instance.transform.position - up * modelBottomOffset;
-                Vector3 delta = bottomWorld - modelBottomWorld;
-                if (BottomAlignVerticalOnly)
-                {
-                    float d = Vector3.Dot(delta, up);
-                    instance.transform.position += up * d;
-                }
-                else
-                {
-                    instance.transform.position += delta;
-                }
+                TrackPlacementWriter.ApplyBottomAlignment(
+                    instance.transform,
+                    bottomWorld,
+                    up,
+                    modelBottomOffset,
+                    BottomAlignVerticalOnly);
             }
 
             return;
         }
 
-        Vector3 fallbackScale = baseScale * targetUniform;
-        instance.transform.localScale = lockScale
-            ? GetOrLockModelLocalScale(obj.trackId, fallbackScale)
-            : fallbackScale;
-        if (model != null && model.anchor == null && model.alignToGround)
-        {
-            float offsetWorld = model.baseBottomOffsetLocal * instance.transform.lossyScale.y;
-            instance.transform.position += instance.transform.up * offsetWorld;
-        }
+        TrackPlacementWriter.ApplyLocalScaleWithGroundAlignment(
+            instance.transform,
+            lockScale ? GetOrLockModelLocalScale(obj.trackId, desiredScale) : desiredScale,
+            model != null && model.anchor == null && model.alignToGround,
+            model != null ? model.baseBottomOffsetLocal : 0f);
     }
 
 
@@ -569,7 +535,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         float deltaV = targetBottomV - projectedBottomV;
         float deltaCamY = -(deltaV * 2f / manifest.eye_h) * (depthMeters / fy);
-        root.position += camRotation * new Vector3(0f, deltaCamY, 0f);
+        TrackPlacementWriter.ApplyCameraSpaceOffset(root, camRotation, new Vector3(0f, deltaCamY, 0f));
     }
 
 

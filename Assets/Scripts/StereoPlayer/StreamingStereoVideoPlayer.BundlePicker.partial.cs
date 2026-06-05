@@ -61,7 +61,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             float timeout = 0.75f;
             while (timeout > 0f)
             {
-                timeout -= Time.unscaledDeltaTime;
+                timeout = RuntimeClock.ResolveTimeoutRemaining(timeout, GetRuntimeUnscaledDeltaTime());
                 yield return null;
             }
         }
@@ -85,36 +85,30 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         bundlePickerRoot = CreateBundlePickerRootObject();
         SetLayerRecursively(bundlePickerRoot, 5); // UI layer
-        Canvas canvas = bundlePickerRoot.GetComponent<Canvas>();
-        if (canvas == null)
-        {
-            canvas = bundlePickerRoot.AddComponent<Canvas>();
-        }
-        canvas.renderMode = RenderMode.WorldSpace;
-        canvas.worldCamera = GetViewCamera();
-        if (bundlePickerRoot.GetComponent<GraphicRaycaster>() == null)
-        {
-            bundlePickerRoot.AddComponent<GraphicRaycaster>();
-        }
+        Canvas canvas = RuntimeCanvasComponentFactory.EnsureCanvas(bundlePickerRoot);
+        RuntimeCanvasWriter.ApplyWorldSpaceCamera(canvas, GetViewCamera());
+        RuntimeCanvasComponentFactory.EnsureGraphicRaycaster(bundlePickerRoot, false);
         EnsureCanvasRaycasters(bundlePickerRoot);
 
         RectTransform canvasRect = bundlePickerRoot.GetComponent<RectTransform>();
-        canvasRect.sizeDelta = new Vector2(canvasW, canvasH);
-        canvasRect.localScale = new Vector3(
-            Mathf.Max(0.01f, BundlePickerSizeMeters.x) / canvasW,
-            Mathf.Max(0.01f, BundlePickerSizeMeters.y) / canvasH,
-            1f);
+        RuntimeUiTransformWriter.ApplySizeDelta(canvasRect, new Vector2(canvasW, canvasH));
+        RuntimeUiTransformWriter.ApplyLocalScale(
+            canvasRect,
+            new Vector3(
+                Mathf.Max(0.01f, BundlePickerSizeMeters.x) / canvasW,
+                Mathf.Max(0.01f, BundlePickerSizeMeters.y) / canvasH,
+                1f));
 
         Transform contentRoot = ResolveBundlePickerContentRoot(bundlePickerRoot);
-        GameObject panelObj = new GameObject("Panel");
-        panelObj.transform.SetParent(contentRoot, false);
-        RectTransform panelRect = panelObj.AddComponent<RectTransform>();
-        panelRect.anchorMin = Vector2.zero;
-        panelRect.anchorMax = Vector2.one;
-        panelRect.offsetMin = Vector2.zero;
-        panelRect.offsetMax = Vector2.zero;
-        Image panelImage = panelObj.AddComponent<Image>();
-        panelImage.color = new Color(0.08f, 0.09f, 0.11f, 0.92f);
+        RectTransform panelRect = RuntimeUiElementFactory.CreateRectChild("Panel", contentRoot, out GameObject panelObj);
+        RuntimeUiTransformWriter.ApplyStretchRect(
+            panelRect,
+            Vector2.zero,
+            Vector2.one,
+            Vector2.zero,
+            Vector2.zero);
+        Image panelImage = RuntimeUiElementFactory.AddImage(panelObj);
+        RuntimeGraphicWriter.ApplyColor(panelImage, new Color(0.08f, 0.09f, 0.11f, 0.92f));
 
         CreateBundlePickerText(panelObj.transform, "Title", "Select bundle.svb", new Vector2(0f, 390f), new Vector2(1050f, 70f), 54, TextAnchor.MiddleCenter, Color.white);
         bundlePickerPathText = CreateBundlePickerText(panelObj.transform, "Path", string.Empty, new Vector2(0f, 325f), new Vector2(1060f, 62f), 28, TextAnchor.MiddleLeft, new Color(0.9f, 0.95f, 1f, 1f));
@@ -156,7 +150,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         bundlePickerPlacementLocked = false;
         if (bundlePickerRoot != null)
         {
-            Destroy(bundlePickerRoot);
+            RuntimeUnityEventBinding.ClearButtonListenersInChildren(bundlePickerRoot);
+            GameObjectLifecycleWriter.DestroyObject(bundlePickerRoot);
             bundlePickerRoot = null;
         }
     }
@@ -169,10 +164,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         Canvas canvas = bundlePickerRoot.GetComponent<Canvas>();
-        if (canvas != null && canvas.worldCamera == null)
-        {
-            canvas.worldCamera = GetViewCamera();
-        }
+        RuntimeCanvasWriter.ApplyWorldCameraIfMissing(canvas, GetViewCamera());
 
         Transform head = GetViewOrHeadTransform();
         if (head == null)
@@ -188,7 +180,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             head.forward * Mathf.Max(0.2f, distance) +
             head.right * BundlePickerOffsetMeters.x +
             head.up * BundlePickerOffsetMeters.y;
-        bundlePickerRoot.transform.position = pos;
         Vector3 toHead = (head.position - pos).normalized;
         if (Mathf.Abs(Vector3.Dot(toHead, Vector3.up)) > 0.98f)
         {
@@ -204,20 +195,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             rot *= Quaternion.Euler(0f, 180f, 0f);
         }
-        bundlePickerRoot.transform.rotation = rot;
+        RuntimeUiTransformWriter.ApplyWorldPose(bundlePickerRoot.transform, pos, rot);
         bundlePickerPlacementLocked = true;
     }
 
     private GameObject CreateBundlePickerRootObject()
     {
-        if (bundlePickerCanvasWithInteractionRayPrefab != null)
-        {
-            GameObject instance = Instantiate(bundlePickerCanvasWithInteractionRayPrefab);
-            instance.name = "BundlePickerUI";
-            return instance;
-        }
-
-        return new GameObject("BundlePickerUI");
+        return RuntimeUiRootFactory.Create("BundlePickerUI", bundlePickerCanvasWithInteractionRayPrefab);
     }
 
     private static Transform ResolveBundlePickerContentRoot(GameObject root)
@@ -294,13 +278,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (bundlePickerPathText != null)
         {
-            bundlePickerPathText.text = $"Path: {bundlePickerCurrentDirectory}";
+            RuntimeTextWriter.ApplyContent(bundlePickerPathText, $"Path: {bundlePickerCurrentDirectory}");
         }
         if (bundlePickerStatusText != null)
         {
-            bundlePickerStatusText.text = string.IsNullOrEmpty(status)
-                ? $"Found {bundlePickerEntries.Count} entries"
-                : status;
+            RuntimeTextWriter.ApplyContent(
+                bundlePickerStatusText,
+                string.IsNullOrEmpty(status) ? $"Found {bundlePickerEntries.Count} entries" : status);
         }
 
         UpdateBundlePickerEntryButtons();
@@ -331,35 +315,35 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     {
                         name = entry.path;
                     }
-                    label.text = entry.isDirectory ? $"[DIR] {name}" : name;
-                    label.alignment = TextAnchor.MiddleLeft;
+                    RuntimeTextWriter.ApplyContent(label, entry.isDirectory ? $"[DIR] {name}" : name);
+                    RuntimeTextWriter.ApplyStyle(label, label.font, label.fontSize, TextAnchor.MiddleLeft, label.color);
                 }
 
-                button.gameObject.SetActive(true);
-                button.interactable = true;
+                GameObjectLifecycleWriter.ApplyActive(button.gameObject, true);
+                RuntimeSelectableWriter.ApplyInteractable(button, true);
             }
             else
             {
                 if (label != null)
                 {
-                    label.text = string.Empty;
+                    RuntimeTextWriter.ApplyContent(label, string.Empty);
                 }
-                button.gameObject.SetActive(false);
+                GameObjectLifecycleWriter.ApplyActive(button.gameObject, false);
             }
         }
 
         int pageCount = GetBundlePickerPageCount();
         if (bundlePickerPageText != null)
         {
-            bundlePickerPageText.text = $"Page {bundlePickerPageIndex + 1}/{Mathf.Max(1, pageCount)}";
+            RuntimeTextWriter.ApplyContent(bundlePickerPageText, $"Page {bundlePickerPageIndex + 1}/{Mathf.Max(1, pageCount)}");
         }
         if (bundlePickerPrevButton != null)
         {
-            bundlePickerPrevButton.interactable = bundlePickerPageIndex > 0;
+            RuntimeSelectableWriter.ApplyInteractable(bundlePickerPrevButton, bundlePickerPageIndex > 0);
         }
         if (bundlePickerNextButton != null)
         {
-            bundlePickerNextButton.interactable = bundlePickerPageIndex < pageCount - 1;
+            RuntimeSelectableWriter.ApplyInteractable(bundlePickerNextButton, bundlePickerPageIndex < pageCount - 1);
         }
     }
 
@@ -462,68 +446,52 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private Text CreateBundlePickerText(Transform parent, string name, string initialText, Vector2 anchoredPos, Vector2 size, int fontSize, TextAnchor alignment, Color color)
     {
-        GameObject obj = new GameObject(name);
-        obj.transform.SetParent(parent, false);
+        RectTransform rect = RuntimeUiElementFactory.CreateRectChild(name, parent, out GameObject obj);
         SetLayerRecursively(obj, 5); // UI layer
-        RectTransform rect = obj.AddComponent<RectTransform>();
-        rect.anchorMin = new Vector2(0.5f, 0.5f);
-        rect.anchorMax = new Vector2(0.5f, 0.5f);
-        rect.anchoredPosition = anchoredPos;
-        rect.sizeDelta = size;
+        RuntimeUiTransformWriter.ApplyCenteredRect(rect, anchoredPos, size);
 
-        Text text = obj.AddComponent<Text>();
-        text.text = initialText;
-        text.font = GetRuntimeUiFont();
-        text.fontSize = fontSize;
-        text.alignment = alignment;
-        text.color = color;
-        text.raycastTarget = false;
+        Text text = RuntimeUiElementFactory.AddText(obj);
+        RuntimeTextWriter.ApplyStyle(text, GetRuntimeUiFont(), fontSize, alignment, color);
+        RuntimeTextWriter.ApplyContent(text, initialText);
+        RuntimeTextWriter.ApplyInteraction(text, false);
         return text;
     }
 
     private Button CreateBundlePickerButton(Transform parent, string name, string label, Vector2 anchoredPos, Vector2 size, UnityEngine.Events.UnityAction onClick, TextAnchor alignment = TextAnchor.MiddleCenter)
     {
-        GameObject obj = new GameObject(name);
-        obj.transform.SetParent(parent, false);
+        RectTransform rect = RuntimeUiElementFactory.CreateRectChild(name, parent, out GameObject obj);
         SetLayerRecursively(obj, 5); // UI layer
-        RectTransform rect = obj.AddComponent<RectTransform>();
-        rect.anchorMin = new Vector2(0.5f, 0.5f);
-        rect.anchorMax = new Vector2(0.5f, 0.5f);
-        rect.anchoredPosition = anchoredPos;
-        rect.sizeDelta = size;
+        RuntimeUiTransformWriter.ApplyCenteredRect(rect, anchoredPos, size);
 
-        Image image = obj.AddComponent<Image>();
-        image.color = new Color(0.22f, 0.26f, 0.34f, 0.95f);
+        Image image = RuntimeUiElementFactory.AddImage(obj);
+        RuntimeGraphicWriter.ApplyColor(image, new Color(0.22f, 0.26f, 0.34f, 0.95f));
 
-        Button button = obj.AddComponent<Button>();
+        Button button = RuntimeUiElementFactory.AddButton(obj);
         ColorBlock colors = button.colors;
         colors.normalColor = image.color;
         colors.highlightedColor = new Color(0.30f, 0.35f, 0.44f, 0.98f);
         colors.pressedColor = new Color(0.16f, 0.20f, 0.28f, 1f);
         colors.selectedColor = colors.highlightedColor;
         colors.disabledColor = new Color(0.18f, 0.18f, 0.18f, 0.6f);
-        button.colors = colors;
-        button.targetGraphic = image;
+        RuntimeGraphicWriter.ApplyColors(button, colors);
+        RuntimeGraphicWriter.ApplyTargetGraphic(button, image);
         if (onClick != null)
         {
-            button.onClick.AddListener(onClick);
+            RuntimeUnityEventBinding.Bind(button, onClick);
         }
 
-        GameObject textObj = new GameObject("Label");
-        textObj.transform.SetParent(obj.transform, false);
-        RectTransform textRect = textObj.AddComponent<RectTransform>();
-        textRect.anchorMin = Vector2.zero;
-        textRect.anchorMax = Vector2.one;
-        textRect.offsetMin = new Vector2(14f, 0f);
-        textRect.offsetMax = new Vector2(-14f, 0f);
+        RectTransform textRect = RuntimeUiElementFactory.CreateRectChild("Label", obj.transform, out GameObject textObj);
+        RuntimeUiTransformWriter.ApplyStretchRect(
+            textRect,
+            Vector2.zero,
+            Vector2.one,
+            new Vector2(14f, 0f),
+            new Vector2(-14f, 0f));
 
-        Text text = textObj.AddComponent<Text>();
-        text.text = label;
-        text.font = GetRuntimeUiFont();
-        text.fontSize = 30;
-        text.alignment = alignment;
-        text.color = Color.white;
-        text.raycastTarget = false;
+        Text text = RuntimeUiElementFactory.AddText(textObj);
+        RuntimeTextWriter.ApplyStyle(text, GetRuntimeUiFont(), 30, alignment, Color.white);
+        RuntimeTextWriter.ApplyContent(text, label);
+        RuntimeTextWriter.ApplyInteraction(text, false);
         SetLayerRecursively(obj, 5); // include label child
 
         return button;

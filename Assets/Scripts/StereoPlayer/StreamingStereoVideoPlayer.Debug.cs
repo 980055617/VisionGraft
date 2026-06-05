@@ -14,34 +14,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private Camera GetViewCamera()
     {
-        Camera[] cams = GetActiveCameras();
-        Camera firstEnabled = null;
-        Camera stereoEnabled = null;
-
-        foreach (Camera cam in cams)
+        if (ViewCameraSelection.IsUsable(cachedViewCamera))
         {
-            if (cam == null || !cam.enabled || !cam.gameObject.activeInHierarchy)
-            {
-                continue;
-            }
-
-            if (firstEnabled == null)
-            {
-                firstEnabled = cam;
-            }
-
-            if (cam.stereoTargetEye != StereoTargetEyeMask.None && stereoEnabled == null)
-            {
-                stereoEnabled = cam;
-            }
-
-            if (cam.CompareTag("MainCamera"))
-            {
-                return cam;
-            }
+            return cachedViewCamera;
         }
 
-        return stereoEnabled ?? firstEnabled;
+        cachedViewCamera = ViewCameraSelection.Select(GetActiveCameras());
+        return cachedViewCamera;
     }
 
 

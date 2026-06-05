@@ -28,30 +28,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         Transform head = GetViewOrHeadTransform();
-        Vector3 toHead = head != null ? (head.position - center).normalized : -basis.forward;
-        if (toHead == Vector3.zero)
-        {
-            toHead = -basis.forward;
-        }
-
-        Vector3 right = basis.right;
-        Vector3 up = basis.up;
         GetScreenSizeMeters(basis, out _, out float screenHeightMeters, out _);
-        float halfScreenH = Mathf.Abs(screenHeightMeters) * 0.5f;
-        float halfBarH = Mathf.Abs(ControlsBarSizeMeters.y) * 0.5f;
-        float downFromCenter = halfScreenH + ControlsBarGapMeters + halfBarH - ControlsBarOffsetMeters.y;
-        runtimeControlsRoot.transform.position =
-            center
-            + right * ControlsBarOffsetMeters.x
-            - up * downFromCenter
-            + toHead * ControlsBarForwardOffsetMeters;
-        runtimeControlsRoot.transform.rotation = basis.rotation;
+        RuntimeControlsPlacement.Pose pose = RuntimeControlsPlacement.ResolveBarPose(
+            center,
+            basis.forward,
+            basis.right,
+            basis.up,
+            basis.rotation,
+            head != null,
+            head != null ? head.position : Vector3.zero,
+            screenHeightMeters,
+            ControlsBarSizeMeters,
+            ControlsBarGapMeters,
+            ControlsBarOffsetMeters,
+            ControlsBarForwardOffsetMeters);
+        RuntimeUiTransformWriter.ApplyWorldPose(runtimeControlsRoot.transform, pose.position, pose.rotation);
         ApplyRuntimeControlsSizing();
 
         Canvas canvas = GetRuntimeControlsCanvas();
         if (canvas != null)
         {
-            canvas.worldCamera = GetViewCamera();
+            RuntimeCanvasWriter.ApplyWorldCamera(canvas, GetViewCamera());
         }
 
         UpdateRuntimeSettingsPlacement();
@@ -82,12 +79,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         Transform head = GetViewOrHeadTransform();
-        Vector3 toHead = head != null ? (head.position - basis.position).normalized : -basis.forward;
-        if (toHead == Vector3.zero)
-        {
-            toHead = -basis.forward;
-        }
-
         float basisWidth = ControlsBarSizeMeters.x;
         if (baseScreen != null)
         {
@@ -95,34 +86,25 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             basisWidth = Mathf.Abs(screenWidthMeters);
         }
 
-        float halfBarW = Mathf.Abs(basisWidth) * 0.5f;
-        float halfPanelW = Mathf.Abs(SettingsPanelSizeMeters.x) * 0.5f;
-        float rightFromBar = halfBarW + SettingsPanelGapMeters + halfPanelW + SettingsPanelOffsetMeters.x;
-        float forwardFromScreen = Mathf.Max(SettingsPanelForwardOffsetMeters, 0.06f);
-        runtimeSettingsRoot.transform.position =
-            basis.position
-            + basis.right * rightFromBar
-            + basis.up * SettingsPanelOffsetMeters.y
-            + toHead * forwardFromScreen;
-        Quaternion panelRotation = basis.rotation;
-        if (head != null)
-        {
-            Vector3 up = basis.up.sqrMagnitude > 0.000001f ? basis.up.normalized : Vector3.up;
-            Vector3 look = head.position - runtimeSettingsRoot.transform.position;
-            look = Vector3.ProjectOnPlane(look, up);
-            if (look.sqrMagnitude > 0.000001f)
-            {
-                panelRotation = Quaternion.LookRotation(look.normalized, up);
-            }
-            // World-space canvas forward is opposite in this project setup.
-            panelRotation = Quaternion.AngleAxis(180f, up) * panelRotation;
-        }
-        runtimeSettingsRoot.transform.rotation = panelRotation;
+        RuntimeControlsPlacement.Pose pose = RuntimeControlsPlacement.ResolveSettingsPose(
+            basis.position,
+            basis.forward,
+            basis.right,
+            basis.up,
+            basis.rotation,
+            head != null,
+            head != null ? head.position : Vector3.zero,
+            basisWidth,
+            SettingsPanelSizeMeters,
+            SettingsPanelGapMeters,
+            SettingsPanelOffsetMeters,
+            SettingsPanelForwardOffsetMeters);
+        RuntimeUiTransformWriter.ApplyWorldPose(runtimeSettingsRoot.transform, pose.position, pose.rotation);
 
         Canvas canvas = runtimeSettingsRoot.GetComponent<Canvas>();
         if (canvas != null)
         {
-            canvas.worldCamera = GetViewCamera();
+            RuntimeCanvasWriter.ApplyWorldCamera(canvas, GetViewCamera());
         }
 
         RectTransform rect = runtimeSettingsRoot.GetComponent<RectTransform>();
@@ -132,13 +114,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (size.x <= 0f || size.y <= 0f)
             {
                 size = new Vector2(RuntimeSettingsDefaultCanvasWidth, RuntimeSettingsDefaultCanvasHeight);
-                rect.sizeDelta = size;
+                RuntimeUiTransformWriter.ApplySizeDelta(rect, size);
             }
 
-            rect.localScale = new Vector3(
-                SettingsPanelSizeMeters.x / size.x,
-                SettingsPanelSizeMeters.y / size.y,
-                1f);
+            RuntimeUiTransformWriter.ApplyLocalScale(
+                rect,
+                new Vector3(
+                    SettingsPanelSizeMeters.x / size.x,
+                    SettingsPanelSizeMeters.y / size.y,
+                    1f));
         }
     }
 
@@ -195,13 +179,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (size.x <= 0f || size.y <= 0f)
         {
             size = new Vector2(RuntimeControlsDefaultCanvasWidth, RuntimeControlsDefaultCanvasHeight);
-            rect.sizeDelta = size;
+            RuntimeUiTransformWriter.ApplySizeDelta(rect, size);
         }
 
-        rect.localScale = new Vector3(
-            ControlsBarSizeMeters.x / size.x,
-            ControlsBarSizeMeters.y / size.y,
-            1f);
+        RuntimeUiTransformWriter.ApplyLocalScale(
+            rect,
+            new Vector3(
+                ControlsBarSizeMeters.x / size.x,
+                ControlsBarSizeMeters.y / size.y,
+                1f));
     }
 
 
@@ -276,7 +262,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        runtimeInteractiveMotionValueText.text = enableInteractiveMotion ? "ON" : "OFF";
+        RuntimeTextWriter.ApplyContent(runtimeInteractiveMotionValueText, enableInteractiveMotion ? "ON" : "OFF");
     }
 
 
@@ -295,56 +281,56 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             if (runtimeTrackSelectionText != null)
             {
-                runtimeTrackSelectionText.text = "none";
+                RuntimeTextWriter.ApplyContent(runtimeTrackSelectionText, "none");
             }
             if (runtimeTrackYawValueText != null)
             {
-                runtimeTrackYawValueText.text = "0.0 deg";
+                RuntimeTextWriter.ApplyContent(runtimeTrackYawValueText, "0.0 deg");
             }
             if (runtimeTrackYawSlider != null)
             {
                 suppressRuntimeTrackYawCallback = true;
-                runtimeTrackYawSlider.SetValueWithoutNotify(0f);
+                RuntimeSliderWriter.ApplyValueWithoutNotify(runtimeTrackYawSlider, 0f);
                 suppressRuntimeTrackYawCallback = false;
-                runtimeTrackYawSlider.interactable = false;
+                RuntimeSelectableWriter.ApplyInteractable(runtimeTrackYawSlider, false);
             }
             if (runtimeTrackFrontGuideText != null)
             {
-                runtimeTrackFrontGuideText.text = "Arrow above head = FRONT  |  +:left  -:right";
+                RuntimeTextWriter.ApplyContent(runtimeTrackFrontGuideText, "Arrow above head = FRONT  |  +:left  -:right");
             }
             if (runtimeTrackKeyInfoText != null)
             {
-                runtimeTrackKeyInfoText.text = "Keys:0  Frame:0";
+                RuntimeTextWriter.ApplyContent(runtimeTrackKeyInfoText, "Keys:0  Frame:0");
             }
             return;
         }
 
         int keyCount = GetManualYawKeyCountForTrack(trackId);
         bool hasKeyAtCurrent = HasManualYawKeyAtCurrentFrame(trackId);
-        int frame = GetCurrentFrameIndex();
+        int frame = GetCurrentPlaybackFrame();
         float yaw = GetManualYawOffsetDegForTrack(trackId);
         if (runtimeTrackSelectionText != null)
         {
-            runtimeTrackSelectionText.text = trackId.ToString();
+            RuntimeTextWriter.ApplyContent(runtimeTrackSelectionText, trackId.ToString());
         }
         if (runtimeTrackYawValueText != null)
         {
-            runtimeTrackYawValueText.text = yaw.ToString("F1") + " deg";
+            RuntimeTextWriter.ApplyContent(runtimeTrackYawValueText, yaw.ToString("F1") + " deg");
         }
         if (runtimeTrackYawSlider != null)
         {
-            runtimeTrackYawSlider.interactable = true;
+            RuntimeSelectableWriter.ApplyInteractable(runtimeTrackYawSlider, true);
             suppressRuntimeTrackYawCallback = true;
-            runtimeTrackYawSlider.SetValueWithoutNotify(yaw);
+            RuntimeSliderWriter.ApplyValueWithoutNotify(runtimeTrackYawSlider, yaw);
             suppressRuntimeTrackYawCallback = false;
         }
         if (runtimeTrackFrontGuideText != null)
         {
-            runtimeTrackFrontGuideText.text = "Arrow above head = FRONT  |  +:left  -:right";
+            RuntimeTextWriter.ApplyContent(runtimeTrackFrontGuideText, "Arrow above head = FRONT  |  +:left  -:right");
         }
         if (runtimeTrackKeyInfoText != null)
         {
-            runtimeTrackKeyInfoText.text = "Keys:" + keyCount + "  Frame:" + frame + (hasKeyAtCurrent ? " [key]" : " [interp]");
+            RuntimeTextWriter.ApplyContent(runtimeTrackKeyInfoText, "Keys:" + keyCount + "  Frame:" + frame + (hasKeyAtCurrent ? " [key]" : " [interp]"));
         }
     }
 
@@ -367,7 +353,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             UpdateRuntimeScreenDistanceSliderRange();
             suppressRuntimeScreenDistanceCallback = true;
-            runtimeScreenDistanceSlider.SetValueWithoutNotify(clamped);
+            RuntimeSliderWriter.ApplyValueWithoutNotify(runtimeScreenDistanceSlider, clamped);
             suppressRuntimeScreenDistanceCallback = false;
         }
 
@@ -378,12 +364,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void PauseForManualRotationEdit()
     {
-        if (vp == null || !vp.isPlaying)
+        RuntimePlaybackController.Command command = RuntimePlaybackController.ResolvePauseForEditCommand(
+            vp != null,
+            vp != null && vp.isPlaying);
+        if (command == RuntimePlaybackController.Command.None)
         {
             return;
         }
 
-        vp.Pause();
+        RuntimePlaybackController.Apply(vp, command);
         UpdatePauseButtonLabel();
     }
 
@@ -412,8 +401,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             runtimeProgressSlider = FindSlider(runtimeControlsRoot, "progressslider");
             if (runtimeProgressSlider != null)
             {
-                runtimeProgressSlider.onValueChanged.RemoveListener(OnRuntimeProgressSliderChanged);
-                runtimeProgressSlider.onValueChanged.AddListener(OnRuntimeProgressSliderChanged);
+                BindRuntimeSlider(runtimeProgressSlider, OnRuntimeProgressSliderChanged);
             }
             runtimeProgressText = FindText(runtimeControlsRoot, "progresstext");
         }
@@ -426,60 +414,39 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (vp == null)
         {
             suppressRuntimeProgressCallback = true;
-            runtimeProgressSlider.SetValueWithoutNotify(0f);
+            RuntimeSliderWriter.ApplyValueWithoutNotify(runtimeProgressSlider, 0f);
             suppressRuntimeProgressCallback = false;
             if (runtimeProgressText != null)
             {
-                runtimeProgressText.text = "00:00 / 00:00";
+                RuntimeTextWriter.ApplyContent(runtimeProgressText, "00:00 / 00:00");
             }
             return;
         }
 
         long vpFrameCount = vp.frameCount > 0 ? (long)vp.frameCount : 0L;
         long vpFrame = vp.frame >= 0 ? vp.frame : -1L;
-        float fpsFallback = metaHeader.fps > 0.001f ? metaHeader.fps : (manifest != null && manifest.fps > 0.001f ? manifest.fps : 0f);
+        float manifestFps = manifest != null ? manifest.fps : 0f;
         int totalFramesMeta = metaHeader.numFrames > 0 ? (int)metaHeader.numFrames : (manifest != null && manifest.num_frames > 0 ? manifest.num_frames : 0);
-        long totalFrames = vpFrameCount > 1 ? vpFrameCount : (totalFramesMeta > 1 ? totalFramesMeta : 0L);
-        int currentFrame = vpFrame >= 0
-            ? (int)vpFrame
-            : (fpsFallback > 0.001f ? Mathf.Max(0, Mathf.FloorToInt((float)vp.time * fpsFallback)) : GetCurrentFrameIndex());
-
-        double totalDuration = vp.length;
-        if (totalDuration <= 0.0001d && fpsFallback > 0.001f && totalFrames > 0)
-        {
-            totalDuration = totalFrames / fpsFallback;
-        }
-
-        float normalized = 0f;
-        if (totalDuration > 0.0001d)
-        {
-            normalized = Mathf.Clamp01((float)(vp.time / totalDuration));
-        }
-        else if (totalFrames > 1)
-        {
-            normalized = Mathf.Clamp01((float)currentFrame / (float)(totalFrames - 1));
-        }
+        int manifestFrames = manifest != null ? manifest.num_frames : 0;
+        RuntimeProgressDisplay.State progress = RuntimeProgressDisplay.Resolve(
+            vpFrameCount,
+            vpFrame,
+            vp.time,
+            vp.length,
+            vp.frameRate,
+            metaHeader.fps,
+            manifestFps,
+            totalFramesMeta,
+            manifestFrames,
+            GetCurrentPlaybackFrame());
 
         suppressRuntimeProgressCallback = true;
-        runtimeProgressSlider.SetValueWithoutNotify(normalized);
+        RuntimeSliderWriter.ApplyValueWithoutNotify(runtimeProgressSlider, progress.normalized);
         suppressRuntimeProgressCallback = false;
 
         if (runtimeProgressText != null)
         {
-            float fps = metaHeader.fps > 0.001f
-                ? metaHeader.fps
-                : (manifest != null && manifest.fps > 0.001f
-                    ? manifest.fps
-                    : (vp.frameRate > 0.001f ? (float)vp.frameRate : 0f));
-            float curSec = (float)vp.time;
-            float totalSec = (float)totalDuration;
-            if (totalSec <= 0.0001f && fps > 0.001f && totalFrames > 0)
-            {
-                int frameForTime = vpFrame >= 0 ? (int)vpFrame : currentFrame;
-                curSec = frameForTime / fps;
-                totalSec = (float)totalFrames / fps;
-            }
-            runtimeProgressText.text = FormatClock(curSec) + " / " + FormatClock(totalSec);
+            RuntimeTextWriter.ApplyContent(runtimeProgressText, progress.clockText);
         }
     }
 
@@ -495,51 +462,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         normalized = Mathf.Clamp01(normalized);
         long totalFramesVp = vp.frameCount > 0 ? (long)vp.frameCount : 0L;
         int totalFramesMeta = metaHeader.numFrames > 0 ? (int)metaHeader.numFrames : (manifest != null && manifest.num_frames > 0 ? manifest.num_frames : 0);
-        long totalFrames = totalFramesVp > 1 ? totalFramesVp : (totalFramesMeta > 1 ? totalFramesMeta : 0L);
-        float fpsFallback = metaHeader.fps > 0.001f ? metaHeader.fps : (manifest != null && manifest.fps > 0.001f ? manifest.fps : (vp.frameRate > 0.001f ? (float)vp.frameRate : 0f));
-        double totalDuration = vp.length;
-        if (totalDuration <= 0.0001d && fpsFallback > 0.001f && totalFrames > 0)
-        {
-            totalDuration = totalFrames / fpsFallback;
-        }
+        int manifestFrames = manifest != null ? manifest.num_frames : 0;
+        long totalFrames = RuntimePlaybackTimeline.ResolveTotalFrames(totalFramesVp, totalFramesMeta, manifestFrames);
+        float manifestFps = manifest != null ? manifest.fps : 0f;
+        float fpsFallback = RuntimePlaybackTimeline.ResolveSeekFps(metaHeader.fps, manifestFps, vp.frameRate);
+        double totalDuration = RuntimePlaybackTimeline.ResolveTotalDuration(vp.length, fpsFallback, totalFrames);
 
-        if (totalDuration > 0.0001d)
-        {
-            double t = normalized * totalDuration;
-            if (vp.canSetTime)
-            {
-                vp.time = t;
-            }
-            else if (totalFrames > 1)
-            {
-                long targetFrame = (long)Mathf.Round(normalized * (totalFrames - 1));
-                targetFrame = System.Math.Max(0L, System.Math.Min(targetFrame, totalFrames - 1L));
-                vp.frame = targetFrame;
-            }
-        }
-        else if (totalFrames > 1)
-        {
-            long targetFrame = (long)Mathf.Round(normalized * (totalFrames - 1));
-            targetFrame = System.Math.Max(0L, System.Math.Min(targetFrame, totalFrames - 1L));
-            vp.frame = targetFrame;
-        }
+        RuntimePlaybackTimeline.SeekTarget target = RuntimePlaybackTimeline.ResolveSeekTarget(
+            normalized,
+            totalDuration,
+            vp.canSetTime,
+            totalFrames);
+        RuntimePlaybackController.ApplySeekTarget(vp, target);
 
         UpdateRuntimeProgressUi();
-    }
-
-
-
-    private static string FormatClock(float sec)
-    {
-        if (sec < 0f || float.IsNaN(sec) || float.IsInfinity(sec))
-        {
-            sec = 0f;
-        }
-
-        int total = Mathf.FloorToInt(sec);
-        int m = total / 60;
-        int s = total % 60;
-        return m.ToString("00") + ":" + s.ToString("00");
     }
 
 
@@ -577,23 +513,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        if (IsPauseHotkeyPressed())
+        bool hotkeyPressed = IsPauseHotkeyPressed();
+        bool hasPrimaryButton = TryReadPrimaryButtonPressed(out bool pressed);
+        RuntimePauseInput.Decision decision = RuntimePauseInput.Resolve(
+            hotkeyPressed,
+            hasPrimaryButton,
+            pressed,
+            prevPrimaryButtonPressed);
+
+        prevPrimaryButtonPressed = decision.previousPrimaryButtonPressed;
+        if (decision.togglePause)
         {
             TogglePausePlayback();
-            return;
-        }
-
-        if (TryReadPrimaryButtonPressed(out bool pressed))
-        {
-            if (pressed && !prevPrimaryButtonPressed)
-            {
-                TogglePausePlayback();
-            }
-            prevPrimaryButtonPressed = pressed;
-        }
-        else
-        {
-            prevPrimaryButtonPressed = false;
         }
     }
 
@@ -601,47 +532,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private bool IsPauseHotkeyPressed()
     {
-#if ENABLE_INPUT_SYSTEM
-        UnityEngine.InputSystem.Keyboard kb = UnityEngine.InputSystem.Keyboard.current;
-        if (kb != null &&
-            ((kb.spaceKey != null && kb.spaceKey.wasPressedThisFrame) ||
-             (kb.pKey != null && kb.pKey.wasPressedThisFrame)))
-        {
-            return true;
-        }
-#endif
-
-#if ENABLE_LEGACY_INPUT_MANAGER
-        return Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.P);
-#else
-        return false;
-#endif
+        return RuntimePauseInputReader.IsPauseHotkeyPressed();
     }
 
 
 
     private bool TryReadPrimaryButtonPressed(out bool pressed)
     {
-        pressed = false;
-        xrInputDevices.Clear();
-        InputDevices.GetDevices(xrInputDevices);
-        bool hasAny = false;
-        for (int i = 0; i < xrInputDevices.Count; i++)
-        {
-            InputDevice device = xrInputDevices[i];
-            if (!device.isValid)
-            {
-                continue;
-            }
-
-            if (device.TryGetFeatureValue(CommonUsages.primaryButton, out bool value))
-            {
-                hasAny = true;
-                pressed |= value;
-            }
-        }
-
-        return hasAny;
+        return RuntimePauseInputReader.TryReadPrimaryButtonPressed(xrInputDevices, out pressed);
     }
 
 
@@ -653,14 +551,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        if (vp.isPlaying)
-        {
-            vp.Pause();
-        }
-        else
-        {
-            vp.Play();
-        }
+        RuntimePlaybackController.Apply(
+            vp,
+            RuntimePlaybackController.ResolveToggleCommand(vp.isPlaying));
 
         UpdatePauseButtonLabel();
     }
@@ -674,7 +567,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        runtimePauseButtonText.text = (vp != null && vp.isPlaying) ? "Pause" : "Resume";
+        RuntimeTextWriter.ApplyContent(runtimePauseButtonText, (vp != null && vp.isPlaying) ? "Pause" : "Resume");
     }
 
 

@@ -16,16 +16,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         GameObject settingsRootObj;
         if (runtimeControlsPrefab != null)
         {
-            settingsRootObj = Instantiate(runtimeControlsPrefab);
-            settingsRootObj.name = "RuntimeSettingsPanel";
+            settingsRootObj = RuntimeUiRootFactory.Create("RuntimeSettingsPanel", runtimeControlsPrefab);
         }
         else
         {
-            settingsRootObj = new GameObject("RuntimeSettingsPanel");
-            Canvas canvas = settingsRootObj.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.WorldSpace;
-            canvas.worldCamera = GetViewCamera();
-            settingsRootObj.AddComponent<GraphicRaycaster>();
+            settingsRootObj = RuntimeUiRootFactory.Create("RuntimeSettingsPanel", null);
+            Canvas canvas = RuntimeCanvasComponentFactory.EnsureCanvas(settingsRootObj);
+            RuntimeCanvasWriter.ApplyWorldSpaceCamera(canvas, GetViewCamera());
+            RuntimeCanvasComponentFactory.EnsureGraphicRaycaster(settingsRootObj, false);
         }
         EnsureCanvasRaycasters(settingsRootObj);
 
@@ -40,22 +38,26 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         RectTransform uiRect = uiRoot as RectTransform;
         if (uiRect != null)
         {
-            uiRect.sizeDelta = new Vector2(RuntimeSettingsDefaultCanvasWidth, RuntimeSettingsDefaultCanvasHeight);
-            uiRect.localScale = new Vector3(
-                SettingsPanelSizeMeters.x / RuntimeSettingsDefaultCanvasWidth,
-                SettingsPanelSizeMeters.y / RuntimeSettingsDefaultCanvasHeight,
-                1f);
+            RuntimeUiTransformWriter.ApplySizeDelta(
+                uiRect,
+                new Vector2(RuntimeSettingsDefaultCanvasWidth, RuntimeSettingsDefaultCanvasHeight));
+            RuntimeUiTransformWriter.ApplyLocalScale(
+                uiRect,
+                new Vector3(
+                    SettingsPanelSizeMeters.x / RuntimeSettingsDefaultCanvasWidth,
+                    SettingsPanelSizeMeters.y / RuntimeSettingsDefaultCanvasHeight,
+                    1f));
         }
 
-        GameObject panelObj = new GameObject("Panel");
-        panelObj.transform.SetParent(uiRoot, false);
-        RectTransform panelRect = panelObj.AddComponent<RectTransform>();
-        panelRect.anchorMin = Vector2.zero;
-        panelRect.anchorMax = Vector2.one;
-        panelRect.offsetMin = Vector2.zero;
-        panelRect.offsetMax = Vector2.zero;
-        Image panelImage = panelObj.AddComponent<Image>();
-        panelImage.color = new Color(0f, 0f, 0f, 0.65f);
+        RectTransform panelRect = RuntimeUiElementFactory.CreateRectChild("Panel", uiRoot, out GameObject panelObj);
+        RuntimeUiTransformWriter.ApplyStretchRect(
+            panelRect,
+            Vector2.zero,
+            Vector2.one,
+            Vector2.zero,
+            Vector2.zero);
+        Image panelImage = RuntimeUiElementFactory.AddImage(panelObj);
+        RuntimeGraphicWriter.ApplyColor(panelImage, new Color(0f, 0f, 0f, 0.65f));
 
         CreateLabel(panelObj.transform, "Title", "Settings", 0.5f, 0.88f, 64, TextAnchor.MiddleCenter);
         CreateLabel(panelObj.transform, "FovLabel", "FOVx", 0.12f, 0.55f, 48, TextAnchor.MiddleLeft);
@@ -64,10 +66,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         runtimeFovxSlider = CreateSlider(panelObj.transform, "FovxSlider", 0.55f);
         if (runtimeFovxSlider != null)
         {
-            runtimeFovxSlider.onValueChanged.RemoveListener(OnRuntimeFovxSliderChanged);
+            UnbindRuntimeSlider(runtimeFovxSlider, OnRuntimeFovxSliderChanged);
             UpdateFovxSliderRange();
-            runtimeFovxSlider.SetValueWithoutNotify(runtimeFovxDeg);
-            runtimeFovxSlider.onValueChanged.AddListener(OnRuntimeFovxSliderChanged);
+            RuntimeSliderWriter.ApplyValueWithoutNotify(runtimeFovxSlider, runtimeFovxDeg);
+            BindRuntimeSlider(runtimeFovxSlider, OnRuntimeFovxSliderChanged);
         }
         UpdateRuntimeFovxText(runtimeFovxDeg);
 
@@ -76,10 +78,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         runtimeScreenDistanceSlider = CreateSlider(panelObj.transform, "ScreenDistanceSlider", 0.43f);
         if (runtimeScreenDistanceSlider != null)
         {
-            runtimeScreenDistanceSlider.onValueChanged.RemoveListener(OnRuntimeScreenDistanceSliderChanged);
+            UnbindRuntimeSlider(runtimeScreenDistanceSlider, OnRuntimeScreenDistanceSliderChanged);
             UpdateRuntimeScreenDistanceSliderRange();
-            runtimeScreenDistanceSlider.SetValueWithoutNotify(ClampRuntimeScreenDistance(screenDistanceMeters));
-            runtimeScreenDistanceSlider.onValueChanged.AddListener(OnRuntimeScreenDistanceSliderChanged);
+            RuntimeSliderWriter.ApplyValueWithoutNotify(runtimeScreenDistanceSlider, ClampRuntimeScreenDistance(screenDistanceMeters));
+            BindRuntimeSlider(runtimeScreenDistanceSlider, OnRuntimeScreenDistanceSliderChanged);
         }
         UpdateRuntimeScreenDistanceText(screenDistanceMeters);
 
@@ -89,33 +91,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         runtimeTrackKeyInfoText = CreateWideLabel(panelObj.transform, "TrackKeyInfo", "Keys:0  Frame:0", 0.5f, 0.05f, 24, TextAnchor.MiddleCenter);
 
         Button prevTrack = CreateSmallButton(panelObj.transform, "TrackPrevButton", new Vector2(-210f, -115f), "<");
-        prevTrack.onClick.RemoveListener(OnRuntimeTrackPrevClicked);
-        prevTrack.onClick.AddListener(OnRuntimeTrackPrevClicked);
+        BindRuntimeButton(prevTrack, OnRuntimeTrackPrevClicked);
 
         Button nextTrack = CreateSmallButton(panelObj.transform, "TrackNextButton", new Vector2(-90f, -115f), ">");
-        nextTrack.onClick.RemoveListener(OnRuntimeTrackNextClicked);
-        nextTrack.onClick.AddListener(OnRuntimeTrackNextClicked);
+        BindRuntimeButton(nextTrack, OnRuntimeTrackNextClicked);
 
         Button resetYaw = CreateSmallButton(panelObj.transform, "TrackYawResetButton", new Vector2(210f, -115f), "Reset");
-        resetYaw.onClick.RemoveListener(OnRuntimeTrackYawResetClicked);
-        resetYaw.onClick.AddListener(OnRuntimeTrackYawResetClicked);
+        BindRuntimeButton(resetYaw, OnRuntimeTrackYawResetClicked);
 
         CreateLabel(panelObj.transform, "InteractiveMotionLabel", "Motion", 0.12f, 0.70f, 40, TextAnchor.MiddleLeft);
         runtimeInteractiveMotionValueText = CreateLabel(panelObj.transform, "InteractiveMotionValue", string.Empty, 0.72f, 0.70f, 36, TextAnchor.MiddleRight);
         Button motionToggle = CreateSmallButton(panelObj.transform, "InteractiveMotionToggleButton", new Vector2(315f, 105f), "Toggle");
-        motionToggle.onClick.RemoveListener(OnRuntimeInteractiveMotionToggleClicked);
-        motionToggle.onClick.AddListener(OnRuntimeInteractiveMotionToggleClicked);
+        BindRuntimeButton(motionToggle, OnRuntimeInteractiveMotionToggleClicked);
 
         CreateLabel(panelObj.transform, "YawLabel", "Yaw", 0.12f, 0.12f, 44, TextAnchor.MiddleLeft);
         runtimeTrackYawValueText = CreateLabel(panelObj.transform, "YawValue", "0.0 deg", 0.88f, 0.12f, 40, TextAnchor.MiddleRight);
         runtimeTrackYawSlider = CreateSlider(panelObj.transform, "TrackYawSlider", 0.12f);
         if (runtimeTrackYawSlider != null)
         {
-            runtimeTrackYawSlider.minValue = -180f;
-            runtimeTrackYawSlider.maxValue = 180f;
-            runtimeTrackYawSlider.SetValueWithoutNotify(0f);
-            runtimeTrackYawSlider.onValueChanged.RemoveListener(OnRuntimeTrackYawSliderChanged);
-            runtimeTrackYawSlider.onValueChanged.AddListener(OnRuntimeTrackYawSliderChanged);
+            RuntimeSliderWriter.ApplyRange(runtimeTrackYawSlider, -180f, 180f);
+            RuntimeSliderWriter.ApplyValueWithoutNotify(runtimeTrackYawSlider, 0f);
+            BindRuntimeSlider(runtimeTrackYawSlider, OnRuntimeTrackYawSliderChanged);
         }
 
         UpdateRuntimeTrackRotationUiState();
@@ -128,20 +124,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private Text CreateLabel(Transform parent, string name, string initialText, float anchorX, float anchorY, int fontSize, TextAnchor anchor)
     {
-        GameObject obj = new GameObject(name);
-        obj.transform.SetParent(parent, false);
-        RectTransform rect = obj.AddComponent<RectTransform>();
-        rect.anchorMin = new Vector2(anchorX, anchorY);
-        rect.anchorMax = new Vector2(anchorX, anchorY);
-        rect.sizeDelta = new Vector2(280f, 90f);
-        rect.anchoredPosition = Vector2.zero;
+        RectTransform rect = RuntimeUiElementFactory.CreateRectChild(name, parent, out GameObject obj);
+        Vector2 anchorPoint = new Vector2(anchorX, anchorY);
+        RuntimeUiTransformWriter.ApplyAnchoredRect(rect, anchorPoint, anchorPoint, Vector2.zero, new Vector2(280f, 90f));
 
-        Text text = obj.AddComponent<Text>();
-        text.font = GetRuntimeUiFont();
-        text.fontSize = fontSize;
-        text.alignment = anchor;
-        text.color = Color.white;
-        text.text = initialText;
+        Text text = RuntimeUiElementFactory.AddText(obj);
+        RuntimeTextWriter.ApplyStyle(text, GetRuntimeUiFont(), fontSize, anchor, Color.white);
+        RuntimeTextWriter.ApplyContent(text, initialText);
         return text;
     }
 
@@ -149,22 +138,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private Text CreateWideLabel(Transform parent, string name, string initialText, float anchorX, float anchorY, int fontSize, TextAnchor anchor)
     {
-        GameObject obj = new GameObject(name);
-        obj.transform.SetParent(parent, false);
-        RectTransform rect = obj.AddComponent<RectTransform>();
-        rect.anchorMin = new Vector2(anchorX, anchorY);
-        rect.anchorMax = new Vector2(anchorX, anchorY);
-        rect.sizeDelta = new Vector2(760f, 64f);
-        rect.anchoredPosition = Vector2.zero;
+        RectTransform rect = RuntimeUiElementFactory.CreateRectChild(name, parent, out GameObject obj);
+        Vector2 anchorPoint = new Vector2(anchorX, anchorY);
+        RuntimeUiTransformWriter.ApplyAnchoredRect(rect, anchorPoint, anchorPoint, Vector2.zero, new Vector2(760f, 64f));
 
-        Text text = obj.AddComponent<Text>();
-        text.font = GetRuntimeUiFont();
-        text.fontSize = fontSize;
-        text.alignment = anchor;
-        text.color = Color.white;
-        text.horizontalOverflow = HorizontalWrapMode.Wrap;
-        text.verticalOverflow = VerticalWrapMode.Truncate;
-        text.text = initialText;
+        Text text = RuntimeUiElementFactory.AddText(obj);
+        RuntimeTextWriter.ApplyStyle(text, GetRuntimeUiFont(), fontSize, anchor, Color.white);
+        RuntimeTextWriter.ApplyOverflow(text, HorizontalWrapMode.Wrap, VerticalWrapMode.Truncate);
+        RuntimeTextWriter.ApplyContent(text, initialText);
         return text;
     }
 
@@ -172,55 +153,50 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private Slider CreateSlider(Transform parent, string name, float anchorY)
     {
-        GameObject sliderObj = new GameObject(name);
-        sliderObj.transform.SetParent(parent, false);
-        RectTransform sliderRect = sliderObj.AddComponent<RectTransform>();
-        sliderRect.anchorMin = new Vector2(0.5f, anchorY);
-        sliderRect.anchorMax = new Vector2(0.5f, anchorY);
-        sliderRect.sizeDelta = new Vector2(520f, 60f);
-        sliderRect.anchoredPosition = Vector2.zero;
+        RectTransform sliderRect = RuntimeUiElementFactory.CreateRectChild(name, parent, out GameObject sliderObj);
+        Vector2 sliderAnchor = new Vector2(0.5f, anchorY);
+        RuntimeUiTransformWriter.ApplyAnchoredRect(sliderRect, sliderAnchor, sliderAnchor, Vector2.zero, new Vector2(520f, 60f));
 
-        Image background = sliderObj.AddComponent<Image>();
-        background.color = new Color(1f, 1f, 1f, 0.2f);
-        Slider slider = sliderObj.AddComponent<Slider>();
-        slider.direction = Slider.Direction.LeftToRight;
-        slider.targetGraphic = background;
+        Image background = RuntimeUiElementFactory.AddImage(sliderObj);
+        RuntimeGraphicWriter.ApplyColor(background, new Color(1f, 1f, 1f, 0.2f));
+        Slider slider = RuntimeUiElementFactory.AddSlider(sliderObj);
+        RuntimeSliderWriter.ApplyDirection(slider, Slider.Direction.LeftToRight);
+        RuntimeGraphicWriter.ApplyTargetGraphic(slider, background);
 
-        GameObject fillArea = new GameObject("Fill Area");
-        fillArea.transform.SetParent(sliderObj.transform, false);
-        RectTransform fillAreaRect = fillArea.AddComponent<RectTransform>();
-        fillAreaRect.anchorMin = new Vector2(0f, 0.25f);
-        fillAreaRect.anchorMax = new Vector2(1f, 0.75f);
-        fillAreaRect.offsetMin = new Vector2(25f, 0f);
-        fillAreaRect.offsetMax = new Vector2(-25f, 0f);
+        RectTransform fillAreaRect = RuntimeUiElementFactory.CreateRectChild("Fill Area", sliderObj.transform, out GameObject fillArea);
+        RuntimeUiTransformWriter.ApplyStretchRect(
+            fillAreaRect,
+            new Vector2(0f, 0.25f),
+            new Vector2(1f, 0.75f),
+            new Vector2(25f, 0f),
+            new Vector2(-25f, 0f));
 
-        GameObject fillObj = new GameObject("Fill");
-        fillObj.transform.SetParent(fillArea.transform, false);
-        Image fillImage = fillObj.AddComponent<Image>();
-        fillImage.color = new Color(0.22f, 0.72f, 1f, 0.95f);
+        GameObject fillObj = RuntimeUiElementFactory.CreateChild("Fill", fillArea.transform);
+        Image fillImage = RuntimeUiElementFactory.AddImage(fillObj);
+        RuntimeGraphicWriter.ApplyColor(fillImage, new Color(0.22f, 0.72f, 1f, 0.95f));
         RectTransform fillRect = fillObj.GetComponent<RectTransform>();
-        fillRect.anchorMin = new Vector2(0f, 0f);
-        fillRect.anchorMax = new Vector2(1f, 1f);
-        fillRect.offsetMin = Vector2.zero;
-        fillRect.offsetMax = Vector2.zero;
+        RuntimeUiTransformWriter.ApplyStretchRect(
+            fillRect,
+            new Vector2(0f, 0f),
+            new Vector2(1f, 1f),
+            Vector2.zero,
+            Vector2.zero);
 
-        GameObject handleArea = new GameObject("Handle Slide Area");
-        handleArea.transform.SetParent(sliderObj.transform, false);
-        RectTransform handleAreaRect = handleArea.AddComponent<RectTransform>();
-        handleAreaRect.anchorMin = Vector2.zero;
-        handleAreaRect.anchorMax = Vector2.one;
-        handleAreaRect.offsetMin = new Vector2(20f, 0f);
-        handleAreaRect.offsetMax = new Vector2(-20f, 0f);
+        RectTransform handleAreaRect = RuntimeUiElementFactory.CreateRectChild("Handle Slide Area", sliderObj.transform, out GameObject handleArea);
+        RuntimeUiTransformWriter.ApplyStretchRect(
+            handleAreaRect,
+            Vector2.zero,
+            Vector2.one,
+            new Vector2(20f, 0f),
+            new Vector2(-20f, 0f));
 
-        GameObject handleObj = new GameObject("Handle");
-        handleObj.transform.SetParent(handleArea.transform, false);
-        Image handleImage = handleObj.AddComponent<Image>();
-        handleImage.color = new Color(0.95f, 0.95f, 0.95f, 1f);
+        GameObject handleObj = RuntimeUiElementFactory.CreateChild("Handle", handleArea.transform);
+        Image handleImage = RuntimeUiElementFactory.AddImage(handleObj);
+        RuntimeGraphicWriter.ApplyColor(handleImage, new Color(0.95f, 0.95f, 0.95f, 1f));
         RectTransform handleRect = handleObj.GetComponent<RectTransform>();
-        handleRect.sizeDelta = new Vector2(26f, 56f);
+        RuntimeUiTransformWriter.ApplySizeDelta(handleRect, new Vector2(26f, 56f));
 
-        slider.fillRect = fillRect;
-        slider.handleRect = handleRect;
+        RuntimeSliderWriter.ApplyRects(slider, fillRect, handleRect);
 
         return slider;
     }
@@ -229,33 +205,25 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private Button CreateSmallButton(Transform parent, string name, Vector2 anchoredPos, string label)
     {
-        GameObject buttonObj = new GameObject(name);
-        buttonObj.transform.SetParent(parent, false);
-        RectTransform buttonRect = buttonObj.AddComponent<RectTransform>();
-        buttonRect.anchorMin = new Vector2(0.5f, 0.5f);
-        buttonRect.anchorMax = new Vector2(0.5f, 0.5f);
-        buttonRect.sizeDelta = new Vector2(110f, 64f);
-        buttonRect.anchoredPosition = anchoredPos;
+        RectTransform buttonRect = RuntimeUiElementFactory.CreateRectChild(name, parent, out GameObject buttonObj);
+        RuntimeUiTransformWriter.ApplyCenteredRect(buttonRect, anchoredPos, new Vector2(110f, 64f));
 
-        Image buttonImage = buttonObj.AddComponent<Image>();
-        buttonImage.color = new Color(0.13f, 0.13f, 0.13f, 0.9f);
-        Button button = buttonObj.AddComponent<Button>();
-        button.targetGraphic = buttonImage;
+        Image buttonImage = RuntimeUiElementFactory.AddImage(buttonObj);
+        RuntimeGraphicWriter.ApplyColor(buttonImage, new Color(0.13f, 0.13f, 0.13f, 0.9f));
+        Button button = RuntimeUiElementFactory.AddButton(buttonObj);
+        RuntimeGraphicWriter.ApplyTargetGraphic(button, buttonImage);
 
-        GameObject textObj = new GameObject("Label");
-        textObj.transform.SetParent(buttonObj.transform, false);
-        RectTransform textRect = textObj.AddComponent<RectTransform>();
-        textRect.anchorMin = Vector2.zero;
-        textRect.anchorMax = Vector2.one;
-        textRect.offsetMin = Vector2.zero;
-        textRect.offsetMax = Vector2.zero;
+        RectTransform textRect = RuntimeUiElementFactory.CreateRectChild("Label", buttonObj.transform, out GameObject textObj);
+        RuntimeUiTransformWriter.ApplyStretchRect(
+            textRect,
+            Vector2.zero,
+            Vector2.one,
+            Vector2.zero,
+            Vector2.zero);
 
-        Text text = textObj.AddComponent<Text>();
-        text.alignment = TextAnchor.MiddleCenter;
-        text.color = Color.white;
-        text.fontSize = 34;
-        text.font = GetRuntimeUiFont();
-        text.text = label;
+        Text text = RuntimeUiElementFactory.AddText(textObj);
+        RuntimeTextWriter.ApplyStyle(text, GetRuntimeUiFont(), 34, TextAnchor.MiddleCenter, Color.white);
+        RuntimeTextWriter.ApplyContent(text, label);
         return button;
     }
 
@@ -314,8 +282,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         float min = Mathf.Min(RuntimeFovxMinDeg, RuntimeFovxMaxDeg);
         float max = Mathf.Max(RuntimeFovxMinDeg, RuntimeFovxMaxDeg);
-        runtimeFovxSlider.minValue = min;
-        runtimeFovxSlider.maxValue = max;
+        RuntimeSliderWriter.ApplyRange(runtimeFovxSlider, min, max);
     }
 
 
@@ -329,8 +296,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         float min = Mathf.Min(RuntimeScreenDistanceMinMeters, RuntimeScreenDistanceMaxMeters);
         float max = Mathf.Max(RuntimeScreenDistanceMinMeters, RuntimeScreenDistanceMaxMeters);
-        runtimeScreenDistanceSlider.minValue = min;
-        runtimeScreenDistanceSlider.maxValue = max;
+        RuntimeSliderWriter.ApplyRange(runtimeScreenDistanceSlider, min, max);
     }
 
 
@@ -370,7 +336,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        runtimeFovxValueText.text = value.ToString("F1") + " deg";
+        RuntimeTextWriter.ApplyContent(runtimeFovxValueText, value.ToString("F1") + " deg");
     }
 
 
@@ -382,7 +348,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        runtimeScreenDistanceValueText.text = value.ToString("F2") + " m";
+        RuntimeTextWriter.ApplyContent(runtimeScreenDistanceValueText, value.ToString("F2") + " m");
     }
 
 
@@ -392,7 +358,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         runtimeSettingsOpen = !runtimeSettingsOpen;
         if (runtimeSettingsRoot != null)
         {
-            runtimeSettingsRoot.SetActive(runtimeSettingsOpen && enableRuntimeControls);
+            GameObjectLifecycleWriter.ApplyActive(runtimeSettingsRoot, runtimeSettingsOpen && enableRuntimeControls);
             SetScreenColliderBlockForSettings(runtimeSettingsOpen && enableRuntimeControls);
             if (runtimeSettingsOpen)
             {
@@ -429,7 +395,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Collider collider = colliders[i];
             if (collider != null)
             {
-                collider.enabled = enabled;
+                ScreenColliderWriter.ApplyColliderEnabled(collider, enabled);
             }
         }
     }
@@ -443,7 +409,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        runtimeSettingsButtonText.text = runtimeSettingsOpen ? "Close" : "Settings";
+        RuntimeTextWriter.ApplyContent(runtimeSettingsButtonText, runtimeSettingsOpen ? "Close" : "Settings");
     }
 
 
@@ -455,16 +421,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 #else
         EventSystem eventSystem = Object.FindObjectOfType<EventSystem>();
 #endif
-        if (eventSystem == null)
-        {
-            GameObject eventSystemObj = new GameObject("EventSystem");
-            eventSystem = eventSystemObj.AddComponent<EventSystem>();
-        }
-
-        if (eventSystem.GetComponent<InputSystemUIInputModule>() == null)
-        {
-            eventSystem.gameObject.AddComponent<InputSystemUIInputModule>();
-        }
+        RuntimeEventSystemFactory.Ensure(eventSystem);
     }
 
 
@@ -486,36 +443,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
 
             GameObject canvasGo = canvas.gameObject;
-            GraphicRaycaster raycaster = canvasGo.GetComponent<GraphicRaycaster>();
-            if (raycaster == null)
-            {
-                raycaster = canvasGo.AddComponent<GraphicRaycaster>();
-            }
-
             // Settings panel is rotated 180deg in this scene setup.
             // Accept reversed graphics so slider/button raycasts still hit.
-            raycaster.ignoreReversedGraphics = false;
+            RuntimeCanvasComponentFactory.EnsureGraphicRaycaster(canvasGo, false);
 
-            System.Type trackedRaycasterType = GetTrackedDeviceGraphicRaycasterType();
+            System.Type trackedRaycasterType = RuntimeTrackedDeviceGraphicRaycasterResolver.Resolve();
             if (trackedRaycasterType != null && canvasGo.GetComponent(trackedRaycasterType) == null)
             {
-                canvasGo.AddComponent(trackedRaycasterType);
+                RuntimeCanvasComponentFactory.EnsureComponent(canvasGo, trackedRaycasterType);
             }
         }
-    }
-
-    private static System.Type GetTrackedDeviceGraphicRaycasterType()
-    {
-        if (trackedDeviceGraphicRaycasterTypeResolved)
-        {
-            return trackedDeviceGraphicRaycasterType;
-        }
-
-        trackedDeviceGraphicRaycasterTypeResolved = true;
-        trackedDeviceGraphicRaycasterType =
-            System.Type.GetType("UnityEngine.XR.Interaction.Toolkit.UI.TrackedDeviceGraphicRaycaster, Unity.XR.Interaction.Toolkit") ??
-            System.Type.GetType("UnityEngine.XR.Interaction.Toolkit.UI.TrackedDeviceGraphicRaycaster, Unity.XR.Interaction.Toolkit.Runtime");
-        return trackedDeviceGraphicRaycasterType;
     }
 
 

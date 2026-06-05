@@ -162,19 +162,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private int GetCurrentFrameIndex()
     {
-        if (vp != null && vp.frame >= 0)
-        {
-            return (int)Mathf.Clamp((float)vp.frame, 0f, metaHeader.numFrames - 1);
-        }
+        return GetCurrentPlaybackFrame();
+    }
 
+    private int GetCurrentPlaybackFrame()
+    {
+        return GetPlaybackFrameSnapshot().currentFrame;
+    }
+
+    private RuntimePlaybackTimeline.FrameSnapshot GetPlaybackFrameSnapshot()
+    {
         float fps = metaHeader.fps > 0f ? metaHeader.fps : (manifest != null ? manifest.fps : 0f);
-        if (vp != null && fps > 0f)
-        {
-            int frame = Mathf.FloorToInt((float)vp.time * fps);
-            return Mathf.Clamp(frame, 0, (int)metaHeader.numFrames - 1);
-        }
-
-        return 0;
+        return RuntimePlaybackTimeline.ResolveFrameSnapshot(
+            vp != null ? vp.frame : -1L,
+            vp != null ? vp.time : 0d,
+            fps,
+            (int)metaHeader.numFrames,
+            lastFrameReadyFrame,
+            UseFrameReadySync);
     }
 
     public bool TryReadFrameObjects(int frameIndex, List<MetaObj> outObjs)
@@ -447,7 +452,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        int frame = GetCurrentFrameIndex();
+        int frame = GetCurrentPlaybackFrame();
         if (!TryReadFrameObjects(frame, metaFrameObjects) || metaFrameObjects.Count == 0)
         {
             return;

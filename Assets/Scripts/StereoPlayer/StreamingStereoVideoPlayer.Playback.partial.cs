@@ -151,9 +151,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             float targetHeight = ComputeTargetHeightMeters(bboxHAdjusted, target.anchorZ);
             ApplyReplaceableModelTransform(instance, anchorWorld, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxWAdjusted, bboxHAdjusted, screen);
             UpdateInteractiveMotionSchedule(instance, target, screen, frame);
+            bool isHumanoidInteractiveRootPinned = IsHumanoidInteractiveRootPinned(target.trackId);
             bool preserveRootScreenHeightAfterSkeleton =
                 IsCategoryPerson(target.categoryId) &&
-                ShouldPreserveRootScreenHeightAfterHumanSkeletonPlacement();
+                ShouldPreserveRootScreenHeightAfterHumanSkeletonPlacement() &&
+                !isHumanoidInteractiveRootPinned;
             Vector3 preSkeletonRootPosition = instance.transform.position;
             TryApplySkeleton(instance, target, screen, frame);
             if (preserveRootScreenHeightAfterSkeleton)
@@ -170,7 +172,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
             bool isHumanoidInteractiveMotionInPlace = IsHumanoidInteractiveMotionInPlace(target.trackId);
             bool shouldUseHumanSmplRootPlacement = ShouldUseHumanSmplRootPlacement(target, frame);
-            bool isHumanoidInteractiveRootPinned = IsHumanoidInteractiveRootPinned(target.trackId);
             if (isHumanoidInteractiveMotionInPlace && !isHumanoidInteractiveRootPinned)
             {
                 if (ShouldInitialFitHumanoidInPlaceRootBeforePinning(

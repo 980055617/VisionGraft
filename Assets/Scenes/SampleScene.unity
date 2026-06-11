@@ -820,6 +820,63 @@ MonoBehaviour:
   m_SendPointerHoverToParent: 1
   _useInitialPressPositionForDrag: 1
   _exclusiveMode: 1
+--- !u!1001 &1244364528
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: 1674062072928472465, guid: 00f8db70a549b7b46963a6d7484c0a8b, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1674062072928472465, guid: 00f8db70a549b7b46963a6d7484c0a8b, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1674062072928472465, guid: 00f8db70a549b7b46963a6d7484c0a8b, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1674062072928472465, guid: 00f8db70a549b7b46963a6d7484c0a8b, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 1674062072928472465, guid: 00f8db70a549b7b46963a6d7484c0a8b, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1674062072928472465, guid: 00f8db70a549b7b46963a6d7484c0a8b, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1674062072928472465, guid: 00f8db70a549b7b46963a6d7484c0a8b, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1674062072928472465, guid: 00f8db70a549b7b46963a6d7484c0a8b, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1674062072928472465, guid: 00f8db70a549b7b46963a6d7484c0a8b, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1674062072928472465, guid: 00f8db70a549b7b46963a6d7484c0a8b, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2049320596049450795, guid: 00f8db70a549b7b46963a6d7484c0a8b, type: 3}
+      propertyPath: m_Name
+      value: npc_casual_set_00
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 00f8db70a549b7b46963a6d7484c0a8b, type: 3}
 --- !u!1 &1375737368
 GameObject:
   m_ObjectHideFlags: 0
@@ -1048,7 +1105,7 @@ MonoBehaviour:
   displayTrackIds: 0000000001000000
   replacePrefab: {fileID: 3348292547451869151, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
   track0Prefab: {fileID: 3348292547451869151, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
-  track1Prefab: {fileID: 4248197375101405997, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+  track1Prefab: {fileID: 110392412574568067, guid: 39611dd7dc0e5e846b6d10d1df540e12, type: 3}
   track2Prefab: {fileID: 0}
   enableBoneApply: 1
   boneApplyAlpha: 1
@@ -1058,7 +1115,7 @@ MonoBehaviour:
   otherProxyBoxColor: {r: 1, g: 0.78, b: 0.18, a: 0.32}
   enableRuntimeControls: 1
   runtimeControlsPrefab: {fileID: 3675716834162371033, guid: 19be18d74f8608a4583c4c6c4e6e8723, type: 3}
-  enableInteractiveMotion: 1
+  enableInteractiveMotion: 0
   humanInteractiveClips:
   - {fileID: -203655887218126122, guid: e6eecc3fd4d4a4145a91ea9763a6c382, type: 3}
   - {fileID: -203655887218126122, guid: 24ba1f0f1a335744fbc564c2739d1ca2, type: 3}
@@ -3302,3 +3359,4 @@ SceneRoots:
   - {fileID: 1210191889}
   - {fileID: 773190229}
   - {fileID: 1964602100}
+  - {fileID: 1244364528}

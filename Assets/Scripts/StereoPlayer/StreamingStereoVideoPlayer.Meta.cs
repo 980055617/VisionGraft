@@ -31,8 +31,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public ushort bboxH;
         public ushort anchorU;
         public ushort anchorV;
-        public float anchorZRaw01;
-        public float anchorZ;
+        public float anchorZ;  // camera-space depth in meters (anchorZq * quant_pos_scale)
         public bool hasSkeleton;
         public ushort skeletonKpCount;
         public Vector3[] jointsCam;
@@ -78,6 +77,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         categoryKpCounts.Clear();
         categoryNames.Clear();
         frameOffsets = null;
+        humanSmplPosesMetaBin.Clear();
 
         try
         {
@@ -218,6 +218,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 using (var ms = new MemoryStream(payload))
                 using (var pr = new BinaryReader(ms))
                 {
+                    humanSmplPosesMetaBin.Remove(frameIndex);
                     ushort objCount = pr.ReadUInt16();
                     for (int i = 0; i < objCount; i++)
                     {
@@ -291,8 +292,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
                         }
 
-                        float anchorZRaw01 = anchorZq * GetQuantPosScale();
-                        float anchorZ = DecodeAnchorDepthMetersFromBundle(anchorZRaw01);
+                        bool hasSmplBlock = (flags & 0x02) != 0;
+                        if (hasSmplBlock)
+                        {
+                            pr.ReadUInt16(); // block_version
+                            StoreSmplBlockFromBin(pr, frameIndex, trackId);
+                        }
+
+                        // anchor_z = anchorZq * quant_pos_scale gives camera-space depth in meters directly
+                        float anchorZ = anchorZq * GetQuantPosScale();
                         MetaObj obj = new MetaObj
                         {
                             trackId = trackId,
@@ -303,7 +311,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                             bboxH = bboxH,
                             anchorU = anchorU,
                             anchorV = anchorV,
-                            anchorZRaw01 = anchorZRaw01,
                             anchorZ = anchorZ,
                             hasSkeleton = hasSkeleton,
                             skeletonKpCount = kpCount,

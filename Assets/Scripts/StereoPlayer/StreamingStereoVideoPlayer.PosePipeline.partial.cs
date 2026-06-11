@@ -1,4 +1,3 @@
-using System;
 using UnityEngine;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
@@ -9,108 +8,109 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void TryApplyPersonPosePipeline(GameObject instance, MetaObj obj, Transform screen, int frame)
     {
-        try
+        if (!TryBuildPersonPoseWorld(obj, screen, out PersonPoseWorldData pose))
         {
-            if (!TryBuildPersonPoseWorld(obj, screen, out PersonPoseWorldData pose))
+            return;
+        }
+
+        HumanSmplPose smplPose = default(HumanSmplPose);
+        bool hasHumanSmplPose = TryGetHumanSmplPose(frame, obj.trackId, out smplPose);
+
+        Animator animator = instance.GetComponentInChildren<Animator>();
+        HumanoidRigCache cache = null;
+        if (animator != null && animator.isHuman)
+        {
+            cache = GetOrBuildHumanoidCache(animator);
+        }
+        bool canApplyHumanSmplPose =
+            enableBoneApply &&
+            EnableHumanSmplMotion &&
+            hasHumanSmplPose &&
+            cache != null &&
+            cache.ready;
+
+        if (canApplyHumanSmplPose)
+        {
+            DisableHumanAnimatorPlayback(animator);
+            smplPose.camRotation = Quaternion.identity;
+            if (TryGetPinholeBasis(screen, out _, out Quaternion smplCamRot) && IsFinite(smplCamRot))
             {
-                return;
+                smplPose.camRotation = smplCamRot;
             }
+        }
 
-            HumanSmplPose smplPose = default(HumanSmplPose);
-            bool hasHumanSmplPose = TryGetHumanSmplPose(frame, obj.trackId, out smplPose);
-
-            if (pose.jointCount < 24)
-            {
-                return;
-            }
-
-            if (hasHumanSmplPose && pose.jointCount >= 44)
-            {
-                RemapHmr2Body25ToSmpl24(ref pose);
-            }
-
-            SkeletonIndices idx = SkeletonIndexPresets.MetrabsSmpl24;
-
-            if (enableJointSmoothing)
-            {
-                SmoothJointsWorld(obj.trackId, pose.jointsWorld, pose.jointVis, Mathf.Clamp01(jointSmoothingAlpha));
-            }
-
-            if (!TryGetSmpl24RootWorld(pose.jointsWorld, pose.jointVis, out Vector3 skeletonRoot))
-            {
-                return;
-            }
-
-            Vector3 yawAxis = screen != null ? screen.up : instance.transform.up;
-            ApplyManualYawToJoints(obj.trackId, frame, pose.jointsWorld, pose.jointVis, skeletonRoot, yawAxis);
-
-            bool hasSmplRootRotation = false;
-            Quaternion smplRootRotation = Quaternion.identity;
-            if (hasHumanSmplPose && ShouldUseHumanSmplRootOrientation())
-            {
-                if (TryGetHumanSmplRootRotation(screen, smplPose, out smplRootRotation))
-                {
-                    smplRootRotation = ApplyManualTrackYawOffset(
-                        obj.trackId,
-                        frame,
-                        smplRootRotation,
-                        screen != null ? screen.up : Vector3.up);
-                    hasSmplRootRotation = true;
-                }
-            }
-
-            Animator animator = instance.GetComponentInChildren<Animator>();
-            HumanoidRigCache cache = null;
-            if (animator != null && animator.isHuman)
-            {
-                cache = GetOrBuildHumanoidCache(animator);
-            }
-            bool canApplyHumanSmplPose =
-                enableBoneApply &&
-                EnableHumanSmplMotion &&
-                hasHumanSmplPose &&
-                cache != null &&
-                cache.ready;
-
-            ReplaceableModel model = instance.GetComponent<ReplaceableModel>();
-            TryApplySmpl24HumanoidPlacement(
-                instance.transform,
-                model,
-                cache,
-                pose.jointsWorld,
-                pose.jointVis,
-                true,
-                hasSmplRootRotation,
-                smplRootRotation);
+        if (canApplyHumanSmplPose && ShouldUseSmplOnlyPose())
+        {
+            // SMPL FK path: anchor is the canonical hip position; 44-point skeleton is not used for placement.
+            ResetHumanoidLocalRotations(cache);
+            AlignHumanoidHipsToSmplRoot(instance.transform, cache, pose.rootWorld);
 
             if (TryApplyHumanInteractivePreIk(instance, obj.trackId, screen))
             {
                 return;
             }
 
-            if (!enableBoneApply)
-            {
-                ApplyHumanInteractiveOverlay(instance, obj.trackId);
-                return;
-            }
-
-            if (cache == null || !cache.ready)
-            {
-                ApplyHumanInteractiveOverlay(instance, obj.trackId);
-                return;
-            }
-
-            TryApplySmpl24HumanoidIk(instance.transform, cache, pose.jointsWorld, pose.jointVis, pose.camOrigin, idx);
-            if (canApplyHumanSmplPose && ShouldApplyHumanSmplAfterLimbIk())
-            {
-                TryApplyHumanSmplRotationOverlay(cache, smplPose);
-            }
+            TryApplyHumanSmplRotationOverlay(cache, smplPose);
             ApplyHumanInteractiveOverlay(instance, obj.trackId);
+            return;
         }
-        catch (Exception ex)
+
+        // Fallback: skeleton-based IK path (no SMPL available)
+        if (pose.jointCount < 24)
         {
-            Debug.LogWarning($"SVB human pose pipeline failed: {ex.Message}");
+            return;
         }
+
+        if (pose.jointCount >= 25)
+        {
+            RemapHmr2Body25ToSmpl24(ref pose);
+        }
+
+        SkeletonIndices idx = SkeletonIndexPresets.MetrabsSmpl24;
+
+        if (enableJointSmoothing)
+        {
+            SmoothJointsWorld(obj.trackId, pose.jointsWorld, pose.jointVis, Mathf.Clamp01(jointSmoothingAlpha));
+        }
+
+        if (!TryGetSmpl24RootWorld(pose.jointsWorld, pose.jointVis, out Vector3 skeletonRoot))
+        {
+            return;
+        }
+
+        Vector3 yawAxis = screen != null ? screen.up : instance.transform.up;
+        ApplyManualYawToJoints(obj.trackId, frame, pose.jointsWorld, pose.jointVis, skeletonRoot, yawAxis);
+
+        ReplaceableModel model = instance.GetComponent<ReplaceableModel>();
+        TryApplySmpl24HumanoidPlacement(
+            instance.transform,
+            model,
+            cache,
+            pose.jointsWorld,
+            pose.jointVis,
+            true,
+            false,
+            default(Quaternion));
+
+        if (TryApplyHumanInteractivePreIk(instance, obj.trackId, screen))
+        {
+            return;
+        }
+
+        if (!enableBoneApply)
+        {
+            ApplyHumanInteractiveOverlay(instance, obj.trackId);
+            return;
+        }
+
+        if (cache == null || !cache.ready)
+        {
+            ApplyHumanInteractiveOverlay(instance, obj.trackId);
+            return;
+        }
+
+        TryApplySmpl24HumanoidIk(instance.transform, cache, pose.jointsWorld, pose.jointVis, pose.camOrigin, idx);
+        ApplyHumanInteractiveOverlay(instance, obj.trackId);
     }
 
     private static void RemapHmr2Body25ToSmpl24(ref PersonPoseWorldData pose)
@@ -178,52 +178,63 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void TryApplyAnimalPosePipeline(GameObject instance, MetaObj obj, Transform screen, int frame)
     {
-        try
+        if (!TryBuildAnimalPoseWorld(obj, screen, frame, out AnimalPoseWorldData pose))
         {
-            if (!TryBuildAnimalPoseWorld(obj, screen, frame, out AnimalPoseWorldData pose))
-            {
-                return;
-            }
-
-            bool freezeAnimalDistal =
-                EnableAnimalDistalFreezeOnHighSkip &&
-                (pose.hasAnimalControl
-                    ? CountAnimalControlSkipSegments(pose.animalControl)
-                    : CountAnimalSkipSegments(pose.jointCount, pose.jointVis, pose.jointsCam)) >= Mathf.Max(0, AnimalDistalFreezeSkipThreshold);
-
-            if (enableJointSmoothing)
-            {
-                SmoothJointsWorld(obj.trackId, pose.jointsWorld, pose.jointVis, Mathf.Clamp01(jointSmoothingAlpha));
-            }
-
-            Vector3 skeletonRoot = pose.rootWorld;
-
-            Vector3 yawAxis = screen != null ? screen.up : instance.transform.up;
-            ApplyManualYawToJoints(obj.trackId, frame, pose.jointsWorld, pose.jointVis, skeletonRoot, yawAxis);
-            ApplyAnimalInteractiveMotion(obj.trackId, instance.transform, screen, ref pose);
-
-            Animator animator = instance.GetComponentInChildren<Animator>();
-            DisableAnimalAnimatorPlayback(animator);
-
-            animalPoseApplier.Apply(new AnimalPoseRequest
-            {
-                instanceRoot = instance.transform,
-                animator = animator,
-                pose = pose,
-                settings = BuildAnimalPoseSettings(),
-                tickContext = GetRuntimeTickContext(),
-                freezeAnimalDistal = freezeAnimalDistal,
-                enableBoneApply = enableBoneApply
-            });
+            return;
         }
-        catch
+
+        bool freezeAnimalDistal =
+            EnableAnimalDistalFreezeOnHighSkip &&
+            (pose.hasAnimalControl
+                ? CountAnimalControlSkipSegments(pose.animalControl)
+                : CountAnimalSkipSegments(pose.jointCount, pose.jointVis, pose.jointsCam)) >= Mathf.Max(0, AnimalDistalFreezeSkipThreshold);
+
+        if (enableJointSmoothing)
         {
+            SmoothJointsWorld(obj.trackId, pose.jointsWorld, pose.jointVis, Mathf.Clamp01(jointSmoothingAlpha));
         }
+
+        Vector3 skeletonRoot = pose.rootWorld;
+
+        Vector3 yawAxis = screen != null ? screen.up : instance.transform.up;
+        ApplyManualYawToJoints(obj.trackId, frame, pose.jointsWorld, pose.jointVis, skeletonRoot, yawAxis);
+        ApplyAnimalInteractiveMotion(obj.trackId, instance.transform, screen, ref pose);
+
+        Animator animator = instance.GetComponentInChildren<Animator>();
+        DisableAnimalAnimatorPlayback(animator);
+
+        animalPoseApplier.Apply(new AnimalPoseRequest
+        {
+            instanceRoot = instance.transform,
+            animator = animator,
+            pose = pose,
+            settings = BuildAnimalPoseSettings(),
+            tickContext = GetRuntimeTickContext(),
+            freezeAnimalDistal = freezeAnimalDistal,
+            enableBoneApply = enableBoneApply
+        });
     }
 
     private void DisableAnimalAnimatorPlayback(Animator animator)
     {
         if (!DisableAnimalAnimatorController || animator == null)
+        {
+            return;
+        }
+
+        if (animator.runtimeAnimatorController != null)
+        {
+            animator.runtimeAnimatorController = null;
+            animator.Rebind();
+            animator.Update(0f);
+        }
+
+        SceneObjectWriter.ApplyAnimatorEnabled(animator, false);
+    }
+
+    private static void DisableHumanAnimatorPlayback(Animator animator)
+    {
+        if (animator == null)
         {
             return;
         }

@@ -1595,6 +1595,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float elapsed = RuntimeClock.ResolveElapsed(now, state.startTime);
         float weight = InteractiveEnvelope(elapsed, state.duration);
         Vector3 instancePositionBeforePlayback = instance != null ? instance.transform.position : Vector3.zero;
+        if (!allowHipsTranslation && state.hasPinnedInPlaceRoot)
+        {
+            instancePositionBeforePlayback = state.startPosition;
+        }
         Quaternion instanceRotationBeforePlayback = instance != null ? instance.transform.rotation : Quaternion.identity;
         Transform animatorTransform = playback.animator != null ? playback.animator.transform : null;
         Vector3 animatorLocalPositionBeforePlayback = animatorTransform != null ? animatorTransform.localPosition : Vector3.zero;

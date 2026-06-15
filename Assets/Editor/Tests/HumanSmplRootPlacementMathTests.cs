@@ -22,6 +22,45 @@ public class HumanSmplRootPlacementMathTests
     }
 
     [Test]
+    public void HumanSmplFkRootConvertsCameraSpaceGlobalOrientToWorldSpace()
+    {
+        Quaternion cameraToWorld = Quaternion.Euler(0f, 180f, 0f);
+        Quaternion cameraSpaceGlobalOrient = Quaternion.Euler(0f, 180f, 0f);
+
+        Quaternion worldRoot = StreamingStereoVideoPlayer.ResolveHumanSmplFkRootWorldRotation(
+            cameraToWorld,
+            cameraSpaceGlobalOrient);
+
+        Assert.That(Quaternion.Angle(Quaternion.identity, worldRoot), Is.LessThan(0.001f));
+    }
+
+    [Test]
+    public void HumanSmplFkRootRejectsInvalidGlobalOrientWithoutReusingPriorRoot()
+    {
+        Quaternion worldRoot = StreamingStereoVideoPlayer.ResolveHumanSmplFkRootWorldRotation(
+            Quaternion.Euler(0f, 90f, 0f),
+            new Quaternion(float.NaN, 0f, 0f, 1f));
+
+        Assert.That(Quaternion.Angle(Quaternion.identity, worldRoot), Is.LessThan(0.001f));
+    }
+
+    [Test]
+    public void HumanSmplTargetWorldAppliesBindRotationInFkWorldFrame()
+    {
+        Quaternion rootWorld = Quaternion.Euler(0f, 90f, 0f);
+        Quaternion bodyFk = Quaternion.identity;
+        Quaternion bindWorld = Quaternion.Euler(0f, 0f, 90f);
+
+        Quaternion target = StreamingStereoVideoPlayer.ResolveHumanSmplTargetWorldRotation(
+            rootWorld,
+            bodyFk,
+            bindWorld);
+
+        Quaternion expected = rootWorld * bodyFk * bindWorld;
+        Assert.That(Quaternion.Angle(expected, target), Is.LessThan(0.001f));
+    }
+
+    [Test]
     public void HumanSmplLocalRotationRetargetPreservesUnityReferencePose()
     {
         Quaternion referenceUnityLocal = Quaternion.Euler(0f, 30f, 0f);
@@ -43,6 +82,12 @@ public class HumanSmplRootPlacementMathTests
     }
 
     [Test]
+    public void SmplOnlyPoseDoesNotForceTerminalHandWorldRotation()
+    {
+        Assert.That(StreamingStereoVideoPlayer.ShouldApplyHumanSmplTerminalHandRotationInSmplOnlyPose(), Is.False);
+    }
+
+    [Test]
     public void HumanSmplMotionKeepsLowerArmIkBendAsGrossPoseAuthority()
     {
         Assert.That(StreamingStereoVideoPlayer.ShouldApplyHumanSmplLowerArmBendRotation(), Is.False);
@@ -58,6 +103,14 @@ public class HumanSmplRootPlacementMathTests
     public void HumanSmplTranslationDoesNotDisableTrackedBBoxPlacement()
     {
         Assert.That(StreamingStereoVideoPlayer.ShouldUseHumanSmplRootPlacementPolicy(true, true), Is.False);
+    }
+
+    [Test]
+    public void SmplOnlyPoseKeepsTrackedAnchorPlacementWhenSmplTranslationExists()
+    {
+        Assert.That(StreamingStereoVideoPlayer.ShouldUseHumanSmplRootAnchorForSmplOnlyPose(true, true), Is.False);
+        Assert.That(StreamingStereoVideoPlayer.ShouldUseHumanSmplRootAnchorForSmplOnlyPose(true, false), Is.False);
+        Assert.That(StreamingStereoVideoPlayer.ShouldUseHumanSmplRootAnchorForSmplOnlyPose(false, true), Is.False);
     }
 
     [Test]

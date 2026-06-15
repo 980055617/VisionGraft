@@ -39,11 +39,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
         }
 
+        // Body25 (25 joints) → SMPL24 (24 joints) 変換: SMPL-only path より前に実施する。
+        // TryApplySmplArmsFromJointPositions は SMPL24 の腕 joint indices (16-21) を使うため、
+        // 変換なしでは Body25 の indices が eye/ear/toe 等の全く異なる joint を指してしまう。
+        if (pose.jointCount >= 25)
+        {
+            RemapHmr2Body25ToSmpl24(ref pose);
+        }
+
         if (canApplyHumanSmplPose && ShouldUseSmplOnlyPose())
         {
             // SMPL FK path: anchor is the canonical hip position; 44-point skeleton is not used for placement.
+            // Smooth root position to suppress anchorZ depth noise (reduces violent forward/backward character movement).
+            // Smooth only the scalar depth (anchorZ) along the camera ray.
+            // UV (anchorU/V) is stable; depth_npz is noisy → smoothing Z fixes lateral jitter too.
             ResetHumanoidLocalRotations(cache);
-            AlignHumanoidHipsToSmplRoot(instance.transform, cache, pose.rootWorld);
+            Vector3 cameraForward = smplPose.camRotation * Vector3.forward;
+            AlignHumanoidHipsToSmplRoot(instance.transform, cache, GetSmoothedSmplRootWorld(cache, pose.rootWorld, pose.camOrigin, cameraForward));
 
             if (TryApplyHumanInteractivePreIk(instance, obj.trackId, screen))
             {
@@ -51,6 +63,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
 
             TryApplyHumanSmplRotationOverlay(cache, smplPose);
+            // FK の body_pose 座標フレームと Unity bone フレームの不一致を
+            // SMPL joint 世界座標（2点間ベクトル）で各 bone 方向を直接整合することで解消する。
+            TryApplySmplArmsFromJointPositions(cache, pose.jointsWorld, pose.jointVis);
+            TryApplySmplLegsFromJointPositions(cache, pose.jointsWorld, pose.jointVis);
+            // 手の FK は AimAt で前腕方向が統一された後に適用する。
+            // FK ループ内では親の tw[] がキャラクター固有のため、AimAt後の bone.rotation を親とすることで
+            // 全キャラクター間で手の向きを一致させる。
+            TryApplyHandFkAfterAimAt(cache, pose.jointsWorld, pose.jointVis);
+            // 骨盤基準配置後にキャラのモデル脚長と SMPL 脚長の差を Y オフセットで吸収する。
+            // XZ は骨盤 anchor のまま、Y だけ SMPL ankle 基準に揃える。
+            AlignHumanoidFeetYToSmplAnkles(instance.transform, cache, pose.jointsWorld, pose.jointVis);
             ApplyHumanInteractiveOverlay(instance, obj.trackId);
             return;
         }
@@ -61,10 +84,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        if (pose.jointCount >= 25)
-        {
-            RemapHmr2Body25ToSmpl24(ref pose);
-        }
+        // (RemapHmr2Body25ToSmpl24 は上で適用済み)
 
         SkeletonIndices idx = SkeletonIndexPresets.MetrabsSmpl24;
 

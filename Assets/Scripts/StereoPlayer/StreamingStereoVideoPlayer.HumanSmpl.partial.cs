@@ -1,6 +1,4 @@
-using System;
 using System.Collections.Generic;
-using System.IO;
 using UnityEngine;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
@@ -12,8 +10,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public Quaternion[] bodyPose;
         public bool hasTransl;
         public Vector3 transl;
-        public bool hasFocalLength;
-        public Vector2 focalLength;
         public float[] betas;
         // Camera-to-world rotation (screen transform basis). Stored for potential future use.
         public Quaternion camRotation;
@@ -30,13 +26,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public int debugFrameCount = 0;
     }
 
-    private readonly Dictionary<int, Dictionary<uint, HumanSmplPose>> humanSmplPosesByFrame = new Dictionary<int, Dictionary<uint, HumanSmplPose>>();
-    // meta.bin SMPL cache: populated per-frame during TryReadFrameObjects, takes priority over sidecar
+    // meta.bin SMPL cache: populated per-frame during TryReadFrameObjects
     private readonly Dictionary<int, Dictionary<uint, HumanSmplPose>> humanSmplPosesMetaBin = new Dictionary<int, Dictionary<uint, HumanSmplPose>>();
     private readonly Dictionary<HumanoidRigCache, HumanSmplRetargetState> humanSmplRetargetStateByCache = new Dictionary<HumanoidRigCache, HumanSmplRetargetState>();
-    private int humanSmplSourceWidth;
-    private int humanSmplSourceHeight;
-
+    // Smoothed root world positions for SMPL-only FK placement (reduces anchorZ depth noise → character forward/backward jitter)
+    private readonly Dictionary<HumanoidRigCache, Vector3> humanSmplSmoothedRoot = new Dictionary<HumanoidRigCache, Vector3>();
+    private readonly Dictionary<HumanoidRigCache, float> humanSmplSmoothedDepth = new Dictionary<HumanoidRigCache, float>();
+    private readonly HashSet<HumanoidRigCache> humanSmplSmoothedRootInit = new HashSet<HumanoidRigCache>();
     // Topological order for FK traversal (parents always before children)
     private static readonly int[] SmplJointTopologicalOrder =
     {
@@ -82,308 +78,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void LoadHumanSmplSidecar(string path)
     {
-        humanSmplPosesByFrame.Clear();
+        // source/human_smpl_from_sam2.json は debug/検証用。runtime 配置には使用しない。
+        // SMPL FK は meta.bin の SMPL block (humanSmplPosesMetaBin) のみを参照する。
         humanSmplRetargetStateByCache.Clear();
-        humanSmplSourceWidth = 0;
-        humanSmplSourceHeight = 0;
-        if (string.IsNullOrEmpty(path) || !File.Exists(path))
-        {
-            return;
-        }
-
-        try
-        {
-            object rootObj = MiniJson.Parse(File.ReadAllText(path));
-            Dictionary<string, object> root = rootObj as Dictionary<string, object>;
-            if (root == null)
-            {
-                return;
-            }
-
-            Dictionary<string, object> meta = GetDict(root, "meta");
-            Dictionary<string, object> video = GetDict(meta, "video");
-            humanSmplSourceWidth = GetInt(video, "width", 0);
-            humanSmplSourceHeight = GetInt(video, "height", 0);
-
-            List<object> frames = GetList(root, "frames");
-            if (frames == null)
-            {
-                return;
-            }
-
-            for (int i = 0; i < frames.Count; i++)
-            {
-                Dictionary<string, object> frame = frames[i] as Dictionary<string, object>;
-                if (frame == null)
-                {
-                    continue;
-                }
-
-                int frameIndex = GetInt(frame, "frame_index", GetInt(frame, "frameIndex", -1));
-                if (frameIndex < 0)
-                {
-                    continue;
-                }
-
-                List<object> objects = GetList(frame, "objects");
-                if (objects == null)
-                {
-                    continue;
-                }
-
-                Dictionary<uint, HumanSmplPose> byTrack = null;
-                for (int o = 0; o < objects.Count; o++)
-                {
-                    Dictionary<string, object> obj = objects[o] as Dictionary<string, object>;
-                    if (obj == null)
-                    {
-                        continue;
-                    }
-
-                    uint trackId = GetUInt(obj, "trackId", uint.MaxValue);
-                    if (trackId == uint.MaxValue)
-                    {
-                        continue;
-                    }
-
-                    Dictionary<string, object> smpl = GetDict(obj, "smpl");
-                    if (smpl == null || !TryReadHumanSmplPose(smpl, out HumanSmplPose pose))
-                    {
-                        continue;
-                    }
-
-                    pose.hasFocalLength = TryReadVector2(GetList(obj, "focalLength"), 1f, out pose.focalLength);
-
-                    if (byTrack == null)
-                    {
-                        byTrack = new Dictionary<uint, HumanSmplPose>();
-                        humanSmplPosesByFrame[frameIndex] = byTrack;
-                    }
-
-                    byTrack[trackId] = pose;
-                }
-            }
-
-            Debug.Log($"SVB human SMPL sidecar loaded: frames={humanSmplPosesByFrame.Count}");
-        }
-        catch (Exception ex)
-        {
-            Debug.LogWarning($"Failed to load SVB human_smpl_from_sam2 sidecar: {ex.Message}");
-        }
-    }
-
-    private static bool TryReadHumanSmplPose(Dictionary<string, object> smpl, out HumanSmplPose pose)
-    {
-        pose = new HumanSmplPose
-        {
-            bodyPose = new Quaternion[23]
-        };
-
-        List<object> globalOrient = GetList(smpl, "globalOrient");
-        if (globalOrient != null && globalOrient.Count > 0 && TryReadRotationMatrix(globalOrient[0] as List<object>, flipCameraY: true, transposeMatrix: false, out Quaternion rootRotation))
-        {
-            pose.hasGlobalOrient = true;
-            pose.globalOrient = rootRotation;
-        }
-
-        List<object> bodyPose = GetList(smpl, "bodyPose");
-        if (bodyPose == null || bodyPose.Count < 1)
-        {
-            return false;
-        }
-
-        int count = Mathf.Min(23, bodyPose.Count);
-        for (int i = 0; i < count; i++)
-        {
-            if (TryReadRotationMatrix(bodyPose[i] as List<object>, flipCameraY: false, transposeMatrix: false, out Quaternion rotation))
-            {
-                pose.bodyPose[i] = rotation;
-            }
-            else
-            {
-                pose.bodyPose[i] = Quaternion.identity;
-            }
-        }
-
-        pose.hasTransl = TryReadVector3(GetList(smpl, "transl"), 1f, out pose.transl) && IsFinite(pose.transl);
-        pose.betas = ReadFloatArray(GetList(smpl, "betas"));
-        return true;
-    }
-
-    private static float[] ReadFloatArray(List<object> list)
-    {
-        if (list == null)
-        {
-            return null;
-        }
-
-        float[] values = new float[list.Count];
-        for (int i = 0; i < list.Count; i++)
-        {
-            values[i] = GetFloat(list, i);
-        }
-
-        return values;
-    }
-
-    private static bool TryReadRotationMatrix(List<object> rows, bool flipCameraY, bool transposeMatrix, out Quaternion rotation)
-    {
-        rotation = Quaternion.identity;
-        if (rows == null || rows.Count < 3)
-        {
-            return false;
-        }
-
-        List<object> row0 = rows[0] as List<object>;
-        List<object> row1 = rows[1] as List<object>;
-        List<object> row2 = rows[2] as List<object>;
-        if (row0 == null || row1 == null || row2 == null ||
-            row0.Count < 3 || row1.Count < 3 || row2.Count < 3)
-        {
-            return false;
-        }
-
-        float m00 = GetFloat(row0, 0);
-        float m01 = GetFloat(row0, 1);
-        float m02 = GetFloat(row0, 2);
-        float m10 = GetFloat(row1, 0);
-        float m11 = GetFloat(row1, 1);
-        float m12 = GetFloat(row1, 2);
-        float m20 = GetFloat(row2, 0);
-        float m21 = GetFloat(row2, 1);
-        float m22 = GetFloat(row2, 2);
-
-        if (flipCameraY)
-        {
-            if (transposeMatrix)
-            {
-                // Stored as R^T. Row extraction reconstructs R (col0_R=row0_M, col1_R=row1_M, col2_R=row2_M).
-                // D*R negates row1 of R. Row1 of R = col1 of R^T = (m01, m11, m21). Negate those.
-                m01 = -m01;
-                m11 = -m11;
-                m21 = -m21;
-            }
-            else
-            {
-                // Stored as R. D*R negates row1 of R = (m10, m11, m12) in row-major storage.
-                m10 = -m10;
-                m11 = -m11;
-                m12 = -m12;
-            }
-        }
-
-        Vector3 right, up, forward;
-        if (transposeMatrix)
-        {
-            // Bundle stores rotation matrices as R^T. Row extraction reconstructs R:
-            //   row0_M = col0_R → right, row1_M = col1_R → up, row2_M = col2_R → forward.
-            right = new Vector3(m00, m01, m02);
-            up = new Vector3(m10, m11, m12);
-            forward = new Vector3(m20, m21, m22);
-        }
-        else
-        {
-            // Standard column extraction: right=col0, up=col1, forward=col2.
-            right = new Vector3(m00, m10, m20);
-            up = new Vector3(m01, m11, m21);
-            forward = new Vector3(m02, m12, m22);
-        }
-
-        if (right.sqrMagnitude < 0.000001f || up.sqrMagnitude < 0.000001f || forward.sqrMagnitude < 0.000001f)
-        {
-            return false;
-        }
-
-        forward.Normalize();
-        up = Vector3.ProjectOnPlane(up, forward);
-        if (up.sqrMagnitude < 0.000001f)
-        {
-            up = Vector3.up;
-        }
-        up.Normalize();
-
-        rotation = Quaternion.LookRotation(forward, up);
-        return IsFinite(rotation);
     }
 
     private bool TryGetHumanSmplPose(int frameIndex, uint trackId, out HumanSmplPose pose)
     {
         pose = default(HumanSmplPose);
-        // meta.bin takes priority over sidecar
-        if (humanSmplPosesMetaBin.TryGetValue(frameIndex, out Dictionary<uint, HumanSmplPose> byTrackMeta) &&
-            byTrackMeta.TryGetValue(trackId, out pose))
-        {
-            return true;
-        }
-        return humanSmplPosesByFrame.TryGetValue(frameIndex, out Dictionary<uint, HumanSmplPose> byTrack) &&
+        return humanSmplPosesMetaBin.TryGetValue(frameIndex, out Dictionary<uint, HumanSmplPose> byTrack) &&
                byTrack.TryGetValue(trackId, out pose);
-    }
-
-    private bool TryGetHumanSmplRootWorld(Transform screen, HumanSmplPose pose, float fallbackDepthMeters, out Vector3 rootWorld)
-    {
-        rootWorld = Vector3.zero;
-        if (!EnableHumanSmplMotion || !pose.hasTransl || !TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
-        {
-            return false;
-        }
-
-        float sourceDepth = Mathf.Abs(pose.transl.z);
-        if (sourceDepth <= 0.0001f)
-        {
-            return false;
-        }
-
-        float targetDepth = Mathf.Max(0.001f, fallbackDepthMeters);
-        if (TryGetHumanSmplRootEyePixel(pose, out float uEye, out float vEye))
-        {
-            rootWorld = AnchorUvZToWorldPinhole(screen, uEye, vEye, targetDepth);
-            return IsFinite(rootWorld);
-        }
-
-        Vector3 transl = pose.transl;
-        if (HumanSmplFlipY)
-        {
-            transl.y = -transl.y;
-        }
-
-        Vector3 normalizedCam = new Vector3(transl.x / sourceDepth, transl.y / sourceDepth, 1f) * targetDepth;
-        rootWorld = camOrigin + (camRotation * normalizedCam);
-        return IsFinite(rootWorld);
-    }
-
-    private bool TryGetHumanSmplRootEyePixel(HumanSmplPose pose, out float uEye, out float vEye)
-    {
-        uEye = 0f;
-        vEye = 0f;
-        if (!pose.hasTransl ||
-            !pose.hasFocalLength ||
-            pose.focalLength.x <= 0.0001f ||
-            pose.focalLength.y <= 0.0001f ||
-            humanSmplSourceWidth <= 0 ||
-            humanSmplSourceHeight <= 0 ||
-            manifest == null ||
-            manifest.eye_w <= 0 ||
-            manifest.eye_h <= 0)
-        {
-            return false;
-        }
-
-        float sourceDepth = Mathf.Abs(pose.transl.z);
-        if (sourceDepth <= 0.0001f)
-        {
-            return false;
-        }
-
-        float uSource = (pose.transl.x / sourceDepth) * pose.focalLength.x + humanSmplSourceWidth * 0.5f;
-        float vSource = (pose.transl.y / sourceDepth) * pose.focalLength.y + humanSmplSourceHeight * 0.5f;
-        if (float.IsNaN(uSource) || float.IsInfinity(uSource) || float.IsNaN(vSource) || float.IsInfinity(vSource))
-        {
-            return false;
-        }
-
-        uEye = Mathf.Clamp(uSource * manifest.eye_w / humanSmplSourceWidth, 0f, manifest.eye_w - 1f);
-        vEye = Mathf.Clamp(vSource * manifest.eye_h / humanSmplSourceHeight, 0f, manifest.eye_h - 1f);
-        return true;
     }
 
     private bool TryGetHumanSmplRootRotation(Transform screen, HumanSmplPose pose, out Quaternion rootRotation)
@@ -464,14 +168,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 : 1f;
 
             Quaternion[] fk = state.smplFk;
+            fk[0] = Quaternion.identity;
             // globalOrient is in Y-up camera space (after D*R conversion in TryReadRotationMatrix).
             // Multiply by camRotation (camera-to-world) to get the pelvis orientation in Unity world space.
             // For a standard VR setup: camRotation ≈ 180°Y, globalOrient for upright person ≈ 180°Y,
             // so fk[0] = camRotation * globalOrient ≈ identity → T-pose for upright person. ✓
-            fk[0] = Quaternion.identity;
-            if (TryGetHumanSmplLocalRotation(pose, 0, out Quaternion rawGlobalOrient) && IsFinite(rawGlobalOrient))
+            if (TryGetHumanSmplLocalRotation(pose, 0, out Quaternion rawGlobalOrient))
             {
-                Quaternion worldFk0 = pose.camRotation * rawGlobalOrient;
+                Quaternion worldFk0 = ResolveHumanSmplFkRootWorldRotation(pose.camRotation, rawGlobalOrient);
                 if (IsFinite(worldFk0))
                 {
                     state.smoothedSmplLocal[0] = state.smoothingInitialized
@@ -486,7 +190,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 cache.bindRotWorld.TryGetValue(HumanBodyBones.Hips, out Quaternion bindHipsWorld) &&
                 IsFinite(bindHipsWorld) && IsFinite(fk[0]))
             {
-                Quaternion targetHipsWorld = bindHipsWorld * fk[0];
+                Quaternion targetHipsWorld = ResolveHumanSmplTargetWorldRotation(fk[0], Quaternion.identity, bindHipsWorld);
                 if (IsFinite(targetHipsWorld))
                 {
                     Quaternion targetHipsLocal = hipsBone.parent != null
@@ -509,62 +213,104 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     Debug.Log($"[SMPL-FK-DBG] bindHipsWorld={dbgHipsWorld.eulerAngles}");
             }
 
-            // Body joints use body_pose-relative FK (starts from identity).
-            // globalOrient is already applied to the Hips bone above.
-            // Unity's kinematic chain propagates the Hips rotation to all descendants automatically,
-            // so child joints only need body_pose applied relative to their own T-pose.
-            // Resetting fk[0] here means parentFk for root-level joints (e.g. LeftUpperLeg) = identity,
-            // which gives correctedLocal = bindRotLocal * body_pose → T-pose preserved when body_pose = identity.
-            fk[0] = Quaternion.identity;
+            // 正しい標準FK公式（2026-06-13 修正）:
+            // bone.rotation[j] = parentTargetWorld[j] * bindRotLocal[j] * bodyPose[j]
+            //
+            // bindRotLocal[j] = T-pose での joint j の親相対ローカル回転。
+            // bodyPose[j] は親フレームで定義されるので、bindRotLocal を先に適用して
+            // T-pose フレームを確立してから bodyPose を重ねるのが正しい順序。
+            //
+            // T-pose 検証（bodyPose=identity）:
+            //   tw[j] = parentTW * bindRotLocal[j] * identity = parentTW * bindRotLocal[j]
+            //   → 展開すると worldGlobalOrient * bindRotWorld[j]  ✓
+            //
+            // 旧公式 (globalOrient * fk_body * bindRotWorld) との違い:
+            //   旧: ... * bodyPose * bindRotWorld  （body_pose → bindRot の順 → 右腕 180°Z で約77°ズレ）
+            //   新: ... * bindRotLocal * bodyPose  （bindRot → body_pose の順 → 全ジョイント正しい）
+            //
+            // NG (旧 cumulative local): parentTargetWorld * bindRotLocal * smplLocal
+            //   ApplyLocalRotation を使うと UpperChest BONE MISSING で腕が誤方向
+            //   → ApplyWorldRotation + tw[] 追跡で解決済み
+            Quaternion worldGlobalOrient = fk[0];
+            // tw[] = 各 joint のターゲット world rotation（fk 配列を再利用）
+            Quaternion[] tw = fk;
+            if (cache.bindRotWorld.TryGetValue(HumanBodyBones.Hips, out Quaternion bindHipsW) && IsFinite(bindHipsW))
+                tw[0] = worldGlobalOrient * bindHipsW;
+            else
+                tw[0] = worldGlobalOrient;
+
 
             for (int i = 0; i < SmplJointTopologicalOrder.Length; i++)
             {
                 int joint = SmplJointTopologicalOrder[i];
                 int parentJoint = SmplJointParentArray[joint];
-                Quaternion parentFk = fk[parentJoint];
+                Quaternion parentTW = tw[parentJoint];
 
                 Quaternion rawSmplLocal = Quaternion.identity;
                 TryGetHumanSmplLocalRotation(pose, joint, out rawSmplLocal);
 
-                // Smooth the input rotation before accumulating FK. Smoothing the input (not the output)
-                // keeps the FK chain consistent: smoothed parent naturally carries the child.
                 Quaternion smplLocal = state.smoothingInitialized
                     ? Quaternion.Slerp(state.smoothedSmplLocal[joint], rawSmplLocal, smoothAlpha)
                     : rawSmplLocal;
                 state.smoothedSmplLocal[joint] = smplLocal;
 
-                fk[joint] = parentFk * smplLocal;
+                // SMPL エスティメーターは Spine・Chest の前傾角を過大推定する傾向がある。
+                // FK 伝播に使うスケール済み回転（smoothedSmplLocal には未スケール値を保存）。
+                const float SpineBodyPoseScale = 0.25f;
+                Quaternion fkLocal = (joint == 3 || joint == 6)
+                    ? Quaternion.Slerp(Quaternion.identity, smplLocal, SpineBodyPoseScale)
+                    : smplLocal;
 
-                if (!SmplJointToHumanBone.TryGetValue(joint, out HumanBodyBones boneId)) continue;
-                if (!cache.bones.TryGetValue(boneId, out Transform bone) || bone == null)
+                // HumanBone マッピングなし → bindLoc=identity で tw 積算してスキップ
+                if (!SmplJointToHumanBone.TryGetValue(joint, out HumanBodyBones boneId))
                 {
-                    if (debugLog) Debug.Log($"[SMPL-FK-DBG] joint={joint}({boneId}) BONE MISSING in rig");
+                    tw[joint] = parentTW * fkLocal;
                     continue;
                 }
-                if (!state.referenceUnityLocal.TryGetValue(boneId, out Quaternion tPoseLocal)) continue;
 
-                Quaternion correctedLocal = Quaternion.Inverse(parentFk) * tPoseLocal * parentFk * smplLocal;
-                if (!IsFinite(correctedLocal)) continue;
+                // bindRotLocal を取得（マッピングあり・キャッシュなしは identity）
+                if (!cache.bindRotLocal.TryGetValue(boneId, out Quaternion bindLoc) || !IsFinite(bindLoc))
+                    bindLoc = Quaternion.identity;
 
-                // Log key joints: hips chain (1,4), ankle (7), toes (10), elbow (18), wrist (20), shoulder (16)
-                bool logThisJoint = debugLog && (joint == 1 || joint == 4 || joint == 7 || joint == 10 || joint == 16 || joint == 18 || joint == 20);
-                if (logThisJoint)
+                // 標準FK: tw[j] = parentTW * bindRotLocal[j] * bodyPose[j]
+                tw[joint] = parentTW * bindLoc * fkLocal;
+
+                // BONE MISSING → bone 設定はスキップするが tw chain は積算済み
+                // （UpperChest 等の tw は子 joint（肩・腕）の parentTW として使われる）
+                if (!cache.bones.TryGetValue(boneId, out Transform bone) || bone == null)
                 {
-                    Quaternion dbgBindWorld = cache.bindRotWorld.TryGetValue(boneId, out Quaternion dbgBW) ? dbgBW : Quaternion.identity;
-                    Debug.Log($"[SMPL-FK-DBG] joint={joint}({boneId}) parentJoint={parentJoint} " +
-                        $"smplLocal={smplLocal.eulerAngles} tPoseLocal={tPoseLocal.eulerAngles} " +
-                        $"parentFk={parentFk.eulerAngles} correctedLocal={correctedLocal.eulerAngles} " +
-                        $"bindRotWorld={dbgBindWorld.eulerAngles} boneWorld_before={bone.rotation.eulerAngles}");
-                    Debug.Log($"[SMPL-FK-DBG]   before: bone.fwd={bone.forward:F2}  bone.up={bone.up:F2}  bone.pos={bone.position:F2}");
+                    if (debugLog) Debug.Log($"[SMPL-FK-DBG] joint={joint}({boneId}) BONE MISSING smplLocal={smplLocal.eulerAngles} tw={tw[joint].eulerAngles}");
+                    continue;
                 }
 
-                TransformWriter.ApplyLocalRotation(bone, correctedLocal);
+                if (IsTerminalHumanSmplHandBone(boneId) &&
+                    !ShouldApplyHumanSmplTerminalHandRotationInSmplOnlyPose())
+                {
+                    continue;
+                }
+
+                Quaternion targetWorld = tw[joint];
+
+                if (!IsFinite(targetWorld))
+                    continue;
+
+                bool logThisJoint = debugLog && (joint == 3 || joint == 6 || joint == 13 || joint == 14 || joint == 16 || joint == 17 || joint == 18 || joint == 19 || joint == 20);
+                if (logThisJoint)
+                {
+                    if (cache.bindRotWorld.TryGetValue(boneId, out Quaternion dbgBindW))
+                    {
+                        Vector3 tposeFwd = (worldGlobalOrient * dbgBindW) * Vector3.forward;
+                        Debug.Log($"[SMPL-FK-DBG] joint={joint}({boneId}) smplLocal={smplLocal.eulerAngles:F1} fkLocal={fkLocal.eulerAngles:F1} " +
+                            $"bindLoc={bindLoc.eulerAngles:F1} tw={tw[joint].eulerAngles:F1}");
+                        Debug.Log($"[SMPL-FK-DBG]   tpose.fwd={tposeFwd:F2}");
+                    }
+                }
+
+                TransformWriter.ApplyWorldRotation(bone, targetWorld);
 
                 if (logThisJoint)
                 {
-                    Quaternion dbgBW2 = cache.bindRotWorld.TryGetValue(boneId, out Quaternion tmp2) ? tmp2 : Quaternion.identity;
-                    Debug.Log($"[SMPL-FK-DBG]   boneWorld_after={bone.rotation.eulerAngles}  fk[j]={fk[joint].eulerAngles}  bindRotWorld*fk[j]={(dbgBW2 * fk[joint]).eulerAngles}");
-                    Debug.Log($"[SMPL-FK-DBG]   bone.fwd={bone.forward:F2}  bone.up={bone.up:F2}  bone.pos={bone.position:F2}");
+                    Debug.Log($"[SMPL-FK-DBG]   after:  bone.fwd={bone.forward:F2}  bone.up={bone.up:F2}");
                 }
 
                 appliedAny = true;
@@ -631,6 +377,224 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         humanSmplRetargetStateByCache[cache] = state;
         return state;
+    }
+
+    // 手のFK を AimAt 補正後に適用する。
+    // 親フレームを SMPL joint 世界座標（elbow→wrist ベクトル）＋ worldUp から構築することで
+    // キャラクター固有の bone axis 差を完全に排除する。
+    // - forward = normalize(smplWrist - smplElbow): 全キャラ共通（SMPL joint 位置由来）
+    // - up      = ProjectOnPlane(Vector3.up, forward): 全キャラ共通（worldUp 投影）
+    // → smplLocal を同じ親フレームに適用するので全キャラ同じ手の向きになる。
+    private void TryApplyHandFkAfterAimAt(HumanoidRigCache cache, Vector3[] jointsWorld, byte[] jointVis)
+    {
+        if (!EnableHumanSmplMotion || cache == null || !cache.ready) return;
+        if (!humanSmplRetargetStateByCache.TryGetValue(cache, out HumanSmplRetargetState state) || state == null) return;
+        if (!state.smoothingInitialized) return;
+
+        ApplyHandFkWithCanonicalParent(cache, state, HumanBodyBones.LeftHand,  smplHandJoint: 20,
+            jointsWorld, jointVis, idxElbow: SmplLeftElbow,  idxWrist: SmplLeftWrist);
+        ApplyHandFkWithCanonicalParent(cache, state, HumanBodyBones.RightHand, smplHandJoint: 21,
+            jointsWorld, jointVis, idxElbow: SmplRightElbow, idxWrist: SmplRightWrist);
+    }
+
+    private static void ApplyHandFkWithCanonicalParent(
+        HumanoidRigCache cache,
+        HumanSmplRetargetState state,
+        HumanBodyBones handBoneId,
+        int smplHandJoint,
+        Vector3[] jointsWorld,
+        byte[] vis,
+        int idxElbow,
+        int idxWrist)
+    {
+        if (!cache.bones.TryGetValue(handBoneId, out Transform handBone) || handBone == null) return;
+
+        Quaternion smplLocal = state.smoothedSmplLocal[smplHandJoint];
+        if (!IsFinite(smplLocal)) return;
+
+        if (!TrackedJointPoints.TryGet(jointsWorld, vis, idxElbow, out Vector3 posElbow)) return;
+        if (!TrackedJointPoints.TryGet(jointsWorld, vis, idxWrist, out Vector3 posWrist))  return;
+
+        // canonical 親フレーム: forward = elbow→wrist、up = worldUp 投影。キャラクター固有値を一切含まない。
+        Vector3 armDir = (posWrist - posElbow);
+        if (armDir.sqrMagnitude < 0.0001f) return;
+        armDir.Normalize();
+
+        Vector3 up = Vector3.ProjectOnPlane(Vector3.up, armDir);
+        if (up.sqrMagnitude < 0.001f)
+            up = Vector3.ProjectOnPlane(Vector3.right, armDir);
+        up.Normalize();
+
+        Quaternion canonicalParent = Quaternion.LookRotation(armDir, up);
+        if (!IsFinite(canonicalParent)) return;
+
+        // handBindCorrection = Inverse(canonicalTpose) * bindRotWorld[hand]
+        // smplLocal=identity のとき tw = bindRotWorld[hand]（T-pose に一致）になる。
+        // キャラクターごとの手ボーンのローカル軸差をこの補正量が吸収する。
+        if (!cache.handBindCorrection.TryGetValue(handBoneId, out Quaternion correction))
+            correction = Quaternion.identity;
+
+        Quaternion tw = canonicalParent * smplLocal * correction;
+        if (!IsFinite(tw)) return;
+
+        if (state.debugFrameCount == 30 || state.debugFrameCount == 60)
+        {
+            Debug.Log($"[HAND-DBG] {handBoneId}: canonicalFwd={armDir:F3} smplLocal={smplLocal.eulerAngles:F1} correction={correction.eulerAngles:F1} → handFwd={tw * Vector3.forward:F3}");
+        }
+
+        TransformWriter.ApplyWorldRotation(handBone, tw);
+    }
+
+    // Exponential smoothing for SMPL-only root world position.
+    //
+    // Root cause of depth + lateral jitter (pinhole model):
+    //   worldPos = camOrigin + anchorZ * ray
+    //   X = xNdc * Z / fx,  Y = yNdc * Z / fy,  Z = anchorZ
+    // anchorZ (from depth_npz) is noisy → X, Y, Z are all noisy together.
+    // UV (anchorU/V from SAM2) is stable → ray direction is stable.
+    //
+    // Fix: smooth only the scalar depth Z, reconstruct along the same stable ray:
+    //   smoothed = camOrigin + (target - camOrigin) * (smoothedZ / rawZ)
+    private Vector3 GetSmoothedSmplRootWorld(HumanoidRigCache cache, Vector3 target, Vector3 camOrigin, Vector3 cameraForward)
+    {
+        const float HalfLifeSecDepth = 0.35f;
+        float dt = Time.deltaTime;
+        float alphaDepth = 1f - Mathf.Exp(-dt * 0.693147f / HalfLifeSecDepth);
+
+        Vector3 offset = target - camOrigin;
+        float rawDepth = cameraForward.sqrMagnitude > 0.0001f
+            ? Vector3.Dot(offset, cameraForward.normalized)
+            : offset.magnitude;
+
+        if (!humanSmplSmoothedRootInit.Contains(cache))
+        {
+            humanSmplSmoothedRoot[cache] = target;
+            humanSmplSmoothedDepth[cache] = rawDepth;
+            humanSmplSmoothedRootInit.Add(cache);
+            return target;
+        }
+
+        float prevDepth = humanSmplSmoothedDepth.TryGetValue(cache, out float pd) ? pd : rawDepth;
+        float smoothedDepth = Mathf.Lerp(prevDepth, rawDepth, alphaDepth);
+        humanSmplSmoothedDepth[cache] = smoothedDepth;
+
+        // Scale the ray by smoothedDepth/rawDepth: UV direction unchanged, only depth is smoothed.
+        Vector3 smoothed = rawDepth > 0.001f
+            ? camOrigin + offset * (smoothedDepth / rawDepth)
+            : target;
+
+        humanSmplSmoothedRoot[cache] = smoothed;
+        return smoothed;
+    }
+
+    // SMPL joint world 位置（jointsWorld）からのベクトル（B - A）を使って腕 bone の向きを整合する。
+    // ApplyHumanoidBoneToward（targetPoint - bone.position）より正確:
+    //   Unity bone 位置と SMPL joint 位置の不一致（スケール差等）の影響を受けない。
+    // 両腕（左右 × 上腕・前腕）に適用する。IK ではなく per-bone の回転のみ。
+    private void TryApplySmplArmsFromJointPositions(HumanoidRigCache cache, Vector3[] jointsWorld, byte[] vis)
+    {
+        if (cache == null || jointsWorld == null || vis == null || jointsWorld.Length < 22) return;
+
+        // Left upper arm: joint 16 (LeftUpperArm start) → joint 18 (LeftElbow = LeftLowerArm start)
+        TryApplySmplArmSegment(cache, HumanBodyBones.LeftUpperArm, HumanBodyBones.LeftLowerArm,
+            jointsWorld, vis, SmplLeftShoulder, SmplLeftElbow);
+
+        // Left lower arm: joint 18 (LeftElbow) → joint 20 (LeftWrist = LeftHand start)
+        TryApplySmplArmSegment(cache, HumanBodyBones.LeftLowerArm, HumanBodyBones.LeftHand,
+            jointsWorld, vis, SmplLeftElbow, SmplLeftWrist);
+
+        // Right upper arm: joint 17 (RightUpperArm start) → joint 19 (RightElbow = RightLowerArm start)
+        TryApplySmplArmSegment(cache, HumanBodyBones.RightUpperArm, HumanBodyBones.RightLowerArm,
+            jointsWorld, vis, SmplRightShoulder, SmplRightElbow);
+
+        // Right lower arm: joint 19 (RightElbow) → joint 21 (RightWrist = RightHand start)
+        TryApplySmplArmSegment(cache, HumanBodyBones.RightLowerArm, HumanBodyBones.RightHand,
+            jointsWorld, vis, SmplRightElbow, SmplRightWrist);
+    }
+
+    // SMPL ankle joint Y を基準にキャラクターの足首ボーン Y を揃える。
+    // 骨盤を SMPL pelvis anchor に配置した後、キャラモデルの脚の長さが SMPL と異なる場合に
+    // 足が浮いたり沈んだりする問題を補正する。XZ 位置は変更しない（骨盤基準を維持）。
+    private void AlignHumanoidFeetYToSmplAnkles(Transform root, HumanoidRigCache cache, Vector3[] jointsWorld, byte[] vis)
+    {
+        if (root == null || cache == null || jointsWorld == null || vis == null) return;
+
+        float smplMinY = float.MaxValue;
+        if (TrackedJointPoints.TryGet(jointsWorld, vis, SmplLeftAnkle,  out Vector3 leftAnkle))
+            smplMinY = Mathf.Min(smplMinY, leftAnkle.y);
+        if (TrackedJointPoints.TryGet(jointsWorld, vis, SmplRightAnkle, out Vector3 rightAnkle))
+            smplMinY = Mathf.Min(smplMinY, rightAnkle.y);
+        if (smplMinY == float.MaxValue) return;
+
+        float charMinY = float.MaxValue;
+        if (cache.bones.TryGetValue(HumanBodyBones.LeftFoot,  out Transform leftFoot)  && leftFoot  != null)
+            charMinY = Mathf.Min(charMinY, leftFoot.position.y);
+        if (cache.bones.TryGetValue(HumanBodyBones.RightFoot, out Transform rightFoot) && rightFoot != null)
+            charMinY = Mathf.Min(charMinY, rightFoot.position.y);
+        if (charMinY == float.MaxValue) return;
+
+        float yOffset = smplMinY - charMinY;
+        Debug.Log($"[FOOT-Y] smplAnkleY={smplMinY:F3} charFootY={charMinY:F3} offset={yOffset:F3}");
+        if (Mathf.Abs(yOffset) < 0.001f) return;
+
+        root.position += new Vector3(0f, yOffset, 0f);
+    }
+
+    // SMPL joint world 位置（jointsWorld）からのベクトル（B - A）を使って脚 bone の向きを整合する。
+    // 腕と同じ AimAt アプローチ。FK の body_pose 座標フレームと Unity bone フレームの誤差を補正する。
+    private void TryApplySmplLegsFromJointPositions(HumanoidRigCache cache, Vector3[] jointsWorld, byte[] vis)
+    {
+        if (cache == null || jointsWorld == null || vis == null || jointsWorld.Length < 12) return;
+
+        // Left thigh: joint 1 (LeftHip) → joint 4 (LeftKnee)
+        TryApplySmplArmSegment(cache, HumanBodyBones.LeftUpperLeg, HumanBodyBones.LeftLowerLeg,
+            jointsWorld, vis, SmplLeftHip, SmplLeftKnee);
+
+        // Left shin: joint 4 (LeftKnee) → joint 7 (LeftAnkle)
+        TryApplySmplArmSegment(cache, HumanBodyBones.LeftLowerLeg, HumanBodyBones.LeftFoot,
+            jointsWorld, vis, SmplLeftKnee, SmplLeftAnkle);
+
+        // Right thigh: joint 2 (RightHip) → joint 5 (RightKnee)
+        TryApplySmplArmSegment(cache, HumanBodyBones.RightUpperLeg, HumanBodyBones.RightLowerLeg,
+            jointsWorld, vis, SmplRightHip, SmplRightKnee);
+
+        // Right shin: joint 5 (RightKnee) → joint 8 (RightAnkle)
+        TryApplySmplArmSegment(cache, HumanBodyBones.RightLowerLeg, HumanBodyBones.RightFoot,
+            jointsWorld, vis, SmplRightKnee, SmplRightAnkle);
+
+        // Left foot direction: joint 7 (LeftAnkle) → joint 10 (LeftToes)
+        TryApplySmplArmSegment(cache, HumanBodyBones.LeftFoot, HumanBodyBones.LeftToes,
+            jointsWorld, vis, SmplLeftAnkle, SmplLeftFoot);
+
+        // Right foot direction: joint 8 (RightAnkle) → joint 11 (RightToes)
+        TryApplySmplArmSegment(cache, HumanBodyBones.RightFoot, HumanBodyBones.RightToes,
+            jointsWorld, vis, SmplRightAnkle, SmplRightFoot);
+    }
+
+    private void TryApplySmplArmSegment(HumanoidRigCache cache,
+        HumanBodyBones proxBone, HumanBodyBones distBone,
+        Vector3[] jointsWorld, byte[] vis, int idxA, int idxB)
+    {
+        if (!cache.bones.TryGetValue(proxBone, out Transform proxT) || proxT == null) return;
+        if (!cache.bones.TryGetValue(distBone, out Transform distT) || distT == null) return;
+        if (!TrackedJointPoints.TryGet(jointsWorld, vis, idxA, out Vector3 posA)) return;
+        if (!TrackedJointPoints.TryGet(jointsWorld, vis, idxB, out Vector3 posB)) return;
+
+        Vector3 targetDir = (posB - posA).normalized;
+        if (targetDir.sqrMagnitude < 0.0001f) return;
+
+        Vector3 currentDir = (distT.position - proxT.position).normalized;
+        if (currentDir.sqrMagnitude < 0.0001f) return;
+
+        float dot = Vector3.Dot(currentDir, targetDir);
+        if (dot > 0.9999f) return;  // 既に整合済み
+
+        Quaternion delta = dot < -0.9999f
+            ? Quaternion.AngleAxis(180f, Vector3.Cross(currentDir, Vector3.up).sqrMagnitude > 0.001f
+                ? Vector3.Cross(currentDir, Vector3.up).normalized
+                : Vector3.Cross(currentDir, Vector3.right).normalized)
+            : Quaternion.FromToRotation(currentDir, targetDir);
+        TransformWriter.ApplyWorldRotation(proxT, delta * proxT.rotation);
     }
 
     private bool ApplyHumanSmplBoneFullOverlay(
@@ -745,9 +709,39 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return referenceUnityLocal * (Quaternion.Inverse(referenceSmplLocal) * currentSmplLocal);
     }
 
+    public static Quaternion ResolveHumanSmplFkRootWorldRotation(
+        Quaternion cameraToWorld,
+        Quaternion cameraSpaceGlobalOrient)
+    {
+        if (!IsFinite(cameraToWorld) || !IsFinite(cameraSpaceGlobalOrient))
+        {
+            return Quaternion.identity;
+        }
+
+        return cameraToWorld * cameraSpaceGlobalOrient;
+    }
+
+    public static Quaternion ResolveHumanSmplTargetWorldRotation(
+        Quaternion worldGlobalOrient,
+        Quaternion bodyFk,
+        Quaternion bindWorld)
+    {
+        if (!IsFinite(worldGlobalOrient) || !IsFinite(bodyFk) || !IsFinite(bindWorld))
+        {
+            return Quaternion.identity;
+        }
+
+        return worldGlobalOrient * bodyFk * bindWorld;
+    }
+
     public static bool ShouldApplyHumanSmplFullHandRotation()
     {
         return true;
+    }
+
+    public static bool ShouldApplyHumanSmplTerminalHandRotationInSmplOnlyPose()
+    {
+        return false;
     }
 
     public static bool ShouldApplyHumanSmplLowerArmBendRotation()
@@ -761,6 +755,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
     public static bool ShouldUseHumanSmplRootPlacementPolicy(bool isPerson, bool hasHumanSmplTranslation)
+    {
+        return false;
+    }
+
+    public static bool ShouldUseHumanSmplRootAnchorForSmplOnlyPose(bool isPerson, bool hasHumanSmplTranslation)
     {
         return false;
     }
@@ -804,6 +803,32 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return currentPosition + up * Vector3.Dot(referencePosition - currentPosition, up);
     }
 
+    // Returns the body-relative FK of the nearest SMPL ancestor that has a real Unity bone.
+    // When a SMPL parent joint (e.g. UpperChest) is absent from the rig, bindRotLocal[j] is
+    // in the actual Unity parent's frame (the next present ancestor), so the correctedLocal
+    // formula must use that ancestor's FK rather than the missing joint's FK.
+    private static Quaternion FindEffectiveParentFk(HumanoidRigCache cache, int parentJoint, Quaternion[] fk)
+    {
+        int p = parentJoint;
+        while (p >= 0)
+        {
+            bool hasBone;
+            if (p == 0)
+            {
+                hasBone = cache.bones.ContainsKey(HumanBodyBones.Hips);
+            }
+            else
+            {
+                hasBone = SmplJointToHumanBone.TryGetValue(p, out HumanBodyBones pBoneId) &&
+                          cache.bones.ContainsKey(pBoneId);
+            }
+            if (hasBone)
+                return fk[p];
+            p = SmplJointParentArray[p];
+        }
+        return Quaternion.identity;
+    }
+
     private static bool TryGetSmplJointForHumanBone(HumanBodyBones boneId, out int smplJoint)
     {
         foreach (KeyValuePair<int, HumanBodyBones> kv in SmplJointToHumanBone)
@@ -817,6 +842,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         smplJoint = -1;
         return false;
+    }
+
+    private static bool IsTerminalHumanSmplHandBone(HumanBodyBones boneId)
+    {
+        return boneId == HumanBodyBones.LeftHand || boneId == HumanBodyBones.RightHand;
     }
 
     private static bool TryGetHumanSmplLocalRotation(HumanSmplPose pose, int smplJoint, out Quaternion rotation)
@@ -885,20 +915,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             !float.IsNaN(v.x) && !float.IsInfinity(v.x) &&
             !float.IsNaN(v.y) && !float.IsInfinity(v.y) &&
             !float.IsNaN(v.z) && !float.IsInfinity(v.z);
-    }
-
-    private static bool TryReadVector2(List<object> list, float unitScale, out Vector2 value)
-    {
-        value = Vector2.zero;
-        if (list == null || list.Count < 2)
-        {
-            return false;
-        }
-
-        value = new Vector2(
-            GetFloat(list, 0) * unitScale,
-            GetFloat(list, 1) * unitScale);
-        return true;
     }
 
     // Called from TryReadFrameObjects after consuming block_version (uint16).

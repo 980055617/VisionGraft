@@ -1,72 +1,69 @@
 # VisionGraft — Claude 作業ガイド
 
-## SMPL リターゲティング（最重要）
+## プロジェクト概要
 
-### 座標変換ルール
+VR ヘッドセット向けのステレオ動画プレイヤー。別プロジェクトで生成した `.svb` bundle を読み込み、動画視聴と 3D モデル置き換えを行うシステム。
 
-バンドルは **globalOrient・body_pose ともに R（通常形式・column convention）で格納**している。
+### 目的
 
-| データ | flipCameraY | transposeMatrix | flipCameraY での否定対象 |
-|--------|-------------|-----------------|--------------------------|
-| `globalOrient` | true | false | m10, m11, m12 (= row1 of stored R = D*R の変換) |
-| `body_pose` | false | false | なし |
-| joint positions (meta.bin) | — | — | そのまま使用（変換済み）|
+bundle 内の検出オブジェクト（Human / Animal / Else）を、対応する 3D モデルに置き換えてリアルタイムに姿勢追従させる没入体験を提供する。将来的にはランダムまたはインタラクション起因の自発的アニメーションも実行予定。
 
-`TryReadRotationMatrix` のパラメータ:
-- `globalOrient` → `flipCameraY: true, transposeMatrix: false`（row1 否定 → column 抽出 → D*R）
-- `body_pose` → `flipCameraY: false, transposeMatrix: false`（column 抽出 = R をそのまま使用）
+### オブジェクト種別と実装状態
 
-**NG パターン:**
-- `D*R*D`（両辺乗算）→ 直立人が上下逆
-- body_pose に `transposeMatrix: true`（row 抽出）→ R^T（逆回転）適用 → **LHip が後ろ・LKnee が伸びる（実際に視覚確認）**
-- globalOrient に `transposeMatrix: true` → R^T が fk[0] に入りFK全体がずれる
+| 種別 | Rig | 姿勢データ | 現状 |
+|---|---|---|---|
+| **Human** | Unity Humanoid Rig | `meta.bin` 内 SMPL block（4D-Human 由来）| 実装中・メイン課題 |
+| **Animal** | カスタム Animal Rig | `meta.bin` 内ジョイント（AniMer + SMAL 予定） | 未実装 |
+| **Else** | なし（剛体） | `meta.bin` 内 anchor / bbox | 配置のみ実装 |
 
-**なぜ直立テストで body_pose のバグが見えないか:** body_pose = identity の場合、R = R^T = I なので row/column 抽出で同じ結果。歩行など動的ポーズで初めてずれが現れる。
+- **姿勢追従**（Pose Following）= bundle の推定データをフレームごとに 3D モデルに適用すること（アニメーションとは別概念）
+- **アニメーション** = 将来実装。ユーザー言動やランダムタイミングで姿勢追従を一時中断し再生するモーション
+- モデル選択: 現状は Inspector で固定。将来的には UI ウィンドウから選択予定
 
-**検証済みデータ（複数フレーム実機確認）:**
-- `transposeMatrix:false`（R）: LHip X ≈ -65° → hip flexion（前） ✓、LKnee X ≈ +35° → knee flexion（前） ✓
-- `transposeMatrix:true`（R^T）: LHip X ≈ +67° → hip extension（後ろ） ✗、LKnee 直立 ✗（実際に確認）
+### bundle (.svb) の構成
 
-### FK 公式
+`.svb` は ZIP アーカイブ形式。別プロジェクト（Python 側）で生成する。
 
-```
-fk[0] = camRotation * globalOrient_D*R   // world-space pelvis orientation
-fk[j] = fk[parent] * body_pose[j]        // 変換なし
-correctedLocal[j] = Inv(parentFk) * tPoseLocal * parentFk * smplLocal
-targetHipsWorld = bindHipsWorld * fk[0]   // Hips は直接 world 回転で設定
-```
+| エントリ | 必須 | 用途 | 内容 |
+|---|---|---|---|
+| `video.mp4` | Required | **Runtime** | ステレオ動画（左右目の映像） |
+| `manifest.json` | Required | **Runtime** | 動画メタ情報（解像度・fps・FOV・座標系など） |
+| `meta.bin` | Required | **Runtime** | フレームごとの検出オブジェクト位置・ジョイント・SMPL block 等のバイナリデータ |
+| `source/human_smpl_from_sam2.json` | Optional | 検証・debug のみ | Human の SMPL 姿勢パラメータ（全フレーム） |
+| `source/animal_control_targets.json` | Optional | 検証・debug のみ | Animal のコントロールターゲット |
+| `source/other_object_proxies.json` | Optional | 検証・debug のみ | Else オブジェクトのプロキシ（バウンディングボックス等） |
 
-不変条件: `world_rot[j] = bindRotWorld[j] * fk[j]`
+### bundle 使用ルール（絶対に守ること）
 
-### camRotation
-```csharp
-camRotation = LookRotation(-screenFront, screen.up)  // TryGetPinholeBasis() で取得
-// screen.up ≈ world +Y（VR ヘッドセット up）
-```
+- **配置・回転・姿勢追従には `meta.bin` と `manifest.json` のみを使う**
+- **`source/*` は runtime 配置に使用禁止** — 検証・debug・将来の再解釈用
+- `meta.bin` には SMPL FK block（rotations・betas・transl）が object payload として含まれており、これが runtime の唯一の SMPL データソース
+- `source/human_smpl_from_sam2.json` 等は bundle によっては同梱されない。runtime がこれに依存すると動かなくなる
 
----
+## ドキュメント構造
+
+作業前に関連ドキュメントを参照すること。ドキュメントがない場合は `docs/` に作成し、作業中・作業後に更新する。
+
+| ドキュメント | 内容 |
+|---|---|
+| [docs/smpl-retargeting.md](docs/smpl-retargeting.md) | SMPL FK・座標変換・Humanoid リターゲティング実装ガイド・調査ログ |
+| [docs/DogMetaBoneMapping.md](docs/DogMetaBoneMapping.md) | 犬モデルのボーンマッピング |
+| [docs/human-animation-test-scene.md](docs/human-animation-test-scene.md) | Human アニメーションテストシーンの使い方 |
+| [docs/interactive-motion-events.md](docs/interactive-motion-events.md) | インタラクティブモーションイベント |
+
+## 作業方針
+
+- **作業前に関連 docs を参照**する
+- **作業中・作業後にドキュメントを更新**する（新しい知見・NG パターン・調査結果）
+- **コードを調べてから推測する**（わからない点は実際のコードを確認してからユーザーに質問）
+- **ログから実際の値を確認**してから修正方向を決める
+- **修正の根本原因が確認できてから変更に入る**
+- **変換式を変える前に数学的検証をする**
 
 ## 絶対に変えてはいけないこと
 
 - **IK 禁止**: Human モデルの姿勢適用で IK（TwoBone IK 等）を復活させない
-- **ShouldUseSmplOnlyPose() = true**: 常に true。変更前に必ず確認
+- **ShouldUseSmplOnlyPose() = true**: 常に true
 - **ShouldUseHumanSmplRootOrientation() = false**: globalOrient は FK 内で処理
 - **Animator 無効化**: `DisableHumanAnimatorPlayback` は再有効化しない
-
----
-
-## 関連ファイル
-
-- `Assets/Scripts/StereoPlayer/StreamingStereoVideoPlayer.HumanSmpl.partial.cs` — 変換・FK
-- `Assets/Scripts/StereoPlayer/StreamingStereoVideoPlayer.Humanoid.partial.cs` — cache ビルド
-- `Assets/Scripts/StereoPlayer/HumanoidRigCache.cs` — bindRotLocal/bindRotWorld
-- `Assets/Scripts/StereoPlayer/StreamingStereoVideoPlayer.PersonSmpl24.partial.cs` — 配置
-- `Assets/Scripts/StereoPlayer/StreamingStereoVideoPlayer.PosePipeline.partial.cs` — パイプライン
-
----
-
-## 作業方針
-
-- 変換式を変える前に「直立人でどうなるか」を具体的に計算して検証する
-- わからない点はコードを調べてから、それでも不明ならユーザーに質問する
-- 修正の根本原因が確認できてから変更に入る
+- **ApplyLocalRotation 禁止**: FK ループ内では `ApplyWorldRotation` のみ使用する

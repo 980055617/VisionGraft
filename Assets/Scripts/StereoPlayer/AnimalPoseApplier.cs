@@ -32,10 +32,10 @@ public sealed partial class AnimalPoseApplier
         if (!request.enableBoneApply || cache == null || !cache.ready)
             return;
 
-        if (request.hasSmalPose)
+        if (request.hasSmalPose && IsAnimalRigReadyForSmalFk(cache))
         {
             AlignAnimalRootToSkeleton(instanceRoot, cache, pose.rootWorld, true, tick);
-            TryApplyAnimalSmalFk(cache, request.smalPose, request.settings);
+            TryApplyAnimalSmalFk(cache, request.smalPose, request.settings, pose.jointsWorld, pose.jointVis, instanceRoot);
             return;
         }
 
@@ -50,6 +50,22 @@ public sealed partial class AnimalPoseApplier
         {
             ApplyAnimalLimbPose(cache, pose.jointsWorld, pose.jointVis, alpha, request.freezeAnimalDistal, pose.hasAnimalControl, pose.animalControl, tick);
         }
+    }
+
+    // SMAL FK needs confident front/rear and left/right identification of all four leg
+    // roots (plus spine) to compute a meaningful root orientation and per-joint bends - a
+    // partially-wrong FK (e.g. front/rear legs swapped) looks worse than just falling back
+    // to the existing keypoint-IK pipeline (ADR-0002 decision 3, 2026-06-18). This is
+    // deliberately stricter than the general cache.ready bone-apply gate, which also covers
+    // the keypoint-IK path and stays lenient so partial rigs still get some bone apply there.
+    private static bool IsAnimalRigReadyForSmalFk(AnimalRigCache cache)
+    {
+        return cache != null
+            && cache.spine != null
+            && cache.leftFrontUpper != null
+            && cache.rightFrontUpper != null
+            && cache.leftRearUpper != null
+            && cache.rightRearUpper != null;
     }
 
     private void TryApplyAnimalRootOrientation(Transform instanceRoot, AnimalRigCache cache, Vector3[] jointsWorld, byte[] vis, float rotateAlpha, bool hasControl, AnimalControlWorldData control, AnimalPoseSettings settings, RuntimeClock.TickContext tick)
@@ -871,6 +887,15 @@ public sealed partial class AnimalPoseApplier
         cache.tailTip = FindAnimalBone(bones, AnimalRigDefinition.TailTip);
         ResolveAnimalModelBasis(root, cache, settings);
 
+        if (cache.spine != null && cache.neck != null)
+        {
+            Vector3 spineToNeck = cache.neck.position - cache.spine.position;
+            if (spineToNeck.sqrMagnitude > 0.000001f)
+            {
+                cache.spineToNeckBindDirWorld = spineToNeck.normalized;
+            }
+        }
+
         PrimeAnimalBinds(
             cache,
             cache.neck, cache.head, cache.spine, cache.tailBase,
@@ -967,6 +992,12 @@ public sealed partial class AnimalPoseApplier
         if (TryAverageAnimalBonePosition(cache.leftFrontUpper, cache.rightFrontUpper, out Vector3 frontCenter) &&
             TryAverageAnimalBonePosition(cache.leftRearUpper, cache.rightRearUpper, out Vector3 rearCenter))
         {
+            Debug.Log($"[SMAL-SKIN-CHECK] BASIS frontCenter={frontCenter:F3} rearCenter={rearCenter:F3} " +
+                $"leftFrontUpper.pos={(cache.leftFrontUpper != null ? cache.leftFrontUpper.position : Vector3.zero):F3} " +
+                $"leftRearUpper.pos={(cache.leftRearUpper != null ? cache.leftRearUpper.position : Vector3.zero):F3} " +
+                $"head.pos={(cache.head != null ? cache.head.position : Vector3.zero):F3} " +
+                $"tailBase.pos={(cache.tailBase != null ? cache.tailBase.position : Vector3.zero):F3}");
+
             Vector3 forwardWorld = frontCenter - rearCenter;
             if (forwardWorld.sqrMagnitude > 0.000001f)
             {

@@ -631,7 +631,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             SkeletonScaleMin,
             SkeletonScaleMax,
             SkeletonScaleRelativeMin,
-            SkeletonScaleRelativeMax,
-            animalSmalCanonicalCorrectionEuler);
+            SkeletonScaleRelativeMax);
     }
 }

@@ -14,8 +14,7 @@ public static class AnimalPoseSettingsFactory
         float skeletonScaleMin,
         float skeletonScaleMax,
         float skeletonScaleRelativeMin,
-        float skeletonScaleRelativeMax,
-        Vector3 animalSmalCanonicalCorrectionEuler)
+        float skeletonScaleRelativeMax)
     {
         return new AnimalPoseSettings
         {
@@ -30,8 +29,7 @@ public static class AnimalPoseSettingsFactory
             skeletonScaleMin = skeletonScaleMin,
             skeletonScaleMax = skeletonScaleMax,
             skeletonScaleRelativeMin = skeletonScaleRelativeMin,
-            skeletonScaleRelativeMax = skeletonScaleRelativeMax,
-            animalSmalCanonicalCorrection = Quaternion.Euler(animalSmalCanonicalCorrectionEuler)
+            skeletonScaleRelativeMax = skeletonScaleRelativeMax
         };
     }
 }

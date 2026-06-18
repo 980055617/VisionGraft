@@ -18,8 +18,7 @@ public class AnimalPoseSettingsFactoryTests
             skeletonScaleMin: 0.2f,
             skeletonScaleMax: 5f,
             skeletonScaleRelativeMin: 0.75f,
-            skeletonScaleRelativeMax: 1.25f,
-            animalSmalCanonicalCorrectionEuler: new Vector3(0f, 90f, 90f));
+            skeletonScaleRelativeMax: 1.25f);
 
         Assert.That(settings.boneApplyAlpha, Is.EqualTo(0.75f));
         Assert.That(settings.enableAnimalLimbApply, Is.True);
@@ -33,6 +32,5 @@ public class AnimalPoseSettingsFactoryTests
         Assert.That(settings.skeletonScaleMax, Is.EqualTo(5f));
         Assert.That(settings.skeletonScaleRelativeMin, Is.EqualTo(0.75f));
         Assert.That(settings.skeletonScaleRelativeMax, Is.EqualTo(1.25f));
-        Assert.That(settings.animalSmalCanonicalCorrection, Is.EqualTo(Quaternion.Euler(0f, 90f, 90f)));
     }
 }

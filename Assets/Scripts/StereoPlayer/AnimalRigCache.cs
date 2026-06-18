@@ -26,6 +26,12 @@ internal sealed class AnimalRigCache
     public Transform tailTip;
     public Vector3 modelForwardLocal;
     public Vector3 modelUpLocal;
+    // Plain bind-time world direction from spine to neck (neck.position - spine.position,
+    // captured once - no aim-child/pivot heuristics). Rotating this by a candidate root
+    // delta predicts where the neck should end up; comparing that prediction against a
+    // real per-frame keypoint reference is how the root yaw fix gets decided per model
+    // (see AnimalSmalFkApplier, ADR-0002).
+    public Vector3 spineToNeckBindDirWorld;
     public readonly Dictionary<Transform, Vector3> bindDirLocal = new Dictionary<Transform, Vector3>();
     public readonly Dictionary<Transform, Quaternion> bindRotLocal = new Dictionary<Transform, Quaternion>();
     public readonly Dictionary<Transform, Quaternion> bindRotWorld = new Dictionary<Transform, Quaternion>();

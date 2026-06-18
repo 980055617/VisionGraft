@@ -61,6 +61,22 @@ public static class AnimalRigDefinition
     public static readonly AnimalBoneRule RightRearPaw = new AnimalBoneRule(
         new[] { "\u30dc\u30fc\u30f3.001_R.003", "foot.003.R", "DEF-foot.R" },
         new[] { "foot.003.r", "foot.004.r", "def-foot.r", "def-toe.r" });
+
+    public static readonly AnimalBoneRule LeftRearToe = new AnimalBoneRule(
+        new[] { "\u30dc\u30fc\u30f3.001_L.004", "foot.004.L", "DEF-toe.L" },
+        new[] { "rear_toe.l", "hind_toe.l" });
+
+    public static readonly AnimalBoneRule RightRearToe = new AnimalBoneRule(
+        new[] { "\u30dc\u30fc\u30f3.001_R.004", "foot.004.R", "DEF-toe.R" },
+        new[] { "rear_toe.r", "hind_toe.r" });
+
+    public static readonly AnimalBoneRule TailMid = new AnimalBoneRule(
+        new[] { "\u30dc\u30fc\u30f3.004", "tail.003", "tail.mid" },
+        new[] { "tail.mid", "tail2" });
+
+    public static readonly AnimalBoneRule TailTip = new AnimalBoneRule(
+        new[] { "\u30dc\u30fc\u30f3.005", "tail.004", "tail.tip" },
+        new[] { "tail.tip", "tail3" });
 }
 
 public readonly struct AnimalBoneRule

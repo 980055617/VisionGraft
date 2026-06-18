@@ -78,6 +78,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         categoryNames.Clear();
         frameOffsets = null;
         humanSmplPosesMetaBin.Clear();
+        animalSmalPosesMetaBin.Clear();
 
         try
         {
@@ -219,6 +220,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 using (var pr = new BinaryReader(ms))
                 {
                     humanSmplPosesMetaBin.Remove(frameIndex);
+                    animalSmalPosesMetaBin.Remove(frameIndex);
                     ushort objCount = pr.ReadUInt16();
                     for (int i = 0; i < objCount; i++)
                     {
@@ -297,6 +299,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                         {
                             pr.ReadUInt16(); // block_version
                             StoreSmplBlockFromBin(pr, frameIndex, trackId);
+                        }
+
+                        bool hasSmalBlock = (flags & 0x04) != 0;
+                        if (hasSmalBlock)
+                        {
+                            pr.ReadUInt16(); // block_version
+                            StoreSmalBlockFromBin(pr, frameIndex, trackId);
                         }
 
                         // anchor_z = anchorZq * quant_pos_scale gives camera-space depth in meters directly

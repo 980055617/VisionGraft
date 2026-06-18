@@ -17,13 +17,18 @@ internal sealed class AnimalRigCache
     public Transform leftRearUpper;
     public Transform leftRearLower;
     public Transform leftRearPaw;
+    public Transform leftRearToe;
     public Transform rightRearUpper;
     public Transform rightRearLower;
     public Transform rightRearPaw;
+    public Transform rightRearToe;
+    public Transform tailMid;
+    public Transform tailTip;
     public Vector3 modelForwardLocal;
     public Vector3 modelUpLocal;
     public readonly Dictionary<Transform, Vector3> bindDirLocal = new Dictionary<Transform, Vector3>();
     public readonly Dictionary<Transform, Quaternion> bindRotLocal = new Dictionary<Transform, Quaternion>();
+    public readonly Dictionary<Transform, Quaternion> bindRotWorld = new Dictionary<Transform, Quaternion>();
     public readonly Dictionary<Transform, Transform> aimChildByBone = new Dictionary<Transform, Transform>();
     public bool ready;
 }

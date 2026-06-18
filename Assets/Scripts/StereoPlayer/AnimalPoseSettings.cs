@@ -14,4 +14,5 @@ public struct AnimalPoseSettings
     public float skeletonScaleMax;
     public float skeletonScaleRelativeMin;
     public float skeletonScaleRelativeMax;
+    public Quaternion animalSmalCanonicalCorrection;
 }

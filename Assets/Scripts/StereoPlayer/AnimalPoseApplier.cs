@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-public sealed class AnimalPoseApplier
+public sealed partial class AnimalPoseApplier
 {
     private readonly AnimalMotionFilter motionFilter;
     private readonly Dictionary<Transform, AnimalRigCache> animalRigCaches = new Dictionary<Transform, AnimalRigCache>();
@@ -16,15 +16,26 @@ public sealed class AnimalPoseApplier
     {
         Transform instanceRoot = request.instanceRoot;
         AnimalPoseWorldData pose = request.pose;
-        if (instanceRoot == null || pose.jointsWorld == null || pose.jointVis == null || pose.jointCount < 20)
-        {
+        if (instanceRoot == null)
             return;
-        }
+
+        bool hasJoints = pose.jointsWorld != null && pose.jointVis != null && pose.jointCount >= 20;
+        if (!hasJoints && !request.hasSmalPose)
+            return;
 
         RuntimeClock.TickContext tick = request.tickContext;
-        AnimalRigCache cache = ApplyAnimalSkeletonPlacement(instanceRoot, request.animator, pose.jointsWorld, pose.jointVis, pose.jointCount, pose.rootWorld, request.settings, tick);
+        AnimalRigCache cache = ApplyAnimalSkeletonPlacement(
+            instanceRoot, request.animator,
+            pose.jointsWorld, pose.jointVis, pose.jointCount,
+            pose.rootWorld, request.settings, tick);
+
         if (!request.enableBoneApply || cache == null || !cache.ready)
+            return;
+
+        if (request.hasSmalPose)
         {
+            AlignAnimalRootToSkeleton(instanceRoot, cache, pose.rootWorld, true, tick);
+            TryApplyAnimalSmalFk(cache, request.smalPose, request.settings);
             return;
         }
 
@@ -226,7 +237,7 @@ public sealed class AnimalPoseApplier
     private AnimalRigCache ApplyAnimalSkeletonPlacement(Transform instanceRoot, Animator animator, Vector3[] jointsWorld, byte[] vis, int jointCount, Vector3 skeletonRoot, AnimalPoseSettings settings, RuntimeClock.TickContext tick)
     {
         Transform rigRoot = animator != null ? animator.transform : instanceRoot;
-        AnimalRigCache cache = GetOrBuildAnimalRigCache(rigRoot, settings);
+        AnimalRigCache cache = GetOrBuildAnimalRigCache(rigRoot, instanceRoot, settings);
         if (settings.enableSkeletonScaleCorrection)
         {
             ApplyAnimalSkeletonScale(instanceRoot, jointsWorld, vis, jointCount, settings);
@@ -612,6 +623,7 @@ public sealed class AnimalPoseApplier
         }
 
         cache.bindRotLocal[bone] = bone.localRotation;
+        cache.bindRotWorld[bone] = bone.rotation;
         Vector3 bindDirLocal = Vector3.forward;
         if (TryGetBoneCenterDirectionWorld(cache, bone, out Vector3 bindDirWorld))
         {
@@ -818,7 +830,7 @@ public sealed class AnimalPoseApplier
         return false;
     }
 
-    private AnimalRigCache GetOrBuildAnimalRigCache(Transform root, AnimalPoseSettings settings)
+    private AnimalRigCache GetOrBuildAnimalRigCache(Transform root, Transform skinSearchRoot, AnimalPoseSettings settings)
     {
         if (root == null)
         {
@@ -850,9 +862,13 @@ public sealed class AnimalPoseApplier
         cache.leftRearUpper = FindAnimalBone(bones, AnimalRigDefinition.LeftRearUpper);
         cache.leftRearLower = FindAnimalBone(bones, AnimalRigDefinition.LeftRearLower);
         cache.leftRearPaw = FindAnimalBone(bones, AnimalRigDefinition.LeftRearPaw);
+        cache.leftRearToe = FindAnimalBone(bones, AnimalRigDefinition.LeftRearToe);
         cache.rightRearUpper = FindAnimalBone(bones, AnimalRigDefinition.RightRearUpper);
         cache.rightRearLower = FindAnimalBone(bones, AnimalRigDefinition.RightRearLower);
         cache.rightRearPaw = FindAnimalBone(bones, AnimalRigDefinition.RightRearPaw);
+        cache.rightRearToe = FindAnimalBone(bones, AnimalRigDefinition.RightRearToe);
+        cache.tailMid = FindAnimalBone(bones, AnimalRigDefinition.TailMid);
+        cache.tailTip = FindAnimalBone(bones, AnimalRigDefinition.TailTip);
         ResolveAnimalModelBasis(root, cache, settings);
 
         PrimeAnimalBinds(
@@ -861,7 +877,9 @@ public sealed class AnimalPoseApplier
             cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw,
             cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw,
             cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw,
-            cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw);
+            cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw,
+            cache.leftRearToe, cache.rightRearToe,
+            cache.tailMid, cache.tailTip);
 
         RegisterAnimalAimPairs(
             cache,
@@ -883,7 +901,60 @@ public sealed class AnimalPoseApplier
             cache.leftRearUpper != null ||
             cache.rightRearUpper != null;
         animalRigCaches[root] = cache;
+
+        // One-time diagnostic: confirm the bones we resolved are the same Transforms a
+        // SkinnedMeshRenderer actually deforms with. If a resolved bone (e.g. leftFrontUpper)
+        // is NOT in any renderer's bones[] array, rotating it will have zero visible effect on
+        // the rendered mesh even though the FK math runs correctly every frame.
+        // Search from skinSearchRoot (the model instance root), not the Armature/animator
+        // subtree: SkinnedMeshRenderer is commonly a sibling of the Armature, not a descendant.
+        LogAnimalBoneSkinningCheck(skinSearchRoot != null ? skinSearchRoot : root, cache);
+
         return cache;
+    }
+
+    private static void LogAnimalBoneSkinningCheck(Transform root, AnimalRigCache cache)
+    {
+        SkinnedMeshRenderer[] renderers = root.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+        HashSet<Transform> skinnedBones = new HashSet<Transform>();
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            Transform[] bones = renderers[i].bones;
+            if (bones == null) continue;
+            for (int j = 0; j < bones.Length; j++)
+                if (bones[j] != null) skinnedBones.Add(bones[j]);
+        }
+
+        void Check(string label, Transform bone)
+        {
+            if (bone == null)
+            {
+                Debug.Log($"[SMAL-SKIN-CHECK] {label}=NULL (not found by name matching)");
+                return;
+            }
+            bool isSkinned = skinnedBones.Contains(bone);
+            Debug.Log($"[SMAL-SKIN-CHECK] {label}={bone.name} isSkinnedByAnyRenderer={isSkinned}");
+        }
+
+        Debug.Log($"[SMAL-SKIN-CHECK] root={root.name} skinnedMeshRendererCount={renderers.Length} totalSkinnedBoneRefs={skinnedBones.Count}");
+        Check("head", cache.head);
+        Check("neck", cache.neck);
+        Check("spine", cache.spine);
+        Check("leftFrontUpper", cache.leftFrontUpper);
+        Check("leftFrontLower", cache.leftFrontLower);
+        Check("leftFrontPaw", cache.leftFrontPaw);
+        Check("rightFrontUpper", cache.rightFrontUpper);
+        Check("rightFrontLower", cache.rightFrontLower);
+        Check("rightFrontPaw", cache.rightFrontPaw);
+        Check("leftRearUpper", cache.leftRearUpper);
+        Check("leftRearLower", cache.leftRearLower);
+        Check("leftRearPaw", cache.leftRearPaw);
+        Check("rightRearUpper", cache.rightRearUpper);
+        Check("rightRearLower", cache.rightRearLower);
+        Check("rightRearPaw", cache.rightRearPaw);
+        Check("tailBase", cache.tailBase);
+        Check("tailMid", cache.tailMid);
+        Check("tailTip", cache.tailTip);
     }
 
     private static void ResolveAnimalModelBasis(Transform root, AnimalRigCache cache, AnimalPoseSettings settings)

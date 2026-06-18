@@ -449,4 +449,217 @@ AlignHumanoidHipsToSmplRoot(instance.transform, cache,
 - 30fps・0.35s 半減期: `alpha ≈ 0.064/frame`（前フレームの深度 93.6% 保持）
 - SAM2 UV tracking の方向は保存 → X・Y も深度ノイズに汚染されなくなる
 
+---
+
+## Animal SMAL FK（2026-06-15 設計確定）
+
+詳細は [ADR-0001](adr/0001-animal-smal-fk.md) を参照。
+
+### Human SMPL との共通点・相違点
+
+| 項目 | Human SMPL | Animal SMAL |
+|---|---|---|
+| FK 公式 | `tw[j] = parentTW * bindRotLocal[j] * pose[j]` | 同一 |
+| globalOrient 変換 | `flipCameraY=true` | 同一（第一候補、実機確認要） |
+| body_pose 変換 | `flipCameraY=false` | 同一 |
+| root ボーン | Hips（joint 0 直接） | spine/ボーン（joint 0 直接） |
+| 仮想チェーン | なし | joint 1-6（pelvis0〜spine3）BONE MISSING パターン |
+| IK との関係 | IK 禁止（全面 FK） | SMAL 有効時は TwoBone IK をスキップ |
+| rig キャッシュ | `HumanoidRigCache`（bindRotLocal + bindRotWorld） | `AnimalRigCache` 拡張版（同上を追加） |
+| 座標フレーム | Unity Humanoid（HumanBodyBones enum） | カスタム（Transform フィールド直接） |
+
+### SMAL FK 固有の注意点
+
+**仮想脊椎チェーン（joint 1-6）:**
+前脚・首（parent=6）の parentTW は `tw[6]`（spine3 先端まで積算した FK 値）。
+後脚・しっぽ（parent=0）の parentTW は `tw[0]`（root world）。
+犬リグでは全ブランチが `ボーン` から直接出ているが、FK チェーンは SMAL 論理親に従うため
+前脚と後脚で異なる parentTW が使われる。これは正常。
+
+**bindRotWorld の必要性:**
+Human SMPL では `tw[0] = worldGlobalOrient * bindHipsW` のように root だけ bindRotWorld を使い、
+以降は `parentTW * bindRotLocal * pose` で展開する。
+SMAL でも同様に `tw[0] = worldGlobalOrient * bindRotWorld[spine]` とする。
+`AnimalRigCache.bindRotWorld` は `PrimeAnimalBind` 時に `bone.rotation`（世界空間回転）としてキャプチャ。
+
+**脊椎ボーンが 1 本しかない問題:**
+SMAL は joint 0-6 の 6 段脊椎を持つが犬モデルは `ボーン` 1 本。joint 0 が `ボーン` を駆動し
+joint 1-6 は FK 積算に使われるのみ（Human の UpperChest BONE MISSING と同じパターン）。
+SpineBodyPoseScale 相当のスケールダウンが必要かは実機ログで確認してから判断する。
+
 **チューニング:** `HalfLifeSecDepth` を大きくすると→より安定（意図的な前後移動への追従が遅くなる）。
+
+---
+
+### 2026-06-16: SMAL 向き調査と SmalCanonicalCorrection 分析
+
+**実機ログ（SmalCanonicalCorrection = Euler(90,0,0) 時）:**
+
+```
+Frame 1:  camRot=(0,0,0)  rawGO=(276.0, 234.7, 148.3)  worldFk0=(354.9, 22.8, 3.2)
+          spine.fwd=(0.387, 0.089, 0.918)  ≈ +Z  spine.up=(-0.085, 0.995, -0.060) ≈ +Y
+          bodyPose_maxAngle=31.2° at SMAL_joint=12（前左脚膝）
+          leftFront.fwd=(-0.535, -0.285, -0.795)  leftFront.up=(0.332, -0.936, 0.113)
+          head.fwd=(0.143, 0.381, 0.913)
+
+Frame 30: worldFk0≈identity  spine.fwd≈+Z  bodyPose_maxAngle=53.5° at joint=25（しっぽ）
+Frame 60: worldFk0≈identity  spine.fwd≈+Z  bodyPose_maxAngle=59.3° at joint=25
+```
+
+**Prefab 実測から確定したボーン階層：**
+
+```
+アーマチュア (parent of ボーン)  localRot = R_x(-90°)  scale = (100,100,100)
+└── ボーン (spine / cache.spine)  localRot = R_x(+90°)   → worldRot = identity ✓ (bindSpineW = identity)
+    ├── body (body mesh)           localRot = R_x(-90°)   → worldRot = R_x(-90°) at T-pose
+    └── ... (other child bones)
+```
+
+**T-pose での犬の向き（数学的導出）：**
+
+```
+body.worldRot at T-pose = ボーン.worldRot × body.localRot = identity × R_x(-90°) = R_x(-90°)
+
+# R_x(-90°) の作用: (x,y,z) → (x, z, -y)
+body.forward = R_x(-90°) × (0,0,1) = (0, 1, 0)  ← +Y（上方向）
+body.up      = R_x(-90°) × (0,1,0) = (0, 0,-1)  ← -Z（視聴者方向）
+body.right   = R_x(-90°) × (1,0,0) = (1, 0, 0)  ← +X
+```
+
+**犬の「鼻」方向（vertex data = mesh local +Y）：**
+
+Blender で dog faces +Y (Blender convention) → FBX export 後の mesh local +Y がそのまま鼻方向。
+
+```
+鼻 in world = body.worldRot × (0,1,0)
+           = ボーン.worldRot × R_x(-90°) × (0,1,0)
+           = tw[0] × (0, 0, -1)   [R_x(-90°)×(0,1,0) = (0,0,-1)]
+           = -spine.fwd
+```
+
+**結論：鼻方向 = −spine.fwd**
+
+- `SmalCanonicalCorrection = Euler(90,0,0)`（確定値）: spine.fwd ≈ +Z → **鼻 ≈ -Z（視聴者向き） ✓**
+- `Euler(90,0,0) × Euler(0,180,0)` を試した結果: spine.fwd ≈ -Z → **鼻 ≈ +Z（スクリーン向き） ✗**
+
+→ **Euler(90,0,0) が正しい。180°Y flip は逆効果だった。**
+
+**NG パターン履歴（SMAL 向き）:**
+
+| 試した値 | spine.fwd | 鼻方向 | 結果 |
+|---|---|---|---|
+| なし（補正前） | -Y 方向（横倒し） | 横倒し | ✗ spine X ≈ -84° |
+| `Euler(90, 0, 0)` | ≈ +Z | ≈ -Z（視聴者向き） | **✓ 正解** |
+| `Euler(90,0,0) × Euler(0,180,0)` | ≈ -Z | ≈ +Z（スクリーン向き） | ✗ |
+
+**脚の動きについて:**
+
+SMAL の body_pose で上腿・股関節（joint 7/11/17/21）は <5° と小さく、
+膝（joint 12/14/18/22）としっぽ（joint 25）に主な動きがある。
+これは SMAL 推定の精度の問題（コードバグではない可能性が高い）。
+bindLoc の 180°Y/Z 成分によって bodyPose が逆方向に適用されている可能性は未調査（要確認）。
+
+---
+
+### 2026-06-16 続報: 全フレームログ解析の結果、上記の「確定」は再オープン
+
+**訂正: 上の表で `Euler(90,0,0)` を「確定値」と書いたが、これは frame 1/30/60 の 3 点だけを見て
+出した誤った結論だった。** Editor.log 全体（1153 行、frame 1〜2280 を 30 フレーム間隔で
+サンプリング）を解析した結果、`worldFk0.Y` は実際には **0°〜360° の全域にわたって変化していた**：
+
+```
+frame   worldFk0 (X,Y,Z deg)
+1       354.9,  22.8,   3.2
+150       1.9, 266.4, 344.6
+330      15.3, 157.9,  11.9
+510       0.9, 359.9,   6.3
+900       6.7, 187.6, 326.6
+1080      0.0, 315.1,  16.1
+1320    357.8,  51.9, 358.1
+```
+
+つまり「常に正面（Y≈0）に固定されている」という旧分析の前提自体が誤りだった
+（3 フレームがたまたま Y≈0 近辺に偏っていただけ）。一方で X・Z（ピッチ・ロール）は
+ほぼ 0°/360° 付近に収まっており、姿勢としての安定性自体は崩れていない。
+
+**結論：`SmalCanonicalCorrection`（SMAL canonical → Unity world の固定回転）の値そのものは
+prefab 階層からの数学的導出であり、机上の検証は通ったが、実際の動画と見比べた
+グラウンドトゥース calibration はまだ一度も行われていない。** ボーン階層からの逆算では
+「どの軸が SMAL の鼻方向か」という *データ規約* 自体は分からない（これは Python 側の
+SMAL 出力規約の話であり、Unity 側の rig 構造からは導出できない）。正しい値は
+動画と Unity 画面を見比べて一度だけキャリブレーションする必要がある。
+
+**対応: ハードコードされた定数 → Inspector で調整可能な値に変更**
+
+- `StreamingStereoVideoPlayer.animalSmalCanonicalCorrectionEuler`（デフォルト `(90,0,0)`、
+  `StreamingStereoVideoPlayer.Core.cs`）を Play Mode 中にリアルタイムで調整できるようにした。
+- `AnimalSmalFkApplier.cs` の `TryApplyAnimalSmalFk` に毎フレーム
+  `Debug.DrawRay`（黄色 = 鼻方向 `-spine.forward`、シアン = 上方向 `spine.up`）を追加。
+  Scene view で動画のオーバーレイと見比べながら値を調整できる。
+- ログサンプリングを `frame==30/60 限定` → `frame % 30 == 0` に変更（動画全体をカバー）。
+- 古いスムージング（`SmalSmoothHalfLifeSec = 0.05f`）を `0f` に変更し、生データを直接適用。
+  0.05s ハーフライフは歩行周波数（~2Hz）の振幅を約30%減衰させていたため、
+  「脚・頭の動きが動画ほど激しくない」という訴えの一因と考えられる。
+
+**キャリブレーション手順（要実機確認）:**
+
+1. Play Mode で動画を再生し、犬の向きが映像から明確に分かるフレーム（真正面 or 真横）で一時停止する。
+2. Scene view で黄色い矢印（鼻方向）が映像内の犬の鼻の向きと一致するか確認する。
+3. 一致しなければ `animalSmalCanonicalCorrectionEuler` を Inspector で調整し、再度比較する
+   （Play Mode 中の変更は即時反映される）。
+4. 一度正しい値が見つかれば、これは SMAL データ規約に基づく値であり、
+   将来別の犬・別動物 rig を追加しても **同じ値を使い回せる**はずである
+   （rig 固有差は `AnimalRigCache` の bindRotLocal/bindRotWorld が自動で吸収する。下記参照）。
+
+**2026-06-16 実機検証で確定: `SmalCanonicalCorrection = Euler(0, 90, 90)`（X=0, Y=90, Z=90）。**
+
+ユーザーが Play Mode 中に `animalSmalCanonicalCorrectionEuler` を Inspector で調整し、
+Scene view の鼻方向レイ（黄色）・上方向レイ（シアン）を動画と見比べながら試行錯誤した結果、
+向きが一致する値として **X=0, Y=90, Z=90** を発見した。
+
+以前（上の節）prefab 階層から机上で導出した `Euler(90,0,0)` は誤りだった。原因は、
+ボーン階層の local rotation だけから「SMAL のどの軸が鼻方向か」という *Python 側のデータ規約*
+を逆算しようとしたこと自体に無理があったため。`Euler(90,0,0)` は X 軸（pitch）だけの回転で
+Y 軸（yaw）の補正を含んでいなかったが、実際には SMAL canonical → Unity world の変換には
+Y・Z 軸の90°回転（合計2軸）が必要だった。机上の階層逆算では bind pose の見た目上の一致と
+実際の calibration がたまたま一部の軸でだけ整合していたために、誤った値が「確定」と
+誤認されてしまった。**結論として、この種の軸変換はコード上の階層推論だけで確定させず、
+必ず実機で動画と見比せて calibrate する必要がある。**
+
+- コードのデフォルト値を `StreamingStereoVideoPlayer.Core.cs` の
+  `animalSmalCanonicalCorrectionEuler = new Vector3(0f, 90f, 90f)` に修正済み。
+- `AnimalPoseSettingsFactoryTests.cs` のテスト値・アサーションも `(0,90,90)` に合わせて修正済み。
+- 将来別の四足 rig を追加する場合、まずこの `(0,90,90)` を流用し、ズレがあれば
+  上記のキャリブレーション手順で再調整する。
+
+---
+
+### 将来の rig 多様化への対応方針（Human と異なり Animal に統一 Humanoid rig がない問題）
+
+Human は Unity Humanoid rig（`HumanBodyBones` enum）という業界標準の統一インターフェースがあるため
+`HumanoidRigCache` は enum ベースで一意に bone を解決できる。Animal にはこの統一規格が存在しないため、
+将来色んな動物・rig 構造に対応する必要がある。現状のアーキテクチャを確認した結果、
+**土台は既に rig 非依存（generic）に作られている**ことが分かった：
+
+| 仕組み | 場所 | 汎用性 |
+|---|---|---|
+| ボーン発見 | `AnimalRigDefinition`（トークン名でのマッチング）+ `FindAnimalBone`/`FindBoneByTokens` | ボーン名が多少違っても "front upper leg" 等のトークンで発見可能 |
+| bind pose 記録 | `PrimeAnimalBind`（`bone.localRotation`/`bone.rotation` を汎用的に記録） | どの bone でも同じロジック。rig 固有のハードコードなし |
+| モデル向き推定 | `ResolveAnimalModelBasis`（前脚・後脚の bone 位置の中点から forward を算出） | rig 固有の Euler 定数を使わず、実測位置から動的に算出 |
+| SMAL joint → bone マッピング | `GetSmalBoneForJoint`（`AnimalRigCache` の汎用フィールドを参照） | rig が変わっても `AnimalRigCache` の同名フィールドが解決されていれば動作 |
+
+**唯一 rig 非依存ではなかったのが `SmalCanonicalCorrection`** （ハードコードされた `Euler(90,0,0)`）。
+これは今回 Inspector 設定値に変更した。この値は **SMAL データ規約（Python 側）に紐づく値であり
+rig には紐づかない** ため、一度正しく calibrate すれば理論上どの四足 rig にも使い回せる。
+
+**今後新しい動物 rig を追加する場合のチェックリスト:**
+
+1. 新しい prefab のボーン名が `AnimalRigDefinition` のトークンに一致するか確認する
+   （一致しなければトークンリストに追加 — これは名前の話なので低コスト）。
+2. `ResolveAnimalModelBasis` が前脚・後脚 bone から forward を正しく推定できるか
+   実機ログ（`cache.modelForwardLocal`）で確認する。
+3. `SmalCanonicalCorrection`（`animalSmalCanonicalCorrectionEuler`）はそのまま使い回せるはずだが、
+   FBX インポート時の軸補正規約（-90°X armature 補正など）が DogRoot と異なるツール/設定で
+   作られた rig の場合は再キャリブレーションが必要になる可能性がある。
+4. 四足ではない動物（鳥・蛇等）は SMAL の 35 joint 階層（`SmalJointParentArray`）自体が
+   合わないため、別の joint 階層定義が必要になる（このケースは未対応・将来課題）。

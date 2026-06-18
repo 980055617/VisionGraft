@@ -209,16 +209,35 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 ? CountAnimalControlSkipSegments(pose.animalControl)
                 : CountAnimalSkipSegments(pose.jointCount, pose.jointVis, pose.jointsCam)) >= Mathf.Max(0, AnimalDistalFreezeSkipThreshold);
 
+        AnimalSmalPose smalPose = default(AnimalSmalPose);
+        bool hasSmalPose = TryGetAnimalSmalPose(frame, obj.trackId, out smalPose);
+        if (hasSmalPose)
+        {
+            smalPose.camRotation = Quaternion.identity;
+            if (TryGetPinholeBasis(screen, out _, out Quaternion smalCamRot) && IsFinite(smalCamRot))
+            {
+                smalPose.camRotation = smalCamRot;
+                if (frame % 30 == 0)
+                    Debug.Log($"[SMAL-PIPE] frame={frame} hasSmalPose=true camRot={smalCamRot.eulerAngles:F1}");
+            }
+        }
+        else if (frame % 30 == 0)
+        {
+            Debug.Log($"[SMAL-PIPE] frame={frame} hasSmalPose=false (SMAL path skipped, keypoint path runs)");
+        }
+
         if (enableJointSmoothing)
         {
             SmoothJointsWorld(obj.trackId, pose.jointsWorld, pose.jointVis, Mathf.Clamp01(jointSmoothingAlpha));
         }
 
-        Vector3 skeletonRoot = pose.rootWorld;
-
-        Vector3 yawAxis = screen != null ? screen.up : instance.transform.up;
-        ApplyManualYawToJoints(obj.trackId, frame, pose.jointsWorld, pose.jointVis, skeletonRoot, yawAxis);
-        ApplyAnimalInteractiveMotion(obj.trackId, instance.transform, screen, ref pose);
+        if (!hasSmalPose)
+        {
+            Vector3 skeletonRoot = pose.rootWorld;
+            Vector3 yawAxis = screen != null ? screen.up : instance.transform.up;
+            ApplyManualYawToJoints(obj.trackId, frame, pose.jointsWorld, pose.jointVis, skeletonRoot, yawAxis);
+            ApplyAnimalInteractiveMotion(obj.trackId, instance.transform, screen, ref pose);
+        }
 
         Animator animator = instance.GetComponentInChildren<Animator>();
         DisableAnimalAnimatorPlayback(animator);
@@ -231,7 +250,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             settings = BuildAnimalPoseSettings(),
             tickContext = GetRuntimeTickContext(),
             freezeAnimalDistal = freezeAnimalDistal,
-            enableBoneApply = enableBoneApply
+            enableBoneApply = enableBoneApply,
+            hasSmalPose = hasSmalPose,
+            smalPose = smalPose
         });
     }
 
@@ -610,6 +631,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             SkeletonScaleMin,
             SkeletonScaleMax,
             SkeletonScaleRelativeMin,
-            SkeletonScaleRelativeMax);
+            SkeletonScaleRelativeMax,
+            animalSmalCanonicalCorrectionEuler);
     }
 }

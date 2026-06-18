@@ -9,4 +9,6 @@ public struct AnimalPoseRequest
     public RuntimeClock.TickContext tickContext;
     public bool freezeAnimalDistal;
     public bool enableBoneApply;
+    public bool hasSmalPose;
+    public AnimalSmalPose smalPose;
 }

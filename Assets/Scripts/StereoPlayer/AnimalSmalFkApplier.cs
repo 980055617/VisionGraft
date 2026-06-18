@@ -1,0 +1,434 @@
+using System.Collections.Generic;
+using UnityEngine;
+
+public sealed partial class AnimalPoseApplier
+{
+    // SMAL parent joint index for joints 0-34.
+    // Root (0) = -1. Virtual spine chain: 1-6 (no Unity bone). Front legs: 7-10, 11-14 (parent=6).
+    // Neck/Head: 15-16 (parent=6). Rear legs: 17-20 (parent=0), 21-24 (parent=0).
+    // Tail: 25-31 (parent=0 for 25, chain after). Mouth/Ears: 32-34 (parent=16).
+    private static readonly int[] SmalJointParentArray =
+    {
+        -1,              // 0 root
+        0, 1, 2, 3, 4, 5, // 1-6  pelvis0..spine3 (BONE MISSING)
+        6, 7, 8, 9,      // 7-10  LLeg1..LFoot
+        6, 11, 12, 13,   // 11-14 RLeg1..RFoot
+        6, 15,           // 15-16 Neck, Head
+        0, 17, 18, 19,   // 17-20 LLegBack1..LFootBack
+        0, 21, 22, 23,   // 21-24 RLegBack1..RFootBack
+        0, 25, 26, 27, 28, 29, 30, // 25-31 Tail1..7
+        16, 16, 16,      // 32-34 Mouth, LEar, REar
+    };
+
+    // Topological order: parents always before children. Since all parent indices < child indices, order is 1..34.
+    private static readonly int[] SmalJointTopologicalOrder =
+    {
+        1,  2,  3,  4,  5,  6,          // virtual spine chain
+        7,  8,  9,  10,                  // front left
+        11, 12, 13, 14,                  // front right
+        15, 16,                          // neck, head
+        17, 18, 19, 20,                  // rear left
+        21, 22, 23, 24,                  // rear right
+        25, 26, 27, 28, 29, 30, 31,      // tail
+        32, 33, 34,                      // mouth, ears (BONE MISSING in first impl)
+    };
+
+    // Rest-pose bone direction (this joint -> its kinematic child), in SMAL's own native
+    // coordinate frame, extracted from the SMAL rest skeleton J array
+    // (Docs/smal-rest-skeleton.json, third_party/AniMer/data/smal/my_smpl_00781_4_all.pkl).
+    // Used to compute a per-joint geometric correction directly from real rest geometry
+    // (SMAL rest direction vs. the Unity dog rig's own actual bind direction for the same
+    // joint), instead of reusing the single global canonicalCorrection - whose roll/twist
+    // component was only ever constrained by a single nose-direction check and turned out
+    // to be unreliable when reused for per-joint local rotations (2026-06-18, see
+    // Docs/adr/0001-animal-smal-fk.md). Joints without an entry here keep using the
+    // previous parentTW*localPose*bindLoc path - this covers the joints that also have a
+    // registered Unity aim-child (RegisterAnimalAimPairs), which is what we need for an
+    // independent, geometry-grounded Unity-side rest direction to compare against.
+    private static readonly Dictionary<int, Vector3> SmalRestDirByJoint = new Dictionary<int, Vector3>
+    {
+        { 7,  new Vector3(0.044701f, -0.095438f, -0.994431f) },  // LLeg1 -> LLeg2
+        { 8,  new Vector3(0.006267f, -0.179885f, -0.983668f) },  // LLeg2 -> LLeg3
+        { 11, new Vector3(0.044701f, 0.095438f, -0.994431f) },   // RLeg1 -> RLeg2
+        { 12, new Vector3(0.006267f, 0.179885f, -0.983668f) },   // RLeg2 -> RLeg3
+        { 15, new Vector3(0.993402f, -0.000000f, -0.114686f) },  // Neck -> Head
+        { 17, new Vector3(0.337957f, 0.086988f, -0.937133f) },   // LLegBack1 -> LLegBack2
+        { 18, new Vector3(-0.194889f, -0.083158f, -0.977294f) }, // LLegBack2 -> LLegBack3
+        { 21, new Vector3(0.337957f, -0.086988f, -0.937133f) },  // RLegBack1 -> RLegBack2
+        { 22, new Vector3(-0.194889f, 0.083158f, -0.977294f) },  // RLegBack2 -> RLegBack3
+    };
+
+    // SMAL rest skeleton root -> Neck direction, used to auto-derive the joint-0/root
+    // orientation correction per model (2026-06-18, ADR-0002), the same way as the other
+    // per-joint corrections above.
+    private static readonly Vector3 SmalRootRestDir = new Vector3(0.997257f, -0.000000f, 0.074018f);
+
+    private sealed class AnimalSmalRetargetState
+    {
+        public readonly Quaternion[] tw = new Quaternion[35];
+        public readonly Quaternion[] smoothedLocal = new Quaternion[35]; // [0]=worldFk0, [1-34]=bodyPose smoothed
+        public bool smoothingInitialized;
+        public int debugFrameCount;
+        // Snapshot of tw[] at the previous *logged* sample (~every 30 ticks), plus real
+        // elapsed time, so we can measure true rotation speed over a visually-relevant
+        // window instead of a single-tick delta (which is too small to judge by) or a
+        // misleading Euler-angle diff (which can look huge near gimbal/wrap singularities).
+        public readonly Quaternion[] lastLoggedTw = new Quaternion[35];
+        public readonly bool[] hasLoggedTw = new bool[35];
+        public float lastLogRealTime;
+        public bool hasLastLogRealTime;
+        // Accumulated per-tick bend-direction angle change since the last logged sample,
+        // for the bone-to-child "BEND" diagnostic (7=leftFrontUpper, 8=leftFrontLower,
+        // 17=leftRearUpper, 21=rightRearUpper, 15=neck).
+        public float bendAccumJoint7;
+        public float bendAccumJoint8;
+        public float bendAccumJoint17;
+        public float bendAccumJoint21;
+        public float bendAccumJoint15;
+    }
+
+    private readonly Dictionary<AnimalRigCache, AnimalSmalRetargetState> smalRetargetStates
+        = new Dictionary<AnimalRigCache, AnimalSmalRetargetState>();
+
+    private AnimalSmalRetargetState GetOrCreateSmalRetargetState(AnimalRigCache cache)
+    {
+        if (smalRetargetStates.TryGetValue(cache, out AnimalSmalRetargetState existing))
+            return existing;
+        var state = new AnimalSmalRetargetState();
+        smalRetargetStates[cache] = state;
+        return state;
+    }
+
+    private void TryApplyAnimalSmalFk(AnimalRigCache cache, AnimalSmalPose pose, AnimalPoseSettings settings)
+    {
+        if (cache == null || !cache.ready || !pose.hasGlobalOrient || pose.bodyPose == null)
+            return;
+
+        Quaternion canonicalCorrection = settings.animalSmalCanonicalCorrection;
+
+        AnimalSmalRetargetState state = GetOrCreateSmalRetargetState(cache);
+
+        // Set to 0 to disable smoothing and pass raw SMAL values directly.
+        // [SMAL-FK-DBG] trueDeltaDegSincePrevSample logging (2026-06-16) showed the raw
+        // per-frame body_pose is largely incoherent noise: 20-100+ deg swings every ~0.2s,
+        // with bodyPose_maxAngle landing on a different random joint almost every sample
+        // (no multi-sample run on the same limb, as a real gait would show). That noise,
+        // applied raw, looks like high-frequency jitter rather than motion - visually
+        // reads as "frozen/stuck" even though the Transforms are moving a lot. Smooth it.
+        const float SmalSmoothHalfLifeSec = 0.12f;
+        float dt = Time.deltaTime;
+        float smoothAlpha = SmalSmoothHalfLifeSec > 0f
+            ? 1f - Mathf.Exp(-dt * 0.693147f / SmalSmoothHalfLifeSec)
+            : 1f;
+
+        Quaternion[] tw = state.tw;
+
+        // Joint 0 (root) orientation correction, derived the same geometric way as the
+        // per-joint bend corrections (2026-06-18, see ADR-0002): compare the SMAL rest
+        // skeleton's own root->Neck direction against THIS model's actual Unity bind
+        // direction for spine->neck, instead of reusing a single hand-tuned
+        // canonicalCorrection that was only ever calibrated against DogRoot's own bind
+        // pose. That constant didn't generalize - swapping in P_GermanShepherd produced a
+        // front-back-flipped orientation, because its bind/rest orientation differs from
+        // DogRoot's. This auto-derives per model, so any rig with a registered spine->neck
+        // aim child (RegisterAnimalAimPairs) gets a correct root orientation automatically.
+        Quaternion rawWorldFk0;
+        if (IsFiniteQ(pose.camRotation) && IsFiniteQ(pose.globalOrient) &&
+            cache.spine != null &&
+            cache.bindRotWorld.TryGetValue(cache.spine, out Quaternion spineBindWorldForRoot) &&
+            cache.bindDirLocal.TryGetValue(cache.spine, out Vector3 spineBindDirLocal))
+        {
+            Vector3 unityRootRestDirWorld = (spineBindWorldForRoot * spineBindDirLocal).normalized;
+            Quaternion rootFrameMap = Quaternion.FromToRotation(SmalRootRestDir, unityRootRestDirWorld);
+            Vector3 smalRootPosedDir = (pose.globalOrient * SmalRootRestDir).normalized;
+            Quaternion rootBendSmal = Quaternion.FromToRotation(SmalRootRestDir, smalRootPosedDir);
+            Quaternion rootBendUnity = rootFrameMap * rootBendSmal * Quaternion.Inverse(rootFrameMap);
+            rawWorldFk0 = pose.camRotation * rootBendUnity;
+        }
+        else
+        {
+            // Fallback: the manual Inspector constant, only validated against DogRoot's own
+            // bind pose. Kept for models without a registered spine->neck aim child.
+            rawWorldFk0 = IsFiniteQ(pose.camRotation) && IsFiniteQ(pose.globalOrient)
+                ? pose.camRotation * pose.globalOrient * canonicalCorrection
+                : Quaternion.identity;
+        }
+
+        Quaternion worldFk0 = state.smoothingInitialized
+            ? Quaternion.Slerp(state.smoothedLocal[0], rawWorldFk0, smoothAlpha)
+            : rawWorldFk0;
+        state.smoothedLocal[0] = worldFk0;
+
+        state.debugFrameCount++;
+        // Log first frame + every 30 frames to sample orientation across the full video.
+        bool debugLog = !state.smoothingInitialized || state.debugFrameCount % 30 == 0;
+
+        if (debugLog)
+        {
+            float realDt = state.hasLastLogRealTime ? Time.time - state.lastLogRealTime : 0f;
+            Debug.Log($"[SMAL-FK-DBG] sampleRealTimeSec={Time.time:F2} dtSincePrevSample={realDt:F3} unityDeltaTime={dt:F4}");
+            state.lastLogRealTime = Time.time;
+            state.hasLastLogRealTime = true;
+        }
+
+        // tw[0] = worldFk0 * bindRotWorld[spine]; apply to spine bone
+        if (cache.spine != null &&
+            cache.bindRotWorld.TryGetValue(cache.spine, out Quaternion bindSpineW) && IsFiniteQ(bindSpineW))
+        {
+            tw[0] = worldFk0 * bindSpineW;
+            if (IsFiniteQ(tw[0]))
+            {
+                TransformWriter.ApplyWorldRotation(cache.spine, tw[0]);
+
+                // Live visual calibration aid: compare these rays against the source video every frame.
+                // Yellow = nose direction, cyan = up direction. Visible in Scene view (and Game view with Gizmos on).
+                Vector3 spinePos = cache.spine.position;
+                Debug.DrawRay(spinePos, -cache.spine.forward * 0.5f, Color.yellow, 0f, false);
+                Debug.DrawRay(spinePos, cache.spine.up * 0.3f, Color.cyan, 0f, false);
+
+                if (debugLog) Debug.Log($"[SMAL-FK-DBG] frame={state.debugFrameCount} camRot={pose.camRotation.eulerAngles:F1} rawGO={pose.globalOrient.eulerAngles:F1} worldFk0={worldFk0.eulerAngles:F1} tw0={tw[0].eulerAngles:F1}");
+                if (debugLog) Debug.Log($"[SMAL-FK-DBG] spine.fwd={cache.spine.forward:F3} spine.up={cache.spine.up:F3} nose(=-spine.fwd)={(-cache.spine.forward):F3}");
+            }
+        }
+        else
+        {
+            tw[0] = worldFk0;
+        }
+
+        // Walk joints 1-34 in topological order
+        for (int i = 0; i < SmalJointTopologicalOrder.Length; i++)
+        {
+            int joint = SmalJointTopologicalOrder[i];
+            int parentJoint = SmalJointParentArray[joint];
+            Quaternion parentTW = tw[parentJoint];
+
+            Quaternion rawLocal = Quaternion.identity;
+            int bodyPoseIdx = joint - 1; // bodyPose[0] = SMAL joint 1, ..., bodyPose[33] = SMAL joint 34
+            if (bodyPoseIdx >= 0 && bodyPoseIdx < pose.bodyPose.Length && IsFiniteQ(pose.bodyPose[bodyPoseIdx]))
+                rawLocal = pose.bodyPose[bodyPoseIdx];
+
+            Quaternion smalLocal = state.smoothingInitialized
+                ? Quaternion.Slerp(state.smoothedLocal[joint], rawLocal, smoothAlpha)
+                : rawLocal;
+            state.smoothedLocal[joint] = smalLocal;
+
+            // pose[j] is read from the bin in SMAL's own (Z-up, Y-forward) axis convention,
+            // same as global_orient. Re-expressing the WHOLE chain Rot_smal[j] = Rot_smal[parent]*pose[j]
+            // into Unity's world frame the same way joint 0 is (worldFk0 = camRotation*globalOrient*C)
+            // works out, by induction over the chain, to: each per-joint factor must be conjugated
+            // as Inverse(C) * pose[j] * C (not C * pose[j] * Inverse(C) - that was backwards in the
+            // previous attempt and still produced near-invisible bends). See the 2026-06-18 entry in
+            // Docs/adr/0001-animal-smal-fk.md for the full derivation.
+            Quaternion worldFramePose = Quaternion.Inverse(canonicalCorrection) * smalLocal * canonicalCorrection;
+
+            Transform bone = GetSmalBoneForJoint(cache, joint);
+
+            if (bone == null)
+            {
+                // BONE MISSING (virtual spine chain joints 1-6): no real bone, so there's no
+                // bind-pose-specific local frame to re-express into - just accumulate in world frame.
+                tw[joint] = parentTW * worldFramePose;
+                continue;
+            }
+
+            if (!cache.bindRotLocal.TryGetValue(bone, out Quaternion bindLoc) || !IsFiniteQ(bindLoc))
+                bindLoc = Quaternion.identity;
+
+            if (SmalRestDirByJoint.TryGetValue(joint, out Vector3 smalRestDir) &&
+                cache.bindRotWorld.TryGetValue(bone, out Quaternion boneBindWorld) &&
+                cache.bindDirLocal.TryGetValue(bone, out Vector3 boneBindDirLocal))
+            {
+                // Geometry-grounded per-joint correction (2026-06-18): instead of reusing the
+                // single global canonicalCorrection (whose roll/twist was only ever constrained
+                // by a one-off nose-direction check, and produced near-invisible "twist instead
+                // of bend" results when reused per-joint - see ADR), derive the correction
+                // directly from comparing this joint's REST bone direction in SMAL's own native
+                // frame (smalRestDir, from the SMAL rest skeleton J array) against this exact
+                // Unity bone's REAL rest bone direction (boneBindWorld * boneBindDirLocal,
+                // captured at bind time via the existing aim-child bind direction machinery).
+                // Quaternion.FromToRotation between the two gives an unambiguous, per-joint
+                // SMAL-frame -> Unity-frame map with no global-axis guessing involved.
+                Vector3 smalPosedDir = (rawLocal * smalRestDir).normalized;
+                Quaternion bendSmal = Quaternion.FromToRotation(smalRestDir, smalPosedDir);
+
+                Vector3 unityRestDirWorld = (boneBindWorld * boneBindDirLocal).normalized;
+                Quaternion jointFrameMap = Quaternion.FromToRotation(smalRestDir, unityRestDirWorld);
+                Quaternion bendUnity = jointFrameMap * bendSmal * Quaternion.Inverse(jointFrameMap);
+
+                Quaternion restWorldRot = parentTW * bindLoc;
+                tw[joint] = bendUnity * restWorldRot;
+            }
+            else
+            {
+                // worldFramePose is a WORLD-frame rotation operator, but it's about to be composed
+                // (via tw[parent]) into bone's REAL Unity parent's local frame, then further into
+                // bone's own bind-local frame (bindLoc). Re-express it into the real Unity parent's
+                // bind frame first (Inverse(parentBindWorld) * X * parentBindWorld), so it composes
+                // consistently with how bindRotWorld/bindRotLocal were captured - this is necessary
+                // because the bone's SMAL-logical parent (parentJoint) is sometimes a virtual,
+                // bone-less joint (e.g. front legs/neck have SMAL parent=6, but their real Unity
+                // parent is the spine bone), so the "parent" used for tw[] accumulation and the
+                // "parent" whose bind frame bindLoc is relative to can differ.
+                Quaternion localPose = worldFramePose;
+                if (bone.parent != null &&
+                    cache.bindRotWorld.TryGetValue(bone.parent, out Quaternion parentBindWorld) &&
+                    IsFiniteQ(parentBindWorld))
+                {
+                    localPose = Quaternion.Inverse(parentBindWorld) * worldFramePose * parentBindWorld;
+                }
+
+                // Standard SMPL/SMAL LBS composes rotation purely as Rot(parent) @ R_joint - rest
+                // pose bend between segments is pure translation (rel_joints), never baked into a
+                // per-joint rotation offset. So the pose term applies directly on top of parentTW,
+                // in the parent's accumulated frame. bindLoc (the Unity dog rig's actual non-trivial
+                // bind-pose local rotation - this rig was authored in a natural standing pose, not
+                // a flat T-pose) must come AFTER, purely to land on Unity's own bind orientation
+                // when pose=identity (see the "T-pose verification" derivation in
+                // Docs/adr/0001-animal-smal-fk.md).
+                tw[joint] = parentTW * localPose * bindLoc;
+            }
+
+            if (!IsFiniteQ(tw[joint]))
+                continue;
+
+            Vector3 posBeforeApply = bone.position;
+
+            // Quaternion.Angle includes twist-around-own-axis, which is invisible on a
+            // limb segment. The thing that's actually visible is whether the direction
+            // from this bone to its child swings - i.e. a genuine bend. Measure that
+            // directly (child.position updates automatically once we rotate bone, since
+            // it's a real Unity child) to settle whether the axis-correction conjugation
+            // actually produced a visible bend or just changed which axis the twist is on.
+            Transform bendChild = joint == 7 ? cache.leftFrontLower
+                : joint == 8 ? cache.leftFrontPaw
+                : joint == 17 ? cache.leftRearLower
+                : joint == 21 ? cache.rightRearLower
+                : joint == 15 ? cache.head
+                : null;
+            Vector3 bendDirBefore = bendChild != null ? (bendChild.position - bone.position).normalized : Vector3.zero;
+
+            TransformWriter.ApplyWorldRotation(bone, tw[joint]);
+
+            if (bendChild != null)
+            {
+                Vector3 bendDirAfter = (bendChild.position - bone.position).normalized;
+                float bendDeg = Vector3.Angle(bendDirBefore, bendDirAfter);
+                if (joint == 7) state.bendAccumJoint7 += bendDeg;
+                else if (joint == 8) state.bendAccumJoint8 += bendDeg;
+                else if (joint == 17) state.bendAccumJoint17 += bendDeg;
+                else if (joint == 21) state.bendAccumJoint21 += bendDeg;
+                else if (joint == 15) state.bendAccumJoint15 += bendDeg;
+
+                if (debugLog)
+                {
+                    float accum = joint == 7 ? state.bendAccumJoint7
+                        : joint == 8 ? state.bendAccumJoint8
+                        : joint == 17 ? state.bendAccumJoint17
+                        : joint == 21 ? state.bendAccumJoint21
+                        : state.bendAccumJoint15;
+                    Debug.Log($"[SMAL-FK-DBG] joint={joint} BEND childDirAngleAccumSincePrevSample={accum:F2}deg (sum of per-tick bone->child direction swings - this is the visually-relevant bend, vs the twist-inclusive Quaternion.Angle logged separately)");
+                    if (joint == 7) state.bendAccumJoint7 = 0f;
+                    else if (joint == 8) state.bendAccumJoint8 = 0f;
+                    else if (joint == 17) state.bendAccumJoint17 = 0f;
+                    else if (joint == 21) state.bendAccumJoint21 = 0f;
+                    else state.bendAccumJoint15 = 0f;
+                }
+            }
+
+            if (debugLog && (joint == 7 || joint == 8 || joint == 9 || joint == 10 ||
+                              joint == 11 || joint == 12 || joint == 13 || joint == 14 ||
+                              joint == 15 || joint == 16 || joint == 17 || joint == 21 || joint == 25))
+            {
+                // Compare against the snapshot taken at the PREVIOUS logged sample (~30
+                // ticks ago), not the previous single tick, so the angle reflects motion
+                // over a visually-relevant window. Quaternion.Angle is geodesic, so it
+                // doesn't suffer from the Euler 0/360-wrap illusion of "huge" deltas above.
+                float trueDeltaDegSincePrevSample = state.hasLoggedTw[joint]
+                    ? Quaternion.Angle(state.lastLoggedTw[joint], tw[joint])
+                    : 0f;
+                state.lastLoggedTw[joint] = tw[joint];
+                state.hasLoggedTw[joint] = true;
+
+                Debug.Log($"[SMAL-FK-DBG] joint={joint} smalLocal={smalLocal.eulerAngles:F1} bindLoc={bindLoc.eulerAngles:F1} tw={tw[joint].eulerAngles:F1} boneRotAfter={bone.rotation.eulerAngles:F1} posDelta={(bone.position - posBeforeApply).magnitude:F4} trueDeltaDegSincePrevSample={trueDeltaDegSincePrevSample:F1}");
+            }
+
+            // Live visual calibration aid: lets us see in Scene view whether each limb/head
+            // bone is actually rotating frame-to-frame, independent of whether the rendered
+            // mesh appears to move (rules out "FK computes motion but wrong bone is driven").
+            if (joint == 7 || joint == 11 || joint == 17 || joint == 21)
+                Debug.DrawRay(bone.position, bone.forward * 0.2f, Color.green, 0f, false);
+            else if (joint == 16)
+                Debug.DrawRay(bone.position, bone.forward * 0.2f, Color.blue, 0f, false);
+        }
+
+        state.smoothingInitialized = true;
+
+        if (debugLog)
+        {
+            // body_pose 全 joint の最大角度を計測 → genuinely near-zero か読み取りバグかを判断
+            float maxBPAngle = 0f;
+            int maxBPJoint = -1;
+            for (int dbgI = 0; dbgI < pose.bodyPose.Length; dbgI++)
+            {
+                float a = Quaternion.Angle(Quaternion.identity, pose.bodyPose[dbgI]);
+                if (a > maxBPAngle) { maxBPAngle = a; maxBPJoint = dbgI + 1; }
+            }
+            Debug.Log($"[SMAL-FK-DBG] bodyPose_maxAngle={maxBPAngle:F1}deg at SMAL_joint={maxBPJoint}  (near-zero=data問題, >20=データ正常)");
+            // body mesh の実際の world 向き: nose = -spine.fwd を確認
+            if (cache.spine != null)
+            {
+                // 子の中から "body" meshを探して向きをチェック
+                Transform bodyMesh = null;
+                for (int ci = 0; ci < cache.spine.childCount; ci++)
+                {
+                    Transform c = cache.spine.GetChild(ci);
+                    if (c.name == "body") { bodyMesh = c; break; }
+                }
+                if (bodyMesh != null)
+                    Debug.Log($"[SMAL-FK-DBG] bodyMesh.fwd={bodyMesh.forward:F3} bodyMesh.up={bodyMesh.up:F3}  [nose≈bodyMesh.up toward viewer=-Z]");
+            }
+            // 前脚・頭の実際の向きを確認 → 向きのズレを特定
+            if (cache.leftFrontUpper != null)
+                Debug.Log($"[SMAL-FK-DBG] leftFront.fwd={cache.leftFrontUpper.forward:F3} leftFront.up={cache.leftFrontUpper.up:F3}");
+            if (cache.leftFrontLower != null)
+                Debug.Log($"[SMAL-FK-DBG] leftFrontLower.fwd={cache.leftFrontLower.forward:F3} leftFrontLower.up={cache.leftFrontLower.up:F3}");
+            if (cache.head != null)
+                Debug.Log($"[SMAL-FK-DBG] head.fwd={cache.head.forward:F3} head.up={cache.head.up:F3}");
+        }
+    }
+
+    private static Transform GetSmalBoneForJoint(AnimalRigCache cache, int joint)
+    {
+        switch (joint)
+        {
+            case 7:  return cache.leftFrontUpper;
+            case 8:  return cache.leftFrontLower;
+            case 9:  return cache.leftFrontPaw;
+            case 11: return cache.rightFrontUpper;
+            case 12: return cache.rightFrontLower;
+            case 13: return cache.rightFrontPaw;
+            case 15: return cache.neck;
+            case 16: return cache.head;
+            case 17: return cache.leftRearUpper;
+            case 18: return cache.leftRearLower;
+            case 19: return cache.leftRearPaw;
+            case 20: return cache.leftRearToe;
+            case 21: return cache.rightRearUpper;
+            case 22: return cache.rightRearLower;
+            case 23: return cache.rightRearPaw;
+            case 24: return cache.rightRearToe;
+            case 25: return cache.tailBase;
+            case 26: return cache.tailMid;
+            case 27: return cache.tailTip;
+            default: return null;
+        }
+    }
+
+    private static bool IsFiniteQ(Quaternion q)
+    {
+        return !float.IsNaN(q.x) && !float.IsInfinity(q.x)
+            && !float.IsNaN(q.y) && !float.IsInfinity(q.y)
+            && !float.IsNaN(q.z) && !float.IsInfinity(q.z)
+            && !float.IsNaN(q.w) && !float.IsInfinity(q.w);
+    }
+}

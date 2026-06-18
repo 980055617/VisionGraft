@@ -49,6 +49,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool enableJointSmoothing = true;
     [Range(0f, 1f)] public float jointSmoothingAlpha = 0.35f;
 
+    [Header("Animal SMAL")]
+    // SMAL canonical frame (Z-up, Y-forward) -> Unity world frame correction.
+    // This is a property of the Python-side SMAL data convention, not of any specific animal rig,
+    // so the same value should apply to every quadruped rig that uses this pipeline.
+    // Tune live in Play mode by comparing the dog's nose direction against the source video at a
+    // frame with an unambiguous facing direction (see Docs/smpl-retargeting.md).
+    public Vector3 animalSmalCanonicalCorrectionEuler = new Vector3(0f, 90f, 90f);
+
     [Header("Other Proxy")]
     public bool showOtherProxyBoxes = true;
     public Color otherProxyBoxColor = new Color(1f, 0.78f, 0.18f, 0.32f);

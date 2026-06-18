@@ -1054,6 +1054,7 @@ MonoBehaviour:
   boneApplyAlpha: 1
   enableJointSmoothing: 1
   jointSmoothingAlpha: 0.35
+  animalSmalCanonicalCorrectionEuler: {x: 0, y: 90, z: 90}
   showOtherProxyBoxes: 0
   otherProxyBoxColor: {r: 1, g: 0.78, b: 0.18, a: 0.32}
   enableRuntimeControls: 1

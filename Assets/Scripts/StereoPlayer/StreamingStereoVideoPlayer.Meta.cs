@@ -31,7 +31,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public ushort bboxH;
         public ushort anchorU;
         public ushort anchorV;
-        public float anchorZ;  // camera-space depth in meters (anchorZq * quant_pos_scale)
+        public float anchorZ;  // camera-space depth in meters, larger = farther (decoded via DecodeAnchorDepthMetersFromBundle from the bundle's 0=far/1=near normalized value)
         public bool hasSkeleton;
         public ushort skeletonKpCount;
         public Vector3[] jointsCam;
@@ -308,8 +308,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                             StoreSmalBlockFromBin(pr, frameIndex, trackId);
                         }
 
-                        // anchor_z = anchorZq * quant_pos_scale gives camera-space depth in meters directly
-                        float anchorZ = anchorZq * GetQuantPosScale();
+                        // anchorZq * quant_pos_scale decodes to a normalized depth where 0=far, 1=near.
+                        // DecodeAnchorDepthMetersFromBundle converts that into an actual camera-space
+                        // distance (larger = farther) relative to the configured screen/popout range.
+                        float anchorZ = DecodeAnchorDepthMetersFromBundle(anchorZq * GetQuantPosScale());
                         MetaObj obj = new MetaObj
                         {
                             trackId = trackId,

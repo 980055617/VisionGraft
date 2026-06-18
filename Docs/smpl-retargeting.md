@@ -663,3 +663,46 @@ rig には紐づかない** ため、一度正しく calibrate すれば理論�
    作られた rig の場合は再キャリブレーションが必要になる可能性がある。
 4. 四足ではない動物（鳥・蛇等）は SMAL の 35 joint 階層（`SmalJointParentArray`）自体が
    合わないため、別の joint 階層定義が必要になる（このケースは未対応・将来課題）。
+
+---
+
+### 2026-06-19: anchorZ の奥行き方向が逆だった（Human/Animal/Else 全カテゴリ共通バグ）
+
+**症状:** Animal が映像内で画面に近づいているのに、3D モデルはカメラから遠ざかる方向に動く。
+
+**原因:** `anchorZq * quant_pos_scale` で復元される値は、bundle 側の深度推定の出力そのままで
+**0=奥, 1=手前の正規化値**（値が大きいほど近い）。しかし Unity 側はこれを「カメラ空間 forward 方向
+の距離（メートル、大きいほど遠い）」として `PinholePlacementSpace.EyePixelDepthToWorld` の
+`zMeters` にそのまま渡していた（標準的なカメラ空間 +Z = 前方、というコメントの思い込み）。
+値の意味が正反対だったため、近づく物体ほど Unity 上では前方（カメラから遠い側）に大きく
+配置されることになっていた。
+
+`AnchorUvZToWorldPinhole` / `EyePixelDepthToWorld` は Human・Animal・Else 全カテゴリ共通の
+配置関数のため、この符号反転は本来全カテゴリに影響する。Human で目立たなかったのは別の偶然
+（インタラクティブモーション・スムージング等）による隠れであり、実際にはバグそのものは
+カテゴリ非依存。
+
+**修正（2026-06-19）:** `StreamingStereoVideoPlayer.Meta.cs` の decode 境界 1 箇所のみで変換。
+`StreamingStereoVideoPlayer.Manifest.partial.cs` に **既存だが、どこからも呼ばれていなかった**
+`DecodeAnchorDepthMetersFromBundle(float zRaw01)` を発見（引数名が `zRaw01` で、最初から
+0=far/1=near を前提に `screenDistanceMeters`/`PopoutRangeMeters`/`MinDistanceFromHeadMeters` で
+正しく変換するロジックが実装済みだった）。decode 側をこの関数を呼ぶように接続するだけで直る。
+
+```csharp
+// anchorZq * quant_pos_scale decodes to a normalized depth where 0=far, 1=near.
+// DecodeAnchorDepthMetersFromBundle converts that into an actual camera-space
+// distance (larger = farther) relative to the configured screen/popout range.
+float anchorZ = DecodeAnchorDepthMetersFromBundle(anchorZq * GetQuantPosScale());
+```
+
+この 1 箇所を直すだけで、`anchorWorld` を経由する全ての配置（Human の `pose.rootWorld`、
+Animal の skeleton/SMAL root、Else の anchor）に効く。実際の配置はステレオ動画の画面距離
+（`screenDistanceMeters`）を基準に、手前への最大ポップアウト量（`PopoutRangeMeters`）の範囲で
+決まる仕組みになる（単純な `1 - normalized` ではなく、VR のポップアウト表現に合わせたスケール）。
+
+**併せて削除した別件（同日）:** Animal パイプラインが `source/animal_control_targets.json`
+（debug/検証専用、配置に使用禁止 — `CLAUDE.md` 参照）を今も読み込み、配置・頭/尾/脚姿勢に
+使っていたことが判明し削除。Human 側は既に同種の sidecar 読み込みが無効化済みだったが、
+Animal 側は未対応のままだった。こちらは本質的な奥行き反転バグとは別件（データソース規約違反）。
+削除後も奥行きの逆転症状自体は残っていたため、上記の `anchorZ` 反転が本当の原因だったことが
+確定した。

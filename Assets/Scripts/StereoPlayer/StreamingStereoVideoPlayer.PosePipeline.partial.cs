@@ -626,11 +626,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             AnimalRootRotateAlpha,
             AnimalRootPitchRollBlend,
             AnimalModelForwardLocal,
-            AnimalModelUpLocal,
-            EnableSkeletonScaleCorrection,
-            SkeletonScaleMin,
-            SkeletonScaleMax,
-            SkeletonScaleRelativeMin,
-            SkeletonScaleRelativeMax);
+            AnimalModelUpLocal);
     }
 }

@@ -26,7 +26,6 @@ public sealed partial class AnimalPoseApplier
         RuntimeClock.TickContext tick = request.tickContext;
         AnimalRigCache cache = ApplyAnimalSkeletonPlacement(
             instanceRoot, request.animator,
-            pose.jointsWorld, pose.jointVis, pose.jointCount,
             pose.rootWorld, request.settings, tick);
 
         if (!request.enableBoneApply || cache == null || !cache.ready)
@@ -250,14 +249,10 @@ public sealed partial class AnimalPoseApplier
         return AnimalBodyBasisResolver.TryResolveFromControl(control, out forward, out up, out facingHint);
     }
 
-    private AnimalRigCache ApplyAnimalSkeletonPlacement(Transform instanceRoot, Animator animator, Vector3[] jointsWorld, byte[] vis, int jointCount, Vector3 skeletonRoot, AnimalPoseSettings settings, RuntimeClock.TickContext tick)
+    private AnimalRigCache ApplyAnimalSkeletonPlacement(Transform instanceRoot, Animator animator, Vector3 skeletonRoot, AnimalPoseSettings settings, RuntimeClock.TickContext tick)
     {
         Transform rigRoot = animator != null ? animator.transform : instanceRoot;
         AnimalRigCache cache = GetOrBuildAnimalRigCache(rigRoot, instanceRoot, settings);
-        if (settings.enableSkeletonScaleCorrection)
-        {
-            ApplyAnimalSkeletonScale(instanceRoot, jointsWorld, vis, jointCount, settings);
-        }
         if (cache != null && cache.ready)
         {
             AlignAnimalRootToSkeleton(instanceRoot, cache, skeletonRoot, false, tick);
@@ -273,41 +268,6 @@ public sealed partial class AnimalPoseApplier
         }
 
         return cache;
-    }
-
-    private static void ApplyAnimalSkeletonScale(Transform root, Vector3[] jointsWorld, byte[] vis, int jointCount, AnimalPoseSettings settings)
-    {
-        if (root == null || !TryGetVisibleJointBounds(jointsWorld, vis, jointCount, out Bounds bounds))
-        {
-            return;
-        }
-
-        ReplaceableModel model = root.GetComponent<ReplaceableModel>();
-        if (model == null)
-        {
-            return;
-        }
-
-        float skeletonExtent = Mathf.Max(bounds.size.x, Mathf.Max(bounds.size.y, bounds.size.z));
-        float modelExtent = Mathf.Max(model.baseBoundsSize.x, model.baseBoundsSize.y);
-        float bboxReferenceUniform = ResolveCurrentUniformScale(root, model);
-        if (!AnimalSkeletonScaleResolver.TryResolveUniform(
-            skeletonExtent,
-            modelExtent,
-            model.userScale,
-            bboxReferenceUniform,
-            settings,
-            out float uniform))
-        {
-            return;
-        }
-
-        TrackPlacementWriter.Apply(
-            root,
-            TrackPlacementCommand.LocalScaleOnly(
-                root.position,
-                root.rotation,
-                model.baseLocalScale * uniform));
     }
 
     private void AlignAnimalRootToSkeleton(Transform instanceRoot, AnimalRigCache cache, Vector3 skeletonRoot, bool smooth, RuntimeClock.TickContext tick)
@@ -1221,33 +1181,6 @@ public sealed partial class AnimalPoseApplier
         }
 
         return node;
-    }
-
-    private static bool TryGetVisibleJointBounds(Vector3[] jointsWorld, byte[] vis, int jointCount, out Bounds bounds)
-    {
-        return AnimalVisibleJointBounds.TryResolve(jointsWorld, vis, jointCount, out bounds);
-    }
-
-    private static float ClampSkeletonUniformScale(float uniform, float referenceUniform, AnimalPoseSettings settings)
-    {
-        return AnimalSkeletonScaleResolver.ClampUniform(uniform, referenceUniform, settings);
-    }
-
-    private static float ResolveCurrentUniformScale(Transform root, ReplaceableModel model)
-    {
-        if (root == null)
-        {
-            return 0f;
-        }
-
-        if (model == null)
-        {
-            return Mathf.Max(root.localScale.x, Mathf.Max(root.localScale.y, root.localScale.z));
-        }
-
-        Vector3 baseScale = model.baseLocalScale;
-        Vector3 localScale = root.localScale;
-        return AnimalSkeletonScaleResolver.ResolveUniformFromScale(localScale, baseScale);
     }
 
 }

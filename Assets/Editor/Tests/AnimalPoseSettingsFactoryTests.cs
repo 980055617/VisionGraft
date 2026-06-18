@@ -13,12 +13,7 @@ public class AnimalPoseSettingsFactoryTests
             animalRootRotateAlpha: 0.6f,
             animalRootPitchRollBlend: 0.18f,
             animalModelForwardLocal: Vector3.back,
-            animalModelUpLocal: Vector3.up,
-            enableSkeletonScaleCorrection: true,
-            skeletonScaleMin: 0.2f,
-            skeletonScaleMax: 5f,
-            skeletonScaleRelativeMin: 0.75f,
-            skeletonScaleRelativeMax: 1.25f);
+            animalModelUpLocal: Vector3.up);
 
         Assert.That(settings.boneApplyAlpha, Is.EqualTo(0.75f));
         Assert.That(settings.enableAnimalLimbApply, Is.True);
@@ -27,10 +22,5 @@ public class AnimalPoseSettingsFactoryTests
         Assert.That(settings.animalRootPitchRollBlend, Is.EqualTo(0.18f));
         Assert.That(settings.animalModelForwardLocal, Is.EqualTo(Vector3.back));
         Assert.That(settings.animalModelUpLocal, Is.EqualTo(Vector3.up));
-        Assert.That(settings.enableSkeletonScaleCorrection, Is.True);
-        Assert.That(settings.skeletonScaleMin, Is.EqualTo(0.2f));
-        Assert.That(settings.skeletonScaleMax, Is.EqualTo(5f));
-        Assert.That(settings.skeletonScaleRelativeMin, Is.EqualTo(0.75f));
-        Assert.That(settings.skeletonScaleRelativeMax, Is.EqualTo(1.25f));
     }
 }

@@ -9,12 +9,7 @@ public static class AnimalPoseSettingsFactory
         float animalRootRotateAlpha,
         float animalRootPitchRollBlend,
         Vector3 animalModelForwardLocal,
-        Vector3 animalModelUpLocal,
-        bool enableSkeletonScaleCorrection,
-        float skeletonScaleMin,
-        float skeletonScaleMax,
-        float skeletonScaleRelativeMin,
-        float skeletonScaleRelativeMax)
+        Vector3 animalModelUpLocal)
     {
         return new AnimalPoseSettings
         {
@@ -24,12 +19,7 @@ public static class AnimalPoseSettingsFactory
             animalRootRotateAlpha = animalRootRotateAlpha,
             animalRootPitchRollBlend = animalRootPitchRollBlend,
             animalModelForwardLocal = animalModelForwardLocal,
-            animalModelUpLocal = animalModelUpLocal,
-            enableSkeletonScaleCorrection = enableSkeletonScaleCorrection,
-            skeletonScaleMin = skeletonScaleMin,
-            skeletonScaleMax = skeletonScaleMax,
-            skeletonScaleRelativeMin = skeletonScaleRelativeMin,
-            skeletonScaleRelativeMax = skeletonScaleRelativeMax
+            animalModelUpLocal = animalModelUpLocal
         };
     }
 }

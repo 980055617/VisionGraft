@@ -14,12 +14,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const string BundleAnimalControlTargetsEntryName = "source/animal_control_targets.json";
     private const string BundleOtherObjectProxiesEntryName = "source/other_object_proxies.json";
     private const string BundleHumanSmplEntryName = "source/human_smpl_from_sam2.json";
+    private const string BundleNormalModeVideoEntryName = "source/pre_removal_stereo_video.mp4";
     private const string ExtractedVideoFileName = "video.mp4";
     private const string ExtractedManifestFileName = "manifest.json";
     private const string ExtractedMetaFileName = "meta.bin";
     private const string ExtractedAnimalControlTargetsFileName = "animal_control_targets.json";
     private const string ExtractedOtherObjectProxiesFileName = "other_object_proxies.json";
     private const string ExtractedHumanSmplFileName = "human_smpl_from_sam2.json";
+    private const string ExtractedNormalModeVideoFileName = "pre_removal_stereo_video.mp4";
 
     private Transform leftScreen;
     private Transform rightScreen;
@@ -124,6 +126,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const float SettingsPanelForwardOffsetMeters = 0.01f;
 
     private VideoPlayer vp;
+    private string modelModePlaybackVideoPath;
+    private string normalModePlaybackVideoPath;
+    private bool hasNormalModeVideo;
+    private bool isNormalMode;
+    private bool pendingModeSwitchResume;
+    private double pendingModeSwitchTimeSeconds;
     private ManifestData manifest;
     private int lastFrameReadyFrame = -1;
     private string leftTexProp = "_MainTex";

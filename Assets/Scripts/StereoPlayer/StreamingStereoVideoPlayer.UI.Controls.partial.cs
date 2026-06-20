@@ -16,6 +16,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             EnsureCanvasRaycasters(prefabRoot);
             EnsurePauseButtonExists(prefabRoot);
             EnsureSettingsButtonExists(prefabRoot);
+            EnsureModeButtonExists(prefabRoot);
             EnsureProgressControlsExists(prefabRoot);
             BindRuntimeControlsUi(prefabRoot);
             return prefabRoot;
@@ -48,11 +49,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Image panelImage = RuntimeUiElementFactory.AddImage(panelObj);
         UiComponentWriter.ApplyGraphicColor(panelImage, new Color(0f, 0f, 0f, 0.45f));
 
-        Button pauseButton = CreateBarButton(panelObj.transform, "PauseToggleButton", new Vector2(-180f, -38f));
+        Button pauseButton = CreateBarButton(panelObj.transform, "PauseToggleButton", new Vector2(-300f, -38f));
         runtimePauseButtonText = GetButtonText(pauseButton);
         BindRuntimeButton(pauseButton, TogglePausePlayback);
 
-        Button settingsButton = CreateBarButton(panelObj.transform, "SettingsButton", new Vector2(180f, -38f));
+        Button modeButton = CreateBarButton(panelObj.transform, "ModeToggleButton", new Vector2(0f, -38f));
+        runtimeModeButtonText = GetButtonText(modeButton);
+        BindRuntimeButton(modeButton, ToggleNormalMode);
+
+        Button settingsButton = CreateBarButton(panelObj.transform, "SettingsButton", new Vector2(300f, -38f));
         runtimeSettingsButtonText = GetButtonText(settingsButton);
         BindRuntimeButton(settingsButton, ToggleRuntimeSettingsPanel);
 
@@ -72,7 +77,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private Button CreateBarButton(Transform parent, string name, Vector2 anchoredPos)
     {
         RectTransform buttonRect = RuntimeUiElementFactory.CreateRectChild(name, parent, out GameObject buttonObj);
-        TransformWriter.ApplyCenteredRect(buttonRect, anchoredPos, new Vector2(300f, 120f));
+        TransformWriter.ApplyCenteredRect(buttonRect, anchoredPos, new Vector2(260f, 120f));
 
         Image buttonImage = RuntimeUiElementFactory.AddImage(buttonObj);
         UiComponentWriter.ApplyGraphicColor(buttonImage, new Color(0.13f, 0.13f, 0.13f, 0.9f));
@@ -94,9 +99,33 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         Text text = RuntimeUiElementFactory.AddText(textObj);
         UiComponentWriter.ApplyTextStyle(text, GetRuntimeUiFont(), 52, TextAnchor.MiddleCenter, Color.white);
-        UiComponentWriter.ApplyTextContent(text, name.Contains("Settings") ? "Settings" : "Pause");
+        UiComponentWriter.ApplyTextContent(text, name.Contains("Settings") ? "Settings" : (name.Contains("Mode") ? "Model" : "Pause"));
 
         return button;
+    }
+
+
+    private void EnsureModeButtonExists(GameObject root)
+    {
+        if (root == null)
+        {
+            return;
+        }
+
+        if (FindButton(root, "mode") != null)
+        {
+            return;
+        }
+
+        Transform parent = EnsureRuntimeControlsCanvasTransform(root);
+        Button settings = FindButton(root, "setting");
+        if (settings != null && settings.transform.parent != null)
+        {
+            parent = settings.transform.parent;
+        }
+
+        Button mode = CreateBarButton(parent, "ModeToggleButton", new Vector2(0f, -38f));
+        BindRuntimeButton(mode, ToggleNormalMode);
     }
 
 
@@ -119,7 +148,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             parent = settings.transform.parent;
         }
 
-        Button pause = CreateBarButton(parent, "PauseToggleButton", new Vector2(-180f, -38f));
+        Button pause = CreateBarButton(parent, "PauseToggleButton", new Vector2(-300f, -38f));
         BindRuntimeButton(pause, TogglePausePlayback);
     }
 
@@ -143,7 +172,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             parent = pause.transform.parent;
         }
 
-        Button settings = CreateBarButton(parent, "SettingsButton", new Vector2(180f, -38f));
+        Button settings = CreateBarButton(parent, "SettingsButton", new Vector2(300f, -38f));
         BindRuntimeButton(settings, ToggleRuntimeSettingsPanel);
     }
 
@@ -203,6 +232,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         runtimePauseButtonText = null;
         runtimeSettingsButtonText = null;
+        runtimeModeButtonText = null;
         runtimeProgressSlider = null;
         runtimeProgressText = null;
 
@@ -222,6 +252,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             BindRuntimeButton(settingsButton, ToggleRuntimeSettingsPanel);
             runtimeSettingsButtonText = GetButtonText(settingsButton);
+        }
+
+        Button modeButton = FindButton(root, "mode");
+        if (modeButton != null)
+        {
+            BindRuntimeButton(modeButton, ToggleNormalMode);
+            runtimeModeButtonText = GetButtonText(modeButton);
         }
 
         runtimeProgressSlider = FindSlider(root, "progressslider");
@@ -334,7 +371,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             RectTransform r = pause.transform as RectTransform;
             if (r != null)
             {
-                TransformWriter.ApplyAnchoredPosition(r, new Vector2(-180f, -62f));
+                TransformWriter.ApplyAnchoredPosition(r, new Vector2(-300f, -62f));
+            }
+        }
+
+        Button mode = FindButton(root, "mode");
+        if (mode != null)
+        {
+            RectTransform r = mode.transform as RectTransform;
+            if (r != null)
+            {
+                TransformWriter.ApplyAnchoredPosition(r, new Vector2(0f, -62f));
             }
         }
 
@@ -344,7 +391,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             RectTransform r = settings.transform as RectTransform;
             if (r != null)
             {
-                TransformWriter.ApplyAnchoredPosition(r, new Vector2(180f, -62f));
+                TransformWriter.ApplyAnchoredPosition(r, new Vector2(300f, -62f));
             }
         }
 

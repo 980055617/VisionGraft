@@ -32,11 +32,13 @@ bundle 内の検出オブジェクト（Human / Animal / Else）を、対応す�
 | `source/human_smpl_from_sam2.json` | Optional | 検証・debug のみ | Human の SMPL 姿勢パラメータ（全フレーム） |
 | `source/animal_control_targets.json` | Optional | 検証・debug のみ | Animal のコントロールターゲット |
 | `source/other_object_proxies.json` | Optional | 検証・debug のみ | Else オブジェクトのプロキシ（バウンディングボックス等） |
+| `source/pre_removal_stereo_video.mp4` | Optional | **Runtime（通常モードのみ）** | 除去前のオリジナルステレオ動画。`video.mp4` と同じ manifest レイアウト・タイムラインを共有する |
 
 ### bundle 使用ルール（絶対に守ること）
 
 - **配置・回転・姿勢追従には `meta.bin` と `manifest.json` のみを使う**
 - **`source/*` は runtime 配置に使用禁止** — 検証・debug・将来の再解釈用
+  - 例外: `source/pre_removal_stereo_video.mp4` は通常モードの動画ストリームとして runtime 再生に使う。配置データとしては使わない（[docs/adr/0003-normal-mode-playback-video.md](docs/adr/0003-normal-mode-playback-video.md)）
 - `meta.bin` には SMPL FK block（rotations・betas・transl）が object payload として含まれており、これが runtime の唯一の SMPL データソース
 - `source/human_smpl_from_sam2.json` 等は bundle によっては同梱されない。runtime がこれに依存すると動かなくなる
 

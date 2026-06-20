@@ -100,6 +100,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         vp.frameReady -= OnVideoFrameReady;
         vp.prepareCompleted -= OnPrepared;
+        vp.prepareCompleted -= OnModeSwitchPrepared;
     }
 
 

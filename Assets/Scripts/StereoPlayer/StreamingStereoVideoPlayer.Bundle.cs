@@ -70,6 +70,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         string extractedAnimalControlTargetsPath = Path.Combine(cacheDir, ExtractedAnimalControlTargetsFileName);
         string extractedOtherObjectProxiesPath = Path.Combine(cacheDir, ExtractedOtherObjectProxiesFileName);
         string extractedHumanSmplPath = Path.Combine(cacheDir, ExtractedHumanSmplFileName);
+        string extractedNormalModeVideoPath = Path.Combine(cacheDir, ExtractedNormalModeVideoFileName);
 
         // Always extract fresh files after cache clear.
         {
@@ -107,6 +108,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     }
 
                     BundleExtractor.ExtractWithRequirement(za, BundleHumanSmplEntryName, extractedHumanSmplPath, SpatialVideoBundleEntryRequirement.Optional);
+                    BundleExtractor.ExtractWithRequirement(za, BundleNormalModeVideoEntryName, extractedNormalModeVideoPath, SpatialVideoBundleEntryRequirement.Optional);
                 }
             }
             catch
@@ -128,8 +130,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         LoadBundleSidecars(extractedAnimalControlTargetsPath, extractedOtherObjectProxiesPath);
         LoadHumanSmplSidecar(extractedHumanSmplPath);
 
-        string normalizedVideoPath = extractedVideoPath.Replace("\\", "/");
-        vp.url = normalizedVideoPath;
+        modelModePlaybackVideoPath = extractedVideoPath.Replace("\\", "/");
+        hasNormalModeVideo = File.Exists(extractedNormalModeVideoPath);
+        normalModePlaybackVideoPath = hasNormalModeVideo ? extractedNormalModeVideoPath.Replace("\\", "/") : null;
+        isNormalMode = false;
+
+        vp.url = modelModePlaybackVideoPath;
 
         RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Prepare);
     }

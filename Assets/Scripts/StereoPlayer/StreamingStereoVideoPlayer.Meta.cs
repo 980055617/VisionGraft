@@ -461,7 +461,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void TrySelectDisplayTrackFromPick(PickResult pick)
     {
-        if (!displayModel || !SelectDisplayTrackFromClick || !metaLoaded)
+        if (!displayModel || !SelectDisplayTrackFromClick || !metaLoaded || isNormalMode)
         {
             return;
         }

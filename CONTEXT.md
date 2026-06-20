@@ -33,6 +33,9 @@ This file records the domain language and project-specific concepts for VisionGr
 - **XR interaction surface**: The input-facing surface aligned with a display screen so XR rays or tracked-device pointers can interact with playback UI and screen-adjacent controls.
 - **Other-object proxy**: A simple spatial proxy for a tracked subject that is not treated as a Human or Animal.
 - **Model scale lock**: Human and animal model size is chosen once when a track's model is first placed, then reused for that track while later frames update position, depth, rotation, and pose without changing size.
+- **Model placement mode**: The playback mode that shows `video.mp4` (the subject-removed plate) with replaceable models tracking each subject. This is the default mode on bundle load.
+- **Normal mode**: The playback mode that shows `source/pre_removal_stereo_video.mp4` (the original, unprocessed plate) with no replaceable models or other-object proxy boxes displayed. `video.mp4` and the normal-mode video share the same manifest-described stereo layout, timeline length, and frame rate, so switching modes preserves playback position. Normal mode is optional per bundle — it requires `source/pre_removal_stereo_video.mp4` to be present.
+_Avoid_: Origin mode, composite mode, raw mode (superseded by the names above)
 
 ## Notes
 

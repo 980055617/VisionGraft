@@ -8,7 +8,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     public void DisplayModelTick()
     {
-        if (!displayModel || !metaLoaded)
+        if (!displayModel || !metaLoaded || isNormalMode)
         {
             return;
         }

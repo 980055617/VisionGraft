@@ -13,6 +13,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private GameObject runtimeControlsRoot;
     private Text runtimePauseButtonText;
     private Text runtimeSettingsButtonText;
+    private Text runtimeModeButtonText;
     private GameObject runtimeSettingsRoot;
     private Slider runtimeProgressSlider;
     private Text runtimeProgressText;
@@ -65,6 +66,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             UpdateRuntimeControlsPlacement();
             UpdatePauseButtonLabel();
             UpdateSettingsButtonLabel();
+            UpdateRuntimeModeUiState();
             UpdateRuntimeProgressUi();
         }
 
@@ -90,6 +92,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
             UnbindRuntimeButton(pauseButton, TogglePausePlayback);
             UnbindRuntimeButton(FindButton(runtimeControlsRoot, "setting"), ToggleRuntimeSettingsPanel);
+            UnbindRuntimeButton(FindButton(runtimeControlsRoot, "mode"), ToggleNormalMode);
             UnbindRuntimeSlider(FindSlider(runtimeControlsRoot, "progressslider"), OnRuntimeProgressSliderChanged);
         }
 

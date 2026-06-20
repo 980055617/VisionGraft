@@ -194,6 +194,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void OnRuntimeTrackPrevClicked()
     {
+        if (isNormalMode)
+        {
+            return;
+        }
+
         PauseForManualRotationEdit();
         StepSelectedManualRotationTrack(-1);
         UpdateRuntimeTrackRotationUiState();
@@ -203,6 +208,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void OnRuntimeTrackNextClicked()
     {
+        if (isNormalMode)
+        {
+            return;
+        }
+
         PauseForManualRotationEdit();
         StepSelectedManualRotationTrack(1);
         UpdateRuntimeTrackRotationUiState();
@@ -212,7 +222,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void OnRuntimeTrackYawResetClicked()
     {
-        if (!TryGetSelectedManualRotationTrack(out uint trackId))
+        if (isNormalMode || !TryGetSelectedManualRotationTrack(out uint trackId))
         {
             return;
         }
@@ -226,7 +236,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void OnRuntimeTrackYawSliderChanged(float value)
     {
-        if (suppressRuntimeTrackYawCallback)
+        if (suppressRuntimeTrackYawCallback || isNormalMode)
         {
             return;
         }
@@ -245,6 +255,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void OnRuntimeInteractiveMotionToggleClicked()
     {
+        if (isNormalMode)
+        {
+            return;
+        }
+
         enableInteractiveMotion = !enableInteractiveMotion;
         if (!enableInteractiveMotion)
         {
@@ -257,6 +272,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void UpdateRuntimeInteractiveMotionUiState()
     {
+        Button motionToggle = FindButton(runtimeSettingsRoot, "interactivemotiontoggle");
+        if (motionToggle != null)
+        {
+            UiComponentWriter.ApplyInteractable(motionToggle, !isNormalMode);
+        }
+
         if (runtimeInteractiveMotionValueText == null)
         {
             return;
@@ -267,11 +288,57 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
 
 
+    private void UpdateRuntimeModeUiState()
+    {
+        Button modeButton = FindButton(runtimeControlsRoot, "mode");
+        if (modeButton != null)
+        {
+            UiComponentWriter.ApplyInteractable(modeButton, hasNormalModeVideo);
+        }
+
+        if (runtimeModeButtonText != null)
+        {
+            UiComponentWriter.ApplyTextContent(runtimeModeButtonText, isNormalMode ? "Normal" : "Model");
+        }
+
+        UpdateRuntimeTrackRotationUiState();
+        UpdateRuntimeInteractiveMotionUiState();
+    }
+
+
+
     private void UpdateRuntimeTrackRotationUiState()
     {
+        Button trackPrevButton = FindButton(runtimeSettingsRoot, "trackprev");
+        if (trackPrevButton != null)
+        {
+            UiComponentWriter.ApplyInteractable(trackPrevButton, !isNormalMode);
+        }
+
+        Button trackNextButton = FindButton(runtimeSettingsRoot, "tracknext");
+        if (trackNextButton != null)
+        {
+            UiComponentWriter.ApplyInteractable(trackNextButton, !isNormalMode);
+        }
+
+        Button trackYawResetButton = FindButton(runtimeSettingsRoot, "trackyawreset");
+        if (trackYawResetButton != null)
+        {
+            UiComponentWriter.ApplyInteractable(trackYawResetButton, !isNormalMode);
+        }
+
         if (runtimeTrackSelectionText == null && runtimeTrackYawSlider == null && runtimeTrackYawValueText == null &&
             runtimeTrackFrontGuideText == null && runtimeTrackKeyInfoText == null)
         {
+            return;
+        }
+
+        if (isNormalMode)
+        {
+            if (runtimeTrackYawSlider != null)
+            {
+                UiComponentWriter.ApplyInteractable(runtimeTrackYawSlider, false);
+            }
             return;
         }
 

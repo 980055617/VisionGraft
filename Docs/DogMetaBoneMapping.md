@@ -58,3 +58,49 @@ Important:
 
 - This mapping aligns naming and chain assignment, but does not fix per-bone local axis mismatch by itself.
 - If limb twist remains unstable, the next step is DCC-side rig normalization (consistent bone roll/forward axis and deformation-bone separation).
+
+## 調査ログ: DogRoot と P_GermanShepherd のサイズ印象差（2026-06-19）
+
+**症状:** 同じ bundle/同じ検出bboxで再生しても、DogRoot適用時の方が「大きい犬」に見える。
+
+**調査して却下した仮説:**
+- FBXのインポートスケール（Scale Factor）の問題 → 誤り。`TrackModelPlacement.ResolveDesiredLocalScale` の
+  `scaleH = bboxWorldH / baseBoundsSize.y` は `baseBoundsSize.y` の値に関わらず最終ワールド高さを
+  `bboxWorldH` に強制する設計なので、メッシュの素のスケール自体は最終結果に影響しない。実際に
+  `dog.fbx` の Scale Factor を変更してみたところ、prefab内で手動オフセットされた各パーツ
+  （`arm.003.R` 等）の位置がスケール変更に追従せず分解して見えるだけで、サイズ問題は解決しなかった
+  （この変更は不要なので revert 済み）。
+- bounds計測に異常な外れ値パーツが混入している → 却下。`[BOUNDS-DBG]` で全Rendererを確認したが、
+  DogRootの各パーツ（body/foot.00x/arm.00x/tail/neck/head/er）はいずれも自然な犬の輪郭に沿っており、
+  異常な孤立パーツはなかった。
+
+**実測値（2026-06-19、`[BOUNDS-DBG]`/`[SCALE-DBG]` で確認、ログは削除済み）:**
+
+| | baseBoundsSize (W, H, D) | W/H比 | D/H比 |
+|---|---|---|---|
+| DogRoot | (2.413, 6.689, 8.561) | 0.361 | 1.280 |
+| P_GermanShepherd | (0.252, 0.976, 1.217) | 0.258 | 1.247 |
+
+同じ検出bboxを両モデルに適用したときの最終ワールドサイズ予測（`Mathf.Min(scaleW, scaleH)` は両モデルとも
+H側が効く＝高さ基準でスケールが決まる）:
+
+| | W | H | D |
+|---|---|---|---|
+| DogRoot | 0.065m | 0.181m | 0.231m |
+| German | 0.046m | 0.180m | 0.224m |
+
+**結論（真因）:** 高さはほぼ一致するが、`Mathf.Min(scaleW, scaleH)` は高さだけをbboxに合わせて固定し、
+幅・奥行きはモデル本来のプロポーションのまま追従する。DogRootはGermanよりも「高さに対して幅が広い
+（W/H比が約40%大きい）」体型のため、高さを揃えても幅・奥行きがそのぶん大きくなり、体積換算で約1.5倍
+「大きい犬」に見える。これはバグではなく、**現在のスケーリング方式（高さのみを基準にした uniform scale）
+が、モデル間の体型差を吸収しない**という設計上の特性。
+
+**今後の検討候補（未実装、提案のみ）:**
+1. 現状の `Mathf.Min(scaleW, scaleH)` を維持（高さ基準になりやすいが、効く軸がモデルごとに変わる可能性は残る）
+2. モデルごとに人間が目視で基準サイズを手動キャリブレーション
+   （`ReplaceableModel.referenceHeightMeters` と同様の仕組みを幅・奥行きにも拡張）— 現時点で最有力候補
+3. bbox の幅・高さに対して非均一スケール（X/Y/Z個別）— リギング済みモデルでFK姿勢適用時に不自然な伸縮の
+   リスクがあるため非推奨
+4. 体積（W×H×D）ベースでスケール決定 — bboxからの体積推定が粗くなりがちで複雑化のリスク
+
+次にこの件を検討する場合は別スレッドで。

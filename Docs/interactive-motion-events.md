@@ -48,6 +48,20 @@ Interactive motion events are optional behaviors inserted during stereo video pl
 - `StreamingStereoVideoPlayer.Playback.partial.cs`: `ApplyMetaTarget` gates the normal tracked pipeline behind `TryApplyOwnedInteractiveMotion`, and applies `ApplyInteractiveHandoffBlendIfActive` after it; `TryApplyInteractiveSystemTriggerTrack` handles tracks missing from the current frame.
 - `StreamingStereoVideoPlayer.PosePipeline.partial.cs`: unchanged tracked FK/IK pipelines, plus a single hook (`CacheLiveAnimalPoseForInteractiveMotion`) that snapshots the real Animal pose whenever tracking actually runs, for later reuse by Owned-stage events.
 - `StreamingStereoVideoPlayer.UI.*`: the runtime `Motion` ON/OFF toggle (unchanged).
+- `InteractiveMotionDebugTools.cs` (Editor-only): force-trigger menu items, see "Testing" above.
+
+## Testing
+
+Random-triggered events fire on an unpredictable interval (`interactiveMotionMinIntervalSeconds`/`MaxIntervalSeconds`) with a random static/dynamic split (`DynamicEventProbability`), which makes visual verification during Play Mode slow. Two Editor-only menu items bypass the random schedule and force a specific kind immediately:
+
+- `VisionGraft > Interactive Motion > Force Static (All Active Tracks)`
+- `VisionGraft > Interactive Motion > Force Dynamic (All Active Tracks)`
+
+Both call `StreamingStereoVideoPlayer.DebugForceInteractiveMotion(bool dynamicKind)` (`StreamingStereoVideoPlayer.InteractiveMotion.partial.cs`) for every `StreamingStereoVideoPlayer` in the scene. Behavior:
+
+- Only Play Mode; only the random-trigger code path (`InteractiveTriggerSource.Random`). The system frame-out trigger is a separate path and is not covered by this tool.
+- Applies to every currently active Human/Animal track at once (no per-track picker).
+- Respects the same rules a real random trigger would: a track already mid-event (`InteractiveEventStage != Inactive`) is skipped rather than interrupted, and nothing fires while the runtime `Motion` toggle (`enableInteractiveMotion`) is off — so forced triggers stay consistent with what could happen in production, they just remove the wait.
 
 ## Asset guidance
 

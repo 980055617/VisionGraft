@@ -234,11 +234,53 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void StartRandomInteractiveMotion(uint trackId, MetaObj obj, float now)
     {
-        InteractiveMotionState state = GetOrCreateInteractiveMotionState(trackId);
         bool isAnimal = IsCategoryAnimal(obj.categoryId);
+        InteractiveEventKind kind = UnityEngine.Random.value < DynamicEventProbability ? InteractiveEventKind.Dynamic : InteractiveEventKind.Static;
+        StartInteractiveMotion(trackId, isAnimal, kind, now);
+    }
+
+    // Editor-only debug entry point (see InteractiveMotionDebugTools) to force-trigger an event
+    // without waiting on InteractiveMotionSchedule's random interval, for visually verifying
+    // static/dynamic playback and the handoff blend during Play Mode. Skips tracks already
+    // mid-event so it never overrides the exclusive-authority state machine.
+    public void DebugForceInteractiveMotion(bool dynamicKind)
+    {
+        if (!enableInteractiveMotion)
+        {
+            return;
+        }
+
+        InteractiveEventKind kind = dynamicKind ? InteractiveEventKind.Dynamic : InteractiveEventKind.Static;
+        RuntimeClock.TickContext tick = GetRuntimeTickContext();
+        foreach (KeyValuePair<uint, GameObject> kv in trackInstances)
+        {
+            uint trackId = kv.Key;
+            if (!interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) || state == null)
+            {
+                continue;
+            }
+            if (state.stage != InteractiveEventStage.Inactive)
+            {
+                continue;
+            }
+            bool isAnimal = IsCategoryAnimal(state.lastCategoryId);
+            bool isPerson = IsCategoryPerson(state.lastCategoryId);
+            if (!isAnimal && !isPerson)
+            {
+                continue;
+            }
+
+            StartInteractiveMotion(trackId, isAnimal, kind, tick.now);
+            Debug.Log($"DebugForceInteractiveMotion: track {trackId} forced into {kind} ({(isAnimal ? "Animal" : "Human")}).");
+        }
+    }
+
+    private void StartInteractiveMotion(uint trackId, bool isAnimal, InteractiveEventKind kind, float now)
+    {
+        InteractiveMotionState state = GetOrCreateInteractiveMotionState(trackId);
         state.subject = isAnimal ? InteractiveMotionSubject.Animal : InteractiveMotionSubject.Person;
         state.triggerSource = InteractiveTriggerSource.Random;
-        state.kind = UnityEngine.Random.value < DynamicEventProbability ? InteractiveEventKind.Dynamic : InteractiveEventKind.Static;
+        state.kind = kind;
         state.originPosition = state.hasLiveSample ? state.livePosition : Vector3.zero;
         state.originRotation = state.hasLiveSample ? state.liveRotation : Quaternion.identity;
 

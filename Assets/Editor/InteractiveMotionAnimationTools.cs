@@ -13,7 +13,7 @@ public static class InteractiveMotionAnimationTools
     [MenuItem("VisionGraft/Interactive Motion/Reimport Human Clips As Humanoid")]
     public static void ReimportHumanClipsAsHumanoid()
     {
-        string[] fbxPaths = Directory.GetFiles(HumanClipFolder, "*.fbx", SearchOption.TopDirectoryOnly);
+        string[] fbxPaths = Directory.GetFiles(HumanClipFolder, "*.fbx", SearchOption.AllDirectories);
         for (int i = 0; i < fbxPaths.Length; i++)
         {
             string path = NormalizeAssetPath(fbxPaths[i]);

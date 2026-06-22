@@ -62,12 +62,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     [Header("Interactive Motion")]
     public bool enableInteractiveMotion = true;
-    public AnimationClip[] humanInteractiveClips;
+    [FormerlySerializedAs("humanInteractiveClips")]
+    public AnimationClip[] humanStaticGestureClips;
+    public AnimationClip[] humanWalkClips;
     public float interactiveMotionMinIntervalSeconds = 6f;
     public float interactiveMotionMaxIntervalSeconds = 14f;
-    public float interactiveMotionDurationSeconds = 5.5f;
-    public float interactiveMotionBlendSeconds = 1.2f;
-    public float interactiveApproachDistanceMeters = 0.25f;
+    [FormerlySerializedAs("interactiveMotionDurationSeconds")]
+    public float staticAnimationDurationSeconds = 5.5f;
+    [FormerlySerializedAs("interactiveMotionBlendSeconds")]
+    public float interactiveHandoffBlendSeconds = 0.8f;
+    public float humanApproachStopDistanceMeters = 0.6f;
+    public float humanWalkSpeedMetersPerSecond = 0.8f;
+    public float animalApproachStopDistanceMeters = 0.5f;
+    public float animalWalkSpeedMetersPerSecond = 0.5f;
 
     private const float PopoutRangeMeters = 0.35f;
     private const float EpsilonMeters = 0.02f;

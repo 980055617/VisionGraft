@@ -79,7 +79,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             {
                 appliedTracks.Add(trackId);
             }
-            else if (TryApplyInteractiveFrameOutTrack(trackId, frame))
+            else if (TryApplyInteractiveSystemTriggerTrack(trackId, frame))
             {
                 appliedTracks.Add(trackId);
             }
@@ -143,56 +143,49 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         GameObject instance = GetOrCreateTrackInstance(target.trackId);
-        if (instance != null)
+        if (instance == null)
         {
-            SceneObjectWriter.ApplyActive(instance, true);
-            Quaternion rotationPinhole = GetPinholeBasisRotation(screen);
-            rotationPinhole = ApplyManualTrackYawOffset(target.trackId, frame, rotationPinhole, screen != null ? screen.up : Vector3.up);
-            float targetHeight = ComputeTargetHeightMeters(bboxHAdjusted, target.anchorZ);
-            ApplyReplaceableModelTransform(instance, anchorWorld, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxWAdjusted, bboxHAdjusted, screen);
-            UpdateInteractiveMotionSchedule(instance, target, screen, frame);
-            bool isHumanoidInteractiveRootPinned = IsHumanoidInteractiveRootPinned(target.trackId);
-            bool preserveRootScreenHeightAfterSkeleton =
-                IsCategoryPerson(target.categoryId) &&
-                ShouldPreserveRootScreenHeightAfterHumanSkeletonPlacement() &&
-                !isHumanoidInteractiveRootPinned;
-            Vector3 preSkeletonRootPosition = instance.transform.position;
-            TryApplySkeleton(instance, target, screen, frame);
-            if (preserveRootScreenHeightAfterSkeleton)
-            {
-                TrackPlacementWriter.Apply(
-                    instance.transform,
-                    TrackPlacementCommand.PositionOnly(
-                        ResolveRootPositionPreservingScreenHeight(
-                            instance.transform.position,
-                            preSkeletonRootPosition,
-                            screen != null ? screen.up : Vector3.up),
-                        instance.transform.rotation,
-                        instance.transform.localScale));
-            }
-            bool isHumanoidInteractiveMotionInPlace = IsHumanoidInteractiveMotionInPlace(target.trackId);
-            bool shouldUseHumanSmplRootPlacement = ShouldUseHumanSmplRootPlacement(target, frame);
-            if (isHumanoidInteractiveMotionInPlace && !isHumanoidInteractiveRootPinned)
-            {
-                if (ShouldInitialFitHumanoidInPlaceRootBeforePinning(
-                    isHumanoidInteractiveMotionInPlace,
-                    isHumanoidInteractiveRootPinned,
-                    shouldUseHumanSmplRootPlacement))
-                {
-                    FitDisplayedModelToBBox(instance, target, screen, bboxHAdjusted);
-                }
-                PinHumanoidInteractiveRootAfterBBox(target.trackId, instance, screen);
-            }
-            else if (ShouldFitDisplayedModelToBBoxDuringInteractiveMotion(
-                    IsInteractiveMotionReplacing(target.trackId),
-                    isHumanoidInteractiveMotionInPlace) &&
-                !shouldUseHumanSmplRootPlacement)
-            {
-                FitDisplayedModelToBBox(instance, target, screen, bboxHAdjusted);
-            }
-            ObserveInteractiveMotionDisplayedRoot(target.trackId, instance);
             return;
         }
+
+        SceneObjectWriter.ApplyActive(instance, true);
+        Quaternion rotationPinhole = GetPinholeBasisRotation(screen);
+        rotationPinhole = ApplyManualTrackYawOffset(target.trackId, frame, rotationPinhole, screen != null ? screen.up : Vector3.up);
+
+        ObserveInteractiveMotionLiveTrackedSample(target.trackId, target, screen);
+        UpdateInteractiveMotionSchedule(target.trackId, target, frame);
+        TryStopSystemTriggerOnVisibleFrame(target.trackId);
+
+        if (TryApplyOwnedInteractiveMotion(target.trackId, instance, screen, frame))
+        {
+            return;
+        }
+
+        float targetHeight = ComputeTargetHeightMeters(bboxHAdjusted, target.anchorZ);
+        ApplyReplaceableModelTransform(instance, anchorWorld, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxWAdjusted, bboxHAdjusted, screen);
+        bool preserveRootScreenHeightAfterSkeleton =
+            IsCategoryPerson(target.categoryId) &&
+            ShouldPreserveRootScreenHeightAfterHumanSkeletonPlacement();
+        Vector3 preSkeletonRootPosition = instance.transform.position;
+        TryApplySkeleton(instance, target, screen, frame);
+        if (preserveRootScreenHeightAfterSkeleton)
+        {
+            TrackPlacementWriter.Apply(
+                instance.transform,
+                TrackPlacementCommand.PositionOnly(
+                    ResolveRootPositionPreservingScreenHeight(
+                        instance.transform.position,
+                        preSkeletonRootPosition,
+                        screen != null ? screen.up : Vector3.up),
+                    instance.transform.rotation,
+                    instance.transform.localScale));
+        }
+        if (!ShouldUseHumanSmplRootPlacement(target, frame))
+        {
+            FitDisplayedModelToBBox(instance, target, screen, bboxHAdjusted);
+        }
+        ObserveInteractiveMotionDisplayedRoot(target.trackId, instance);
+        ApplyInteractiveHandoffBlendIfActive(target.trackId, instance, frame);
     }
 
 
@@ -331,7 +324,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (AlignModelToBBoxBottom && model != null)
             {
                 Vector3 up = screen != null ? screen.up : Vector3.up;
-                float vBottom = ResolveBBoxBottomVEye(obj);
+                float vBottom = ResolveReliableBBoxBottomVEye(obj);
                 Vector3 bottomWorld = AnchorUvZToWorldPinhole(screen, uEye, vBottom, obj.anchorZ);
                 bottomWorld += up * ModelBottomExtraOffsetMeters;
                 float modelBottomOffset = model.baseBottomOffsetLocal * lossy.y;
@@ -382,6 +375,37 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return Mathf.Clamp(vBottom, 0f, manifest.eye_h - 1f);
     }
 
+    // A track's bbox routinely collapses while it is being clipped by the frame edge (the
+    // detector only sees a shrinking sliver), which moves the bbox's bottom edge away from the
+    // subject's true feet position and pops the model's bottom-aligned height. Freeze the
+    // bottom-alignment target at the last reliable bbox once that happens, instead of chasing
+    // a bbox that no longer represents the subject's full extent.
+    private const float BBoxBottomAlignMinAreaRatio = 0.5f;
+    private readonly Dictionary<uint, float> lastGoodBottomAlignArea = new Dictionary<uint, float>();
+    private readonly Dictionary<uint, float> lastGoodBottomAlignVEye = new Dictionary<uint, float>();
+
+    private float ResolveReliableBBoxBottomVEye(MetaObj obj)
+    {
+        float vBottom = ResolveBBoxBottomVEye(obj);
+        float area = (float)obj.bboxW * obj.bboxH;
+        bool touchesFrameEdge = manifest != null &&
+            (obj.bboxX <= 0 || obj.bboxY <= 0 ||
+             obj.bboxX + obj.bboxW >= manifest.eye_w - 1 || obj.bboxY + obj.bboxH >= manifest.eye_h - 1);
+
+        if (touchesFrameEdge &&
+            lastGoodBottomAlignArea.TryGetValue(obj.trackId, out float lastGoodArea) &&
+            lastGoodArea > 0f &&
+            area < lastGoodArea * BBoxBottomAlignMinAreaRatio &&
+            lastGoodBottomAlignVEye.TryGetValue(obj.trackId, out float frozenVBottom))
+        {
+            return frozenVBottom;
+        }
+
+        lastGoodBottomAlignArea[obj.trackId] = area;
+        lastGoodBottomAlignVEye[obj.trackId] = vBottom;
+        return vBottom;
+    }
+
 
     private void FitDisplayedModelToBBox(GameObject instance, MetaObj obj, Transform screen, float bboxH)
     {
@@ -405,7 +429,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        AlignProjectedModelBottomToBBox(instance.transform, screen, projectedBottomV, depthMeters, ResolveBBoxBottomVEye(obj));
+        AlignProjectedModelBottomToBBox(instance.transform, screen, projectedBottomV, depthMeters, ResolveReliableBBoxBottomVEye(obj));
     }
 
     private bool ShouldUseHumanSmplRootPlacement(MetaObj obj, int frame)

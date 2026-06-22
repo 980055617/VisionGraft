@@ -57,11 +57,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Vector3 cameraForward = smplPose.camRotation * Vector3.forward;
             AlignHumanoidHipsToSmplRoot(instance.transform, cache, GetSmoothedSmplRootWorld(cache, pose.rootWorld, pose.camOrigin, cameraForward));
 
-            if (TryApplyHumanInteractivePreIk(instance, obj.trackId, screen))
-            {
-                return;
-            }
-
             TryApplyHumanSmplRotationOverlay(cache, smplPose);
             // FK の body_pose 座標フレームと Unity bone フレームの不一致を
             // SMPL joint 世界座標（2点間ベクトル）で各 bone 方向を直接整合することで解消する。
@@ -74,7 +69,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // 骨盤基準配置後にキャラのモデル脚長と SMPL 脚長の差を Y オフセットで吸収する。
             // XZ は骨盤 anchor のまま、Y だけ SMPL ankle 基準に揃える。
             AlignHumanoidFeetYToSmplAnkles(instance.transform, cache, pose.jointsWorld, pose.jointVis);
-            ApplyHumanInteractiveOverlay(instance, obj.trackId);
             return;
         }
 
@@ -112,25 +106,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             false,
             default(Quaternion));
 
-        if (TryApplyHumanInteractivePreIk(instance, obj.trackId, screen))
+        if (!enableBoneApply || cache == null || !cache.ready)
         {
-            return;
-        }
-
-        if (!enableBoneApply)
-        {
-            ApplyHumanInteractiveOverlay(instance, obj.trackId);
-            return;
-        }
-
-        if (cache == null || !cache.ready)
-        {
-            ApplyHumanInteractiveOverlay(instance, obj.trackId);
             return;
         }
 
         TryApplySmpl24HumanoidIk(instance.transform, cache, pose.jointsWorld, pose.jointVis, pose.camOrigin, idx);
-        ApplyHumanInteractiveOverlay(instance, obj.trackId);
     }
 
     private static void RemapHmr2Body25ToSmpl24(ref PersonPoseWorldData pose)
@@ -236,11 +217,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Vector3 skeletonRoot = pose.rootWorld;
             Vector3 yawAxis = screen != null ? screen.up : instance.transform.up;
             ApplyManualYawToJoints(obj.trackId, frame, pose.jointsWorld, pose.jointVis, skeletonRoot, yawAxis);
-            ApplyAnimalInteractiveMotion(obj.trackId, instance.transform, screen, ref pose);
         }
 
         Animator animator = instance.GetComponentInChildren<Animator>();
         DisableAnimalAnimatorPlayback(animator);
+
+        CacheLiveAnimalPoseForInteractiveMotion(obj.trackId, pose, instance.transform.position, instance.transform.rotation, hasSmalPose, smalPose);
 
         animalPoseApplier.Apply(new AnimalPoseRequest
         {

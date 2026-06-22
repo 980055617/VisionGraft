@@ -200,6 +200,35 @@ public static class AnimalFrameOutMotion
         return posePosition;
     }
 
+    public static StreamingStereoVideoPlayer.AnimalFrameOutLoopPose ResolveOneWaySegmentPose(
+        Vector3 startPosition,
+        Vector3 endPosition,
+        Quaternion fallbackRotation,
+        Vector3 upAxis,
+        float normalizedTime)
+    {
+        Vector3 safeUp = upAxis.sqrMagnitude > 0.000001f ? upAxis.normalized : Vector3.up;
+        float t = EaseInOutMotion01(Mathf.Clamp01(normalizedTime));
+        Vector3 position = Vector3.Lerp(startPosition, endPosition, t);
+
+        Vector3 travel = Vector3.ProjectOnPlane(endPosition - startPosition, safeUp);
+        Quaternion rotation = travel.sqrMagnitude > 0.000001f
+            ? Quaternion.LookRotation(travel.normalized, safeUp)
+            : fallbackRotation;
+
+        return new StreamingStereoVideoPlayer.AnimalFrameOutLoopPose
+        {
+            position = position,
+            rotation = rotation
+        };
+    }
+
+    private static float EaseInOutMotion01(float value)
+    {
+        value = Mathf.Clamp01(value);
+        return value * value * (3f - 2f * value);
+    }
+
     private static Quaternion ResolveRotation(
         Quaternion startRotation,
         Vector3 frameOutDirection,

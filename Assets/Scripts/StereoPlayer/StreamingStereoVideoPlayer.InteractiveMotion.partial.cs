@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Animations;
@@ -5,91 +6,89 @@ using UnityEngine.Playables;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
-    private const string HumanInteractiveClipAssetFolder = "Assets/Animations/InteractiveMotion/Human";
+    private const string HumanStaticClipAssetFolder = "Assets/Animations/InteractiveMotion/Human/Static";
+    private const string HumanWalkClipAssetFolder = "Assets/Animations/InteractiveMotion/Human/Walk";
+    private const float DynamicEventProbability = 0.18f;
+    private const float MinWalkDurationSeconds = 1.0f;
+    private const float MinGestureDurationSeconds = 1.5f;
+    private const float SystemTriggerLoopSeconds = 2.0f;
     private const float AnimalBodyTurnMaxDegrees = 35f;
-    private const float AnimalFrameOutLoopSeconds = 2.0f;
-    private const float AnimalFrameOutSpeedMetersPerSecond = 0.2f;
 
-    private enum InteractiveMotionSubject
-    {
-        Person,
-        Animal
-    }
-
-    private enum InteractiveMotionMode
-    {
-        Overlay,
-        Replacement
-    }
-
-    private enum InteractiveAnimalPreset
-    {
-        LookAtViewer,
-        BodyTurnViewer,
-        TailWag,
-        PawWave,
-        ApproachViewer
-    }
-
-    private enum InteractiveHumanPreset
-    {
-        ClipInPlace,
-        FaceViewer,
-        ApproachViewer
-    }
-
-    private sealed class InteractiveMotionState
-    {
-        public bool active;
-        public bool startedFromFrameOut;
-        public InteractiveMotionSubject subject;
-        public InteractiveMotionMode mode;
-        public InteractiveAnimalPreset animalPreset;
-        public InteractiveHumanPreset humanPreset;
-        public float startTime;
-        public float duration;
-        public float nextTriggerTime;
-        public Vector3 startPosition;
-        public Quaternion startRotation = Quaternion.identity;
-        public Vector3 previousTrackedPosition;
-        public Vector3 lastTrackedPosition;
-        public Quaternion lastTrackedRotation = Quaternion.identity;
-        public bool hasLastDisplayedRoot;
-        public Vector3 lastDisplayedRootPosition;
-        public Quaternion lastDisplayedRootRotation = Quaternion.identity;
-        public bool hasLastDisplayedBoundsBottomY;
-        public float lastDisplayedBoundsBottomY;
-        public bool hasLastDisplayedProjectedBottomV;
-        public float lastDisplayedProjectedBottomV;
-        public bool hasPinnedInPlaceRoot;
-        public Vector3 pinnedInPlacePosition;
-        public Quaternion pinnedInPlaceRotation = Quaternion.identity;
-        public Vector2 previousAnchorEyePixel;
-        public Vector2 lastAnchorEyePixel;
-        public Rect lastBBoxEye;
-        public float lastEyeWidth;
-        public float lastEyeHeight;
-        public bool hasPreviousAnchorEyePixel;
-        public bool hasLastAnchorEyePixel;
-        public bool hasLastBBoxEye;
-        public bool hasPreviousTrackedTransform;
-        public bool hasLastTrackedTransform;
-        public byte lastCategoryId;
-        public Transform lastScreen;
-        public int visibleDebugLogCount;
-        public AnimationClip humanClip;
-        public int frameOutStartFrame;
-        public int frameInFrame;
-        public int frameOutDebugLogCount;
-        public bool hasFrameInPosition;
-        public Vector3 frameInPosition;
-        public Vector3 frameOutDirection;
-    }
+    private enum InteractiveMotionSubject { Person, Animal }
+    private enum InteractiveEventKind { Static, Dynamic }
+    private enum InteractiveTriggerSource { Random, SystemFrameOut }
+    private enum InteractiveDynamicPhase { WalkIn, Gesture, WalkBack }
+    private enum InteractiveEventStage { Inactive, Owned, HandoffBlend }
+    private enum InteractiveAnimalPreset { FaceViewer, BodyTurnViewer, TailWag, PawWave }
+    private enum InteractiveHumanPreset { ClipGesture, FaceViewer }
 
     public struct AnimalFrameOutLoopPose
     {
         public Vector3 position;
         public Quaternion rotation;
+    }
+
+    private sealed class InteractiveMotionState
+    {
+        public InteractiveEventStage stage = InteractiveEventStage.Inactive;
+        public InteractiveEventKind kind;
+        public InteractiveTriggerSource triggerSource;
+        public InteractiveDynamicPhase dynamicPhase;
+        public InteractiveMotionSubject subject;
+        public byte lastCategoryId;
+
+        public float nextTriggerTime;
+        public float phaseStartTime;
+        public float phaseDuration;
+        public float handoffStartTime;
+
+        public Vector3 originPosition;
+        public Quaternion originRotation = Quaternion.identity;
+        public Vector3 phaseFromPosition;
+        public Quaternion phaseFromRotation = Quaternion.identity;
+        public Vector3 phaseToPosition;
+        public Quaternion phaseToRotation = Quaternion.identity;
+        public Vector3 gesturePosition;
+        public Quaternion gestureRotation = Quaternion.identity;
+
+        public Vector3 handoffFromPosition;
+        public Quaternion handoffFromRotation = Quaternion.identity;
+
+        public bool hasLiveSample;
+        public Vector3 livePosition;
+        public Quaternion liveRotation = Quaternion.identity;
+        public float lastGoodBBoxArea;
+        public bool hasReliableBBoxThisFrame;
+        public Transform lastScreen;
+        public Vector2 lastAnchorEyePixel;
+        public Vector2 previousAnchorEyePixel;
+        public bool hasLastAnchorEyePixel;
+        public bool hasPreviousAnchorEyePixel;
+        public Rect lastBBoxEye;
+        public float lastEyeWidth;
+        public float lastEyeHeight;
+        public bool hasLastBBoxEye;
+
+        public int triggerStartFrame;
+        public float frameInQualityWaitStartTime;
+        public int frameInFrame;
+        public bool hasFrameInPosition;
+        public Vector3 frameInPosition;
+        public Vector3 frameOutDirection;
+
+        public AnimationClip humanClip;
+        public InteractiveHumanPreset humanPreset;
+
+        public InteractiveAnimalPreset animalPreset;
+        public bool hasCachedAnimalPose;
+        public AnimalPoseWorldData cachedAnimalPose;
+        public Vector3 cachedAnimalBasePosition;
+        public Quaternion cachedAnimalBaseRotation = Quaternion.identity;
+        public bool cachedAnimalHasSmalPose;
+        public AnimalSmalPose cachedAnimalSmalPose;
+
+        public readonly Dictionary<HumanBodyBones, Quaternion> fallbackBoneBaseLocalRotations = new Dictionary<HumanBodyBones, Quaternion>();
+        public readonly Dictionary<HumanBodyBones, Quaternion> handoffFromBoneLocalRotations = new Dictionary<HumanBodyBones, Quaternion>();
     }
 
     private sealed class InteractiveClipPlayback
@@ -98,29 +97,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public AnimationClip clip;
         public Animator animator;
         public bool loop;
-        public readonly Dictionary<HumanBodyBones, Transform> bones = new Dictionary<HumanBodyBones, Transform>();
-        public readonly Dictionary<HumanBodyBones, Quaternion> beforeLocalRotations = new Dictionary<HumanBodyBones, Quaternion>();
-        public readonly Dictionary<HumanBodyBones, Vector3> beforeLocalPositions = new Dictionary<HumanBodyBones, Vector3>();
-        public readonly Dictionary<HumanBodyBones, Quaternion> animatedLocalRotations = new Dictionary<HumanBodyBones, Quaternion>();
-        public readonly Dictionary<HumanBodyBones, Vector3> animatedLocalPositions = new Dictionary<HumanBodyBones, Vector3>();
     }
 
     private readonly Dictionary<uint, InteractiveMotionState> interactiveMotionByTrack = new Dictionary<uint, InteractiveMotionState>();
     private readonly Dictionary<uint, InteractiveClipPlayback> interactiveClipPlaybackByTrack = new Dictionary<uint, InteractiveClipPlayback>();
 
-    private void ObserveInteractiveMotionTarget(GameObject instance, MetaObj obj, Transform screen)
-    {
-        if (instance == null)
-        {
-            return;
-        }
+    // --- Live sample + scheduling -------------------------------------------------------
 
-        InteractiveMotionState state = GetOrCreateInteractiveMotionState(obj.trackId);
-        if (state.hasLastTrackedTransform)
-        {
-            state.previousTrackedPosition = state.lastTrackedPosition;
-            state.hasPreviousTrackedTransform = true;
-        }
+    // A track's detection box routinely collapses for the last few frames before it leaves
+    // the visible frame (the detector is only catching a sliver at the edge), and the anchor
+    // position becomes unreliable in exactly those frames. Reject a frame from updating the
+    // displayed-root sample once its bbox area drops below this fraction of the last accepted
+    // (good) bbox area, so a frame-out origin freezes at the last reliable frame instead of a
+    // corrupted tail frame.
+    private const float BBoxQualityMinAreaRatio = 0.5f;
+
+    private void ObserveInteractiveMotionLiveTrackedSample(uint trackId, MetaObj obj, Transform screen)
+    {
+        InteractiveMotionState state = GetOrCreateInteractiveMotionState(trackId);
         if (state.hasLastAnchorEyePixel)
         {
             state.previousAnchorEyePixel = state.lastAnchorEyePixel;
@@ -139,241 +133,81 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             state.lastEyeHeight = manifest.eye_h;
             state.hasLastBBoxEye = obj.bboxW > 0 && obj.bboxH > 0;
         }
-        state.lastTrackedPosition = instance.transform.position;
-        state.lastTrackedRotation = instance.transform.rotation;
-        state.hasLastTrackedTransform = true;
         state.lastCategoryId = obj.categoryId;
         if (state.lastScreen == null)
         {
             state.lastScreen = screen;
         }
+
+        float bboxArea = (float)obj.bboxW * obj.bboxH;
+        state.hasReliableBBoxThisFrame = bboxArea > 0f &&
+            (state.lastGoodBBoxArea <= 0f || bboxArea >= state.lastGoodBBoxArea * BBoxQualityMinAreaRatio);
+        if (state.hasReliableBBoxThisFrame)
+        {
+            state.lastGoodBBoxArea = bboxArea;
+        }
     }
 
-    private void UpdateInteractiveMotionSchedule(GameObject instance, MetaObj obj, Transform screen, int frame)
+    // Called after the full tracked placement pipeline (anchor + bbox fit + skeleton) has
+    // written the model's actual displayed transform for this frame. Interactive motion must
+    // freeze/originate from this, not the raw pinhole anchor: the anchor is often well above
+    // the model's grounded feet position, so freezing to it pops the model upward. Skipped on
+    // frames whose bbox just collapsed (see BBoxQualityMinAreaRatio), so the sample used to
+    // start a frame-out walk is the last reliable frame, not a corrupted edge-of-frame one.
+    private void ObserveInteractiveMotionDisplayedRoot(uint trackId, GameObject instance)
     {
         if (instance == null)
         {
             return;
         }
 
-        ObserveInteractiveMotionTarget(instance, obj, screen);
-        if (TryStopFrameOutInteractiveMotionOnFrameIn(obj.trackId))
+        InteractiveMotionState state = GetOrCreateInteractiveMotionState(trackId);
+        if (state.hasLiveSample && !state.hasReliableBBoxThisFrame)
         {
             return;
         }
 
+        state.livePosition = instance.transform.position;
+        state.liveRotation = instance.transform.rotation;
+        state.hasLiveSample = true;
+    }
+
+    private void UpdateInteractiveMotionSchedule(uint trackId, MetaObj obj, int frame)
+    {
         bool isSupportedCategory = IsCategoryPerson(obj.categoryId) || IsCategoryAnimal(obj.categoryId);
         if (!enableInteractiveMotion || !isSupportedCategory)
         {
             return;
         }
 
-        InteractiveMotionState state = GetOrCreateInteractiveMotionState(obj.trackId);
-        RuntimeClock.TickContext tick = GetRuntimeTickContext();
-        float nextInterval = RandomInteractiveInterval();
-        InteractiveMotionSchedule.Decision decision = InteractiveMotionSchedule.Resolve(
-            enableInteractiveMotion,
-            isSupportedCategory,
-            state.active,
-            state.nextTriggerTime,
-            state.startTime,
-            state.duration,
-            tick.now,
-            nextInterval);
-
-        state.nextTriggerTime = decision.nextTriggerTime;
-        if (decision.action == InteractiveMotionSchedule.Action.Stop)
-        {
-            StopInteractiveMotion(obj.trackId);
-            return;
-        }
-
-        if (decision.action != InteractiveMotionSchedule.Action.Start)
-        {
-            return;
-        }
-
-        StartInteractiveMotion(obj.trackId, instance, obj, frame, false, tick.now);
-    }
-
-    private bool TryApplyInteractiveFrameOutTrack(uint trackId, int frame)
-    {
-        bool hasInstance = trackInstances.TryGetValue(trackId, out GameObject instance) && instance != null;
-        if (!hasInstance)
-        {
-            return false;
-        }
-
-        bool hasState = interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) && state != null;
-        bool isSupportedCategory = hasState && (IsCategoryPerson(state.lastCategoryId) || IsCategoryAnimal(state.lastCategoryId));
-        InteractiveMotionSchedule.FrameOutAction action = InteractiveMotionSchedule.ResolveFrameOutAction(
-            enableInteractiveMotion,
-            hasInstance,
-            hasState,
-            hasState && state.hasLastTrackedTransform,
-            isSupportedCategory,
-            hasState && state.active,
-            hasState && state.startedFromFrameOut,
-            hasState && state.mode == InteractiveMotionMode.Replacement);
-        if (action == InteractiveMotionSchedule.FrameOutAction.None)
-        {
-            return false;
-        }
-
-        RuntimeClock.TickContext tick = GetRuntimeTickContext();
-        if (action == InteractiveMotionSchedule.FrameOutAction.StartThenApply)
-        {
-            StartInteractiveMotion(trackId, instance, default(MetaObj), frame, true, tick.now);
-        }
-
-        if (!state.active || state.mode != InteractiveMotionMode.Replacement)
-        {
-            return false;
-        }
-
-        SceneObjectWriter.ApplyActive(instance, true);
-        if (state.subject == InteractiveMotionSubject.Animal)
-        {
-            ApplyAnimalFrameOutTransform(trackId, instance, state.lastScreen, frame, tick.now);
-        }
-        else
-        {
-            ApplyInteractiveReplacementTransform(trackId, instance, state.lastScreen, tick.now);
-            ApplyHumanClipPlayback(trackId, instance, tick.now, tick.deltaTime);
-        }
-        if (ShouldStopInteractiveFrameOutTrack(state, frame, tick.now))
-        {
-            StopInteractiveMotion(trackId);
-        }
-        return true;
-    }
-
-    private bool ShouldStopInteractiveFrameOutTrack(InteractiveMotionState state, int frame, float now)
-    {
-        return InteractiveMotionSchedule.ShouldStopFrameOut(
-            state == null,
-            state != null && state.subject == InteractiveMotionSubject.Animal,
-            state != null && state.startedFromFrameOut,
-            state != null ? state.frameInFrame : -1,
-            state != null ? state.frameOutStartFrame : -1,
-            frame,
-            state != null ? RuntimeClock.ResolveElapsed(now, state.startTime) : 0f,
-            state != null ? state.duration : 0f);
-    }
-
-    private bool TryStopFrameOutInteractiveMotionOnFrameIn(uint trackId)
-    {
-        if (!interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) ||
-            state == null ||
-            !state.active ||
-            !state.startedFromFrameOut)
-        {
-            return false;
-        }
-
-        StopInteractiveMotion(trackId);
-        state.nextTriggerTime = RuntimeClock.ResolveNextTime(GetRuntimeTickContext().now, RandomInteractiveInterval());
-        return true;
-    }
-
-    private void StartInteractiveMotion(uint trackId, GameObject instance, MetaObj obj, int frame, bool frameOut, float now)
-    {
         InteractiveMotionState state = GetOrCreateInteractiveMotionState(trackId);
-        bool isAnimal = frameOut ? IsCategoryAnimal(state.lastCategoryId) : IsCategoryAnimal(obj.categoryId);
-        bool isPerson = frameOut ? IsCategoryPerson(state.lastCategoryId) : IsCategoryPerson(obj.categoryId);
-        if (!isAnimal && !isPerson)
+        if (state.stage != InteractiveEventStage.Inactive)
         {
             return;
         }
 
-        state.active = true;
-        state.startedFromFrameOut = frameOut;
-        if (frameOut)
+        RuntimeClock.TickContext tick = GetRuntimeTickContext();
+        InteractiveMotionSchedule.Decision decision = InteractiveMotionSchedule.ResolveRandomTrigger(
+            enableInteractiveMotion,
+            isSupportedCategory,
+            true,
+            state.nextTriggerTime,
+            tick.now,
+            RandomInteractiveInterval());
+        state.nextTriggerTime = decision.nextTriggerTime;
+        if (!decision.shouldStart)
         {
-            state.visibleDebugLogCount = 0;
-        }
-        state.subject = isAnimal ? InteractiveMotionSubject.Animal : InteractiveMotionSubject.Person;
-        state.startTime = now;
-        state.duration = GetEffectiveInteractiveMotionDuration();
-        Vector3 displayedPosition = ResolveInteractiveFrameOutStartPosition(
-            instance.transform.position,
-            frameOut && state.hasLastDisplayedRoot,
-            state.lastDisplayedRootPosition);
-        Quaternion displayedRotation = frameOut && state.hasLastDisplayedRoot
-            ? state.lastDisplayedRootRotation
-            : instance.transform.rotation;
-        if (frameOut && isAnimal)
-        {
-            TrackPlacementWriter.Apply(
-                instance.transform,
-                new TrackPlacementCommand(displayedPosition, displayedRotation, instance.transform.localScale));
-            PreserveAnimalFrameOutDisplayedBoundsBottom(instance, state);
-            PreserveAnimalFrameOutProjectedBottom(instance, state);
-            displayedPosition = instance.transform.position;
-            displayedRotation = instance.transform.rotation;
-        }
-        state.startPosition = displayedPosition;
-        state.startRotation = displayedRotation;
-        state.lastTrackedPosition = displayedPosition;
-        state.lastTrackedRotation = displayedRotation;
-        state.hasPinnedInPlaceRoot = false;
-        state.pinnedInPlacePosition = instance.transform.position;
-        state.pinnedInPlaceRotation = Quaternion.identity;
-        state.frameOutStartFrame = frame;
-        state.frameInFrame = -1;
-        state.frameOutDebugLogCount = 0;
-        if (frameOut)
-        {
-            LogAnimalFrameOutDebug("start", trackId, frame, instance, state, null, 0f, 0f);
-        }
-        state.hasFrameInPosition = false;
-        state.frameInPosition = Vector3.zero;
-        ResolveFrameOutPixelAxes(state.lastScreen, instance.transform, out Vector3 pixelRight, out Vector3 pixelUp);
-        Vector3 motionDirection = ResolveAnimalFrameOutDirectionFromScreenMotion(
-            state.previousAnchorEyePixel,
-            state.lastAnchorEyePixel,
-            state.hasPreviousAnchorEyePixel && state.hasLastAnchorEyePixel,
-            pixelRight,
-            pixelUp,
-            ResolveAnimalFrameOutDirection(
-                state.previousTrackedPosition,
-                state.lastTrackedPosition,
-                state.hasPreviousTrackedTransform,
-                state.startRotation,
-                state.lastScreen != null ? state.lastScreen.up : instance.transform.up));
-        state.frameOutDirection = ResolveAnimalFrameOutDirectionFromScreenExit(
-            state.lastBBoxEye,
-            state.lastEyeWidth,
-            state.lastEyeHeight,
-            pixelRight,
-            pixelUp,
-            motionDirection);
-        state.hasLastTrackedTransform = true;
-        if (!frameOut)
-        {
-            state.lastCategoryId = obj.categoryId;
-        }
-
-        if (isPerson)
-        {
-            state.humanClip = PickHumanInteractiveClip();
-            state.humanPreset = PickHumanPreset(frameOut, state.humanClip);
-            state.mode = state.humanPreset == InteractiveHumanPreset.ApproachViewer
-                ? InteractiveMotionMode.Replacement
-                : InteractiveMotionMode.Overlay;
-            state.duration = GetHumanInteractiveMotionDuration(state.humanClip, state.humanPreset);
-            StartHumanClipPlayback(trackId, instance, state.humanClip);
             return;
         }
 
-        state.animalPreset = PickAnimalPreset(frameOut);
-        state.mode = state.animalPreset == InteractiveAnimalPreset.ApproachViewer
-            ? InteractiveMotionMode.Replacement
-            : InteractiveMotionMode.Overlay;
-        if (frameOut)
-        {
-            TryPrepareAnimalFrameInTarget(trackId, frame, state);
-        }
+        StartRandomInteractiveMotion(trackId, obj, tick.now);
+    }
+
+    private float RandomInteractiveInterval()
+    {
+        float min = Mathf.Max(0.1f, interactiveMotionMinIntervalSeconds);
+        float max = Mathf.Max(min, interactiveMotionMaxIntervalSeconds);
+        return UnityEngine.Random.Range(min, max);
     }
 
     private InteractiveMotionState GetOrCreateInteractiveMotionState(uint trackId)
@@ -391,656 +225,279 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return state;
     }
 
-    public static Vector3 ResolveInteractiveFrameOutStartPosition(
-        Vector3 instancePosition,
-        bool hasLastDisplayedRoot,
-        Vector3 lastDisplayedRootPosition)
+    private GameObject GetTrackInstanceOrNull(uint trackId)
     {
-        return hasLastDisplayedRoot ? lastDisplayedRootPosition : instancePosition;
+        return trackInstances.TryGetValue(trackId, out GameObject instance) ? instance : null;
     }
 
-    private float RandomInteractiveInterval()
-    {
-        float min = Mathf.Max(0.1f, interactiveMotionMinIntervalSeconds);
-        float max = Mathf.Max(min, interactiveMotionMaxIntervalSeconds);
-        return Random.Range(min, max);
-    }
+    // --- Random-triggered events: static or dynamic (walk-in / gesture / walk-back) ----
 
-    private AnimationClip PickHumanInteractiveClip()
+    private void StartRandomInteractiveMotion(uint trackId, MetaObj obj, float now)
     {
-        if (humanInteractiveClips == null || humanInteractiveClips.Length == 0)
+        InteractiveMotionState state = GetOrCreateInteractiveMotionState(trackId);
+        bool isAnimal = IsCategoryAnimal(obj.categoryId);
+        state.subject = isAnimal ? InteractiveMotionSubject.Animal : InteractiveMotionSubject.Person;
+        state.triggerSource = InteractiveTriggerSource.Random;
+        state.kind = UnityEngine.Random.value < DynamicEventProbability ? InteractiveEventKind.Dynamic : InteractiveEventKind.Static;
+        state.originPosition = state.hasLiveSample ? state.livePosition : Vector3.zero;
+        state.originRotation = state.hasLiveSample ? state.liveRotation : Quaternion.identity;
+
+        if (state.kind == InteractiveEventKind.Static)
         {
-            return null;
+            BeginGesturePhase(state, trackId, isAnimal, state.originPosition, state.originRotation, now);
+            return;
         }
 
-        int start = Random.Range(0, humanInteractiveClips.Length);
-        for (int i = 0; i < humanInteractiveClips.Length; i++)
+        BeginWalkInPhase(state, trackId, isAnimal, now);
+    }
+
+    private void BeginWalkInPhase(InteractiveMotionState state, uint trackId, bool isAnimal, float now)
+    {
+        state.fallbackBoneBaseLocalRotations.Clear();
+        state.dynamicPhase = InteractiveDynamicPhase.WalkIn;
+        Vector3 upAxis = Vector3.up;
+        Transform viewer = GetViewOrHeadTransform();
+        Vector3 forwardFallback = state.lastScreen != null ? -state.lastScreen.forward : Vector3.forward;
+        Vector3 viewerPosition = viewer != null ? viewer.position : state.originPosition + forwardFallback;
+        Vector3 toViewer = Vector3.ProjectOnPlane(viewerPosition - state.originPosition, upAxis);
+        float stopDistance = isAnimal ? animalApproachStopDistanceMeters : humanApproachStopDistanceMeters;
+        Vector3 destination = toViewer.sqrMagnitude > 0.000001f
+            ? viewerPosition - toViewer.normalized * stopDistance
+            : state.originPosition;
+        destination = PreserveHeight(destination, state.originPosition, upAxis);
+        Quaternion destinationRotation = toViewer.sqrMagnitude > 0.000001f
+            ? Quaternion.LookRotation(toViewer.normalized, upAxis)
+            : state.originRotation;
+
+        state.phaseFromPosition = state.originPosition;
+        state.phaseFromRotation = state.originRotation;
+        state.phaseToPosition = destination;
+        state.phaseToRotation = destinationRotation;
+
+        float speed = Mathf.Max(0.05f, isAnimal ? animalWalkSpeedMetersPerSecond : humanWalkSpeedMetersPerSecond);
+        float distance = Vector3.Distance(state.phaseFromPosition, state.phaseToPosition);
+        state.phaseStartTime = now;
+        state.phaseDuration = Mathf.Max(MinWalkDurationSeconds, distance / speed);
+        state.stage = InteractiveEventStage.Owned;
+
+        if (!isAnimal)
         {
-            AnimationClip clip = humanInteractiveClips[(start + i) % humanInteractiveClips.Length];
-            if (clip != null)
+            StartHumanClipPlayback(trackId, GetTrackInstanceOrNull(trackId), PickHumanWalkClip(), true);
+        }
+    }
+
+    private void BeginGesturePhase(InteractiveMotionState state, uint trackId, bool isAnimal, Vector3 freezePosition, Quaternion freezeRotation, float now)
+    {
+        state.fallbackBoneBaseLocalRotations.Clear();
+        state.dynamicPhase = InteractiveDynamicPhase.Gesture;
+        state.gesturePosition = freezePosition;
+        state.gestureRotation = freezeRotation;
+        state.phaseStartTime = now;
+        state.stage = InteractiveEventStage.Owned;
+        GameObject instance = GetTrackInstanceOrNull(trackId);
+
+        if (isAnimal)
+        {
+            state.animalPreset = PickAnimalPreset(state.cachedAnimalHasSmalPose);
+            if (state.animalPreset == InteractiveAnimalPreset.FaceViewer)
             {
-                return clip;
+                state.gestureRotation = ResolveFaceViewerRotation(state.gesturePosition, freezeRotation, state.lastScreen);
             }
-        }
-
-        return null;
-    }
-
-    private InteractiveAnimalPreset PickAnimalPreset(bool frameOut)
-    {
-        if (frameOut)
-        {
-            return InteractiveAnimalPreset.ApproachViewer;
-        }
-
-        int value = Random.Range(0, 100);
-        if (value < 35)
-        {
-            return InteractiveAnimalPreset.LookAtViewer;
-        }
-        if (value < 60)
-        {
-            return InteractiveAnimalPreset.TailWag;
-        }
-        if (value < 80)
-        {
-            return InteractiveAnimalPreset.PawWave;
-        }
-        if (value < 95)
-        {
-            return InteractiveAnimalPreset.BodyTurnViewer;
-        }
-
-        return InteractiveAnimalPreset.ApproachViewer;
-    }
-
-    private InteractiveHumanPreset PickHumanPreset(bool frameOut, AnimationClip clip)
-    {
-        if (frameOut)
-        {
-            return InteractiveHumanPreset.ApproachViewer;
-        }
-
-        if (IsWalkingHumanClip(clip))
-        {
-            return InteractiveHumanPreset.ApproachViewer;
-        }
-
-        // Most visible in-frame interactions should stay in place. Approach is occasional.
-        int value = Random.Range(0, 4);
-        if (value == 0)
-        {
-            return InteractiveHumanPreset.FaceViewer;
-        }
-        return InteractiveHumanPreset.ClipInPlace;
-    }
-
-    private bool IsInteractiveMotionReplacing(uint trackId)
-    {
-        return enableInteractiveMotion &&
-            interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) &&
-            state != null &&
-            state.active &&
-            state.mode == InteractiveMotionMode.Replacement;
-    }
-
-    private bool IsHumanoidInteractiveMotionInPlace(uint trackId)
-    {
-        return enableInteractiveMotion &&
-            interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) &&
-            state != null &&
-            state.active &&
-            state.subject == InteractiveMotionSubject.Person &&
-            state.mode != InteractiveMotionMode.Replacement;
-    }
-
-    private void ObserveInteractiveMotionDisplayedRoot(uint trackId, GameObject instance)
-    {
-        if (instance == null ||
-            !interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) ||
-            state == null)
-        {
+            state.phaseDuration = Mathf.Max(MinGestureDurationSeconds, staticAnimationDurationSeconds);
             return;
         }
 
-        state.lastDisplayedRootPosition = instance.transform.position;
-        state.lastDisplayedRootRotation = instance.transform.rotation;
-        state.hasLastDisplayedRoot = true;
-        CaptureInteractiveDisplayedBoundsBottom(state, instance);
-        LogAnimalVisibleDebug(trackId, instance, state);
-        state.lastTrackedPosition = instance.transform.position;
-        state.lastTrackedRotation = instance.transform.rotation;
-    }
-
-    private void LogAnimalVisibleDebug(uint trackId, GameObject instance, InteractiveMotionState state)
-    {
-        if (state == null || !IsCategoryAnimal(state.lastCategoryId) || state.visibleDebugLogCount >= 80)
+        state.gestureRotation = ResolveFaceViewerRotation(state.gesturePosition, freezeRotation, state.lastScreen);
+        state.humanClip = PickHumanClip(humanStaticGestureClips);
+        if (state.humanClip != null)
         {
+            state.humanPreset = InteractiveHumanPreset.ClipGesture;
+            state.phaseDuration = Mathf.Max(MinGestureDurationSeconds, state.humanClip.length > 0.0001f ? state.humanClip.length : staticAnimationDurationSeconds);
+            StartHumanClipPlayback(trackId, instance, state.humanClip, false);
             return;
         }
 
-        state.visibleDebugLogCount++;
-        Vector3 root = instance != null ? instance.transform.position : Vector3.zero;
-        Vector3 euler = instance != null ? instance.transform.rotation.eulerAngles : Vector3.zero;
-        Bounds bounds = default(Bounds);
-        float bottomV = float.NaN;
-        bool hasBounds = instance != null && TryGetRendererWorldBounds(instance, out bounds);
-        bool hasProjection = instance != null && TryProjectRendererBoundsToEyeHeight(instance, state.lastScreen, out _, out bottomV, out _, out _);
-        Debug.Log(
-            $"[DEBUG-AVIS] track={trackId} rootY={root.y:F4} boundsMinY={(hasBounds ? bounds.min.y : float.NaN):F4} " +
-            $"bottomV={(hasProjection ? bottomV : float.NaN):F2} rotEuler=({euler.x:F1},{euler.y:F1},{euler.z:F1}) active={state.active} frameOut={state.startedFromFrameOut}");
+        state.humanPreset = InteractiveHumanPreset.FaceViewer;
+        state.phaseDuration = Mathf.Max(MinGestureDurationSeconds, staticAnimationDurationSeconds);
     }
 
-    private void CaptureInteractiveDisplayedBoundsBottom(InteractiveMotionState state, GameObject instance)
+    private void BeginWalkBackPhase(InteractiveMotionState state, uint trackId, bool isAnimal, float now)
     {
-        if (state == null || instance == null)
+        state.fallbackBoneBaseLocalRotations.Clear();
+        state.dynamicPhase = InteractiveDynamicPhase.WalkBack;
+        Vector3 upAxis = Vector3.up;
+        Vector3 travel = Vector3.ProjectOnPlane(state.originPosition - state.gesturePosition, upAxis);
+        state.phaseFromPosition = state.gesturePosition;
+        state.phaseFromRotation = state.gestureRotation;
+        state.phaseToPosition = state.originPosition;
+        state.phaseToRotation = travel.sqrMagnitude > 0.000001f
+            ? Quaternion.LookRotation(travel.normalized, upAxis)
+            : state.gestureRotation;
+
+        float speed = Mathf.Max(0.05f, isAnimal ? animalWalkSpeedMetersPerSecond : humanWalkSpeedMetersPerSecond);
+        float distance = Vector3.Distance(state.phaseFromPosition, state.phaseToPosition);
+        state.phaseStartTime = now;
+        state.phaseDuration = Mathf.Max(MinWalkDurationSeconds, distance / speed);
+        state.stage = InteractiveEventStage.Owned;
+
+        if (!isAnimal)
         {
+            StartHumanClipPlayback(trackId, GetTrackInstanceOrNull(trackId), PickHumanWalkClip(), true);
+        }
+    }
+
+    private void AdvanceRandomEventPhase(uint trackId, InteractiveMotionState state, float now)
+    {
+        bool isAnimal = state.subject == InteractiveMotionSubject.Animal;
+        if (state.kind == InteractiveEventKind.Static)
+        {
+            BeginHandoff(trackId, state, now);
             return;
         }
 
-        if (TryGetRendererWorldBounds(instance, out Bounds bounds))
+        switch (state.dynamicPhase)
         {
-            state.lastDisplayedBoundsBottomY = bounds.min.y;
-            state.hasLastDisplayedBoundsBottomY = true;
+            case InteractiveDynamicPhase.WalkIn:
+                BeginGesturePhase(state, trackId, isAnimal, state.phaseToPosition, state.phaseToRotation, now);
+                break;
+            case InteractiveDynamicPhase.Gesture:
+                BeginWalkBackPhase(state, trackId, isAnimal, now);
+                break;
+            default:
+                BeginHandoff(trackId, state, now);
+                break;
         }
-        if (TryProjectRendererBoundsToEyeHeight(instance, state.lastScreen, out _, out float bottomV, out _, out _))
-        {
-            state.lastDisplayedProjectedBottomV = bottomV;
-            state.hasLastDisplayedProjectedBottomV = true;
-        }
     }
 
-    public static bool ShouldFitDisplayedModelToBBoxDuringInteractiveMotion(bool isReplacing, bool isHumanoidInPlace)
-    {
-        return !isReplacing && !isHumanoidInPlace;
-    }
+    // --- System-triggered events: fills the gap while a track is offscreen -------------
 
-    public static bool ShouldInitialFitHumanoidInPlaceRootBeforePinning(
-        bool isHumanoidInPlace,
-        bool isPinned,
-        bool shouldUseHumanSmplRootPlacement)
+    private bool TryApplyInteractiveSystemTriggerTrack(uint trackId, int frame)
     {
-        return isHumanoidInPlace && !isPinned && !shouldUseHumanSmplRootPlacement;
-    }
-
-    public static bool ShouldPreserveHumanoidInteractiveRootPosition(bool allowHipsTranslation)
-    {
-        return !allowHipsTranslation;
-    }
-
-    public static bool ShouldApplyHumanFaceViewerRootTransform(bool isReplacement, bool isFaceViewerPreset)
-    {
-        return !isReplacement && isFaceViewerPreset;
-    }
-
-    public static Vector3 ResolveHumanoidInteractiveRootPosition(
-        Vector3 currentPosition,
-        Vector3 startPosition,
-        bool allowHipsTranslation)
-    {
-        return allowHipsTranslation ? currentPosition : startPosition;
-    }
-
-    public static Vector3 ResolveHumanoidInteractiveRootPosition(
-        Vector3 currentPosition,
-        Vector3 startPosition,
-        bool allowHipsTranslation,
-        float preservationWeight)
-    {
-        return allowHipsTranslation
-            ? currentPosition
-            : Vector3.Lerp(currentPosition, startPosition, Mathf.Clamp01(preservationWeight));
-    }
-
-    public static Quaternion ResolveHumanoidInteractiveRootRotation(
-        Quaternion currentRotation,
-        Quaternion startRotation,
-        bool allowHipsTranslation,
-        Vector3 upAxis,
-        Vector3 fallbackForward)
-    {
-        return ResolveHumanoidInteractiveRootRotation(
-            currentRotation,
-            startRotation,
-            allowHipsTranslation,
-            upAxis,
-            fallbackForward,
-            1.0f);
-    }
-
-    public static Quaternion ResolveHumanoidInteractiveRootRotation(
-        Quaternion currentRotation,
-        Quaternion startRotation,
-        bool allowHipsTranslation,
-        Vector3 upAxis,
-        Vector3 fallbackForward,
-        float preservationWeight)
-    {
-        return allowHipsTranslation
-            ? currentRotation
-            : Quaternion.Slerp(
-                MakeUprightYawRotation(currentRotation, upAxis, fallbackForward),
-                MakeUprightYawRotation(startRotation, upAxis, fallbackForward),
-                Mathf.Clamp01(preservationWeight));
-    }
-
-    public static Quaternion ResolveHumanoidViewerFacingRotation(
-        Vector3 rootPosition,
-        Quaternion fallbackRotation,
-        Vector3 upAxis,
-        Vector3 viewerPosition,
-        bool hasViewer,
-        Vector3 fallbackForward)
-    {
-        Vector3 safeUp = upAxis.sqrMagnitude > 0.000001f ? upAxis.normalized : Vector3.up;
-        Vector3 toViewer = hasViewer ? Vector3.ProjectOnPlane(viewerPosition - rootPosition, safeUp) : Vector3.zero;
-        if (toViewer.sqrMagnitude <= 0.000001f)
-        {
-            return MakeUprightYawRotation(fallbackRotation, safeUp, fallbackForward);
-        }
-
-        return Quaternion.LookRotation(toViewer.normalized, safeUp);
-    }
-
-    public static TrackPlacementCommand ResolveInteractiveReplacementPlacementCommand(
-        Vector3 position,
-        Quaternion rotation,
-        Vector3 currentLocalScale)
-    {
-        return new TrackPlacementCommand(position, rotation, currentLocalScale);
-    }
-
-    public static TrackPlacementCommand ResolveRotationOnlyPlacementCommand(
-        Vector3 currentPosition,
-        Quaternion rotation,
-        Vector3 currentLocalScale)
-    {
-        return TrackPlacementCommand.RotationOnly(currentPosition, rotation, currentLocalScale);
-    }
-
-    public static TrackPlacementCommand ResolvePositionOnlyPlacementCommand(
-        Vector3 position,
-        Quaternion currentRotation,
-        Vector3 currentLocalScale)
-    {
-        return TrackPlacementCommand.PositionOnly(position, currentRotation, currentLocalScale);
-    }
-
-    private bool TryApplyHumanInteractivePreIk(GameObject instance, uint trackId, Transform screen)
-    {
-        if (!enableInteractiveMotion ||
-            !interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) ||
-            state == null ||
-            !state.active ||
-            state.subject != InteractiveMotionSubject.Person)
+        GameObject instance = GetTrackInstanceOrNull(trackId);
+        if (instance == null || !interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) || state == null)
         {
             return false;
         }
 
-        if (state.mode == InteractiveMotionMode.Replacement)
+        if (state.stage == InteractiveEventStage.Inactive)
         {
-            RuntimeClock.TickContext tick = GetRuntimeTickContext();
-            ApplyInteractiveReplacementTransform(trackId, instance, screen, tick.now);
-            ApplyHumanClipPlayback(trackId, instance, tick.now, tick.deltaTime);
-            return true;
-        }
-        else if (ShouldApplyHumanFaceViewerRootTransform(false, true))
-        {
-            RuntimeClock.TickContext tick = GetRuntimeTickContext();
-            ApplyInteractiveFaceViewerTransform(instance, state, screen, tick.now);
-        }
-
-        return false;
-    }
-
-    private void ApplyHumanInteractiveOverlay(GameObject instance, uint trackId)
-    {
-        if (!enableInteractiveMotion ||
-            !interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) ||
-            state == null ||
-            !state.active ||
-            state.subject != InteractiveMotionSubject.Person ||
-            state.mode == InteractiveMotionMode.Replacement)
-        {
-            return;
+            if (!enableInteractiveMotion || !state.hasLiveSample)
+            {
+                return false;
+            }
+            if (!IsCategoryPerson(state.lastCategoryId) && !IsCategoryAnimal(state.lastCategoryId))
+            {
+                return false;
+            }
+            StartSystemTriggerInteractiveMotion(trackId, instance, state, frame);
         }
 
-        RuntimeClock.TickContext tick = GetRuntimeTickContext();
-        ApplyHumanClipPlayback(trackId, instance, tick.now, tick.deltaTime);
-    }
-
-    private void ApplyInteractiveReplacementTransform(uint trackId, GameObject instance, Transform screen, float now)
-    {
-        if (instance == null || !interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) || state == null)
+        SceneObjectWriter.ApplyActive(instance, true);
+        if (state.stage == InteractiveEventStage.Owned)
         {
-            return;
+            return TryApplyOwnedInteractiveMotion(trackId, instance, null, frame);
         }
 
-        float elapsed = RuntimeClock.ResolveElapsed(now, state.startTime);
-        float duration = Mathf.Max(0.001f, state.duration);
-        float t = Mathf.Clamp01(elapsed / duration);
-        float blend = GetEffectiveInteractiveMotionBlend();
-        float inWeight = Mathf.Clamp01(elapsed / blend);
-        float outWeight = Mathf.Clamp01((duration - elapsed) / blend);
-        float eventWeight = Mathf.Min(inWeight, outWeight);
-
-        Transform head = GetViewOrHeadTransform();
-        Vector3 towardHead = Vector3.zero;
-        if (head != null)
-        {
-            towardHead = head.position - state.startPosition;
-            Vector3 up = screen != null ? screen.up : Vector3.up;
-            towardHead = Vector3.ProjectOnPlane(towardHead, up);
-        }
-        if (towardHead.sqrMagnitude <= 0.000001f)
-        {
-            towardHead = screen != null ? -screen.forward : instance.transform.forward;
-        }
-        towardHead.Normalize();
-
-        Vector3 upAxis = screen != null ? screen.up : Vector3.up;
-        float approach = SmoothMotion01(Mathf.Sin(t * Mathf.PI)) * GetEffectiveInteractiveApproachDistance() * eventWeight;
-        Vector3 eventPosition = state.startPosition + towardHead * approach;
-        Vector3 targetPosition = state.hasLastTrackedTransform ? state.lastTrackedPosition : state.startPosition;
-        Vector3 blendedPosition = Vector3.Lerp(targetPosition, eventPosition, eventWeight);
-        blendedPosition += upAxis * Vector3.Dot(targetPosition - blendedPosition, upAxis);
-
-        Quaternion lookRotation = Quaternion.LookRotation(towardHead, upAxis);
-        Quaternion trackedRotation = state.hasLastTrackedTransform ? state.lastTrackedRotation : state.startRotation;
-        Quaternion uprightTrackedRotation = MakeUprightYawRotation(trackedRotation, upAxis, instance.transform.forward);
-        TrackPlacementWriter.Apply(
-            instance.transform,
-            ResolveInteractiveReplacementPlacementCommand(
-                blendedPosition,
-                Quaternion.Slerp(uprightTrackedRotation, lookRotation, eventWeight),
-                instance.transform.localScale));
+        return state.stage == InteractiveEventStage.HandoffBlend;
     }
 
-    private void ApplyAnimalFrameOutTransform(uint trackId, GameObject instance, Transform screen, int frame, float now)
+    private void StartSystemTriggerInteractiveMotion(uint trackId, GameObject instance, InteractiveMotionState state, int frame)
     {
-        if (instance == null || !interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) || state == null)
-        {
-            return;
-        }
+        bool isAnimal = IsCategoryAnimal(state.lastCategoryId);
+        state.subject = isAnimal ? InteractiveMotionSubject.Animal : InteractiveMotionSubject.Person;
+        state.triggerSource = InteractiveTriggerSource.SystemFrameOut;
+        state.kind = InteractiveEventKind.Dynamic;
+        state.dynamicPhase = InteractiveDynamicPhase.WalkIn;
+        state.originPosition = state.livePosition;
+        state.originRotation = state.liveRotation;
+        state.phaseFromPosition = state.livePosition;
+        state.phaseFromRotation = state.liveRotation;
+        state.triggerStartFrame = frame;
+        state.hasFrameInPosition = false;
+        state.frameInFrame = -1;
 
-        float elapsed = RuntimeClock.ResolveElapsed(now, state.startTime);
-        float t = ResolveAnimalFrameOutNormalizedTime(state, frame, elapsed);
-        Vector3 upAxis = Vector3.up;
-        AnimalFrameOutLoopPose pose = ResolveAnimalFrameOutLoopPose(
-            state.startPosition,
-            state.startRotation,
-            state.frameOutDirection,
-            state.frameInPosition,
-            state.hasFrameInPosition,
-            t,
-            ResolveAnimalFrameOutTravelDistance(state),
-            1.0f,
-            upAxis);
-
-        TrackPlacementWriter.Apply(
-            instance.transform,
-            ResolvePositionOnlyPlacementCommand(
-                pose.position,
-                instance.transform.rotation,
-                instance.transform.localScale));
-        ApplyAnimalFrameOutWalkAnimation(instance.transform, pose, t, ResolveAnimalFrameOutTravelDistance(state), upAxis);
-        LogAnimalFrameOutDebug("after-pose", trackId, frame, instance, state, pose, t, elapsed);
-        PreserveAnimalFrameOutDisplayedBoundsBottom(instance, state);
-        PreserveAnimalFrameOutProjectedBottom(instance, state);
-        LogAnimalFrameOutDebug("after-preserve", trackId, frame, instance, state, pose, t, elapsed);
-    }
-
-    private void LogAnimalFrameOutDebug(
-        string phase,
-        uint trackId,
-        int frame,
-        GameObject instance,
-        InteractiveMotionState state,
-        AnimalFrameOutLoopPose? pose,
-        float normalizedTime,
-        float elapsed)
-    {
-        if (state == null || state.subject != InteractiveMotionSubject.Animal || state.frameOutDebugLogCount >= 120)
-        {
-            return;
-        }
-
-        state.frameOutDebugLogCount++;
-        Vector3 root = instance != null ? instance.transform.position : Vector3.zero;
-        Vector3 euler = instance != null ? instance.transform.rotation.eulerAngles : Vector3.zero;
-        Bounds bounds = default(Bounds);
-        float bottomV = float.NaN;
-        bool hasBounds = instance != null && TryGetRendererWorldBounds(instance, out bounds);
-        bool hasProjection = instance != null && TryProjectRendererBoundsToEyeHeight(instance, state.lastScreen, out _, out bottomV, out _, out _);
-        Vector3 posePosition = pose.HasValue ? pose.Value.position : Vector3.zero;
-        Debug.Log(
-            $"[DEBUG-AFRAME] phase={phase} track={trackId} frame={frame} t={normalizedTime:F3} elapsed={elapsed:F3} " +
-            $"rootY={root.y:F4} startY={state.startPosition.y:F4} lastDisplayedRootY={(state.hasLastDisplayedRoot ? state.lastDisplayedRootPosition.y : float.NaN):F4} " +
-            $"boundsMinY={(hasBounds ? bounds.min.y : float.NaN):F4} targetBoundsMinY={(state.hasLastDisplayedBoundsBottomY ? state.lastDisplayedBoundsBottomY : float.NaN):F4} " +
-            $"bottomV={(hasProjection ? bottomV : float.NaN):F2} targetBottomV={(state.hasLastDisplayedProjectedBottomV ? state.lastDisplayedProjectedBottomV : float.NaN):F2} " +
-            $"rotEuler=({euler.x:F1},{euler.y:F1},{euler.z:F1}) poseY={(pose.HasValue ? posePosition.y : float.NaN):F4} hasFrameIn={state.hasFrameInPosition} frameInY={(state.hasFrameInPosition ? state.frameInPosition.y : float.NaN):F4}");
-    }
-
-    private void PreserveAnimalFrameOutProjectedBottom(GameObject instance, InteractiveMotionState state)
-    {
-        if (instance == null ||
-            state == null ||
-            !state.hasLastDisplayedProjectedBottomV ||
-            !TryProjectRendererBoundsToEyeHeight(instance, state.lastScreen, out _, out float bottomV, out _, out float depthMeters))
-        {
-            return;
-        }
-
-        AlignProjectedModelBottomToBBox(
-            instance.transform,
-            state.lastScreen,
-            bottomV,
-            depthMeters,
-            state.lastDisplayedProjectedBottomV);
-    }
-
-    private void PreserveAnimalFrameOutDisplayedBoundsBottom(GameObject instance, InteractiveMotionState state)
-    {
-        if (instance == null ||
-            state == null ||
-            !state.hasLastDisplayedBoundsBottomY ||
-            !TryGetRendererWorldBounds(instance, out Bounds bounds))
-        {
-            return;
-        }
-
-        TrackPlacementWriter.Apply(
-            instance.transform,
-            ResolvePositionOnlyPlacementCommand(
-                ResolvePositionPreservingBoundsBottom(
-                    instance.transform.position,
-                    bounds.min.y,
-                    true,
-                    state.lastDisplayedBoundsBottomY),
-                instance.transform.rotation,
-                instance.transform.localScale));
-    }
-
-    public static Vector3 ResolvePositionPreservingBoundsBottom(
-        Vector3 currentPosition,
-        float currentBottomY,
-        bool hasTargetBottomY,
-        float targetBottomY)
-    {
-        return hasTargetBottomY
-            ? currentPosition + Vector3.up * (targetBottomY - currentBottomY)
-            : currentPosition;
-    }
-
-    private float ResolveAnimalFrameOutNormalizedTime(InteractiveMotionState state, int frame, float elapsed)
-    {
-        if (state != null && state.frameInFrame > state.frameOutStartFrame)
-        {
-            int span = Mathf.Max(1, state.frameInFrame - state.frameOutStartFrame);
-            return Mathf.Clamp01((frame - state.frameOutStartFrame) / (float)span);
-        }
-
-        float loopDuration = Mathf.Max(0.001f, Mathf.Min(state != null ? state.duration : AnimalFrameOutLoopSeconds, AnimalFrameOutLoopSeconds));
-        return Mathf.Clamp01(elapsed / loopDuration);
-    }
-
-    private float ResolveAnimalFrameOutTravelDistance(InteractiveMotionState state)
-    {
-        if (state != null && state.frameInFrame > state.frameOutStartFrame)
-        {
-            float fps = metaHeader.fps > 0f ? metaHeader.fps : (manifest != null && manifest.fps > 0f ? manifest.fps : 30f);
-            float gapSeconds = (state.frameInFrame - state.frameOutStartFrame) / Mathf.Max(1f, fps);
-            return ResolveAnimalFrameOutTravelDistance(gapSeconds, AnimalFrameOutSpeedMetersPerSecond);
-        }
-
-        return ResolveAnimalFrameOutTravelDistance(AnimalFrameOutLoopSeconds, AnimalFrameOutSpeedMetersPerSecond);
-    }
-
-    public static float ResolveAnimalFrameOutTravelDistance(float hiddenSeconds, float speedMetersPerSecond)
-    {
-        return AnimalFrameOutMotion.ResolveTravelDistance(hiddenSeconds, speedMetersPerSecond);
-    }
-
-    public static Vector3 ResolveAnimalFrameOutDirection(
-        Vector3 previousPosition,
-        Vector3 currentPosition,
-        bool hasPreviousPosition,
-        Quaternion fallbackRotation,
-        Vector3 upAxis)
-    {
-        return AnimalFrameOutMotion.ResolveDirection(
-            previousPosition,
-            currentPosition,
-            hasPreviousPosition,
-            fallbackRotation,
-            upAxis);
-    }
-
-    public static Vector3 ResolveAnimalFrameOutDirectionFromScreenMotion(
-        Vector2 previousEyePixel,
-        Vector2 currentEyePixel,
-        bool hasPreviousEyePixel,
-        Vector3 screenRight,
-        Vector3 screenUp,
-        Vector3 fallbackDirection)
-    {
-        return AnimalFrameOutMotion.ResolveDirectionFromScreenMotion(
-            previousEyePixel,
-            currentEyePixel,
-            hasPreviousEyePixel,
-            screenRight,
-            screenUp,
-            fallbackDirection);
-    }
-
-    public static Vector3 ResolveAnimalFrameOutDirectionFromScreenExit(
-        Rect bboxEye,
-        float eyeWidth,
-        float eyeHeight,
-        Vector3 screenRight,
-        Vector3 screenUp,
-        Vector3 fallbackDirection)
-    {
-        return AnimalFrameOutMotion.ResolveDirectionFromScreenExit(
-            bboxEye,
-            eyeWidth,
-            eyeHeight,
-            screenRight,
-            screenUp,
-            fallbackDirection);
-    }
-
-    private void ResolveFrameOutPixelAxes(Transform screen, Transform fallback, out Vector3 pixelRight, out Vector3 pixelUp)
-    {
-        if (TryGetPinholeBasis(screen, out _, out Quaternion pinholeRotation))
+        Vector3 pixelRight = Vector3.right;
+        Vector3 pixelUp = Vector3.up;
+        if (TryGetPinholeBasis(state.lastScreen, out _, out Quaternion pinholeRotation))
         {
             pixelRight = pinholeRotation * Vector3.right;
             pixelUp = pinholeRotation * Vector3.up;
+        }
+        Vector3 fallbackDirection = state.lastScreen != null ? -state.lastScreen.forward : Vector3.forward;
+        Vector3 motionDirection = AnimalFrameOutMotion.ResolveDirectionFromScreenMotion(
+            state.previousAnchorEyePixel,
+            state.lastAnchorEyePixel,
+            state.hasPreviousAnchorEyePixel && state.hasLastAnchorEyePixel,
+            pixelRight,
+            pixelUp,
+            fallbackDirection);
+        state.frameOutDirection = AnimalFrameOutMotion.ResolveDirectionFromScreenExit(
+            state.lastBBoxEye,
+            state.lastEyeWidth,
+            state.lastEyeHeight,
+            pixelRight,
+            pixelUp,
+            motionDirection);
+
+        TryPrepareFrameInTarget(trackId, frame, state);
+
+        float now = GetRuntimeTickContext().now;
+        state.phaseStartTime = now;
+        state.phaseDuration = state.hasFrameInPosition
+            ? Mathf.Max(MinWalkDurationSeconds, (state.frameInFrame - frame) / Mathf.Max(1f, ResolveMetaFps()))
+            : SystemTriggerLoopSeconds;
+        state.stage = InteractiveEventStage.Owned;
+
+        if (!isAnimal)
+        {
+            StartHumanClipPlayback(trackId, instance, PickHumanWalkClip(), true);
+        }
+    }
+
+    // The detector's bbox is routinely still small/partial for the first few frames after a
+    // track reappears (mirroring the same collapse on the way out), so the normal tracked
+    // pipeline's bbox-fit placement can be briefly wrong right when visibility resumes.
+    // Handing off into that frame would blend toward a bad position. Keep running the
+    // synthetic frame-out walk until a reliable frame is seen, up to a timeout so a track
+    // that never recovers full bbox confidence doesn't get stuck.
+    private const float MaxFrameInQualityWaitSeconds = 0.5f;
+
+    private void TryStopSystemTriggerOnVisibleFrame(uint trackId)
+    {
+        if (!interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) || state == null)
+        {
             return;
         }
-
-        pixelRight = fallback != null ? fallback.right : Vector3.right;
-        pixelUp = fallback != null ? fallback.up : Vector3.up;
-    }
-
-    public static AnimalFrameOutLoopPose ResolveAnimalFrameOutLoopPose(
-        Vector3 startPosition,
-        Quaternion startRotation,
-        Vector3 frameOutDirection,
-        Vector3 frameInPosition,
-        bool hasFrameInPosition,
-        float normalizedTime,
-        float travelDistance,
-        float weight,
-        Vector3 upAxis)
-    {
-        return AnimalFrameOutMotion.ResolveLoopPose(
-            startPosition,
-            startRotation,
-            frameOutDirection,
-            frameInPosition,
-            hasFrameInPosition,
-            normalizedTime,
-            travelDistance,
-            weight,
-            upAxis);
-    }
-
-    public static Vector3 PreserveAnimalFrameOutStartHeight(Vector3 position, Vector3 startPosition, Vector3 upAxis)
-    {
-        return AnimalFrameOutMotion.PreserveStartHeight(position, startPosition, upAxis);
-    }
-
-    public static Vector3 ResolveAnimalFrameOutControlPoint(
-        Vector3 startPosition,
-        Vector3 frameInPosition,
-        bool hasFrameInPosition,
-        Vector3 frameOutDirection,
-        float travelDistance,
-        Vector3 upAxis)
-    {
-        return AnimalFrameOutMotion.ResolveControlPoint(
-            startPosition,
-            frameInPosition,
-            hasFrameInPosition,
-            frameOutDirection,
-            travelDistance,
-            upAxis);
-    }
-
-    private static void ApplyAnimalFrameOutWalkAnimation(
-        Transform root,
-        AnimalFrameOutLoopPose pose,
-        float normalizedTime,
-        float travelDistance,
-        Vector3 upAxis)
-    {
-        if (root == null)
+        if (state.stage != InteractiveEventStage.Owned || state.triggerSource != InteractiveTriggerSource.SystemFrameOut)
         {
             return;
         }
 
-        TrackPlacementWriter.Apply(
-            root,
-            new TrackPlacementCommand(
-                ResolveAnimalFrameOutWalkPosition(pose.position),
-                pose.rotation,
-                root.localScale));
+        float now = GetRuntimeTickContext().now;
+        if (!state.hasReliableBBoxThisFrame)
+        {
+            if (state.frameInQualityWaitStartTime <= 0f)
+            {
+                state.frameInQualityWaitStartTime = now;
+            }
+            if (now - state.frameInQualityWaitStartTime < MaxFrameInQualityWaitSeconds)
+            {
+                return;
+            }
+        }
+
+        state.frameInQualityWaitStartTime = 0f;
+        BeginHandoff(trackId, state, now);
     }
 
-    public static Vector3 ResolveAnimalFrameOutWalkPosition(Vector3 posePosition)
-    {
-        return AnimalFrameOutMotion.ResolveWalkPosition(posePosition);
-    }
-
-    private bool TryPrepareAnimalFrameInTarget(uint trackId, int frameOutStartFrame, InteractiveMotionState state)
+    private bool TryPrepareFrameInTarget(uint trackId, int triggerStartFrame, InteractiveMotionState state)
     {
         if (state == null || frameOffsets == null || frameOffsets.Length == 0)
         {
             return false;
         }
 
-        if (!TryFindNextTrackObject(trackId, frameOutStartFrame + 1, out int frameInFrame, out MetaObj frameInObj))
+        if (!TryFindNextTrackObject(trackId, triggerStartFrame + 1, out int frameInFrame, out MetaObj frameInObj))
         {
             return false;
         }
@@ -1051,10 +508,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         state.frameInFrame = frameInFrame;
-        state.frameInPosition = frameInPosition;
+        state.frameInPosition = PreserveHeight(frameInPosition, state.originPosition, Vector3.up);
         state.hasFrameInPosition = true;
-        float fps = metaHeader.fps > 0f ? metaHeader.fps : (manifest != null && manifest.fps > 0f ? manifest.fps : 30f);
-        state.duration = Mathf.Max(0.1f, (frameInFrame - frameOutStartFrame) / Mathf.Max(1f, fps));
         return true;
     }
 
@@ -1112,187 +567,588 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return true;
     }
 
-    private void ApplyInteractiveFaceViewerTransform(GameObject instance, InteractiveMotionState state, Transform screen, float now)
+    private float ResolveMetaFps()
     {
-        if (instance == null || state == null)
+        return metaHeader.fps > 0f ? metaHeader.fps : (manifest != null && manifest.fps > 0f ? manifest.fps : 30f);
+    }
+
+    // --- Owned-stage apply (shared by random and system-triggered events) --------------
+
+    private bool TryApplyOwnedInteractiveMotion(uint trackId, GameObject instance, Transform screen, int frame)
+    {
+        if (!interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) || state == null || state.stage != InteractiveEventStage.Owned)
         {
+            return false;
+        }
+
+        RuntimeClock.TickContext tick = GetRuntimeTickContext();
+        bool isAnimal = state.subject == InteractiveMotionSubject.Animal;
+        bool isGesturePhase = state.kind == InteractiveEventKind.Static || state.dynamicPhase == InteractiveDynamicPhase.Gesture;
+
+        if (isGesturePhase)
+        {
+            ApplyFrozenPoseAndGesture(trackId, instance, state, tick);
+        }
+        else
+        {
+            ResolveOwnedWalkPose(state, frame, tick.now, out Vector3 position, out Quaternion rotation);
+            if (isAnimal)
+            {
+                ApplyMovingAnimalPose(instance, state, position, rotation, tick);
+            }
+            else
+            {
+                ApplyHumanClipPlayback(trackId, instance, tick.now, tick.deltaTime);
+                if (!HasActiveHumanClipPlayback(trackId))
+                {
+                    ApplyFallbackHumanWalk(instance, state, tick.now);
+                }
+                // Same re-pin as the gesture phase: the looping walk clip may have written its
+                // own root motion onto the instance transform during Evaluate().
+                TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(position, rotation, instance.transform.localScale));
+            }
+        }
+
+        float elapsed = RuntimeClock.ResolveElapsed(tick.now, state.phaseStartTime);
+        if (state.triggerSource == InteractiveTriggerSource.Random && elapsed >= state.phaseDuration)
+        {
+            AdvanceRandomEventPhase(trackId, state, tick.now);
+        }
+
+        return true;
+    }
+
+    private void ResolveOwnedWalkPose(InteractiveMotionState state, int frame, float now, out Vector3 position, out Quaternion rotation)
+    {
+        float elapsed = RuntimeClock.ResolveElapsed(now, state.phaseStartTime);
+        if (state.triggerSource == InteractiveTriggerSource.SystemFrameOut)
+        {
+            float t = ResolveSystemTriggerNormalizedTime(state, frame, elapsed);
+            AnimalFrameOutLoopPose pose = AnimalFrameOutMotion.ResolveLoopPose(
+                state.phaseFromPosition,
+                state.phaseFromRotation,
+                state.frameOutDirection,
+                state.frameInPosition,
+                state.hasFrameInPosition,
+                t,
+                ResolveSystemTriggerTravelDistance(state),
+                1f,
+                Vector3.up);
+            position = pose.position;
+            rotation = pose.rotation;
             return;
         }
 
-        float elapsed = RuntimeClock.ResolveElapsed(now, state.startTime);
-        float weight = InteractiveEnvelope(elapsed, state.duration);
-        Vector3 upAxis = screen != null ? screen.up : Vector3.up;
-        Transform head = GetViewOrHeadTransform();
-        Vector3 toViewer = head != null
-            ? Vector3.ProjectOnPlane(head.position - instance.transform.position, upAxis)
-            : Vector3.zero;
-        if (toViewer.sqrMagnitude <= 0.000001f)
-        {
-            toViewer = screen != null ? -screen.forward : instance.transform.forward;
-            toViewer = Vector3.ProjectOnPlane(toViewer, upAxis);
-        }
-        if (toViewer.sqrMagnitude <= 0.000001f)
-        {
-            toViewer = Vector3.ProjectOnPlane(Vector3.forward, upAxis);
-        }
-        toViewer.Normalize();
-
-        Quaternion lookRotation = Quaternion.LookRotation(toViewer, upAxis);
-        Quaternion trackedRotation = state.hasLastTrackedTransform ? state.lastTrackedRotation : instance.transform.rotation;
-        Quaternion uprightTrackedRotation = MakeUprightYawRotation(trackedRotation, upAxis, instance.transform.forward);
-        TrackPlacementWriter.Apply(
-            instance.transform,
-            ResolveRotationOnlyPlacementCommand(
-                instance.transform.position,
-                Quaternion.Slerp(uprightTrackedRotation, lookRotation, Mathf.Clamp01(weight * 0.75f)),
-                instance.transform.localScale));
+        float walkT = Mathf.Clamp01(elapsed / Mathf.Max(0.001f, state.phaseDuration));
+        AnimalFrameOutLoopPose walkPose = AnimalFrameOutMotion.ResolveOneWaySegmentPose(
+            state.phaseFromPosition, state.phaseToPosition, state.phaseFromRotation, Vector3.up, walkT);
+        position = walkPose.position;
+        rotation = walkPose.rotation;
     }
 
-    private static Quaternion MakeUprightYawRotation(Quaternion sourceRotation, Vector3 upAxis, Vector3 fallbackForward)
+    private float ResolveSystemTriggerNormalizedTime(InteractiveMotionState state, int frame, float elapsed)
+    {
+        if (state.hasFrameInPosition && state.frameInFrame > state.triggerStartFrame)
+        {
+            int span = Mathf.Max(1, state.frameInFrame - state.triggerStartFrame);
+            return Mathf.Clamp01((frame - state.triggerStartFrame) / (float)span);
+        }
+        return Mathf.Clamp01(elapsed / Mathf.Max(0.001f, state.phaseDuration));
+    }
+
+    private float ResolveSystemTriggerTravelDistance(InteractiveMotionState state)
+    {
+        bool isAnimal = state.subject == InteractiveMotionSubject.Animal;
+        float speed = Mathf.Max(0.05f, isAnimal ? animalWalkSpeedMetersPerSecond : humanWalkSpeedMetersPerSecond);
+        float seconds = state.hasFrameInPosition && state.frameInFrame > state.triggerStartFrame
+            ? (state.frameInFrame - state.triggerStartFrame) / Mathf.Max(1f, ResolveMetaFps())
+            : SystemTriggerLoopSeconds;
+        return AnimalFrameOutMotion.ResolveTravelDistance(seconds, speed);
+    }
+
+    private static Vector3 PreserveHeight(Vector3 position, Vector3 referencePosition, Vector3 upAxis)
     {
         Vector3 safeUp = upAxis.sqrMagnitude > 0.000001f ? upAxis.normalized : Vector3.up;
-        Vector3 forward = Vector3.ProjectOnPlane(sourceRotation * Vector3.forward, safeUp);
-        if (forward.sqrMagnitude <= 0.000001f)
-        {
-            forward = Vector3.ProjectOnPlane(fallbackForward, safeUp);
-        }
-        if (forward.sqrMagnitude <= 0.000001f)
-        {
-            forward = Vector3.ProjectOnPlane(Vector3.forward, safeUp);
-        }
-
-        return Quaternion.LookRotation(forward.normalized, safeUp);
+        return position + safeUp * Vector3.Dot(referencePosition - position, safeUp);
     }
 
-    private void ApplyAnimalInteractiveMotion(uint trackId, Transform instanceRoot, Transform screen, ref AnimalPoseWorldData pose)
+    // --- Handoff blend: fixed-duration transition back to live tracking ----------------
+
+    private void BeginHandoff(uint trackId, InteractiveMotionState state, float now)
     {
-        if (!enableInteractiveMotion ||
-            !interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) ||
-            state == null ||
-            !state.active ||
-            state.subject != InteractiveMotionSubject.Animal)
+        GameObject instance = GetTrackInstanceOrNull(trackId);
+        state.handoffFromPosition = instance != null ? instance.transform.position : state.originPosition;
+        state.handoffFromRotation = instance != null ? instance.transform.rotation : state.originRotation;
+        state.handoffFromBoneLocalRotations.Clear();
+        if (instance != null && state.subject == InteractiveMotionSubject.Person)
+        {
+            CaptureHumanoidBoneLocalRotations(instance, state.handoffFromBoneLocalRotations);
+        }
+        state.stage = InteractiveEventStage.HandoffBlend;
+        state.handoffStartTime = now;
+        StopHumanClipPlayback(trackId);
+    }
+
+    private void ApplyInteractiveHandoffBlendIfActive(uint trackId, GameObject instance, int frame)
+    {
+        if (instance == null || !interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) || state == null || state.stage != InteractiveEventStage.HandoffBlend)
         {
             return;
         }
 
         RuntimeClock.TickContext tick = GetRuntimeTickContext();
-        float elapsed = RuntimeClock.ResolveElapsed(tick.now, state.startTime);
-        float t = Mathf.Clamp01(elapsed / Mathf.Max(0.001f, state.duration));
-        float weight = InteractiveEnvelope(elapsed, state.duration);
-        float wave = Mathf.Sin(t * Mathf.PI * 6f) * weight;
+        float elapsed = RuntimeClock.ResolveElapsed(tick.now, state.handoffStartTime);
+        float duration = Mathf.Max(0.05f, interactiveHandoffBlendSeconds);
+        float t = Mathf.Clamp01(elapsed / duration);
 
-        if (state.mode == InteractiveMotionMode.Replacement)
+        // The tracked pipeline already wrote this frame's fully-tracked bone pose before this
+        // runs; blend the body pose toward it too, not just the root, otherwise the body snaps
+        // instantly into the tracked pose while only the root smoothly catches up.
+        if (state.subject == InteractiveMotionSubject.Person && state.handoffFromBoneLocalRotations.Count > 0)
         {
-            Vector3 before = pose.rootWorld;
-            ApplyInteractiveReplacementTransform(trackId, instanceRoot != null ? instanceRoot.gameObject : null, screen, tick.now);
-            Vector3 after = instanceRoot != null ? instanceRoot.position : before;
-            Vector3 delta = after - before;
-            OffsetAnimalPose(ref pose, delta);
-            return;
+            BlendHumanoidBoneLocalRotations(instance, state.handoffFromBoneLocalRotations, t);
         }
 
-        switch (state.animalPreset)
+        Vector3 blendedPosition = Vector3.Lerp(state.handoffFromPosition, instance.transform.position, t);
+        Quaternion blendedRotation = Quaternion.Slerp(state.handoffFromRotation, instance.transform.rotation, t);
+        TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(blendedPosition, blendedRotation, instance.transform.localScale));
+
+        if (t >= 1f)
         {
-            case InteractiveAnimalPreset.LookAtViewer:
-                ApplyAnimalBodyTurnViewer(instanceRoot, screen, ref pose, weight);
-                break;
-            case InteractiveAnimalPreset.BodyTurnViewer:
-                ApplyAnimalBodyTurnViewer(instanceRoot, screen, ref pose, weight);
-                break;
-            case InteractiveAnimalPreset.TailWag:
-                ApplyAnimalTailWag(screen, ref pose, wave);
-                break;
-            case InteractiveAnimalPreset.PawWave:
-                ApplyAnimalPawWave(screen, ref pose, wave, weight);
-                break;
+            state.stage = InteractiveEventStage.Inactive;
+            state.nextTriggerTime = RuntimeClock.ResolveNextTime(tick.now, RandomInteractiveInterval());
         }
     }
 
-    private float InteractiveEnvelope(float elapsed, float duration)
+    private static void CaptureHumanoidBoneLocalRotations(GameObject instance, Dictionary<HumanBodyBones, Quaternion> destination)
     {
-        float blend = GetEffectiveInteractiveMotionBlend();
-        return Mathf.Min(Mathf.Clamp01(elapsed / blend), Mathf.Clamp01((duration - elapsed) / blend));
-    }
-
-    private float GetEffectiveInteractiveMotionDuration()
-    {
-        return Mathf.Max(4.5f, interactiveMotionDurationSeconds);
-    }
-
-    private float GetHumanInteractiveMotionDuration(AnimationClip clip, InteractiveHumanPreset preset)
-    {
-        if (preset == InteractiveHumanPreset.ApproachViewer)
-        {
-            return GetEffectiveInteractiveMotionDuration();
-        }
-
-        float clipLength = clip != null && clip.length > 0.0001f ? clip.length : 2.0f;
-        return Mathf.Max(clipLength + GetEffectiveInteractiveMotionBlend(), 1.2f);
-    }
-
-    private float GetEffectiveInteractiveMotionBlend()
-    {
-        return Mathf.Max(0.9f, interactiveMotionBlendSeconds);
-    }
-
-    private float GetEffectiveInteractiveApproachDistance()
-    {
-        return Mathf.Clamp(interactiveApproachDistanceMeters, 0f, 0.3f);
-    }
-
-    private static float SmoothMotion01(float value)
-    {
-        value = Mathf.Clamp01(value);
-        return value * value * (3f - 2f * value);
-    }
-
-    private void ApplyAnimalLookAtViewer(Transform screen, ref AnimalPoseWorldData pose, float weight)
-    {
-        Transform head = GetViewOrHeadTransform();
-        if (head == null || weight <= 0f)
+        Animator animator = instance.GetComponentInChildren<Animator>();
+        if (animator == null || !animator.isHuman)
         {
             return;
         }
 
-        Vector3 headRoot;
-        if (pose.hasAnimalControl && pose.animalControl.hasHeadRoot)
+        foreach (HumanBodyBones boneId in Enum.GetValues(typeof(HumanBodyBones)))
         {
-            headRoot = pose.animalControl.headRootWorld;
-        }
-        else if (!TryGetAnimalJointWorld(pose, 18, out headRoot))
-        {
-            headRoot = pose.rootWorld;
-        }
+            if (boneId == HumanBodyBones.LastBone)
+            {
+                continue;
+            }
 
-        Vector3 toViewer = head.position - headRoot;
-        if (toViewer.sqrMagnitude <= 0.000001f)
+            Transform bone = animator.GetBoneTransform(boneId);
+            if (bone != null)
+            {
+                destination[boneId] = bone.localRotation;
+            }
+        }
+    }
+
+    private static void BlendHumanoidBoneLocalRotations(GameObject instance, Dictionary<HumanBodyBones, Quaternion> fromLocalRotations, float weight)
+    {
+        Animator animator = instance.GetComponentInChildren<Animator>();
+        if (animator == null || !animator.isHuman)
         {
             return;
         }
-        toViewer.Normalize();
 
-        Vector3 currentTip;
-        if (pose.hasAnimalControl && pose.animalControl.hasHeadTip)
+        foreach (KeyValuePair<HumanBodyBones, Quaternion> kv in fromLocalRotations)
         {
-            currentTip = pose.animalControl.headTipWorld;
+            Transform bone = animator.GetBoneTransform(kv.Key);
+            if (bone == null)
+            {
+                continue;
+            }
+
+            TransformWriter.ApplyLocalRotation(bone, Quaternion.Slerp(kv.Value, bone.localRotation, Mathf.Clamp01(weight)));
         }
-        else if (!TryGetAnimalJointWorld(pose, 19, out currentTip))
+    }
+
+    // --- Human gesture / walk clip playback ---------------------------------------------
+
+    private AnimationClip PickHumanClip(AnimationClip[] clips)
+    {
+        if (clips == null || clips.Length == 0)
         {
-            currentTip = headRoot + toViewer * 0.12f;
+            return null;
         }
 
-        float length = Mathf.Max(0.05f, Vector3.Distance(headRoot, currentTip));
-        Vector3 targetTip = headRoot + toViewer * length;
-        Vector3 blendedTip = Vector3.Lerp(currentTip, targetTip, Mathf.Clamp01(weight));
-
-        if (pose.hasAnimalControl)
+        int start = UnityEngine.Random.Range(0, clips.Length);
+        for (int i = 0; i < clips.Length; i++)
         {
-            pose.animalControl.hasHeadRoot = true;
-            pose.animalControl.headRootWorld = headRoot;
-            pose.animalControl.hasHeadTip = true;
-            pose.animalControl.headTipWorld = blendedTip;
+            AnimationClip clip = clips[(start + i) % clips.Length];
+            if (clip != null)
+            {
+                return clip;
+            }
         }
-        SetAnimalJointWorld(ref pose, 19, blendedTip);
+
+        return null;
+    }
+
+    private AnimationClip PickHumanWalkClip()
+    {
+        return PickHumanClip(humanWalkClips);
+    }
+
+    private void ApplyFrozenPoseAndGesture(uint trackId, GameObject instance, InteractiveMotionState state, RuntimeClock.TickContext tick)
+    {
+        if (state.subject == InteractiveMotionSubject.Person)
+        {
+            if (state.humanPreset == InteractiveHumanPreset.ClipGesture)
+            {
+                ApplyHumanClipPlayback(trackId, instance, tick.now, tick.deltaTime);
+            }
+            else
+            {
+                ApplyFallbackHumanWave(instance, state, tick.now);
+            }
+            // Clip evaluation may have written its own (incorrect) root motion onto the
+            // instance transform; re-pin the frozen gesture pose after evaluating the clip.
+            TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(state.gesturePosition, state.gestureRotation, instance.transform.localScale));
+            return;
+        }
+
+        TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(state.gesturePosition, state.gestureRotation, instance.transform.localScale));
+        ApplyFrozenAnimalGesture(instance, state, tick);
+    }
+
+    private void StartHumanClipPlayback(uint trackId, GameObject instance, AnimationClip clip, bool loop)
+    {
+        StopHumanClipPlayback(trackId);
+        if (instance == null || clip == null)
+        {
+            return;
+        }
+
+        Animator animator = instance.GetComponentInChildren<Animator>();
+        if (animator == null)
+        {
+            return;
+        }
+
+        SceneObjectWriter.ApplyAnimatorEnabled(animator, true);
+        SceneObjectWriter.ApplyRootMotion(animator, false);
+        PlayableGraph graph = PlayableGraph.Create("InteractiveMotion_" + trackId);
+        graph.SetTimeUpdateMode(DirectorUpdateMode.Manual);
+        AnimationClipPlayable playable = AnimationClipPlayable.Create(graph, clip);
+        playable.SetApplyFootIK(false);
+        playable.SetApplyPlayableIK(false);
+        AnimationPlayableOutput output = AnimationPlayableOutput.Create(graph, "Animation", animator);
+        output.SetSourcePlayable(playable);
+        SceneObjectWriter.ApplyPlay(graph);
+        interactiveClipPlaybackByTrack[trackId] = new InteractiveClipPlayback
+        {
+            graph = graph,
+            clip = clip,
+            animator = animator,
+            loop = loop
+        };
+    }
+
+    private void ApplyHumanClipPlayback(uint trackId, GameObject instance, float now, float deltaTime)
+    {
+        if (!interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) || state == null)
+        {
+            return;
+        }
+        if (!interactiveClipPlaybackByTrack.TryGetValue(trackId, out InteractiveClipPlayback playback) ||
+            playback == null ||
+            !playback.graph.IsValid() ||
+            playback.clip == null)
+        {
+            return;
+        }
+
+        Transform animatorTransform = playback.animator != null ? playback.animator.transform : null;
+        Vector3 animatorLocalPositionBefore = animatorTransform != null ? animatorTransform.localPosition : Vector3.zero;
+        Quaternion animatorLocalRotationBefore = animatorTransform != null ? animatorTransform.localRotation : Quaternion.identity;
+
+        float elapsed = RuntimeClock.ResolveElapsed(now, state.phaseStartTime);
+        double time = elapsed;
+        if (playback.loop && playback.clip.length > 0.0001f)
+        {
+            time %= playback.clip.length;
+        }
+        else if (playback.clip.length > 0.0001f)
+        {
+            time = Mathf.Min(elapsed, playback.clip.length);
+        }
+        playback.graph.GetRootPlayable(0).SetTime(time);
+        playback.graph.Evaluate(deltaTime);
+
+        if (ShouldRestoreAnimatorLocalTransformSeparately(animatorTransform, instance.transform))
+        {
+            TransformWriter.ApplyLocalPose(animatorTransform, animatorLocalPositionBefore, animatorLocalRotationBefore);
+        }
+    }
+
+    public static bool ShouldRestoreAnimatorLocalTransformSeparately(Transform animatorTransform, Transform instanceTransform)
+    {
+        return animatorTransform != null && instanceTransform != null && animatorTransform != instanceTransform;
+    }
+
+    private bool HasActiveHumanClipPlayback(uint trackId)
+    {
+        return interactiveClipPlaybackByTrack.TryGetValue(trackId, out InteractiveClipPlayback playback) &&
+            playback != null &&
+            playback.graph.IsValid() &&
+            playback.clip != null;
+    }
+
+    private void StopHumanClipPlayback(uint trackId)
+    {
+        if (!interactiveClipPlaybackByTrack.TryGetValue(trackId, out InteractiveClipPlayback playback) || playback == null)
+        {
+            return;
+        }
+
+        if (playback.graph.IsValid())
+        {
+            playback.graph.Destroy();
+        }
+        interactiveClipPlaybackByTrack.Remove(trackId);
+    }
+
+    private void ApplyFallbackHumanWave(GameObject instance, InteractiveMotionState state, float now)
+    {
+        if (instance == null)
+        {
+            return;
+        }
+
+        Animator animator = instance.GetComponentInChildren<Animator>();
+        if (animator == null || !animator.isHuman)
+        {
+            return;
+        }
+
+        Transform upper = animator.GetBoneTransform(HumanBodyBones.RightUpperArm);
+        Transform lower = animator.GetBoneTransform(HumanBodyBones.RightLowerArm);
+        if (upper == null || lower == null)
+        {
+            return;
+        }
+
+        Quaternion upperBase = ResolveFallbackBoneBaseRotation(state, HumanBodyBones.RightUpperArm, upper);
+        Quaternion lowerBase = ResolveFallbackBoneBaseRotation(state, HumanBodyBones.RightLowerArm, lower);
+
+        float elapsed = RuntimeClock.ResolveElapsed(now, state.phaseStartTime);
+        float wave = Mathf.Sin(elapsed * Mathf.PI * 2.5f);
+        TransformWriter.ApplyLocalRotation(upper, upperBase * Quaternion.Euler(-45f, 0f, 25f));
+        TransformWriter.ApplyLocalRotation(lower, lowerBase * Quaternion.Euler(0f, 0f, 35f * wave));
+    }
+
+    private void ApplyFallbackHumanWalk(GameObject instance, InteractiveMotionState state, float now)
+    {
+        if (instance == null)
+        {
+            return;
+        }
+
+        Animator animator = instance.GetComponentInChildren<Animator>();
+        if (animator == null || !animator.isHuman)
+        {
+            return;
+        }
+
+        Transform leftUpperLeg = animator.GetBoneTransform(HumanBodyBones.LeftUpperLeg);
+        Transform rightUpperLeg = animator.GetBoneTransform(HumanBodyBones.RightUpperLeg);
+        if (leftUpperLeg == null || rightUpperLeg == null)
+        {
+            return;
+        }
+
+        Quaternion leftLegBase = ResolveFallbackBoneBaseRotation(state, HumanBodyBones.LeftUpperLeg, leftUpperLeg);
+        Quaternion rightLegBase = ResolveFallbackBoneBaseRotation(state, HumanBodyBones.RightUpperLeg, rightUpperLeg);
+
+        float elapsed = RuntimeClock.ResolveElapsed(now, state.phaseStartTime);
+        float stride = Mathf.Sin(elapsed * Mathf.PI * 3f);
+        float legDegrees = 28f * stride;
+        TransformWriter.ApplyLocalRotation(leftUpperLeg, leftLegBase * Quaternion.Euler(legDegrees, 0f, 0f));
+        TransformWriter.ApplyLocalRotation(rightUpperLeg, rightLegBase * Quaternion.Euler(-legDegrees, 0f, 0f));
+
+        Transform leftUpperArm = animator.GetBoneTransform(HumanBodyBones.LeftUpperArm);
+        Transform rightUpperArm = animator.GetBoneTransform(HumanBodyBones.RightUpperArm);
+        if (leftUpperArm != null && rightUpperArm != null)
+        {
+            Quaternion leftArmBase = ResolveFallbackBoneBaseRotation(state, HumanBodyBones.LeftUpperArm, leftUpperArm);
+            Quaternion rightArmBase = ResolveFallbackBoneBaseRotation(state, HumanBodyBones.RightUpperArm, rightUpperArm);
+            float armDegrees = legDegrees * 0.6f;
+            TransformWriter.ApplyLocalRotation(leftUpperArm, leftArmBase * Quaternion.Euler(-armDegrees, 0f, 0f));
+            TransformWriter.ApplyLocalRotation(rightUpperArm, rightArmBase * Quaternion.Euler(armDegrees, 0f, 0f));
+        }
+    }
+
+    private static Quaternion ResolveFallbackBoneBaseRotation(InteractiveMotionState state, HumanBodyBones bone, Transform boneTransform)
+    {
+        if (!state.fallbackBoneBaseLocalRotations.TryGetValue(bone, out Quaternion baseRotation))
+        {
+            baseRotation = boneTransform.localRotation;
+            state.fallbackBoneBaseLocalRotations[bone] = baseRotation;
+        }
+        return baseRotation;
+    }
+
+    // --- Animal gesture / moving pose (replays the last real tracked pose, rigidly remapped) --
+
+    private void CacheLiveAnimalPoseForInteractiveMotion(uint trackId, AnimalPoseWorldData pose, Vector3 basePosition, Quaternion baseRotation, bool hasSmalPose, AnimalSmalPose smalPose)
+    {
+        InteractiveMotionState state = GetOrCreateInteractiveMotionState(trackId);
+        state.hasCachedAnimalPose = true;
+        state.cachedAnimalPose = pose;
+        state.cachedAnimalBasePosition = basePosition;
+        state.cachedAnimalBaseRotation = baseRotation;
+        state.cachedAnimalHasSmalPose = hasSmalPose;
+        state.cachedAnimalSmalPose = smalPose;
+    }
+
+    private void ApplyFrozenAnimalGesture(GameObject instance, InteractiveMotionState state, RuntimeClock.TickContext tick)
+    {
+        if (!state.hasCachedAnimalPose)
+        {
+            return;
+        }
+
+        AnimalPoseWorldData pose = RemapAnimalPoseRigid(state.cachedAnimalPose, state.cachedAnimalBasePosition, state.cachedAnimalBaseRotation, state.gesturePosition, state.gestureRotation);
+        float elapsed = RuntimeClock.ResolveElapsed(tick.now, state.phaseStartTime);
+        float wave = Mathf.Sin(elapsed * Mathf.PI * 1.5f);
+
+        if (!state.cachedAnimalHasSmalPose)
+        {
+            switch (state.animalPreset)
+            {
+                case InteractiveAnimalPreset.BodyTurnViewer:
+                    ApplyAnimalBodyTurnViewer(instance.transform, state.lastScreen, ref pose, 1f);
+                    break;
+                case InteractiveAnimalPreset.TailWag:
+                    ApplyAnimalTailWag(state.lastScreen, ref pose, wave);
+                    break;
+                case InteractiveAnimalPreset.PawWave:
+                    ApplyAnimalPawWave(state.lastScreen, ref pose, wave, 1f);
+                    break;
+            }
+        }
+
+        ApplyAnimalPoseRequest(instance, pose, state.cachedAnimalHasSmalPose, state.cachedAnimalSmalPose, state.gesturePosition, state.gestureRotation, tick);
+    }
+
+    private void ApplyMovingAnimalPose(GameObject instance, InteractiveMotionState state, Vector3 position, Quaternion rotation, RuntimeClock.TickContext tick)
+    {
+        if (!state.hasCachedAnimalPose)
+        {
+            TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(position, rotation, instance.transform.localScale));
+            return;
+        }
+
+        AnimalPoseWorldData pose = RemapAnimalPoseRigid(state.cachedAnimalPose, state.cachedAnimalBasePosition, state.cachedAnimalBaseRotation, position, rotation);
+        ApplyAnimalPoseRequest(instance, pose, state.cachedAnimalHasSmalPose, state.cachedAnimalSmalPose, position, rotation, tick);
+    }
+
+    private void ApplyAnimalPoseRequest(GameObject instance, AnimalPoseWorldData pose, bool hasSmalPose, AnimalSmalPose smalPose, Vector3 targetPosition, Quaternion targetRotation, RuntimeClock.TickContext tick)
+    {
+        Animator animator = instance.GetComponentInChildren<Animator>();
+        DisableAnimalAnimatorPlayback(animator);
+        animalPoseApplier.Apply(new AnimalPoseRequest
+        {
+            instanceRoot = instance.transform,
+            animator = animator,
+            pose = pose,
+            settings = BuildAnimalPoseSettings(),
+            tickContext = tick,
+            freezeAnimalDistal = false,
+            enableBoneApply = enableBoneApply,
+            hasSmalPose = hasSmalPose,
+            smalPose = smalPose
+        });
+
+        // AnimalPoseApplier re-aligns and low-pass-filters the root from the solved bone
+        // placement, which drifts away from the intended walk/freeze height over time. Re-pin
+        // the root explicitly; the limb/head/tail bones are children, so this only rigidly
+        // carries the already-solved pose along with it, it does not undo their solving.
+        TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(targetPosition, targetRotation, instance.transform.localScale));
+    }
+
+    private static AnimalPoseWorldData RemapAnimalPoseRigid(AnimalPoseWorldData basePose, Vector3 basePosition, Quaternion baseRotation, Vector3 newPosition, Quaternion newRotation)
+    {
+        // Yaw-only delta: the cached pose's rotation can carry pitch/roll from the animal's
+        // natural body tilt. Remapping with the full 3D delta would "un-tilt" the cached pose
+        // around basePosition, shifting every point's height. Walking/turning should only
+        // ever rotate the cached pose around the world-up axis.
+        Quaternion delta = ResolveYawOnlyRotation(newRotation, Vector3.up) * Quaternion.Inverse(ResolveYawOnlyRotation(baseRotation, Vector3.up));
+        Vector3 Map(Vector3 point) => newPosition + delta * (point - basePosition);
+
+        AnimalPoseWorldData result = basePose;
+        result.rootWorld = Map(basePose.rootWorld);
+        result.jointsWorld = MapPoints(basePose.jointsWorld, Map);
+        if (basePose.hasAnimalControl)
+        {
+            result.animalControl = RemapAnimalControlRigid(basePose.animalControl, Map);
+        }
+        return result;
+    }
+
+    private static Quaternion ResolveYawOnlyRotation(Quaternion rotation, Vector3 upAxis)
+    {
+        Vector3 safeUp = upAxis.sqrMagnitude > 0.000001f ? upAxis.normalized : Vector3.up;
+        Vector3 forward = Vector3.ProjectOnPlane(rotation * Vector3.forward, safeUp);
+        if (forward.sqrMagnitude <= 0.000001f)
+        {
+            forward = Vector3.ProjectOnPlane(Vector3.forward, safeUp);
+        }
+        if (forward.sqrMagnitude <= 0.000001f)
+        {
+            forward = Vector3.right;
+        }
+        return Quaternion.LookRotation(forward.normalized, safeUp);
+    }
+
+    private static Vector3[] MapPoints(Vector3[] source, Func<Vector3, Vector3> map)
+    {
+        if (source == null)
+        {
+            return null;
+        }
+
+        Vector3[] result = new Vector3[source.Length];
+        for (int i = 0; i < source.Length; i++)
+        {
+            result[i] = map(source[i]);
+        }
+        return result;
+    }
+
+    private static AnimalControlWorldData RemapAnimalControlRigid(AnimalControlWorldData control, Func<Vector3, Vector3> map)
+    {
+        AnimalControlWorldData result = control;
+        if (control.hasRoot) result.rootWorld = map(control.rootWorld);
+        if (control.hasWithers) result.withersWorld = map(control.withersWorld);
+        if (control.hasHeadRoot) result.headRootWorld = map(control.headRootWorld);
+        if (control.hasHeadTip) result.headTipWorld = map(control.headTipWorld);
+        if (control.hasTailBase) result.tailBaseWorld = map(control.tailBaseWorld);
+        if (control.hasTailTip) result.tailTipWorld = map(control.tailTipWorld);
+        if (control.hasForwardHint) result.forwardHintWorld = map(control.forwardHintWorld);
+        if (control.hasUpHint) result.upHintWorld = map(control.upHintWorld);
+        result.frontLeftLegWorld = MapPoints(control.frontLeftLegWorld, map);
+        result.frontRightLegWorld = MapPoints(control.frontRightLegWorld, map);
+        result.rearLeftLegWorld = MapPoints(control.rearLeftLegWorld, map);
+        result.rearRightLegWorld = MapPoints(control.rearRightLegWorld, map);
+        result.headWorld = MapPoints(control.headWorld, map);
+        result.tailWorld = MapPoints(control.tailWorld, map);
+        return result;
+    }
+
+    private InteractiveAnimalPreset PickAnimalPreset(bool cachedHasSmalPose)
+    {
+        if (cachedHasSmalPose)
+        {
+            return InteractiveAnimalPreset.FaceViewer;
+        }
+
+        int value = UnityEngine.Random.Range(0, 100);
+        if (value < 30) return InteractiveAnimalPreset.FaceViewer;
+        if (value < 55) return InteractiveAnimalPreset.TailWag;
+        if (value < 80) return InteractiveAnimalPreset.PawWave;
+        return InteractiveAnimalPreset.BodyTurnViewer;
     }
 
     private void ApplyAnimalBodyTurnViewer(Transform instanceRoot, Transform screen, ref AnimalPoseWorldData pose, float weight)
@@ -1358,7 +1214,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             pose.animalControl.frontRightLegWorld[end] += offset;
         }
 
-        SetAnimalJointWorld(ref pose, 14, GetAnimalJointWorldOrRoot(pose, 14) + offset * Mathf.Clamp01(weight));
+        if (pose.jointsWorld != null && pose.jointsWorld.Length > 14)
+        {
+            pose.jointsWorld[14] += offset * Mathf.Clamp01(weight);
+            if (pose.jointVis != null && pose.jointVis.Length > 14)
+            {
+                pose.jointVis[14] = 1;
+            }
+        }
     }
 
     private Vector3 ResolveInteractiveViewerDirection(Vector3 root, Transform screen, Transform instanceRoot, Vector3 up)
@@ -1442,419 +1305,58 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return 0.25f;
     }
 
-    private bool TryGetAnimalJointWorld(AnimalPoseWorldData pose, int index, out Vector3 value)
+    // --- Shared viewer-facing rotation helper -------------------------------------------
+
+    private Quaternion ResolveFaceViewerRotation(Vector3 position, Quaternion fallbackRotation, Transform screen)
     {
-        value = Vector3.zero;
-        if (pose.jointsWorld == null || index < 0 || index >= pose.jointsWorld.Length)
-        {
-            return false;
-        }
-        value = pose.jointsWorld[index];
-        return true;
-    }
-
-    private Vector3 GetAnimalJointWorldOrRoot(AnimalPoseWorldData pose, int index)
-    {
-        return TryGetAnimalJointWorld(pose, index, out Vector3 value) ? value : pose.rootWorld;
-    }
-
-    private void SetAnimalJointWorld(ref AnimalPoseWorldData pose, int index, Vector3 value)
-    {
-        if (pose.jointsWorld == null || index < 0 || index >= pose.jointsWorld.Length)
-        {
-            return;
-        }
-        pose.jointsWorld[index] = value;
-        if (pose.jointVis != null && index < pose.jointVis.Length)
-        {
-            pose.jointVis[index] = 1;
-        }
-    }
-
-    private void OffsetAnimalPose(ref AnimalPoseWorldData pose, Vector3 delta)
-    {
-        pose.rootWorld += delta;
-        if (pose.jointsWorld != null)
-        {
-            for (int i = 0; i < pose.jointsWorld.Length; i++)
-            {
-                pose.jointsWorld[i] += delta;
-            }
-        }
-
-        if (!pose.hasAnimalControl)
-        {
-            return;
-        }
-
-        OffsetAnimalControl(ref pose.animalControl, delta);
-    }
-
-    private void OffsetAnimalControl(ref AnimalControlWorldData control, Vector3 delta)
-    {
-        if (control.hasRoot) control.rootWorld += delta;
-        if (control.hasWithers) control.withersWorld += delta;
-        if (control.hasHeadRoot) control.headRootWorld += delta;
-        if (control.hasHeadTip) control.headTipWorld += delta;
-        if (control.hasTailBase) control.tailBaseWorld += delta;
-        if (control.hasTailTip) control.tailTipWorld += delta;
-        if (control.hasForwardHint) control.forwardHintWorld += delta;
-        if (control.hasUpHint) control.upHintWorld += delta;
-        OffsetChain(control.frontLeftLegWorld, delta);
-        OffsetChain(control.frontRightLegWorld, delta);
-        OffsetChain(control.rearLeftLegWorld, delta);
-        OffsetChain(control.rearRightLegWorld, delta);
-        OffsetChain(control.headWorld, delta);
-        OffsetChain(control.tailWorld, delta);
-    }
-
-    private static void OffsetChain(Vector3[] chain, Vector3 delta)
-    {
-        if (chain == null)
-        {
-            return;
-        }
-        for (int i = 0; i < chain.Length; i++)
-        {
-            chain[i] += delta;
-        }
-    }
-
-    private void StartHumanClipPlayback(uint trackId, GameObject instance, AnimationClip clip)
-    {
-        StopHumanClipPlayback(trackId);
-        if (instance == null || clip == null)
-        {
-            return;
-        }
-
-        Animator animator = instance.GetComponentInChildren<Animator>();
-        if (animator == null)
-        {
-            return;
-        }
-
-        SceneObjectWriter.ApplyAnimatorEnabled(animator, true);
-        SceneObjectWriter.ApplyRootMotion(animator, false);
-        PlayableGraph graph = PlayableGraph.Create("InteractiveMotion_" + trackId);
-        graph.SetTimeUpdateMode(DirectorUpdateMode.Manual);
-        AnimationClipPlayable playable = AnimationClipPlayable.Create(graph, clip);
-        playable.SetApplyFootIK(false);
-        playable.SetApplyPlayableIK(false);
-        AnimationPlayableOutput output = AnimationPlayableOutput.Create(graph, "Animation", animator);
-        output.SetSourcePlayable(playable);
-        SceneObjectWriter.ApplyPlay(graph);
-        interactiveClipPlaybackByTrack[trackId] = new InteractiveClipPlayback
-        {
-            graph = graph,
-            clip = clip,
-            animator = animator,
-            loop = IsWalkingHumanClip(clip)
-        };
-        CacheHumanoidPlaybackBones(interactiveClipPlaybackByTrack[trackId], animator);
-    }
-
-    private void ApplyHumanClipPlayback(uint trackId, GameObject instance, float now, float deltaTime)
-    {
-        if (!interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) || state == null)
-        {
-            return;
-        }
-
-        bool allowHipsTranslation = state.mode == InteractiveMotionMode.Replacement;
-        if (!interactiveClipPlaybackByTrack.TryGetValue(trackId, out InteractiveClipPlayback playback) ||
-            playback == null ||
-            !playback.graph.IsValid() ||
-            playback.clip == null)
-        {
-            ApplyFallbackHumanWave(instance, state, now);
-            float fallbackWeight = InteractiveEnvelope(RuntimeClock.ResolveElapsed(now, state.startTime), state.duration);
-            if (ShouldPreserveHumanoidInteractiveRootPosition(allowHipsTranslation) && instance != null)
-            {
-                Vector3 upAxis = state.lastScreen != null ? state.lastScreen.up : Vector3.up;
-                TrackPlacementWriter.Apply(
-                    instance.transform,
-                    new TrackPlacementCommand(
-                        ResolveHumanoidInteractiveRootPosition(
-                        instance.transform.position,
-                        state.startPosition,
-                        allowHipsTranslation,
-                        fallbackWeight),
-                        ResolveHumanoidInteractiveRootRotation(
-                        instance.transform.rotation,
-                        state.startRotation,
-                        allowHipsTranslation,
-                        upAxis,
-                        instance.transform.forward,
-                        fallbackWeight),
-                        instance.transform.localScale));
-            }
-            return;
-        }
-
-        float elapsed = RuntimeClock.ResolveElapsed(now, state.startTime);
-        float weight = InteractiveEnvelope(elapsed, state.duration);
-        Vector3 instancePositionBeforePlayback = instance != null ? instance.transform.position : Vector3.zero;
-        if (!allowHipsTranslation && state.hasPinnedInPlaceRoot)
-        {
-            instancePositionBeforePlayback = state.startPosition;
-        }
-        Quaternion instanceRotationBeforePlayback = instance != null ? instance.transform.rotation : Quaternion.identity;
-        Transform animatorTransform = playback.animator != null ? playback.animator.transform : null;
-        Vector3 animatorLocalPositionBeforePlayback = animatorTransform != null ? animatorTransform.localPosition : Vector3.zero;
-        Quaternion animatorLocalRotationBeforePlayback = animatorTransform != null ? animatorTransform.localRotation : Quaternion.identity;
-        CaptureHumanoidPose(playback.bones, playback.beforeLocalRotations, playback.beforeLocalPositions);
-
-        double time = elapsed;
-        if (playback.loop && playback.clip.length > 0.0001f)
-        {
-            time %= playback.clip.length;
-        }
-        else if (playback.clip.length > 0.0001f)
-        {
-            time = Mathf.Min(elapsed, playback.clip.length);
-        }
-        playback.graph.GetRootPlayable(0).SetTime(time);
-        playback.graph.Evaluate(deltaTime);
-
-        CaptureHumanoidPose(playback.bones, playback.animatedLocalRotations, playback.animatedLocalPositions);
-        BlendHumanoidPose(playback.bones, playback.beforeLocalRotations, playback.beforeLocalPositions, playback.animatedLocalRotations, playback.animatedLocalPositions, weight, allowHipsTranslation);
-        if (instance != null)
-        {
-            if (ShouldRestoreAnimatorLocalTransformSeparately(animatorTransform, instance.transform))
-            {
-                TransformWriter.ApplyLocalPose(
-                    animatorTransform,
-                    animatorLocalPositionBeforePlayback,
-                    animatorLocalRotationBeforePlayback);
-            }
-            Vector3 upAxis = state.lastScreen != null ? state.lastScreen.up : Vector3.up;
-            TrackPlacementWriter.Apply(
-                instance.transform,
-                new TrackPlacementCommand(
-                    ShouldPreserveHumanoidInteractiveRootPosition(allowHipsTranslation)
-                        ? ResolveHumanoidInteractiveRootPosition(
-                            instancePositionBeforePlayback,
-                            state.startPosition,
-                            allowHipsTranslation,
-                            weight)
-                        : instancePositionBeforePlayback,
-                    ResolveHumanoidInteractiveRootRotation(
-                        instanceRotationBeforePlayback,
-                        state.startRotation,
-                        allowHipsTranslation,
-                        upAxis,
-                        instance.transform.forward,
-                        weight),
-                    instance.transform.localScale));
-        }
-    }
-
-    private bool IsHumanoidInteractiveRootPinned(uint trackId)
-    {
-        return interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) &&
-            state != null &&
-            state.hasPinnedInPlaceRoot;
-    }
-
-    private void PinHumanoidInteractiveRootAfterBBox(uint trackId, GameObject instance, Transform screen)
-    {
-        if (!interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) ||
-            state == null ||
-            state.subject != InteractiveMotionSubject.Person ||
-            state.mode == InteractiveMotionMode.Replacement)
-        {
-            return;
-        }
-
-        PinHumanoidInPlaceRoot(instance, state, screen);
-    }
-
-    private void PinHumanoidInPlaceRoot(GameObject instance, InteractiveMotionState state, Transform screen)
-    {
-        if (instance == null || state == null || state.hasPinnedInPlaceRoot)
-        {
-            return;
-        }
-
-        Vector3 upAxis = screen != null ? screen.up : (state.lastScreen != null ? state.lastScreen.up : Vector3.up);
+        Vector3 upAxis = screen != null ? screen.up : Vector3.up;
         Transform viewer = GetViewOrHeadTransform();
-        state.pinnedInPlacePosition = instance.transform.position;
-        Vector3 viewerPosition = viewer != null ? viewer.position : Vector3.zero;
-        bool hasViewer = viewer != null;
-        if (!hasViewer && screen != null)
-        {
-            viewerPosition = state.pinnedInPlacePosition - screen.forward;
-            hasViewer = true;
-        }
-        state.pinnedInPlaceRotation = ResolveHumanoidViewerFacingRotation(
-            state.pinnedInPlacePosition,
-            instance.transform.rotation,
-            upAxis,
-            viewerPosition,
-            hasViewer,
-            screen != null ? -screen.forward : instance.transform.forward);
-        state.startPosition = state.pinnedInPlacePosition;
-        state.startRotation = state.pinnedInPlaceRotation;
-        state.hasPinnedInPlaceRoot = true;
-        TrackPlacementWriter.Apply(
-            instance.transform,
-            new TrackPlacementCommand(
-                state.pinnedInPlacePosition,
-                state.pinnedInPlaceRotation,
-                instance.transform.localScale));
+        Vector3 fallbackForward = screen != null ? -screen.forward : Vector3.forward;
+        Vector3 viewerPosition = viewer != null ? viewer.position : position - fallbackForward;
+        return ResolveHumanoidViewerFacingRotation(position, fallbackRotation, upAxis, viewerPosition, true, fallbackForward);
     }
 
-    public static bool ShouldRestoreAnimatorLocalTransformSeparately(Transform animatorTransform, Transform instanceTransform)
+    public static Quaternion ResolveHumanoidViewerFacingRotation(
+        Vector3 rootPosition,
+        Quaternion fallbackRotation,
+        Vector3 upAxis,
+        Vector3 viewerPosition,
+        bool hasViewer,
+        Vector3 fallbackForward)
     {
-        return animatorTransform != null && instanceTransform != null && animatorTransform != instanceTransform;
+        Vector3 safeUp = upAxis.sqrMagnitude > 0.000001f ? upAxis.normalized : Vector3.up;
+        Vector3 toViewer = hasViewer ? Vector3.ProjectOnPlane(viewerPosition - rootPosition, safeUp) : Vector3.zero;
+        if (toViewer.sqrMagnitude <= 0.000001f)
+        {
+            return MakeUprightYawRotation(fallbackRotation, safeUp, fallbackForward);
+        }
+
+        return Quaternion.LookRotation(toViewer.normalized, safeUp);
     }
 
-    private static bool IsWalkingHumanClip(AnimationClip clip)
+    private static Quaternion MakeUprightYawRotation(Quaternion sourceRotation, Vector3 upAxis, Vector3 fallbackForward)
     {
-        if (clip == null || string.IsNullOrEmpty(clip.name))
+        Vector3 safeUp = upAxis.sqrMagnitude > 0.000001f ? upAxis.normalized : Vector3.up;
+        Vector3 forward = Vector3.ProjectOnPlane(sourceRotation * Vector3.forward, safeUp);
+        if (forward.sqrMagnitude <= 0.000001f)
         {
-            return false;
+            forward = Vector3.ProjectOnPlane(fallbackForward, safeUp);
+        }
+        if (forward.sqrMagnitude <= 0.000001f)
+        {
+            forward = Vector3.ProjectOnPlane(Vector3.forward, safeUp);
         }
 
-        string name = clip.name.ToLowerInvariant();
-        return name.Contains("walk") || name.Contains("run") || name.Contains("step") || name.Contains("approach");
+        return Quaternion.LookRotation(forward.normalized, safeUp);
     }
 
-    private static void CacheHumanoidPlaybackBones(InteractiveClipPlayback playback, Animator animator)
-    {
-        if (playback == null || animator == null || !animator.isHuman)
-        {
-            return;
-        }
-
-        foreach (HumanBodyBones boneId in System.Enum.GetValues(typeof(HumanBodyBones)))
-        {
-            if (boneId == HumanBodyBones.LastBone)
-            {
-                continue;
-            }
-
-            Transform bone = animator.GetBoneTransform(boneId);
-            if (bone != null)
-            {
-                playback.bones[boneId] = bone;
-            }
-        }
-    }
-
-    private static void CaptureHumanoidPose(
-        Dictionary<HumanBodyBones, Transform> bones,
-        Dictionary<HumanBodyBones, Quaternion> rotations,
-        Dictionary<HumanBodyBones, Vector3> positions)
-    {
-        rotations.Clear();
-        positions.Clear();
-        foreach (KeyValuePair<HumanBodyBones, Transform> kv in bones)
-        {
-            Transform bone = kv.Value;
-            if (bone == null)
-            {
-                continue;
-            }
-
-            rotations[kv.Key] = bone.localRotation;
-            positions[kv.Key] = bone.localPosition;
-        }
-    }
-
-    private static void BlendHumanoidPose(
-        Dictionary<HumanBodyBones, Transform> bones,
-        Dictionary<HumanBodyBones, Quaternion> baseRotations,
-        Dictionary<HumanBodyBones, Vector3> basePositions,
-        Dictionary<HumanBodyBones, Quaternion> animatedRotations,
-        Dictionary<HumanBodyBones, Vector3> animatedPositions,
-        float weight,
-        bool allowHipsTranslation)
-    {
-        float t = Mathf.Clamp01(weight);
-        foreach (KeyValuePair<HumanBodyBones, Transform> kv in bones)
-        {
-            Transform bone = kv.Value;
-            if (bone == null)
-            {
-                continue;
-            }
-
-            if (baseRotations.TryGetValue(kv.Key, out Quaternion baseRotation) &&
-                animatedRotations.TryGetValue(kv.Key, out Quaternion animatedRotation))
-            {
-                TransformWriter.ApplyLocalRotation(bone, Quaternion.Slerp(baseRotation, animatedRotation, t));
-            }
-
-            if (kv.Key == HumanBodyBones.Hips &&
-                basePositions.TryGetValue(kv.Key, out Vector3 basePosition) &&
-                animatedPositions.TryGetValue(kv.Key, out Vector3 animatedPosition))
-            {
-                TransformWriter.ApplyLocalPosition(
-                    bone,
-                    ResolveHumanoidInteractiveLocalPosition(kv.Key, basePosition, animatedPosition, t, allowHipsTranslation));
-            }
-            else if (basePositions.TryGetValue(kv.Key, out Vector3 preservedPosition))
-            {
-                TransformWriter.ApplyLocalPosition(bone, preservedPosition);
-            }
-        }
-    }
-
-    public static Vector3 ResolveHumanoidInteractiveLocalPosition(
-        HumanBodyBones boneId,
-        Vector3 basePosition,
-        Vector3 animatedPosition,
-        float weight,
-        bool allowHipsTranslation)
-    {
-        if (boneId != HumanBodyBones.Hips || !allowHipsTranslation)
-        {
-            return basePosition;
-        }
-
-        return Vector3.Lerp(basePosition, animatedPosition, Mathf.Clamp01(weight));
-    }
-
-    private void ApplyFallbackHumanWave(GameObject instance, InteractiveMotionState state, float now)
-    {
-        if (instance == null)
-        {
-            return;
-        }
-
-        Animator animator = instance.GetComponentInChildren<Animator>();
-        if (animator == null || !animator.isHuman)
-        {
-            return;
-        }
-
-        Transform upper = animator.GetBoneTransform(HumanBodyBones.RightUpperArm);
-        Transform lower = animator.GetBoneTransform(HumanBodyBones.RightLowerArm);
-        if (upper == null || lower == null)
-        {
-            return;
-        }
-
-        float elapsed = RuntimeClock.ResolveElapsed(now, state.startTime);
-        float t = Mathf.Clamp01(elapsed / Mathf.Max(0.001f, state.duration));
-        float weight = InteractiveEnvelope(elapsed, state.duration);
-        float wave = Mathf.Sin(t * Mathf.PI * 8f) * weight;
-        TransformWriter.ApplyLocalRotation(
-            upper,
-            upper.localRotation * Quaternion.Euler(-45f * weight, 0f, 25f * weight));
-        TransformWriter.ApplyLocalRotation(
-            lower,
-            lower.localRotation * Quaternion.Euler(0f, 0f, 35f * wave));
-    }
+    // --- Lifecycle -----------------------------------------------------------------------
 
     private void StopInteractiveMotion(uint trackId)
     {
         if (interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) && state != null)
         {
-            state.active = false;
-            state.startedFromFrameOut = false;
+            state.stage = InteractiveEventStage.Inactive;
             state.humanClip = null;
         }
         StopHumanClipPlayback(trackId);
@@ -1867,20 +1369,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             StopInteractiveMotion(keys[i]);
         }
-    }
-
-    private void StopHumanClipPlayback(uint trackId)
-    {
-        if (!interactiveClipPlaybackByTrack.TryGetValue(trackId, out InteractiveClipPlayback playback) || playback == null)
-        {
-            return;
-        }
-
-        if (playback.graph.IsValid())
-        {
-            playback.graph.Destroy();
-        }
-        interactiveClipPlaybackByTrack.Remove(trackId);
     }
 
     private void DisposeInteractiveMotion()
@@ -1896,23 +1384,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 #if UNITY_EDITOR
     private void OnValidate()
     {
-        AutoAssignHumanInteractiveClipsInEditor();
+        AutoAssignHumanInteractiveClipsInEditor(ref humanStaticGestureClips, HumanStaticClipAssetFolder);
+        AutoAssignHumanInteractiveClipsInEditor(ref humanWalkClips, HumanWalkClipAssetFolder);
     }
 
-    private void AutoAssignHumanInteractiveClipsInEditor()
+    private void AutoAssignHumanInteractiveClipsInEditor(ref AnimationClip[] clips, string folder)
     {
-        if (humanInteractiveClips != null && humanInteractiveClips.Length > 0)
+        if (clips != null && clips.Length > 0)
         {
             return;
         }
 
-        string[] guids = UnityEditor.AssetDatabase.FindAssets("t:AnimationClip", new[] { HumanInteractiveClipAssetFolder });
+        string[] guids = UnityEditor.AssetDatabase.FindAssets("t:AnimationClip", new[] { folder });
         if (guids == null || guids.Length == 0)
         {
             return;
         }
 
-        List<AnimationClip> clips = new List<AnimationClip>();
+        List<AnimationClip> found = new List<AnimationClip>();
         for (int i = 0; i < guids.Length; i++)
         {
             string path = UnityEditor.AssetDatabase.GUIDToAssetPath(guids[i]);
@@ -1920,20 +1409,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             for (int j = 0; j < assets.Length; j++)
             {
                 AnimationClip clip = assets[j] as AnimationClip;
-                if (clip == null || clip.name.StartsWith("__preview__", System.StringComparison.Ordinal))
+                if (clip == null || clip.name.StartsWith("__preview__", StringComparison.Ordinal))
                 {
                     continue;
                 }
-                clips.Add(clip);
+                found.Add(clip);
             }
         }
 
-        if (clips.Count == 0)
+        if (found.Count == 0)
         {
             return;
         }
 
-        humanInteractiveClips = clips.ToArray();
+        clips = found.ToArray();
         UnityEditor.EditorUtility.SetDirty(this);
     }
 #endif

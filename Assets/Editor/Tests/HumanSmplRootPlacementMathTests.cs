@@ -240,220 +240,6 @@ public class HumanSmplRootPlacementMathTests
     }
 
     [Test]
-    public void HumanoidInteractiveInPlaceClipPreservesHipsLocalPosition()
-    {
-        Vector3 basePosition = new Vector3(0.1f, 1.0f, -0.2f);
-        Vector3 animatedPosition = new Vector3(2.0f, 1.2f, 3.0f);
-
-        Vector3 resolved = StreamingStereoVideoPlayer.ResolveHumanoidInteractiveLocalPosition(
-            HumanBodyBones.Hips,
-            basePosition,
-            animatedPosition,
-            1.0f,
-            false);
-
-        Assert.That(resolved.x, Is.EqualTo(basePosition.x).Within(0.001f));
-        Assert.That(resolved.y, Is.EqualTo(basePosition.y).Within(0.001f));
-        Assert.That(resolved.z, Is.EqualTo(basePosition.z).Within(0.001f));
-    }
-
-    [Test]
-    public void HumanoidInteractiveInPlaceClipDisablesPostAnimationBBoxFit()
-    {
-        Assert.That(StreamingStereoVideoPlayer.ShouldFitDisplayedModelToBBoxDuringInteractiveMotion(false, true), Is.False);
-    }
-
-    [Test]
-    public void HumanoidInteractiveInPlaceClipFitsBBoxOnceBeforePinning()
-    {
-        Assert.That(
-            StreamingStereoVideoPlayer.ShouldInitialFitHumanoidInPlaceRootBeforePinning(true, false, false),
-            Is.True);
-    }
-
-    [Test]
-    public void HumanoidInteractiveInPlaceClipDoesNotRefitBBoxAfterPinning()
-    {
-        Assert.That(
-            StreamingStereoVideoPlayer.ShouldInitialFitHumanoidInPlaceRootBeforePinning(true, true, false),
-            Is.False);
-    }
-
-    [Test]
-    public void HumanoidInteractiveReplacementClipDisablesPostAnimationBBoxFit()
-    {
-        Assert.That(StreamingStereoVideoPlayer.ShouldFitDisplayedModelToBBoxDuringInteractiveMotion(true, false), Is.False);
-    }
-
-    [Test]
-    public void HumanoidInteractiveIdleAllowsPostAnimationBBoxFit()
-    {
-        Assert.That(StreamingStereoVideoPlayer.ShouldFitDisplayedModelToBBoxDuringInteractiveMotion(false, false), Is.True);
-    }
-
-    [Test]
-    public void HumanoidClipInPlaceAppliesViewerFacingRootTransform()
-    {
-        Assert.That(StreamingStereoVideoPlayer.ShouldApplyHumanFaceViewerRootTransform(false, true), Is.True);
-    }
-
-    [Test]
-    public void HumanoidFaceViewerAppliesFaceViewerRootTransform()
-    {
-        Assert.That(StreamingStereoVideoPlayer.ShouldApplyHumanFaceViewerRootTransform(false, true), Is.True);
-    }
-
-    [Test]
-    public void HumanoidInteractiveInPlaceClipPreservesRootTransformPosition()
-    {
-        Assert.That(StreamingStereoVideoPlayer.ShouldPreserveHumanoidInteractiveRootPosition(false), Is.True);
-    }
-
-    [Test]
-    public void HumanoidInteractiveInPlaceClipKeepsPinnedStartRootPosition()
-    {
-        Vector3 currentPosition = new Vector3(3.0f, 2.0f, 1.0f);
-        Vector3 startPosition = new Vector3(0.2f, 1.1f, -0.3f);
-
-        Vector3 resolved = StreamingStereoVideoPlayer.ResolveHumanoidInteractiveRootPosition(
-            currentPosition,
-            startPosition,
-            false);
-
-        Assert.That(resolved.x, Is.EqualTo(startPosition.x).Within(0.001f));
-        Assert.That(resolved.y, Is.EqualTo(startPosition.y).Within(0.001f));
-        Assert.That(resolved.z, Is.EqualTo(startPosition.z).Within(0.001f));
-    }
-
-    [Test]
-    public void HumanoidInteractiveInPlaceClipReleasesRootWhenEnvelopeIsZero()
-    {
-        Vector3 currentPosition = new Vector3(3.0f, 2.0f, 1.0f);
-        Vector3 startPosition = new Vector3(0.2f, 1.1f, -0.3f);
-
-        Vector3 resolved = StreamingStereoVideoPlayer.ResolveHumanoidInteractiveRootPosition(
-            currentPosition,
-            startPosition,
-            false,
-            0.0f);
-
-        Assert.That(resolved.x, Is.EqualTo(currentPosition.x).Within(0.001f));
-        Assert.That(resolved.y, Is.EqualTo(currentPosition.y).Within(0.001f));
-        Assert.That(resolved.z, Is.EqualTo(currentPosition.z).Within(0.001f));
-    }
-
-    [Test]
-    public void HumanoidInteractiveInPlaceClipBlendsRootDuringTransition()
-    {
-        Vector3 currentPosition = new Vector3(2.0f, 0.0f, 0.0f);
-        Vector3 startPosition = Vector3.zero;
-
-        Vector3 resolved = StreamingStereoVideoPlayer.ResolveHumanoidInteractiveRootPosition(
-            currentPosition,
-            startPosition,
-            false,
-            0.5f);
-
-        Assert.That(resolved.x, Is.EqualTo(1.0f).Within(0.001f));
-    }
-
-    [Test]
-    public void HumanoidInteractiveInPlaceClipPinsRootAtFullWeight()
-    {
-        Vector3 currentPosition = new Vector3(2.0f, 0.0f, 0.0f);
-        Vector3 startPosition = Vector3.zero;
-
-        Vector3 resolved = StreamingStereoVideoPlayer.ResolveHumanoidInteractiveRootPosition(
-            currentPosition,
-            startPosition,
-            false,
-            1.0f);
-
-        Assert.That(resolved.x, Is.EqualTo(startPosition.x).Within(0.001f));
-    }
-
-    [Test]
-    public void InteractiveReplacementPlacementCommandKeepsResolvedPoseAndCurrentScale()
-    {
-        Vector3 resolvedPosition = new Vector3(0.5f, 1.0f, -0.5f);
-        Quaternion resolvedRotation = Quaternion.Euler(0.0f, 45.0f, 0.0f);
-        Vector3 currentScale = new Vector3(1.2f, 1.3f, 1.4f);
-
-        TrackPlacementCommand command = StreamingStereoVideoPlayer.ResolveInteractiveReplacementPlacementCommand(
-            resolvedPosition,
-            resolvedRotation,
-            currentScale);
-
-        Assert.That(command.position.x, Is.EqualTo(resolvedPosition.x).Within(0.001f));
-        Assert.That(command.position.y, Is.EqualTo(resolvedPosition.y).Within(0.001f));
-        Assert.That(command.position.z, Is.EqualTo(resolvedPosition.z).Within(0.001f));
-        Assert.That(Quaternion.Angle(command.rotation, resolvedRotation), Is.LessThan(0.001f));
-        Assert.That(command.localScale.x, Is.EqualTo(currentScale.x).Within(0.001f));
-        Assert.That(command.localScale.y, Is.EqualTo(currentScale.y).Within(0.001f));
-        Assert.That(command.localScale.z, Is.EqualTo(currentScale.z).Within(0.001f));
-    }
-
-    [Test]
-    public void RotationOnlyPlacementCommandKeepsCurrentPositionAndScale()
-    {
-        Vector3 currentPosition = new Vector3(-1.0f, 0.5f, 2.0f);
-        Quaternion resolvedRotation = Quaternion.Euler(0.0f, 90.0f, 0.0f);
-        Vector3 currentScale = new Vector3(0.9f, 1.1f, 1.0f);
-
-        TrackPlacementCommand command = StreamingStereoVideoPlayer.ResolveRotationOnlyPlacementCommand(
-            currentPosition,
-            resolvedRotation,
-            currentScale);
-
-        Assert.That(command.position.x, Is.EqualTo(currentPosition.x).Within(0.001f));
-        Assert.That(command.position.y, Is.EqualTo(currentPosition.y).Within(0.001f));
-        Assert.That(command.position.z, Is.EqualTo(currentPosition.z).Within(0.001f));
-        Assert.That(Quaternion.Angle(command.rotation, resolvedRotation), Is.LessThan(0.001f));
-        Assert.That(command.localScale.x, Is.EqualTo(currentScale.x).Within(0.001f));
-        Assert.That(command.localScale.y, Is.EqualTo(currentScale.y).Within(0.001f));
-        Assert.That(command.localScale.z, Is.EqualTo(currentScale.z).Within(0.001f));
-    }
-
-    [Test]
-    public void PositionOnlyPlacementCommandKeepsCurrentRotationAndScale()
-    {
-        Vector3 resolvedPosition = new Vector3(2.0f, 3.0f, 4.0f);
-        Quaternion currentRotation = Quaternion.Euler(0.0f, 30.0f, 0.0f);
-        Vector3 currentScale = new Vector3(1.4f, 1.0f, 0.8f);
-
-        TrackPlacementCommand command = StreamingStereoVideoPlayer.ResolvePositionOnlyPlacementCommand(
-            resolvedPosition,
-            currentRotation,
-            currentScale);
-
-        Assert.That(command.position.x, Is.EqualTo(resolvedPosition.x).Within(0.001f));
-        Assert.That(command.position.y, Is.EqualTo(resolvedPosition.y).Within(0.001f));
-        Assert.That(command.position.z, Is.EqualTo(resolvedPosition.z).Within(0.001f));
-        Assert.That(Quaternion.Angle(command.rotation, currentRotation), Is.LessThan(0.001f));
-        Assert.That(command.localScale.x, Is.EqualTo(currentScale.x).Within(0.001f));
-        Assert.That(command.localScale.y, Is.EqualTo(currentScale.y).Within(0.001f));
-        Assert.That(command.localScale.z, Is.EqualTo(currentScale.z).Within(0.001f));
-    }
-
-    [Test]
-    public void HumanoidInteractiveInPlaceClipKeepsPinnedRootUpright()
-    {
-        Quaternion crouchedRotation = Quaternion.LookRotation(
-            new Vector3(0.5f, -0.7f, 0.5f).normalized,
-            new Vector3(0.0f, 0.7f, 0.7f).normalized);
-
-        Quaternion resolved = StreamingStereoVideoPlayer.ResolveHumanoidInteractiveRootRotation(
-            Quaternion.identity,
-            crouchedRotation,
-            false,
-            Vector3.up,
-            Vector3.forward);
-
-        Assert.That(Vector3.Dot(resolved * Vector3.up, Vector3.up), Is.GreaterThan(0.999f));
-        Assert.That(Mathf.Abs(Vector3.Dot(resolved * Vector3.forward, Vector3.up)), Is.LessThan(0.001f));
-    }
-
-    [Test]
     public void HumanoidInteractiveInPlaceClipFacesViewerFromPinnedRoot()
     {
         Quaternion resolved = StreamingStereoVideoPlayer.ResolveHumanoidViewerFacingRotation(
@@ -505,12 +291,6 @@ public class HumanSmplRootPlacementMathTests
     }
 
     [Test]
-    public void HumanoidInteractiveReplacementClipAllowsRootTransformPosition()
-    {
-        Assert.That(StreamingStereoVideoPlayer.ShouldPreserveHumanoidInteractiveRootPosition(true), Is.False);
-    }
-
-    [Test]
     public void AnimalFrameOutLoopMovesForwardThenTurnsBackTowardFrame()
     {
         Vector3 startPosition = Vector3.zero;
@@ -518,7 +298,7 @@ public class HumanSmplRootPlacementMathTests
         Vector3 frameOutDirection = Vector3.right;
         Quaternion startRotation = Quaternion.LookRotation(Vector3.right, Vector3.up);
 
-        StreamingStereoVideoPlayer.AnimalFrameOutLoopPose outward = StreamingStereoVideoPlayer.ResolveAnimalFrameOutLoopPose(
+        StreamingStereoVideoPlayer.AnimalFrameOutLoopPose outward = AnimalFrameOutMotion.ResolveLoopPose(
             startPosition,
             startRotation,
             frameOutDirection,
@@ -529,7 +309,7 @@ public class HumanSmplRootPlacementMathTests
             1.0f,
             Vector3.up);
 
-        StreamingStereoVideoPlayer.AnimalFrameOutLoopPose returning = StreamingStereoVideoPlayer.ResolveAnimalFrameOutLoopPose(
+        StreamingStereoVideoPlayer.AnimalFrameOutLoopPose returning = AnimalFrameOutMotion.ResolveLoopPose(
             startPosition,
             startRotation,
             frameOutDirection,
@@ -539,7 +319,7 @@ public class HumanSmplRootPlacementMathTests
             1.0f,
             1.0f,
             Vector3.up);
-        StreamingStereoVideoPlayer.AnimalFrameOutLoopPose completed = StreamingStereoVideoPlayer.ResolveAnimalFrameOutLoopPose(
+        StreamingStereoVideoPlayer.AnimalFrameOutLoopPose completed = AnimalFrameOutMotion.ResolveLoopPose(
             startPosition,
             startRotation,
             frameOutDirection,
@@ -561,7 +341,7 @@ public class HumanSmplRootPlacementMathTests
     [Test]
     public void AnimalFrameOutLoopKeepsMovingOutBeforeLateReturnWindow()
     {
-        StreamingStereoVideoPlayer.AnimalFrameOutLoopPose pose = StreamingStereoVideoPlayer.ResolveAnimalFrameOutLoopPose(
+        StreamingStereoVideoPlayer.AnimalFrameOutLoopPose pose = AnimalFrameOutMotion.ResolveLoopPose(
             Vector3.zero,
             Quaternion.LookRotation(Vector3.right, Vector3.up),
             Vector3.right,
@@ -578,7 +358,7 @@ public class HumanSmplRootPlacementMathTests
     [Test]
     public void AnimalFrameOutLoopWithoutFrameInKeepsMovingOut()
     {
-        StreamingStereoVideoPlayer.AnimalFrameOutLoopPose pose = StreamingStereoVideoPlayer.ResolveAnimalFrameOutLoopPose(
+        StreamingStereoVideoPlayer.AnimalFrameOutLoopPose pose = AnimalFrameOutMotion.ResolveLoopPose(
             Vector3.zero,
             Quaternion.LookRotation(Vector3.right, Vector3.up),
             Vector3.right,
@@ -596,7 +376,7 @@ public class HumanSmplRootPlacementMathTests
     [Test]
     public void AnimalFrameOutControlMovesBeyondForwardFrameInBeforeReturning()
     {
-        Vector3 control = StreamingStereoVideoPlayer.ResolveAnimalFrameOutControlPoint(
+        Vector3 control = AnimalFrameOutMotion.ResolveControlPoint(
             Vector3.zero,
             new Vector3(2.0f, 0.0f, 0.0f),
             true,
@@ -612,7 +392,7 @@ public class HumanSmplRootPlacementMathTests
     {
         Quaternion startRotation = Quaternion.Euler(0f, 45f, 0f);
 
-        StreamingStereoVideoPlayer.AnimalFrameOutLoopPose pose = StreamingStereoVideoPlayer.ResolveAnimalFrameOutLoopPose(
+        StreamingStereoVideoPlayer.AnimalFrameOutLoopPose pose = AnimalFrameOutMotion.ResolveLoopPose(
             Vector3.zero,
             startRotation,
             Vector3.right,
@@ -633,7 +413,7 @@ public class HumanSmplRootPlacementMathTests
         Vector3 current = Vector3.right * 0.2f;
         Quaternion modelFacingLeft = Quaternion.LookRotation(Vector3.left, Vector3.up);
 
-        Vector3 resolved = StreamingStereoVideoPlayer.ResolveAnimalFrameOutDirection(
+        Vector3 resolved = AnimalFrameOutMotion.ResolveDirection(
             previous,
             current,
             true,
@@ -646,7 +426,7 @@ public class HumanSmplRootPlacementMathTests
     [Test]
     public void AnimalFrameOutDirectionUsesScreenPixelMotionBeforeWorldMotion()
     {
-        Vector3 resolved = StreamingStereoVideoPlayer.ResolveAnimalFrameOutDirectionFromScreenMotion(
+        Vector3 resolved = AnimalFrameOutMotion.ResolveDirectionFromScreenMotion(
             new Vector2(100f, 100f),
             new Vector2(130f, 100f),
             true,
@@ -660,7 +440,7 @@ public class HumanSmplRootPlacementMathTests
     [Test]
     public void AnimalFrameOutDirectionMapsImageDownToNegativeScreenUp()
     {
-        Vector3 resolved = StreamingStereoVideoPlayer.ResolveAnimalFrameOutDirectionFromScreenMotion(
+        Vector3 resolved = AnimalFrameOutMotion.ResolveDirectionFromScreenMotion(
             new Vector2(100f, 100f),
             new Vector2(100f, 130f),
             true,
@@ -674,7 +454,7 @@ public class HumanSmplRootPlacementMathTests
     [Test]
     public void AnimalFrameOutDirectionUsesRightScreenEdgeBeforeMotionFallback()
     {
-        Vector3 resolved = StreamingStereoVideoPlayer.ResolveAnimalFrameOutDirectionFromScreenExit(
+        Vector3 resolved = AnimalFrameOutMotion.ResolveDirectionFromScreenExit(
             new Rect(930f, 200f, 90f, 120f),
             1000f,
             600f,
@@ -688,7 +468,7 @@ public class HumanSmplRootPlacementMathTests
     [Test]
     public void AnimalFrameOutDirectionUsesLeftScreenEdgeBeforeMotionFallback()
     {
-        Vector3 resolved = StreamingStereoVideoPlayer.ResolveAnimalFrameOutDirectionFromScreenExit(
+        Vector3 resolved = AnimalFrameOutMotion.ResolveDirectionFromScreenExit(
             new Rect(-20f, 200f, 90f, 120f),
             1000f,
             600f,
@@ -702,7 +482,7 @@ public class HumanSmplRootPlacementMathTests
     [Test]
     public void AnimalFrameOutTravelDistanceUsesSpeedAndHiddenDuration()
     {
-        float distance = StreamingStereoVideoPlayer.ResolveAnimalFrameOutTravelDistance(3.0f, 0.2f);
+        float distance = AnimalFrameOutMotion.ResolveTravelDistance(3.0f, 0.2f);
 
         Assert.That(distance, Is.EqualTo(0.6f).Within(0.001f));
     }
@@ -712,7 +492,7 @@ public class HumanSmplRootPlacementMathTests
     {
         Vector3 posePosition = new Vector3(1.0f, 2.0f, 3.0f);
 
-        Vector3 resolved = StreamingStereoVideoPlayer.ResolveAnimalFrameOutWalkPosition(posePosition);
+        Vector3 resolved = AnimalFrameOutMotion.ResolveWalkPosition(posePosition);
 
         Assert.That(resolved.y, Is.EqualTo(posePosition.y).Within(0.001f));
     }
@@ -723,7 +503,7 @@ public class HumanSmplRootPlacementMathTests
         Vector3 startPosition = new Vector3(0.0f, 1.0f, 0.0f);
         Vector3 frameInPosition = new Vector3(1.0f, 4.0f, 0.0f);
 
-        StreamingStereoVideoPlayer.AnimalFrameOutLoopPose pose = StreamingStereoVideoPlayer.ResolveAnimalFrameOutLoopPose(
+        StreamingStereoVideoPlayer.AnimalFrameOutLoopPose pose = AnimalFrameOutMotion.ResolveLoopPose(
             startPosition,
             Quaternion.identity,
             Vector3.right,
@@ -740,7 +520,7 @@ public class HumanSmplRootPlacementMathTests
     [Test]
     public void AnimalFrameOutHeightPreserverRestoresStartHeight()
     {
-        Vector3 resolved = StreamingStereoVideoPlayer.PreserveAnimalFrameOutStartHeight(
+        Vector3 resolved = AnimalFrameOutMotion.PreserveStartHeight(
             new Vector3(2.0f, 5.0f, 0.0f),
             new Vector3(0.0f, 1.5f, 0.0f),
             Vector3.up);
@@ -749,31 +529,25 @@ public class HumanSmplRootPlacementMathTests
     }
 
     [Test]
-    public void AnimalFrameOutPreservesLastDisplayedBoundsBottom()
+    public void AnimalFrameOutOneWaySegmentEasesFromStartToEnd()
     {
-        Vector3 resolved = StreamingStereoVideoPlayer.ResolvePositionPreservingBoundsBottom(
-            new Vector3(1.0f, 3.0f, 2.0f),
-            4.0f,
-            true,
-            1.25f);
+        StreamingStereoVideoPlayer.AnimalFrameOutLoopPose midway = AnimalFrameOutMotion.ResolveOneWaySegmentPose(
+            Vector3.zero,
+            new Vector3(2.0f, 0.0f, 0.0f),
+            Quaternion.identity,
+            Vector3.up,
+            0.5f);
 
-        Assert.That(resolved.x, Is.EqualTo(1.0f).Within(0.001f));
-        Assert.That(resolved.y, Is.EqualTo(0.25f).Within(0.001f));
-        Assert.That(resolved.z, Is.EqualTo(2.0f).Within(0.001f));
-    }
+        StreamingStereoVideoPlayer.AnimalFrameOutLoopPose end = AnimalFrameOutMotion.ResolveOneWaySegmentPose(
+            Vector3.zero,
+            new Vector3(2.0f, 0.0f, 0.0f),
+            Quaternion.identity,
+            Vector3.up,
+            1.0f);
 
-    [Test]
-    public void AnimalFrameOutStartsFromLastDisplayedRootAfterBBoxFit()
-    {
-        Vector3 preFitRoot = new Vector3(0.0f, 2.0f, 0.0f);
-        Vector3 displayedRoot = new Vector3(0.0f, 1.2f, 0.0f);
-
-        Vector3 resolved = StreamingStereoVideoPlayer.ResolveInteractiveFrameOutStartPosition(
-            preFitRoot,
-            true,
-            displayedRoot);
-
-        Assert.That(resolved.y, Is.EqualTo(displayedRoot.y).Within(0.001f));
+        Assert.That(midway.position.x, Is.EqualTo(1.0f).Within(0.001f));
+        Assert.That(end.position.x, Is.EqualTo(2.0f).Within(0.001f));
+        Assert.That(Vector3.Dot(end.rotation * Vector3.forward, Vector3.right), Is.GreaterThan(0.99f));
     }
 
     [Test]

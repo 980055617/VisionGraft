@@ -109,6 +109,16 @@ public sealed partial class AnimalPoseApplier
         return state;
     }
 
+    private static Quaternion ExtractYawOnly(Quaternion rotation)
+    {
+        Vector3 forward = Vector3.ProjectOnPlane(rotation * Vector3.forward, Vector3.up);
+        if (forward.sqrMagnitude <= 0.000001f)
+        {
+            return Quaternion.identity;
+        }
+        return Quaternion.LookRotation(forward.normalized, Vector3.up);
+    }
+
     private void TryApplyAnimalSmalFk(AnimalRigCache cache, AnimalSmalPose pose, AnimalPoseSettings settings, Vector3[] jointsWorld, byte[] jointVis, Transform instanceRoot)
     {
         if (cache == null || !cache.ready || !pose.hasGlobalOrient || pose.bodyPose == null)
@@ -176,7 +186,17 @@ public sealed partial class AnimalPoseApplier
             }
         }
 
-        Quaternion rawWorldFk0 = pose.camRotation * pose.globalOrient * SmalDataAxisCorrection * state.rootYawFix;
+        // Prepend the track root's own yaw, the same way a Humanoid Avatar's local joint
+        // rotations naturally compose with its root through Unity's transform hierarchy (see
+        // ShouldUseHumanSmplRootOrientation - Human keeps a tracked root orientation separate
+        // from SMPL's globalOrient for exactly this reason). instanceRoot's yaw is otherwise
+        // left untouched by normal tracking (AlignAnimalRootToSkeleton only ever moves its
+        // position, never rotation - see ApplyAnimalSkeletonPlacement), so this is a no-op
+        // during normal playback and only matters when something - e.g. an interactive-motion
+        // gesture turning the model to face the viewer - explicitly sets instanceRoot's
+        // rotation.
+        Quaternion instanceRootYaw = instanceRoot != null ? ExtractYawOnly(instanceRoot.rotation) : Quaternion.identity;
+        Quaternion rawWorldFk0 = instanceRootYaw * pose.camRotation * pose.globalOrient * SmalDataAxisCorrection * state.rootYawFix;
 
         Quaternion worldFk0 = state.smoothingInitialized
             ? Quaternion.Slerp(state.smoothedLocal[0], rawWorldFk0, smoothAlpha)

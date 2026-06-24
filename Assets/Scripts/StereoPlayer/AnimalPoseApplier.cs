@@ -12,6 +12,28 @@ public sealed partial class AnimalPoseApplier
         motionFilter = new AnimalMotionFilter(resolved);
     }
 
+    // There is no Humanoid-Avatar-style standard for which local axis an animal's nose points
+    // along, so unlike Human (where local +Z reliably is the facing direction),
+    // instanceRoot.rotation's own +Z cannot be assumed to be the nose. cache.spine.forward is
+    // kept live and correct every frame by AnimalSmalFkApplier's FK write (with the project's
+    // established "nose = -spine.forward" convention - see the gizmo in AnimalSmalFkApplier),
+    // so reading it is the reliable way to measure which way the model is actually facing right
+    // now, for callers that need to compute a relative turn (e.g. the FaceViewer interactive
+    // motion preset) rather than assume an absolute local axis.
+    public bool TryGetCurrentNoseWorldDirection(Transform instanceRoot, out Vector3 noseWorldDirection)
+    {
+        Transform rigRoot = instanceRoot != null ? (instanceRoot.GetComponentInChildren<Animator>()?.transform ?? instanceRoot) : null;
+        if (rigRoot != null && animalRigCaches.TryGetValue(rigRoot, out AnimalRigCache cache) &&
+            cache != null && cache.spine != null)
+        {
+            noseWorldDirection = -cache.spine.forward;
+            return true;
+        }
+
+        noseWorldDirection = Vector3.forward;
+        return false;
+    }
+
     public void Apply(AnimalPoseRequest request)
     {
         Transform instanceRoot = request.instanceRoot;
@@ -35,6 +57,7 @@ public sealed partial class AnimalPoseApplier
         {
             AlignAnimalRootToSkeleton(instanceRoot, cache, pose.rootWorld, true, tick);
             TryApplyAnimalSmalFk(cache, request.smalPose, request.settings, pose.jointsWorld, pose.jointVis, instanceRoot);
+            ApplyGestureOverlay(cache, request);
             return;
         }
 
@@ -49,6 +72,22 @@ public sealed partial class AnimalPoseApplier
         {
             ApplyAnimalLimbPose(cache, pose.jointsWorld, pose.jointVis, alpha, request.freezeAnimalDistal, pose.hasAnimalControl, pose.animalControl, tick);
         }
+
+        ApplyGestureOverlay(cache, request);
+    }
+
+    // Runs after bone placement regardless of pose source (SMAL FK or keypoint/control-target
+    // IK above), so an AnimalGesturePose gesture/walk clip works on any track - unlike the
+    // animal-control-target-only presets (TailWag/PawWave/BodyTurnViewer), which stay pre-FK
+    // and so still only apply when pose.hasAnimalControl is true.
+    private static void ApplyGestureOverlay(AnimalRigCache cache, AnimalPoseRequest request)
+    {
+        if (request.gestureOverlayClip == null || cache == null)
+        {
+            return;
+        }
+
+        AnimalGesturePosePlayer.ApplyToRigCache(request.gestureOverlayClip, request.gestureOverlayNormalizedTime, cache);
     }
 
     // SMAL FK needs confident front/rear and left/right identification of all four leg

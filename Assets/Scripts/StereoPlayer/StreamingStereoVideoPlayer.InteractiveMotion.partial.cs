@@ -8,6 +8,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
     private const string HumanStaticClipAssetFolder = "Assets/Animations/InteractiveMotion/Human/Static";
     private const string HumanWalkClipAssetFolder = "Assets/Animations/InteractiveMotion/Human/Walk";
+    private const string AnimalStaticClipAssetFolder = "Assets/Animations/InteractiveMotion/Animal/Static";
+    private const string AnimalWalkClipAssetFolder = "Assets/Animations/InteractiveMotion/Animal/Walk";
     private const float DynamicEventProbability = 0.18f;
     private const float MinWalkDurationSeconds = 1.0f;
     private const float MinGestureDurationSeconds = 1.5f;
@@ -19,7 +21,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private enum InteractiveTriggerSource { Random, SystemFrameOut }
     private enum InteractiveDynamicPhase { WalkIn, Gesture, WalkBack }
     private enum InteractiveEventStage { Inactive, Owned, HandoffBlend }
-    private enum InteractiveAnimalPreset { FaceViewer, BodyTurnViewer, TailWag, PawWave }
+    private enum InteractiveAnimalPreset { FaceViewer, BodyTurnViewer, TailWag, PawWave, DataDrivenClip }
     private enum InteractiveHumanPreset { ClipGesture, FaceViewer }
 
     public struct AnimalFrameOutLoopPose
@@ -80,6 +82,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public InteractiveHumanPreset humanPreset;
 
         public InteractiveAnimalPreset animalPreset;
+        public AnimalGesturePose animalGestureClip;
+        public AnimalGesturePose animalWalkClip;
         public bool hasCachedAnimalPose;
         public AnimalPoseWorldData cachedAnimalPose;
         public Vector3 cachedAnimalBasePosition;
@@ -307,9 +311,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             ? viewerPosition - toViewer.normalized * stopDistance
             : state.originPosition;
         destination = PreserveHeight(destination, state.originPosition, upAxis);
-        Quaternion destinationRotation = toViewer.sqrMagnitude > 0.000001f
-            ? Quaternion.LookRotation(toViewer.normalized, upAxis)
-            : state.originRotation;
+        Quaternion destinationRotation = state.originRotation;
+        if (toViewer.sqrMagnitude > 0.000001f)
+        {
+            destinationRotation = isAnimal
+                ? ResolveAnimalTurnedRotation(GetTrackInstanceOrNull(trackId), state.originRotation, toViewer, upAxis)
+                : Quaternion.LookRotation(toViewer.normalized, upAxis);
+        }
 
         state.phaseFromPosition = state.originPosition;
         state.phaseFromRotation = state.originRotation;
@@ -322,7 +330,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.phaseDuration = Mathf.Max(MinWalkDurationSeconds, distance / speed);
         state.stage = InteractiveEventStage.Owned;
 
-        if (!isAnimal)
+        if (isAnimal)
+        {
+            state.animalWalkClip = PickAnimalWalkClip();
+        }
+        else
         {
             StartHumanClipPlayback(trackId, GetTrackInstanceOrNull(trackId), PickHumanWalkClip(), true);
         }
@@ -340,12 +352,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (isAnimal)
         {
-            state.animalPreset = PickAnimalPreset(state.cachedAnimalHasSmalPose);
+            state.animalPreset = PickAnimalPreset(state.cachedAnimalHasSmalPose, out AnimalGesturePose gestureClip);
+            state.animalGestureClip = gestureClip;
             if (state.animalPreset == InteractiveAnimalPreset.FaceViewer)
             {
-                state.gestureRotation = ResolveFaceViewerRotation(state.gesturePosition, freezeRotation, state.lastScreen);
+                state.gestureRotation = ResolveAnimalFaceViewerRotation(instance, state.gesturePosition, freezeRotation, state.lastScreen);
             }
-            state.phaseDuration = Mathf.Max(MinGestureDurationSeconds, staticAnimationDurationSeconds);
+            state.phaseDuration = gestureClip != null
+                ? Mathf.Max(MinGestureDurationSeconds, gestureClip.duration)
+                : Mathf.Max(MinGestureDurationSeconds, staticAnimationDurationSeconds);
             return;
         }
 
@@ -372,9 +387,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.phaseFromPosition = state.gesturePosition;
         state.phaseFromRotation = state.gestureRotation;
         state.phaseToPosition = state.originPosition;
-        state.phaseToRotation = travel.sqrMagnitude > 0.000001f
-            ? Quaternion.LookRotation(travel.normalized, upAxis)
-            : state.gestureRotation;
+        state.phaseToRotation = state.gestureRotation;
+        if (travel.sqrMagnitude > 0.000001f)
+        {
+            state.phaseToRotation = isAnimal
+                ? ResolveAnimalTurnedRotation(GetTrackInstanceOrNull(trackId), state.gestureRotation, travel, upAxis)
+                : Quaternion.LookRotation(travel.normalized, upAxis);
+        }
 
         float speed = Mathf.Max(0.05f, isAnimal ? animalWalkSpeedMetersPerSecond : humanWalkSpeedMetersPerSecond);
         float distance = Vector3.Distance(state.phaseFromPosition, state.phaseToPosition);
@@ -382,7 +401,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.phaseDuration = Mathf.Max(MinWalkDurationSeconds, distance / speed);
         state.stage = InteractiveEventStage.Owned;
 
-        if (!isAnimal)
+        if (isAnimal)
+        {
+            state.animalWalkClip = PickAnimalWalkClip();
+        }
+        else
         {
             StartHumanClipPlayback(trackId, GetTrackInstanceOrNull(trackId), PickHumanWalkClip(), true);
         }
@@ -490,7 +513,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             : SystemTriggerLoopSeconds;
         state.stage = InteractiveEventStage.Owned;
 
-        if (!isAnimal)
+        if (isAnimal)
+        {
+            state.animalWalkClip = PickAnimalWalkClip();
+        }
+        else
         {
             StartHumanClipPlayback(trackId, instance, PickHumanWalkClip(), true);
         }
@@ -636,6 +663,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             ResolveOwnedWalkPose(state, frame, tick.now, out Vector3 position, out Quaternion rotation);
             if (isAnimal)
             {
+                // AnimalFrameOutMotion.ResolveOneWaySegmentPose recomputes its own
+                // Quaternion.LookRotation(travel, up) every frame independent of
+                // phaseToRotation - travel is fixed for the whole walk phase, so that result is
+                // actually constant and equivalent to phaseToRotation for Human. For Animal,
+                // phaseToRotation was already corrected (BeginWalkInPhase/BeginWalkBackPhase) to
+                // turn the model's measured real nose direction, not its naive local +Z, toward
+                // the target - the Random trigger source should use that corrected value
+                // instead. (SystemFrameOut already rotates relative to a known-good live
+                // rotation via AnimalFrameOutMotion.ResolveRotation, so it needs no change.)
+                if (state.triggerSource == InteractiveTriggerSource.Random)
+                {
+                    rotation = state.phaseToRotation;
+                }
                 ApplyMovingAnimalPose(instance, state, position, rotation, tick);
             }
             else
@@ -1055,6 +1095,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float elapsed = RuntimeClock.ResolveElapsed(tick.now, state.phaseStartTime);
         float wave = Mathf.Sin(elapsed * Mathf.PI * 1.5f);
 
+        AnimalGesturePose gestureOverlayClip = null;
+        float gestureOverlayNormalizedTime = 0f;
         if (!state.cachedAnimalHasSmalPose)
         {
             switch (state.animalPreset)
@@ -1070,8 +1112,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     break;
             }
         }
+        if (state.animalGestureClip != null)
+        {
+            // Applied post-FK in AnimalPoseApplier (ApplyGestureOverlay), not on pose.animalControl
+            // here, so it works whether this track's pose came from SMAL or animal control targets.
+            // On a SMAL track this runs *together* with FaceViewer's turn (PickAnimalPreset sets
+            // both at once there), not instead of it - the two don't compete for the root the
+            // way the pre-FK presets above do.
+            gestureOverlayClip = state.animalGestureClip;
+            gestureOverlayNormalizedTime = state.phaseDuration > 0.0001f ? Mathf.Clamp01(elapsed / state.phaseDuration) : 0f;
+        }
 
-        ApplyAnimalPoseRequest(instance, pose, state.cachedAnimalHasSmalPose, state.cachedAnimalSmalPose, state.gesturePosition, state.gestureRotation, tick);
+        ApplyAnimalPoseRequest(instance, pose, state.cachedAnimalHasSmalPose, state.cachedAnimalSmalPose, state.gesturePosition, state.gestureRotation, tick, gestureOverlayClip, gestureOverlayNormalizedTime);
     }
 
     private void ApplyMovingAnimalPose(GameObject instance, InteractiveMotionState state, Vector3 position, Quaternion rotation, RuntimeClock.TickContext tick)
@@ -1083,10 +1135,21 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         AnimalPoseWorldData pose = RemapAnimalPoseRigid(state.cachedAnimalPose, state.cachedAnimalBasePosition, state.cachedAnimalBaseRotation, position, rotation);
-        ApplyAnimalPoseRequest(instance, pose, state.cachedAnimalHasSmalPose, state.cachedAnimalSmalPose, position, rotation, tick);
+        float loopTime = 0f;
+        if (state.animalWalkClip != null)
+        {
+            // Same per-point curve data as the static gesture preset, but looped instead of
+            // played once - this is what turns the otherwise rigid walk/walk-back translation
+            // into a leg cycle, on any model AnimalRigDefinition can resolve, regardless of
+            // whether this track's pose came from SMAL or animal control targets.
+            float elapsed = RuntimeClock.ResolveElapsed(tick.now, state.phaseStartTime);
+            float clipDuration = Mathf.Max(0.0001f, state.animalWalkClip.duration);
+            loopTime = (elapsed % clipDuration) / clipDuration;
+        }
+        ApplyAnimalPoseRequest(instance, pose, state.cachedAnimalHasSmalPose, state.cachedAnimalSmalPose, position, rotation, tick, state.animalWalkClip, loopTime);
     }
 
-    private void ApplyAnimalPoseRequest(GameObject instance, AnimalPoseWorldData pose, bool hasSmalPose, AnimalSmalPose smalPose, Vector3 targetPosition, Quaternion targetRotation, RuntimeClock.TickContext tick)
+    private void ApplyAnimalPoseRequest(GameObject instance, AnimalPoseWorldData pose, bool hasSmalPose, AnimalSmalPose smalPose, Vector3 targetPosition, Quaternion targetRotation, RuntimeClock.TickContext tick, AnimalGesturePose gestureOverlayClip, float gestureOverlayNormalizedTime)
     {
         Animator animator = instance.GetComponentInChildren<Animator>();
         DisableAnimalAnimatorPlayback(animator);
@@ -1100,7 +1163,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             freezeAnimalDistal = false,
             enableBoneApply = enableBoneApply,
             hasSmalPose = hasSmalPose,
-            smalPose = smalPose
+            smalPose = smalPose,
+            gestureOverlayClip = gestureOverlayClip,
+            gestureOverlayNormalizedTime = gestureOverlayNormalizedTime
         });
 
         // AnimalPoseApplier re-aligns and low-pass-filters the root from the solved bone
@@ -1128,6 +1193,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         return result;
     }
+
 
     private static Quaternion ResolveYawOnlyRotation(Quaternion rotation, Vector3 upAxis)
     {
@@ -1179,18 +1245,54 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return result;
     }
 
-    private InteractiveAnimalPreset PickAnimalPreset(bool cachedHasSmalPose)
+    private InteractiveAnimalPreset PickAnimalPreset(bool cachedHasSmalPose, out AnimalGesturePose dataDrivenClip)
     {
+        dataDrivenClip = null;
+        bool hasDataDrivenClips = animalStaticGestureClips != null && animalStaticGestureClips.Length > 0;
+        int value = UnityEngine.Random.Range(0, 100);
+
         if (cachedHasSmalPose)
         {
+            // TailWag/PawWave/BodyTurnViewer perturb AnimalControlWorldData pre-FK, so they
+            // stay unavailable on SMAL tracks - FaceViewer (turning toward the viewer) is the
+            // only thing left that can run pre-FK. DataDrivenClip applies post-FK (see
+            // AnimalPoseApplier.ApplyGestureOverlay) so it works here too, and unlike the
+            // pre-FK presets it doesn't compete with FaceViewer for the root - both can run at
+            // once, so always combine them instead of picking one.
+            if (hasDataDrivenClips)
+            {
+                dataDrivenClip = animalStaticGestureClips[UnityEngine.Random.Range(0, animalStaticGestureClips.Length)];
+            }
             return InteractiveAnimalPreset.FaceViewer;
         }
 
-        int value = UnityEngine.Random.Range(0, 100);
-        if (value < 30) return InteractiveAnimalPreset.FaceViewer;
-        if (value < 55) return InteractiveAnimalPreset.TailWag;
-        if (value < 80) return InteractiveAnimalPreset.PawWave;
-        return InteractiveAnimalPreset.BodyTurnViewer;
+        if (!hasDataDrivenClips)
+        {
+            if (value < 30) return InteractiveAnimalPreset.FaceViewer;
+            if (value < 55) return InteractiveAnimalPreset.TailWag;
+            if (value < 80) return InteractiveAnimalPreset.PawWave;
+            return InteractiveAnimalPreset.BodyTurnViewer;
+        }
+
+        // With data-driven clips available, carve out a flat 20% chance for them and scale
+        // the existing hand-coded presets down proportionally so their relative weights
+        // (30/25/25/20) are unchanged among themselves.
+        if (value < 24) return InteractiveAnimalPreset.FaceViewer;
+        if (value < 44) return InteractiveAnimalPreset.TailWag;
+        if (value < 64) return InteractiveAnimalPreset.PawWave;
+        if (value < 80) return InteractiveAnimalPreset.BodyTurnViewer;
+        dataDrivenClip = animalStaticGestureClips[UnityEngine.Random.Range(0, animalStaticGestureClips.Length)];
+        return InteractiveAnimalPreset.DataDrivenClip;
+    }
+
+    private AnimalGesturePose PickAnimalWalkClip()
+    {
+        if (animalWalkClips == null || animalWalkClips.Length == 0)
+        {
+            return null;
+        }
+
+        return animalWalkClips[UnityEngine.Random.Range(0, animalWalkClips.Length)];
     }
 
     private void ApplyAnimalBodyTurnViewer(Transform instanceRoot, Transform screen, ref AnimalPoseWorldData pose, float weight)
@@ -1358,6 +1460,46 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return ResolveHumanoidViewerFacingRotation(position, fallbackRotation, upAxis, viewerPosition, true, fallbackForward);
     }
 
+    // AnimalSmalFkApplier.TryApplyAnimalSmalFk now prepends instanceRoot's own yaw onto its FK
+    // root rotation, the same way a Humanoid Avatar's local joint rotations naturally compose
+    // with its root through Unity's transform hierarchy (see ShouldUseHumanSmplRootOrientation).
+    // But unlike Human, there is no Avatar-standardized "local +Z is the nose" guarantee for an
+    // animal rig, so naively assigning Quaternion.LookRotation(toViewer, up) - which points
+    // local +Z at toViewer - does not reliably point the real nose there. Instead, measure
+    // which way the model is actually facing right now (AnimalPoseApplier.
+    // TryGetCurrentNoseWorldDirection) and turn fallbackRotation (the track's current real
+    // rotation) by the angle from there to toViewer - the same "measure live state, apply a
+    // relative delta" approach AnimalFrameOutMotion.ResolveRotation already uses successfully
+    // for the system frame-out trigger.
+    private Quaternion ResolveAnimalFaceViewerRotation(GameObject instance, Vector3 position, Quaternion fallbackRotation, Transform screen)
+    {
+        Vector3 upAxis = screen != null ? screen.up : Vector3.up;
+        Transform viewer = GetViewOrHeadTransform();
+        Vector3 fallbackForward = screen != null ? -screen.forward : Vector3.forward;
+        Vector3 viewerPosition = viewer != null ? viewer.position : position - fallbackForward;
+        Vector3 toViewer = Vector3.ProjectOnPlane(viewerPosition - position, upAxis);
+        return ResolveAnimalTurnedRotation(instance, fallbackRotation, toViewer, upAxis);
+    }
+
+    private Quaternion ResolveAnimalTurnedRotation(GameObject instance, Quaternion currentRotation, Vector3 targetDirectionWorld, Vector3 upAxis)
+    {
+        Vector3 targetFlat = Vector3.ProjectOnPlane(targetDirectionWorld, upAxis);
+        if (instance == null || targetFlat.sqrMagnitude <= 0.000001f ||
+            !animalPoseApplier.TryGetCurrentNoseWorldDirection(instance.transform, out Vector3 noseWorld))
+        {
+            return currentRotation;
+        }
+
+        Vector3 noseFlat = Vector3.ProjectOnPlane(noseWorld, upAxis);
+        if (noseFlat.sqrMagnitude <= 0.000001f)
+        {
+            return currentRotation;
+        }
+
+        float signedAngle = Vector3.SignedAngle(noseFlat, targetFlat, upAxis);
+        return Quaternion.AngleAxis(signedAngle, upAxis) * currentRotation;
+    }
+
     public static Quaternion ResolveHumanoidViewerFacingRotation(
         Vector3 rootPosition,
         Quaternion fallbackRotation,
@@ -1428,6 +1570,41 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         AutoAssignHumanInteractiveClipsInEditor(ref humanStaticGestureClips, HumanStaticClipAssetFolder);
         AutoAssignHumanInteractiveClipsInEditor(ref humanWalkClips, HumanWalkClipAssetFolder);
+        AutoAssignAnimalGestureClipsInEditor(ref animalStaticGestureClips, AnimalStaticClipAssetFolder);
+        AutoAssignAnimalGestureClipsInEditor(ref animalWalkClips, AnimalWalkClipAssetFolder);
+    }
+
+    private void AutoAssignAnimalGestureClipsInEditor(ref AnimalGesturePose[] clips, string folder)
+    {
+        if (clips != null && clips.Length > 0)
+        {
+            return;
+        }
+
+        string[] guids = UnityEditor.AssetDatabase.FindAssets("t:AnimalGesturePose", new[] { folder });
+        if (guids == null || guids.Length == 0)
+        {
+            return;
+        }
+
+        List<AnimalGesturePose> found = new List<AnimalGesturePose>();
+        for (int i = 0; i < guids.Length; i++)
+        {
+            string path = UnityEditor.AssetDatabase.GUIDToAssetPath(guids[i]);
+            AnimalGesturePose clip = UnityEditor.AssetDatabase.LoadAssetAtPath<AnimalGesturePose>(path);
+            if (clip != null)
+            {
+                found.Add(clip);
+            }
+        }
+
+        if (found.Count == 0)
+        {
+            return;
+        }
+
+        clips = found.ToArray();
+        UnityEditor.EditorUtility.SetDirty(this);
     }
 
     private void AutoAssignHumanInteractiveClipsInEditor(ref AnimationClip[] clips, string folder)

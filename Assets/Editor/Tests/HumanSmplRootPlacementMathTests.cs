@@ -341,13 +341,15 @@ public class HumanSmplRootPlacementMathTests
     [Test]
     public void AnimalFrameOutLoopKeepsMovingOutBeforeLateReturnWindow()
     {
+        // Symmetric out/back geometry here puts the turn point at t≈0.5 (distance-ratio split,
+        // not a fixed 75%) - sample well before that and before the short turn window around it.
         StreamingStereoVideoPlayer.AnimalFrameOutLoopPose pose = AnimalFrameOutMotion.ResolveLoopPose(
             Vector3.zero,
             Quaternion.LookRotation(Vector3.right, Vector3.up),
             Vector3.right,
             Vector3.zero,
             true,
-            0.70f,
+            0.30f,
             1.0f,
             1.0f,
             Vector3.up);

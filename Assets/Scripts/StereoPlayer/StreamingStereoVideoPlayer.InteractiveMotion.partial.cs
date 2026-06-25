@@ -93,6 +93,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         public readonly Dictionary<HumanBodyBones, Quaternion> fallbackBoneBaseLocalRotations = new Dictionary<HumanBodyBones, Quaternion>();
         public readonly Dictionary<HumanBodyBones, Quaternion> handoffFromBoneLocalRotations = new Dictionary<HumanBodyBones, Quaternion>();
+        public readonly Dictionary<Transform, Quaternion> handoffFromAnimalBoneLocalRotations = new Dictionary<Transform, Quaternion>();
     }
 
     private sealed class InteractiveClipPlayback
@@ -474,9 +475,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.kind = InteractiveEventKind.Dynamic;
         state.dynamicPhase = InteractiveDynamicPhase.WalkIn;
         state.originPosition = state.livePosition;
-        state.originRotation = state.liveRotation;
         state.phaseFromPosition = state.livePosition;
-        state.phaseFromRotation = state.liveRotation;
         state.triggerStartFrame = frame;
         state.hasFrameInPosition = false;
         state.frameInFrame = -1;
@@ -503,6 +502,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             pixelRight,
             pixelUp,
             motionDirection);
+
+        // frameOutDirection must stay derived from the bbox edge (above) - it determines which
+        // way the model actually walks, and has to point off the visible screen for the track
+        // to disappear at all. (A previous version pointed it at the measured nose direction
+        // instead, to keep facing and movement self-consistent - that broke the walk-out
+        // entirely, since the measured facing direction has no necessary relationship to which
+        // screen edge the track is exiting through.)
+        //
+        // liveRotation (instanceRoot's tracked rotation) carries no usable heading on its own
+        // for a SMAL-posed animal (see ResolveAnimalFaceViewerRotation), so turn it to face
+        // frameOutDirection the same way FaceViewer does. This measurement is noisier than usual
+        // right at this exact moment (the bbox is already collapsing in the last few tracked
+        // frames before disappearing - see "Animal tracks" in Docs/interactive-motion-events.md),
+        // so the resulting facing can be a little off from the true exit direction - accepted as
+        // the lesser problem versus not exiting the screen at all.
+        Vector3 faceViewerUpAxis = state.lastScreen != null ? state.lastScreen.up : Vector3.up;
+        Quaternion outboundRotation = isAnimal
+            ? ResolveAnimalTurnedRotation(instance, state.liveRotation, state.frameOutDirection, faceViewerUpAxis)
+            : state.liveRotation;
+        state.originRotation = outboundRotation;
+        state.phaseFromRotation = outboundRotation;
 
         TryPrepareFrameInTarget(trackId, frame, state);
 
@@ -738,14 +758,42 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return Mathf.Clamp01(elapsed / Mathf.Max(0.001f, state.phaseDuration));
     }
 
+    // Returns the "overshoot" distance ResolveControlPoint adds past the predicted frame-in
+    // point, sized so that walking the whole out-and-back path (frameInProjection + overshoot,
+    // there; overshoot, back) at the configured walk speed takes exactly as long as the track
+    // is actually hidden. Previously this returned hiddenSeconds * speed directly as the
+    // overshoot itself, then ResolveLoopPose split that same duration into a fixed 75/25
+    // out/back time ratio regardless of how that compared to the actual out/back distance
+    // ratio - whichever leg was geometrically shorter still got 25%/75% of the time, so it
+    // moved faster than the configured speed (and faster than the other leg).
+    // A frame-out walk reads as more natural a bit faster than the random-triggered
+    // walk-toward-viewer (which is tuned for a deliberate, visible approach) - the subject is
+    // already in motion when it leaves frame, not starting from a stand-still.
+    private const float SystemTriggerSpeedMultiplier = 1.5f;
+
     private float ResolveSystemTriggerTravelDistance(InteractiveMotionState state)
     {
         bool isAnimal = state.subject == InteractiveMotionSubject.Animal;
-        float speed = Mathf.Max(0.05f, isAnimal ? animalWalkSpeedMetersPerSecond : humanWalkSpeedMetersPerSecond);
+        float speed = Mathf.Max(0.05f, isAnimal ? animalWalkSpeedMetersPerSecond : humanWalkSpeedMetersPerSecond) * SystemTriggerSpeedMultiplier;
         float seconds = state.hasFrameInPosition && state.frameInFrame > state.triggerStartFrame
             ? (state.frameInFrame - state.triggerStartFrame) / Mathf.Max(1f, ResolveMetaFps())
             : SystemTriggerLoopSeconds;
-        return AnimalFrameOutMotion.ResolveTravelDistance(seconds, speed);
+        float totalPathDistance = AnimalFrameOutMotion.ResolveTravelDistance(seconds, speed);
+
+        if (!state.hasFrameInPosition)
+        {
+            return totalPathDistance;
+        }
+
+        Vector3 forward = Vector3.ProjectOnPlane(state.frameOutDirection, Vector3.up);
+        if (forward.sqrMagnitude <= 0.000001f)
+        {
+            forward = Vector3.forward;
+        }
+        forward.Normalize();
+        Vector3 toFrameIn = Vector3.ProjectOnPlane(state.frameInPosition - state.originPosition, Vector3.up);
+        float frameInProjection = Mathf.Max(0f, Vector3.Dot(toFrameIn, forward));
+        return Mathf.Max(0f, (totalPathDistance - frameInProjection) / 2f);
     }
 
     private static Vector3 PreserveHeight(Vector3 position, Vector3 referencePosition, Vector3 upAxis)
@@ -762,9 +810,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.handoffFromPosition = instance != null ? instance.transform.position : state.originPosition;
         state.handoffFromRotation = instance != null ? instance.transform.rotation : state.originRotation;
         state.handoffFromBoneLocalRotations.Clear();
+        state.handoffFromAnimalBoneLocalRotations.Clear();
         if (instance != null && state.subject == InteractiveMotionSubject.Person)
         {
             CaptureHumanoidBoneLocalRotations(instance, state.handoffFromBoneLocalRotations);
+        }
+        else if (instance != null && state.subject == InteractiveMotionSubject.Animal)
+        {
+            animalPoseApplier.CaptureBoneLocalRotations(instance.transform, state.handoffFromAnimalBoneLocalRotations);
+            Debug.Log($"[DEBUG-handoff] captured {state.handoffFromAnimalBoneLocalRotations.Count} animal bones at handoff start");
         }
         state.stage = InteractiveEventStage.HandoffBlend;
         state.handoffStartTime = now;
@@ -789,6 +843,29 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (state.subject == InteractiveMotionSubject.Person && state.handoffFromBoneLocalRotations.Count > 0)
         {
             BlendHumanoidBoneLocalRotations(instance, state.handoffFromBoneLocalRotations, t);
+        }
+        else if (state.subject == InteractiveMotionSubject.Animal && state.handoffFromAnimalBoneLocalRotations.Count > 0)
+        {
+            if (t <= 0.3f)
+            {
+                Transform sampleBone = null;
+                Quaternion sampleFrom = Quaternion.identity;
+                foreach (KeyValuePair<Transform, Quaternion> kv in state.handoffFromAnimalBoneLocalRotations)
+                {
+                    sampleBone = kv.Key;
+                    sampleFrom = kv.Value;
+                    break;
+                }
+                Quaternion sampleToBefore = sampleBone != null ? sampleBone.localRotation : Quaternion.identity;
+                AnimalPoseApplier.BlendBoneLocalRotations(state.handoffFromAnimalBoneLocalRotations, t);
+                Quaternion sampleAfter = sampleBone != null ? sampleBone.localRotation : Quaternion.identity;
+                Debug.Log($"[DEBUG-handoff2] t={t:F2} sampleBone={(sampleBone != null ? sampleBone.name : "null")} " +
+                    $"from.euler={sampleFrom.eulerAngles:F1} liveToBeforeBlend.euler={sampleToBefore.eulerAngles:F1} afterBlend.euler={sampleAfter.eulerAngles:F1}");
+            }
+            else
+            {
+                AnimalPoseApplier.BlendBoneLocalRotations(state.handoffFromAnimalBoneLocalRotations, t);
+            }
         }
 
         Vector3 blendedPosition = Vector3.Lerp(state.handoffFromPosition, instance.transform.position, t);

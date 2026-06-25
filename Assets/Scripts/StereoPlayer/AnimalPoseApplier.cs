@@ -12,6 +12,64 @@ public sealed partial class AnimalPoseApplier
         motionFilter = new AnimalMotionFilter(resolved);
     }
 
+    // Snapshot every resolved canonical bone's local rotation, so a caller can blend the body
+    // pose back toward whatever the tracked pipeline writes next (mirroring
+    // CaptureHumanoidBoneLocalRotations/BlendHumanoidBoneLocalRotations for Human) - without
+    // this, only the root smoothly catches up at the end of an interactive motion event while
+    // the legs/spine/head/tail snap instantly into the live tracked pose the moment the
+    // tracked pipeline writes it.
+    public void CaptureBoneLocalRotations(Transform instanceRoot, Dictionary<Transform, Quaternion> destination)
+    {
+        Transform rigRoot = instanceRoot != null ? (instanceRoot.GetComponentInChildren<Animator>()?.transform ?? instanceRoot) : null;
+        if (rigRoot == null || !animalRigCaches.TryGetValue(rigRoot, out AnimalRigCache cache) || cache == null)
+        {
+            return;
+        }
+
+        AddBoneLocalRotation(destination, cache.neck);
+        AddBoneLocalRotation(destination, cache.head);
+        AddBoneLocalRotation(destination, cache.spine);
+        AddBoneLocalRotation(destination, cache.tailBase);
+        AddBoneLocalRotation(destination, cache.tailMid);
+        AddBoneLocalRotation(destination, cache.tailTip);
+        AddBoneLocalRotation(destination, cache.leftFrontUpper);
+        AddBoneLocalRotation(destination, cache.leftFrontLower);
+        AddBoneLocalRotation(destination, cache.leftFrontPaw);
+        AddBoneLocalRotation(destination, cache.rightFrontUpper);
+        AddBoneLocalRotation(destination, cache.rightFrontLower);
+        AddBoneLocalRotation(destination, cache.rightFrontPaw);
+        AddBoneLocalRotation(destination, cache.leftRearUpper);
+        AddBoneLocalRotation(destination, cache.leftRearLower);
+        AddBoneLocalRotation(destination, cache.leftRearPaw);
+        AddBoneLocalRotation(destination, cache.leftRearToe);
+        AddBoneLocalRotation(destination, cache.rightRearUpper);
+        AddBoneLocalRotation(destination, cache.rightRearLower);
+        AddBoneLocalRotation(destination, cache.rightRearPaw);
+        AddBoneLocalRotation(destination, cache.rightRearToe);
+    }
+
+    private static void AddBoneLocalRotation(Dictionary<Transform, Quaternion> destination, Transform bone)
+    {
+        if (bone != null)
+        {
+            destination[bone] = bone.localRotation;
+        }
+    }
+
+    public static void BlendBoneLocalRotations(Dictionary<Transform, Quaternion> fromLocalRotations, float weight)
+    {
+        float clampedWeight = Mathf.Clamp01(weight);
+        foreach (KeyValuePair<Transform, Quaternion> kv in fromLocalRotations)
+        {
+            if (kv.Key == null)
+            {
+                continue;
+            }
+
+            kv.Key.localRotation = Quaternion.Slerp(kv.Value, kv.Key.localRotation, clampedWeight);
+        }
+    }
+
     // There is no Humanoid-Avatar-style standard for which local axis an animal's nose points
     // along, so unlike Human (where local +Z reliably is the facing direction),
     // instanceRoot.rotation's own +Z cannot be assumed to be the nose. cache.spine.forward is

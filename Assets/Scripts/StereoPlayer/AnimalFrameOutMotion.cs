@@ -3,7 +3,6 @@ using UnityEngine;
 public static class AnimalFrameOutMotion
 {
     private const float EdgeMargin01 = 0.08f;
-    private const float ReturnStart01 = 0.75f;
 
     public static float ResolveTravelDistance(float hiddenSeconds, float speedMetersPerSecond)
     {
@@ -106,6 +105,14 @@ public static class AnimalFrameOutMotion
         return direction.sqrMagnitude > 0.000001f ? direction.normalized : fallback;
     }
 
+    // Fraction of the *whole* walk's duration the turn itself takes, regardless of how long
+    // that total duration is - "quickly change heading, then keep walking straight" should read
+    // as a quick turn relative to the walk whether the walk is 5 seconds or 0.3 seconds, so this
+    // is a fraction of phaseDurationSeconds rather than a fixed number of real seconds (a fixed
+    // real-second window would, for a short walk, end up covering most or all of it - turning
+    // continuously throughout instead of "straight, turn, straight").
+    private const float TurnWindowFraction = 0.2f;
+
     public static StreamingStereoVideoPlayer.AnimalFrameOutLoopPose ResolveLoopPose(
         Vector3 startPosition,
         Quaternion startRotation,
@@ -135,25 +142,50 @@ public static class AnimalFrameOutMotion
             ? PreserveStartHeight(frameInPosition, startPosition, safeUp)
             : startPosition;
         Vector3 control = ResolveControlPoint(startPosition, end, hasFrameInPosition, forward, distance, safeUp);
-        bool returning = hasFrameInPosition && t >= ReturnStart01;
+
+        // Straight out, straight back - two segments meeting at a corner, split by their actual
+        // distance ratio so both legs average the same walking speed.
+        float outboundDistance = Vector3.Distance(startPosition, control);
+        float returnDistance = hasFrameInPosition ? Vector3.Distance(control, end) : outboundDistance;
+        float totalPathDistance = outboundDistance + returnDistance;
+        float turnPoint01 = hasFrameInPosition && totalPathDistance > 0.0001f
+            ? Mathf.Clamp01(outboundDistance / totalPathDistance)
+            : 0.5f;
+
+        bool returning = hasFrameInPosition && t >= turnPoint01;
         float segmentT = returning
-            ? Mathf.InverseLerp(ReturnStart01, 1.0f, t)
-            : Mathf.InverseLerp(0.0f, ReturnStart01, t);
+            ? Mathf.InverseLerp(turnPoint01, 1.0f, t)
+            : Mathf.InverseLerp(0.0f, turnPoint01, t);
         Vector3 segmentStart = returning ? control : startPosition;
         Vector3 segmentEnd = returning ? end : control;
-        float motionT = returning ? SmoothMotion01(segmentT) : EaseOutMotion01(segmentT);
-        Vector3 position = Vector3.Lerp(segmentStart, segmentEnd, motionT);
+        Vector3 position = Vector3.Lerp(segmentStart, segmentEnd, SmoothMotion01(segmentT));
 
-        Vector3 facing = segmentEnd - segmentStart;
-        if (facing.sqrMagnitude <= 0.000001f)
+        // The turn itself is a short Slerp window centered on turnPoint01, independent of the
+        // (likely much longer) total walk duration - position keeps moving along the straight
+        // segments above the whole time, the heading just catches up to the new segment's
+        // direction quickly instead of all at once or gradually over the full walk.
+        Vector3 returnFacing = end - control;
+        if (returnFacing.sqrMagnitude <= 0.000001f)
         {
-            facing = returning ? -forward : forward;
+            returnFacing = -forward;
         }
+        Quaternion turnedRotation = ResolveRotation(startRotation, forward, returnFacing, safeUp);
+        float halfWindow01 = TurnWindowFraction * 0.5f;
+        // Re-center the window so it always fits inside [0, 1] regardless of where turnPoint01
+        // falls.
+        float windowCenter = Mathf.Clamp(turnPoint01, halfWindow01, 1f - halfWindow01);
+        float turnBlend = hasFrameInPosition
+            ? Mathf.Clamp01(Mathf.InverseLerp(windowCenter - halfWindow01, windowCenter + halfWindow01, t))
+            : 0f;
+        Quaternion resultRotation = Quaternion.Slerp(startRotation, turnedRotation, turnBlend);
+        Debug.Log($"[DEBUG-loop] t={t:F2} turnPoint01={turnPoint01:F2} windowCenter={windowCenter:F2} " +
+            $"halfWindow01={halfWindow01:F2} turnBlend={turnBlend:F2} startRotation.euler={startRotation.eulerAngles:F1} " +
+            $"resultRotation.euler={resultRotation.eulerAngles:F1}");
 
         return new StreamingStereoVideoPlayer.AnimalFrameOutLoopPose
         {
             position = PreserveStartHeight(position, startPosition, safeUp),
-            rotation = ResolveRotation(startRotation, forward, facing, safeUp)
+            rotation = resultRotation
         };
     }
 
@@ -253,11 +285,5 @@ public static class AnimalFrameOutMotion
     {
         value = Mathf.Clamp01(value);
         return value * value * (3f - 2f * value);
-    }
-
-    private static float EaseOutMotion01(float value)
-    {
-        value = Mathf.Clamp01(value);
-        return 1f - ((1f - value) * (1f - value));
     }
 }

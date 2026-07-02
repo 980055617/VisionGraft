@@ -280,12 +280,41 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
     }
 
+    // Counts random-triggered events currently in progress (Owned or HandoffBlend), across all
+    // tracks, so the video pauses for the duration of any random animation and only resumes
+    // once every one of them has finished - two tracks animating back-to-back or overlapping
+    // should not let the video sneak forward in between. System (frame-out) events are tied to
+    // the real video timeline (they walk out and back to match when the subject actually
+    // reappears), so they deliberately do not pause anything here.
+    private int activeRandomInteractiveMotionCount;
+
+    private void BeginRandomInteractiveMotionVideoPause()
+    {
+        activeRandomInteractiveMotionCount++;
+        if (activeRandomInteractiveMotionCount == 1 && vp != null && vp.isPlaying)
+        {
+            RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Pause);
+            UpdatePauseButtonLabel();
+        }
+    }
+
+    private void EndRandomInteractiveMotionVideoPause()
+    {
+        activeRandomInteractiveMotionCount = Mathf.Max(0, activeRandomInteractiveMotionCount - 1);
+        if (activeRandomInteractiveMotionCount == 0 && vp != null && !vp.isPlaying)
+        {
+            RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
+            UpdatePauseButtonLabel();
+        }
+    }
+
     private void StartInteractiveMotion(uint trackId, bool isAnimal, InteractiveEventKind kind, float now)
     {
         InteractiveMotionState state = GetOrCreateInteractiveMotionState(trackId);
         state.subject = isAnimal ? InteractiveMotionSubject.Animal : InteractiveMotionSubject.Person;
         state.triggerSource = InteractiveTriggerSource.Random;
         state.kind = kind;
+        BeginRandomInteractiveMotionVideoPause();
         state.originPosition = state.hasLiveSample ? state.livePosition : Vector3.zero;
         state.originRotation = state.hasLiveSample ? state.liveRotation : Quaternion.identity;
 
@@ -674,6 +703,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         bool isAnimal = state.subject == InteractiveMotionSubject.Animal;
         bool isGesturePhase = state.kind == InteractiveEventKind.Static || state.dynamicPhase == InteractiveDynamicPhase.Gesture;
 
+        // Permanent frame-out: no reappearance in remaining metadata — walk indefinitely until
+        // off-screen rather than stopping at a fixed control point.
+        if (state.triggerSource == InteractiveTriggerSource.SystemFrameOut && !state.hasFrameInPosition)
+        {
+            return TryApplyPermanentFrameOutWalk(trackId, instance, state, isAnimal, tick);
+        }
+
         if (isGesturePhase)
         {
             ApplyFrozenPoseAndGesture(trackId, instance, state, tick);
@@ -718,6 +754,69 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         return true;
+    }
+
+    // Permanent frame-out walk: linear constant-speed movement in frameOutDirection until the
+    // instance is no longer visible to any camera, or the safety timeout fires. Constant speed
+    // (not ResolveLoopPose's smoothstep) keeps root movement in sync with the looping walk
+    // animation. On hide: deactivate, reset to Inactive, clear hasLiveSample so the trigger
+    // does not immediately restart. See docs/adr/0005-permanent-frameout-indefinite-walk.md.
+    private bool TryApplyPermanentFrameOutWalk(uint trackId, GameObject instance, InteractiveMotionState state, bool isAnimal, RuntimeClock.TickContext tick)
+    {
+        float elapsed = RuntimeClock.ResolveElapsed(tick.now, state.phaseStartTime);
+        float speed = Mathf.Max(0.05f, isAnimal ? animalWalkSpeedMetersPerSecond : humanWalkSpeedMetersPerSecond) * SystemTriggerSpeedMultiplier;
+        Vector3 position = state.phaseFromPosition + state.frameOutDirection * (elapsed * speed);
+        Quaternion rotation = state.phaseFromRotation;
+
+        if (isAnimal)
+        {
+            ApplyMovingAnimalPose(instance, state, position, rotation, tick);
+        }
+        else
+        {
+            ApplyHumanClipPlayback(trackId, instance, tick.now, tick.deltaTime);
+            if (!HasActiveHumanClipPlayback(trackId))
+            {
+                ApplyFallbackHumanWalk(instance, state, tick.now);
+            }
+            TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(position, rotation, instance.transform.localScale));
+        }
+
+        bool invisible = !IsInstanceVisibleToAnyCamera(instance);
+        bool timedOut = elapsed >= ResolvePermanentFrameOutTimeoutSeconds();
+        if (invisible || timedOut)
+        {
+            SceneObjectWriter.ApplyActive(instance, false);
+            state.stage = InteractiveEventStage.Inactive;
+            state.hasLiveSample = false;
+            StopHumanClipPlayback(trackId);
+        }
+
+        return true;
+    }
+
+    private static bool IsInstanceVisibleToAnyCamera(GameObject instance)
+    {
+        if (instance == null)
+        {
+            return false;
+        }
+
+        Renderer[] renderers = instance.GetComponentsInChildren<Renderer>(true);
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            if (renderers[i] != null && renderers[i].isVisible)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private float ResolvePermanentFrameOutTimeoutSeconds()
+    {
+        return vp != null && vp.length > 0.0001 ? (float)(vp.length * 0.5) : 60f;
     }
 
     private void ResolveOwnedWalkPose(InteractiveMotionState state, int frame, float now, out Vector3 position, out Quaternion rotation)
@@ -876,6 +975,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             state.stage = InteractiveEventStage.Inactive;
             state.nextTriggerTime = RuntimeClock.ResolveNextTime(tick.now, RandomInteractiveInterval());
+            if (state.triggerSource == InteractiveTriggerSource.Random)
+            {
+                EndRandomInteractiveMotionVideoPause();
+            }
         }
     }
 

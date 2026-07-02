@@ -48,15 +48,19 @@ bundle 内の検出オブジェクト（Human / Animal / Else）を、対応す�
 
 | ドキュメント | 内容 |
 |---|---|
-| [docs/smpl-retargeting.md](docs/smpl-retargeting.md) | SMPL FK・座標変換・Humanoid リターゲティング実装ガイド・調査ログ |
-| [docs/DogMetaBoneMapping.md](docs/DogMetaBoneMapping.md) | 犬モデルのボーンマッピング |
+| [docs/bundle-placement.md](docs/bundle-placement.md) | bundle 構造・meta.bin・anchor 配置（発表用まとめ + 実装リファレンス） |
+| [docs/smpl-retargeting.md](docs/smpl-retargeting.md) | Human SMPL / Animal SMAL FK・座標変換・調査ログ（発表用まとめ付き） |
+| [docs/interactive-motion-events.md](docs/interactive-motion-events.md) | インタラクティブモーションイベント（発表用まとめ付き） |
+| [docs/DogMetaBoneMapping.md](docs/DogMetaBoneMapping.md) | 犬モデルのボーンマッピング・スケール調査 |
 | [docs/human-animation-test-scene.md](docs/human-animation-test-scene.md) | Human アニメーションテストシーンの使い方 |
-| [docs/interactive-motion-events.md](docs/interactive-motion-events.md) | インタラクティブモーションイベント |
+| [docs/presentations/weekly/](docs/presentations/weekly/) | 週次進捗ファイル（`YYYY-MM-DD.md`、金曜日の日付） |
 
 ## 作業方針
 
 - **作業前に関連 docs を参照**する
 - **作業中・作業後にドキュメントを更新**する（新しい知見・NG パターン・調査結果）
+- **実装後に `Docs/presentations/` を更新**する（対応する機能ファイルの内容を現状に合わせ、`presentations/weekly/YYYY-MM-DD.md` に今週の差分を追記する）
+  - 週次ファイルの命名規則: **金曜日（ゼミ当日）の日付**をファイル名にする。内容はその前の週（土〜金）の作業記録
 - **コードを調べてから推測する**（わからない点は実際のコードを確認してからユーザーに質問）
 - **ログから実際の値を確認**してから修正方向を決める
 - **修正の根本原因が確認できてから変更に入る**

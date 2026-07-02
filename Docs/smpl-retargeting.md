@@ -1,5 +1,32 @@
 # SMPL → Unity Humanoid リターゲティング 実装ガイド
 
+> **構成:** `発表用まとめ` がゼミ向け概要。`関連ファイル`〜`SMPL ↔ Unity Humanoid 座標系対応` が**実装リファレンス**（FK 公式・座標変換ルール・マッピング表）。`調査ログ` 以降が**なぜこの実装になったかの経緯記録**。
+
+## 発表用まとめ
+
+### Human SMPL → Unity Humanoid Rig
+
+方式は **FK のみ**（IK 禁止・暫定。将来 FK vs IK の比較検証が必要）。
+
+```
+tw[j] = parentTW * bindRotLocal[bone] * bodyPose[j]
+→ ApplyWorldRotation(bone, tw[j])
+```
+
+- Spine/Chest は推定値が過大（34〜63°）なので `SpineBodyPoseScale=0.25` でダウンスケール補正
+- 腕・脚は SMPL ジョイント座標も使って AimAt で向きを微調整（1 ボーンずつの forward 補正）
+- **なぜ `parent * bind * pose` の順か**: SMPL body_pose は「親ボーンの現在姿勢からの相対回転」という規約。実際に右腕で約 77° のズレが出て発覚した
+
+### Animal SMAL → カスタム Animal Rig
+
+同じ FK 公式を使用。SMAL ネイティブ座標系が Unity と異なるため `SmalDataAxisCorrection = Euler(0,90,90)` を適用（実機キャリブレーション確定値）。一部の関節（脚・首）は rest skeleton との差分から幾何的に補正（詳細 [ADR-0001](adr/0001-animal-smal-fk.md)）。
+
+複数モデル対応（[ADR-0002](adr/0002-animal-rig-generalization.md)）: ボーン名トークンマッチング + 前後脚の実測位置から正面方向を動的に推定。DogRoot・P_GermanShepherd で検証済み。
+
+**Human と異なる理由**: Human は Unity 標準 Humanoid Avatar があるため関節 FK が直接対応するが、Animal はカスタムリグのためジョイント対応・座標補正を自前で構築する必要があった。
+
+---
+
 ## 関連ファイル
 
 | ファイル | 役割 |

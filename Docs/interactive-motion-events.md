@@ -2,6 +2,22 @@
 
 Interactive motion events are optional behaviors inserted during stereo video playback to make displayed person and animal tracks feel responsive. They are enabled by default and can be disabled at runtime from the settings panel with the `Motion` toggle. See [docs/adr/0004-interactive-motion-exclusive-handoff.md](adr/0004-interactive-motion-exclusive-handoff.md) for the architectural decision behind this design.
 
+## 発表用まとめ
+
+**設計思想**: 「姿勢追従（Pose Following）」と「アニメーション」は別概念。アニメーションは Pose Following を一時的に中断（Exclusive Authority）して再生し、終了後はブレンドして追従に戻す。
+
+| 種類 | 内容 |
+|---|---|
+| **Static animation** | 根を固定したままその場でジェスチャー再生（wave、idle 等） |
+| **Dynamic animation** | 歩いて近くへ → ジェスチャー → 歩いて戻る |
+| **System frame-out** | 検出が消えた瞬間に自動発生。再出現予測位置へ歩く（[ADR-0005](adr/0005-permanent-frameout-indefinite-walk.md) も参照） |
+
+**実装状況**: Human は FBX Humanoid clip を Playable で再生。Animal はカーブベースの汎用ジェスチャーデータ（`AnimalGesturePose`）を additive で適用（リグ非依存設計）。Handoff blend は root + 全ボーンを Slerp。
+
+**強調ポイント**: Pose Following と Animation の分離設計。競合しないよう排他制御している点が最大の工夫。
+
+---
+
 ## Core model
 
 - **Exclusive authority**: while an interactive motion event is active for a track, normal pose tracking (the `meta.bin`-driven root placement and FK/IK pipeline) is fully suspended for that track. The event owns the model's root and pose until it ends. There is no per-frame blending with live tracking while an event runs.
@@ -9,9 +25,12 @@ Interactive motion events are optional behaviors inserted during stereo video pl
 - Two kinds of event:
   - **Static animation**: freezes the model's root in place and plays an in-place gesture.
   - **Dynamic animation**: a three-phase sequence built on a shared walking-motion primitive — walk-in, a static-animation gesture, walk-back to the position the event started from.
+- **Video pause during Random events**: a Random-triggered event pauses video playback (`BeginRandomInteractiveMotionVideoPause`/`EndRandomInteractiveMotionVideoPause`, via `RuntimePlaybackController`) for its whole duration (Owned + HandoffBlend) and resumes it once finished. A reference count, not a flag, tracks this - if a second track's Random event starts (or is already running) while another is still finishing, the video stays paused until *all* of them have ended, not just the most recent one. The gesture/walk animation itself runs on real time (`RuntimeClock`/`Time.time`), independent of video playback, so it keeps animating smoothly while the video frame is frozen. System (frame-out) events deliberately do **not** pause anything - they are paced to match the real video timeline (walking out and back in sync with when the subject actually reappears), so pausing would break that sync.
 - Two trigger sources:
   - **Random**: scheduled per track at random intervals (`interactiveMotionMinIntervalSeconds` / `interactiveMotionMaxIntervalSeconds`). Picks static or dynamic with a fixed in-code probability (`DynamicEventProbability`).
-  - **System (frame-out)**: triggered automatically when a track disappears from the current frame's metadata. Modeled as a dynamic animation with no gesture phase: the model walks away from its last visible position (preserving the height it had at the moment of disappearance) and, when the track's reappearance frame can be predicted from upcoming metadata, walks toward that predicted position so it rejoins tracking smoothly when the subject reappears. If no reappearance can be predicted, it just walks out and waits.
+  - **System (frame-out)**: triggered automatically when a track disappears from the current frame's metadata. Modeled as a dynamic animation with no gesture phase. Behavior differs based on whether a reappearance frame exists in the remaining metadata:
+    - **Temporary frame-out** (`hasFrameInPosition == true`): the model walks away from its last visible position (preserving height) along a timed out-and-back arc toward the predicted reappearance position, rejoining tracking smoothly when the subject reappears.
+    - **Permanent frame-out** (`hasFrameInPosition == false`): no reappearance found in remaining frames. The model walks indefinitely in `frameOutDirection` at constant speed (`walkSpeed × SystemTriggerSpeedMultiplier`) until `Renderer.isVisible` becomes false for all renderers, or a safety timeout of `vp.length × 0.5` seconds elapses. At that point the instance is deactivated, state resets to `Inactive`, and `hasLiveSample` is cleared so the trigger does not restart immediately. When the video loops and the track reappears, `hasLiveSample` is restored by normal tracking and the system trigger can fire again. Constant-speed linear walk is used (not `ResolveLoopPose`'s smoothstep) to keep root movement in sync with the walk animation clip; see [docs/adr/0005-permanent-frameout-indefinite-walk.md](adr/0005-permanent-frameout-indefinite-walk.md).
   - The "last visible position" is deliberately not just the literal last frame's data. Inspecting `meta.bin` directly around a real frame-out (an animal track exiting the right edge) showed the detector's bbox collapsing hard for the last several frames before disappearing — the detector is only catching a shrinking sliver at the edge in those frames. `ObserveInteractiveMotionLiveTrackedSample`/`ObserveInteractiveMotionDisplayedRoot` reject a frame from updating the frame-out origin once its bbox area drops below `BBoxQualityMinAreaRatio` (50%) of the last accepted bbox area, so the origin freezes at the last reliable frame instead of one of the corrupted tail frames.
   - The same collapse happens symmetrically on reappearance: the first few frames after a track comes back also have a small/partial bbox before it recovers to full size, so the normal tracked pipeline's bbox-fit placement is briefly wrong right when visibility resumes. `TryStopSystemTriggerOnVisibleFrame` does not hand off the instant the track becomes visible; it keeps running the synthetic frame-out walk until a frame passes the same bbox-quality check (or `MaxFrameInQualityWaitSeconds` elapses, as a safety cap for a track whose bbox never fully recovers), so the handoff blends toward a reliable tracked frame instead of a still-corrupted one.
   - A track can also float *before* it ever frame-outs, while it is still genuinely visible in the metadata (this is not an Interactive Motion code path at all — it happens in the normal tracked pipeline). Checking `meta.bin` showed the bbox's right edge pinned exactly at the frame width for several frames before the track disappeared: the subject was being clipped by the screen edge, so the detector's bbox only covered a shrinking visible sliver, and the bbox's bottom edge (used for `AlignModelToBBoxBottom`) drifted away from the subject's true feet position as that sliver shrank. `ResolveReliableBBoxBottomVEye` in `StreamingStereoVideoPlayer.Playback.partial.cs` freezes the bottom-alignment target at the last reliable (large enough, frame-edge-touching) bbox instead of chasing a collapsed one. This is a core tracked-pipeline fix, independent of `enableInteractiveMotion`.

@@ -1054,13 +1054,12 @@ MonoBehaviour:
   boneApplyAlpha: 1
   enableJointSmoothing: 1
   jointSmoothingAlpha: 0.35
-  animalSmalCanonicalCorrectionEuler: {x: 0, y: 90, z: 90}
   showOtherProxyBoxes: 0
   otherProxyBoxColor: {r: 1, g: 0.78, b: 0.18, a: 0.32}
   enableRuntimeControls: 1
   runtimeControlsPrefab: {fileID: 3675716834162371033, guid: 19be18d74f8608a4583c4c6c4e6e8723, type: 3}
-  enableInteractiveMotion: 0
-  humanInteractiveClips:
+  enableInteractiveMotion: 1
+  humanStaticGestureClips:
   - {fileID: -203655887218126122, guid: e6eecc3fd4d4a4145a91ea9763a6c382, type: 3}
   - {fileID: -203655887218126122, guid: 24ba1f0f1a335744fbc564c2739d1ca2, type: 3}
   - {fileID: -203655887218126122, guid: 0e463dcbe29b06c4b90e96f55d703f69, type: 3}
@@ -1068,11 +1067,23 @@ MonoBehaviour:
   - {fileID: -203655887218126122, guid: 476d139a39a5a9749841377f289048c7, type: 3}
   - {fileID: -203655887218126122, guid: a3ff864cf9bda90469ddde7a5a63a1e3, type: 3}
   - {fileID: -203655887218126122, guid: f48165954a1dc834c8312f4ab2d8325d, type: 3}
+  humanWalkClips:
+  - {fileID: -203655887218126122, guid: dca5e96eb574c95418d2907e29745b86, type: 3}
+  animalStaticGestureClips:
+  - {fileID: 11400000, guid: d97096482128a4a4fa4470a230800c43, type: 2}
+  - {fileID: 11400000, guid: 287e09220e0a90a4a9fadbc5ccaeb9a9, type: 2}
+  - {fileID: 11400000, guid: ce811256706a36e4f85b3530b3de432b, type: 2}
+  - {fileID: 11400000, guid: 422e018c5b1e3de4aa3acc2a34624f38, type: 2}
+  animalWalkClips:
+  - {fileID: 11400000, guid: cbd6419643807bc4793fb2652fd65cc5, type: 2}
   interactiveMotionMinIntervalSeconds: 6
   interactiveMotionMaxIntervalSeconds: 14
-  interactiveMotionDurationSeconds: 2.4
-  interactiveMotionBlendSeconds: 0.45
-  interactiveApproachDistanceMeters: 0.45
+  staticAnimationDurationSeconds: 2.4
+  interactiveHandoffBlendSeconds: 0.45
+  humanApproachStopDistanceMeters: 0.6
+  humanWalkSpeedMetersPerSecond: 0.8
+  animalApproachStopDistanceMeters: 0.5
+  animalWalkSpeedMetersPerSecond: 0.5
 --- !u!114 &1029322083431137655
 MonoBehaviour:
   m_ObjectHideFlags: 0

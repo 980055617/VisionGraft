@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: f0e6c1cbfc100b44c9434d4749da91fa
+timeCreated: 1455108223
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 55797
+  packageName: Tiger
+  packageVersion: 1.0
+  assetPath: Assets/Tiger/Materials/texture.mat
+  uploadId: 102476

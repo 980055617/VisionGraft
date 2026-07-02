@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 37a4ad92f98a7b646ad2d9b1a42c6428
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 377614
+  packageName: 'Realistic Cow: Shepherd Valley'
+  packageVersion: 1.0
+  assetPath: Assets/Shepherd_Valley/HDRP/Prefabs/P_Cow.prefab
+  uploadId: 909530

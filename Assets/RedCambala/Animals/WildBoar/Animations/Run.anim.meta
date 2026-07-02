@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 5ee2bc86f28a4b04997b21da658885f6
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 7400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 262076
+  packageName: Wild boar
+  packageVersion: 1.0
+  assetPath: Assets/RedCambala/Animals/WildBoar/Animations/Run.anim
+  uploadId: 620418

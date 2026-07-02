@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: d80123b554c761148911b8f930cafe59
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 7400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 262076
+  packageName: Wild boar
+  packageVersion: 1.0
+  assetPath: Assets/RedCambala/Animals/WildBoar/Animations/StunOut.anim
+  uploadId: 620418

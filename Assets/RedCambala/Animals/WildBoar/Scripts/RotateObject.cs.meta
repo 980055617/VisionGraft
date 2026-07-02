@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 0f7b26efa759ec24c930dda80b97ff8f
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 262076
+  packageName: Wild boar
+  packageVersion: 1.0
+  assetPath: Assets/RedCambala/Animals/WildBoar/Scripts/RotateObject.cs
+  uploadId: 620418

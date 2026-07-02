@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: d3ab35911514a304fa6881dd0f695691
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 11400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 377614
+  packageName: 'Realistic Cow: Shepherd Valley'
+  packageVersion: 1.0
+  assetPath: Assets/Shepherd_Valley/HDRP/Scenes/Prefabs_Scene/Global Volume Profile.asset
+  uploadId: 909530

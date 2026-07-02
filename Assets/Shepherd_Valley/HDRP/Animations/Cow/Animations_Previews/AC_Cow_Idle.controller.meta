@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 54d180c551cd7f447950901894fc5612
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 9100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 377614
+  packageName: 'Realistic Cow: Shepherd Valley'
+  packageVersion: 1.0
+  assetPath: Assets/Shepherd_Valley/HDRP/Animations/Cow/Animations_Previews/AC_Cow_Idle.controller
+  uploadId: 909530

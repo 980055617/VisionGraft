@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 50e33a144b5d5ba4d9fe79a92084bcd7
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 377614
+  packageName: 'Realistic Cow: Shepherd Valley'
+  packageVersion: 1.0
+  assetPath: Assets/Shepherd_Valley/HDRP/Materials/M_Cow.mat
+  uploadId: 909530

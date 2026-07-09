@@ -31,6 +31,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private IEnumerator Start()
     {
+        LoadModelPrefabs();
+
         vp = GetComponent<VideoPlayer>();
         if (vp == null)
         {
@@ -313,6 +315,32 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         PlaceScreens();
+    }
+
+
+    private void LoadModelPrefabs()
+    {
+        humanPrefabs  = LoadPrefabsFromResources("Models/Human");
+        animalPrefabs = LoadPrefabsFromResources("Models/Animal");
+        Debug.Log($"[Model] Human: {humanPrefabs.Length} prefab, Animal: {animalPrefabs.Length} prefab");
+    }
+
+    // Resources.LoadAll は Sources/ 内 FBX も拾うため、大文字始まりの名前のみ使用する
+    // 命名規則: Prefab は大文字始まり（Bear.prefab）、FBX は小文字始まり（bear.fbx）
+    private static GameObject[] LoadPrefabsFromResources(string resourcePath)
+    {
+        GameObject[] all = Resources.LoadAll<GameObject>(resourcePath);
+        int count = 0;
+        for (int i = 0; i < all.Length; i++)
+            if (all[i] != null && all[i].name.Length > 0 && char.IsUpper(all[i].name[0]))
+                count++;
+
+        GameObject[] result = new GameObject[count];
+        int j = 0;
+        for (int i = 0; i < all.Length; i++)
+            if (all[i] != null && all[i].name.Length > 0 && char.IsUpper(all[i].name[0]))
+                result[j++] = all[i];
+        return result;
     }
 }
 

@@ -52,17 +52,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private bool HasAnyDisplayPrefabConfigured()
     {
-        return TrackPrefabResolver.HasAnyConfigured(replacePrefab, track0Prefab, track1Prefab, track2Prefab);
+        return (humanPrefabs != null && humanPrefabs.Length > 0) ||
+               (animalPrefabs != null && animalPrefabs.Length > 0);
     }
 
 
     private bool TryApplyDisplayedTracks(int frame)
     {
+        // 空 = bundle 内の全トラックを表示
         if (displayTrackIds == null || displayTrackIds.Length == 0)
         {
-            return false;
+            return TryApplyAllTracks(frame);
         }
 
+        // 指定あり = そのトラック ID のみ表示
         HashSet<uint> selectedTracks = new HashSet<uint>();
         HashSet<uint> appliedTracks = new HashSet<uint>();
         for (int i = 0; i < displayTrackIds.Length; i++)
@@ -87,6 +90,37 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         HideUnselectedTrackInstances(appliedTracks);
         return selectedTracks.Count > 0;
+    }
+
+
+    private bool TryApplyAllTracks(int frame)
+    {
+        if (metaFrameObjects.Count == 0)
+        {
+            return false;
+        }
+
+        HashSet<uint> appliedTracks = new HashSet<uint>();
+        for (int i = 0; i < metaFrameObjects.Count; i++)
+        {
+            uint trackId = metaFrameObjects[i].trackId;
+            if (appliedTracks.Contains(trackId))
+            {
+                continue;
+            }
+
+            if (TryApplyTargetByTrackId(trackId, frame))
+            {
+                appliedTracks.Add(trackId);
+            }
+            else if (TryApplyInteractiveSystemTriggerTrack(trackId, frame))
+            {
+                appliedTracks.Add(trackId);
+            }
+        }
+
+        HideUnselectedTrackInstances(appliedTracks);
+        return true;
     }
 
 
@@ -142,7 +176,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             anchorWorld = otherWorld;
         }
 
-        GameObject instance = GetOrCreateTrackInstance(target.trackId);
+        GameObject instance = GetOrCreateTrackInstance(target.trackId, target.categoryId);
         if (instance == null)
         {
             return;
@@ -224,9 +258,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private GameObject GetOrCreateTrackInstance(uint trackId)
+    private GameObject GetOrCreateTrackInstance(uint trackId, byte categoryId)
     {
-        GameObject prefab = ResolveTrackPrefab(trackId);
+        GameObject prefab = ResolveTrackPrefab(categoryId);
         return TrackInstanceLifecycle.GetOrCreate(
             trackId,
             prefab,
@@ -237,9 +271,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private GameObject ResolveTrackPrefab(uint trackId)
+    private GameObject ResolveTrackPrefab(byte categoryId)
     {
-        return TrackPrefabResolver.Resolve(trackId, replacePrefab, track0Prefab, track1Prefab, track2Prefab);
+        if (IsCategoryAnimal(categoryId))
+        {
+            if (animalPrefabs != null && animalPrefabs.Length > 0)
+            {
+                int idx = Mathf.Clamp(selectedAnimalIndex, 0, animalPrefabs.Length - 1);
+                return animalPrefabs[idx];
+            }
+            return null;
+        }
+        if (humanPrefabs != null && humanPrefabs.Length > 0)
+        {
+            int idx = Mathf.Clamp(selectedHumanIndex, 0, humanPrefabs.Length - 1);
+            return humanPrefabs[idx];
+        }
+        return null;
     }
 
 

@@ -10,7 +10,7 @@ GameObject:
   m_Component:
   - component: {fileID: 3075254841230604974}
   m_Layer: 0
-  m_Name: P_GermanShepherd
+  m_Name: GermanShepherd
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -80,6 +80,10 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: -7914517437862455989, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
+      propertyPath: m_Name
+      value: front_l_upper
+      objectReference: {fileID: 0}
     - target: {fileID: -7874289739142276283, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
@@ -88,9 +92,73 @@ PrefabInstance:
       propertyPath: 'm_Materials.Array.data[1]'
       value: 
       objectReference: {fileID: 2100000, guid: 30c1830b71ac313459f69c9c8ff90d0e, type: 2}
+    - target: {fileID: -7435319537327982050, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
+      propertyPath: m_Name
+      value: front_r_upper
+      objectReference: {fileID: 0}
+    - target: {fileID: -4661699158442921643, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
+      propertyPath: m_Name
+      value: head
+      objectReference: {fileID: 0}
+    - target: {fileID: -3770542929101801645, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
+      propertyPath: m_Name
+      value: front_r_lower
+      objectReference: {fileID: 0}
+    - target: {fileID: -2469955109787372066, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
+      propertyPath: m_Name
+      value: rear_l_toe
+      objectReference: {fileID: 0}
     - target: {fileID: 919132149155446097, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
       propertyPath: m_Name
       value: SK_GermanShepherd_01
+      objectReference: {fileID: 0}
+    - target: {fileID: 2594508653233371729, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
+      propertyPath: m_Name
+      value: front_r_paw
+      objectReference: {fileID: 0}
+    - target: {fileID: 3559416538534682019, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
+      propertyPath: m_Name
+      value: front_l_lower
+      objectReference: {fileID: 0}
+    - target: {fileID: 3609408151759782564, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
+      propertyPath: m_Name
+      value: spine
+      objectReference: {fileID: 0}
+    - target: {fileID: 3686830942948350765, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
+      propertyPath: m_Name
+      value: rear_r_upper
+      objectReference: {fileID: 0}
+    - target: {fileID: 3755794324415467537, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
+      propertyPath: m_Name
+      value: rear_l_upper
+      objectReference: {fileID: 0}
+    - target: {fileID: 3837257066937015480, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
+      propertyPath: m_Name
+      value: front_l_paw
+      objectReference: {fileID: 0}
+    - target: {fileID: 4409554490319344044, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
+      propertyPath: m_Name
+      value: rear_l_lower
+      objectReference: {fileID: 0}
+    - target: {fileID: 5720421827836258807, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
+      propertyPath: m_Name
+      value: rear_l_paw
+      objectReference: {fileID: 0}
+    - target: {fileID: 6370051258680928214, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
+      propertyPath: m_Name
+      value: rear_r_toe
+      objectReference: {fileID: 0}
+    - target: {fileID: 6565204381389339919, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
+      propertyPath: m_Name
+      value: neck
+      objectReference: {fileID: 0}
+    - target: {fileID: 8020707468342261874, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
+      propertyPath: m_Name
+      value: rear_r_paw
+      objectReference: {fileID: 0}
+    - target: {fileID: 8069180122146372318, guid: a6149f04780115a48b6bad836a1fe25b, type: 3}
+      propertyPath: m_Name
+      value: rear_r_lower
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

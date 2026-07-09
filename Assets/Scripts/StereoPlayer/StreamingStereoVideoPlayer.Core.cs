@@ -39,11 +39,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     [Header("Model Debug")]
     [FormerlySerializedAs("useMetaFollow")]
     public bool displayModel = true;
-    public int[] displayTrackIds = { 0, 1 };
-    public GameObject replacePrefab;
-    public GameObject track0Prefab;
-    public GameObject track1Prefab;
-    public GameObject track2Prefab;
+    public int[] displayTrackIds = new int[0]; // 空 = 全トラック表示, 指定あり = そのIDのみ
+    public int selectedHumanIndex = 0;
+    public int selectedAnimalIndex = 0;
+
+    // Resources/Models/Human と Resources/Models/Animal から起動時に自動ロード
+    private GameObject[] humanPrefabs;
+    private GameObject[] animalPrefabs;
 
     [Header("Bones")]
     public bool enableBoneApply = true;

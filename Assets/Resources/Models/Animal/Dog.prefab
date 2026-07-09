@@ -1,4 +1,4 @@
-﻿%YAML 1.1
+%YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
 --- !u!1 &-8859930315583292275
 GameObject:
@@ -10,7 +10,7 @@ GameObject:
   m_Component:
   - component: {fileID: -7597746608008460136}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3_L.001"
+  m_Name: front_l_upper
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -43,7 +43,7 @@ GameObject:
   m_Component:
   - component: {fileID: 3408916672574218159}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3.005"
+  m_Name: tail_tip
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -76,7 +76,7 @@ GameObject:
   m_Component:
   - component: {fileID: 8490654611495347158}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3.001_R.004"
+  m_Name: rear_r_toe
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -226,7 +226,7 @@ GameObject:
   m_Component:
   - component: {fileID: 9194392701675496023}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3_R.003"
+  m_Name: front_r_paw
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -290,7 +290,7 @@ GameObject:
   m_Component:
   - component: {fileID: -6967397618099709235}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3.007"
+  m_Name: neck
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -409,7 +409,7 @@ GameObject:
   m_Component:
   - component: {fileID: 3094737292214598871}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3_L.003"
+  m_Name: front_l_paw
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -442,7 +442,7 @@ GameObject:
   m_Component:
   - component: {fileID: -677740979709711231}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3.001_L.004"
+  m_Name: rear_l_toe
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -475,7 +475,7 @@ GameObject:
   m_Component:
   - component: {fileID: 8872607070090102157}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3.001_L.002"
+  m_Name: rear_l_lower
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -917,7 +917,7 @@ GameObject:
   m_Component:
   - component: {fileID: -1526379616697468318}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3_R.001"
+  m_Name: front_r_upper
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1272,7 +1272,7 @@ GameObject:
   m_Component:
   - component: {fileID: -5601380644033658610}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3.003"
+  m_Name: tail_base
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1508,7 +1508,7 @@ GameObject:
   m_Component:
   - component: {fileID: 6408633799948932587}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3.009"
+  m_Name: head
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1543,7 +1543,7 @@ GameObject:
   - component: {fileID: 8110377541080770804}
   - component: {fileID: 7651156549762192968}
   m_Layer: 0
-  m_Name: DogRoot
+  m_Name: Dog
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1595,7 +1595,7 @@ GameObject:
   m_Component:
   - component: {fileID: -6591445385943863464}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3_R.002"
+  m_Name: front_r_lower
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1628,7 +1628,7 @@ GameObject:
   m_Component:
   - component: {fileID: 509387571546106521}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3.001_R.003"
+  m_Name: rear_r_paw
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1661,7 +1661,7 @@ GameObject:
   m_Component:
   - component: {fileID: 8255929167227481760}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3"
+  m_Name: spine
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1699,7 +1699,7 @@ GameObject:
   m_Component:
   - component: {fileID: -4768544845996601642}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3.001_L.001"
+  m_Name: rear_l_upper
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1787,7 +1787,7 @@ GameObject:
   m_Component:
   - component: {fileID: 4089552722354815925}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3.004"
+  m_Name: tail_mid
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1906,7 +1906,7 @@ GameObject:
   m_Component:
   - component: {fileID: 4367023615094872665}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3.001_R.001"
+  m_Name: rear_r_upper
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -2025,7 +2025,7 @@ GameObject:
   m_Component:
   - component: {fileID: 4371219876149329426}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3.001_L.003"
+  m_Name: rear_l_paw
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -2058,7 +2058,7 @@ GameObject:
   m_Component:
   - component: {fileID: 3806807281275425541}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3_L.002"
+  m_Name: front_l_lower
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -2263,7 +2263,7 @@ GameObject:
   m_Component:
   - component: {fileID: 5174648863496908514}
   m_Layer: 0
-  m_Name: "\u30DC\u30FC\u30F3.001_R.002"
+  m_Name: rear_r_lower
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0

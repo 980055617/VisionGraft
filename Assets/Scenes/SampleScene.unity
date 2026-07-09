@@ -1046,10 +1046,9 @@ MonoBehaviour:
   fitScreenToFov: 1
   displayModel: 1
   displayTrackIds: 0000000001000000
-  replacePrefab: {fileID: 3348292547451869151, guid: ecbaae1ea4bbb7540a88ad11e6d559f2, type: 3}
-  track0Prefab: {fileID: 2049320596049450795, guid: 00f8db70a549b7b46963a6d7484c0a8b, type: 3}
-  track1Prefab: {fileID: 110392412574568067, guid: 39611dd7dc0e5e846b6d10d1df540e12, type: 3}
-  track2Prefab: {fileID: 0}
+  humanPrefab: {fileID: 0}
+  animalPrefabs: []
+  selectedAnimalIndex: 0
   enableBoneApply: 1
   boneApplyAlpha: 1
   enableJointSmoothing: 1

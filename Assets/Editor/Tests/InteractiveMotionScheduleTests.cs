@@ -9,6 +9,7 @@ public class InteractiveMotionScheduleTests
             enabled: true,
             isSupportedCategory: true,
             isInactive: true,
+            isRandomEventAlreadyActive: false,
             nextTriggerTime: 0f,
             now: 10f,
             nextIntervalSeconds: 3f);
@@ -24,6 +25,7 @@ public class InteractiveMotionScheduleTests
             enabled: true,
             isSupportedCategory: true,
             isInactive: true,
+            isRandomEventAlreadyActive: false,
             nextTriggerTime: 9f,
             now: 10f,
             nextIntervalSeconds: 3f);
@@ -39,6 +41,7 @@ public class InteractiveMotionScheduleTests
             enabled: true,
             isSupportedCategory: true,
             isInactive: false,
+            isRandomEventAlreadyActive: false,
             nextTriggerTime: 9f,
             now: 10f,
             nextIntervalSeconds: 3f);
@@ -54,6 +57,7 @@ public class InteractiveMotionScheduleTests
             enabled: false,
             isSupportedCategory: true,
             isInactive: true,
+            isRandomEventAlreadyActive: false,
             nextTriggerTime: 0f,
             now: 10f,
             nextIntervalSeconds: 3f).shouldStart, Is.False);
@@ -62,8 +66,25 @@ public class InteractiveMotionScheduleTests
             enabled: true,
             isSupportedCategory: false,
             isInactive: true,
+            isRandomEventAlreadyActive: false,
             nextTriggerTime: 0f,
             now: 10f,
             nextIntervalSeconds: 3f).shouldStart, Is.False);
+    }
+
+    [Test]
+    public void ResolveRandomTriggerWaitsAndReschedulesWhenAnotherRandomEventIsActive()
+    {
+        InteractiveMotionSchedule.Decision decision = InteractiveMotionSchedule.ResolveRandomTrigger(
+            enabled: true,
+            isSupportedCategory: true,
+            isInactive: true,
+            isRandomEventAlreadyActive: true,
+            nextTriggerTime: 9f,
+            now: 10f,
+            nextIntervalSeconds: 3f);
+
+        Assert.That(decision.shouldStart, Is.False);
+        Assert.That(decision.nextTriggerTime, Is.EqualTo(13f).Within(0.0001f));
     }
 }

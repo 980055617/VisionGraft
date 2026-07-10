@@ -1046,9 +1046,8 @@ MonoBehaviour:
   fitScreenToFov: 1
   displayModel: 1
   displayTrackIds: 0000000001000000
-  humanPrefab: {fileID: 0}
-  animalPrefabs: []
-  selectedAnimalIndex: 0
+  selectedHumanIndex: 0
+  selectedAnimalIndex: 5
   enableBoneApply: 1
   boneApplyAlpha: 1
   enableJointSmoothing: 1

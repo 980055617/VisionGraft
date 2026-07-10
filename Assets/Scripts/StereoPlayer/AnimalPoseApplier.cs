@@ -84,7 +84,19 @@ public sealed partial class AnimalPoseApplier
         if (rigRoot != null && animalRigCaches.TryGetValue(rigRoot, out AnimalRigCache cache) &&
             cache != null && cache.spine != null)
         {
-            noseWorldDirection = -cache.spine.forward;
+            // Compute model-accurate nose direction: spine.rotation * Inv(spineBindWorld) * modelForwardLocal.
+            // For Dog (bindSpineW=identity, modelForwardLocal=-Z) this equals -spine.forward (old hardcoded value).
+            // For other models where the spine bone is not aligned with the nose at T-pose, this correctly
+            // remaps modelForwardLocal through the spine's current rotation.
+            if (cache.bindRotWorld.TryGetValue(cache.spine, out Quaternion spineBindWorld) &&
+                cache.modelForwardLocal.sqrMagnitude > 0.000001f)
+            {
+                noseWorldDirection = cache.spine.rotation * (Quaternion.Inverse(spineBindWorld) * cache.modelForwardLocal);
+            }
+            else
+            {
+                noseWorldDirection = -cache.spine.forward;
+            }
             return true;
         }
 
@@ -976,6 +988,13 @@ public sealed partial class AnimalPoseApplier
             cache.neck, cache.head,
             cache.spine, cache.neck);
 
+        // spineToNeckBindDirWorld is kept in world space (bind-time direction from spine to neck).
+        // The rootYawFix detection formula uses: candidate * modelOrientFix * spineToNeckBindDirWorld,
+        // which correctly predicts the neck world direction because:
+        //   tw[0] = candidate * modelOrientFix * S  →  neck_world = tw[0] * Inv(S) * spineToNeck_world
+        //                                            = candidate * modelOrientFix * spineToNeck_world
+        // (see rawWorldFk0 formula in TryApplyAnimalSmalFk for the modelOrientFix definition).
+
         cache.ready =
             cache.head != null ||
             cache.leftFrontUpper != null ||
@@ -1140,7 +1159,10 @@ public sealed partial class AnimalPoseApplier
         Transform neck = spineBones[Mathf.Max(0, spineBones.Count - 2)];
         Transform body = spineBones[Mathf.Clamp(spineBones.Count / 2, 0, spineBones.Count - 1)];
 
-        if (cache.spine == null)
+        if (cache.spine == null ||
+            AnimalDefSpineFallbackPolicy.ShouldReplaceCanonicalSpineWithDefSpineChain(
+                cache.tailBase != null,
+                spineBones.Count))
         {
             cache.spine = body;
         }

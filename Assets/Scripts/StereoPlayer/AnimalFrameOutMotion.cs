@@ -178,9 +178,6 @@ public static class AnimalFrameOutMotion
             ? Mathf.Clamp01(Mathf.InverseLerp(windowCenter - halfWindow01, windowCenter + halfWindow01, t))
             : 0f;
         Quaternion resultRotation = Quaternion.Slerp(startRotation, turnedRotation, turnBlend);
-        Debug.Log($"[DEBUG-loop] t={t:F2} turnPoint01={turnPoint01:F2} windowCenter={windowCenter:F2} " +
-            $"halfWindow01={halfWindow01:F2} turnBlend={turnBlend:F2} startRotation.euler={startRotation.eulerAngles:F1} " +
-            $"resultRotation.euler={resultRotation.eulerAngles:F1}");
 
         return new StreamingStereoVideoPlayer.AnimalFrameOutLoopPose
         {

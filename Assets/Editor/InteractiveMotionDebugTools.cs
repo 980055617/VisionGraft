@@ -6,13 +6,13 @@ using UnityEngine;
 // Docs/interactive-motion-events.md "Testing" section.
 public static class InteractiveMotionDebugTools
 {
-    [MenuItem("VisionGraft/Interactive Motion/Force Static (All Active Tracks)")]
+    [MenuItem("VisionGraft/Interactive Motion/Force Static (One Eligible Track)")]
     public static void ForceStaticAll()
     {
         ForceAll(dynamicKind: false);
     }
 
-    [MenuItem("VisionGraft/Interactive Motion/Force Dynamic (All Active Tracks)")]
+    [MenuItem("VisionGraft/Interactive Motion/Force Dynamic (One Eligible Track)")]
     public static void ForceDynamicAll()
     {
         ForceAll(dynamicKind: true);

@@ -196,6 +196,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             enableInteractiveMotion,
             isSupportedCategory,
             true,
+            IsRandomInteractiveMotionInProgress(),
             state.nextTriggerTime,
             tick.now,
             RandomInteractiveInterval());
@@ -244,13 +245,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         StartInteractiveMotion(trackId, isAnimal, kind, now);
     }
 
-    // Editor-only debug entry point (see InteractiveMotionDebugTools) to force-trigger an event
+    // Editor-only debug entry point (see InteractiveMotionDebugTools) to force-trigger one event
     // without waiting on InteractiveMotionSchedule's random interval, for visually verifying
     // static/dynamic playback and the handoff blend during Play Mode. Skips tracks already
     // mid-event so it never overrides the exclusive-authority state machine.
     public void DebugForceInteractiveMotion(bool dynamicKind)
     {
-        if (!enableInteractiveMotion)
+        if (!enableInteractiveMotion || IsRandomInteractiveMotionInProgress())
         {
             return;
         }
@@ -277,16 +278,21 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
             StartInteractiveMotion(trackId, isAnimal, kind, tick.now);
             Debug.Log($"DebugForceInteractiveMotion: track {trackId} forced into {kind} ({(isAnimal ? "Animal" : "Human")}).");
+            return;
         }
     }
 
     // Counts random-triggered events currently in progress (Owned or HandoffBlend), across all
-    // tracks, so the video pauses for the duration of any random animation and only resumes
-    // once every one of them has finished - two tracks animating back-to-back or overlapping
-    // should not let the video sneak forward in between. System (frame-out) events are tied to
-    // the real video timeline (they walk out and back to match when the subject actually
-    // reappears), so they deliberately do not pause anything here.
+    // tracks. Random scheduling treats any positive count as a global lock so only one random
+    // animation can run at a time. System (frame-out) events are tied to the real video timeline
+    // (they walk out and back to match when the subject actually reappears), so they deliberately
+    // do not pause anything here.
     private int activeRandomInteractiveMotionCount;
+
+    private bool IsRandomInteractiveMotionInProgress()
+    {
+        return activeRandomInteractiveMotionCount > 0;
+    }
 
     private void BeginRandomInteractiveMotionVideoPause()
     {
@@ -917,7 +923,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         else if (instance != null && state.subject == InteractiveMotionSubject.Animal)
         {
             animalPoseApplier.CaptureBoneLocalRotations(instance.transform, state.handoffFromAnimalBoneLocalRotations);
-            Debug.Log($"[DEBUG-handoff] captured {state.handoffFromAnimalBoneLocalRotations.Count} animal bones at handoff start");
         }
         state.stage = InteractiveEventStage.HandoffBlend;
         state.handoffStartTime = now;
@@ -945,26 +950,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         else if (state.subject == InteractiveMotionSubject.Animal && state.handoffFromAnimalBoneLocalRotations.Count > 0)
         {
-            if (t <= 0.3f)
-            {
-                Transform sampleBone = null;
-                Quaternion sampleFrom = Quaternion.identity;
-                foreach (KeyValuePair<Transform, Quaternion> kv in state.handoffFromAnimalBoneLocalRotations)
-                {
-                    sampleBone = kv.Key;
-                    sampleFrom = kv.Value;
-                    break;
-                }
-                Quaternion sampleToBefore = sampleBone != null ? sampleBone.localRotation : Quaternion.identity;
-                AnimalPoseApplier.BlendBoneLocalRotations(state.handoffFromAnimalBoneLocalRotations, t);
-                Quaternion sampleAfter = sampleBone != null ? sampleBone.localRotation : Quaternion.identity;
-                Debug.Log($"[DEBUG-handoff2] t={t:F2} sampleBone={(sampleBone != null ? sampleBone.name : "null")} " +
-                    $"from.euler={sampleFrom.eulerAngles:F1} liveToBeforeBlend.euler={sampleToBefore.eulerAngles:F1} afterBlend.euler={sampleAfter.eulerAngles:F1}");
-            }
-            else
-            {
-                AnimalPoseApplier.BlendBoneLocalRotations(state.handoffFromAnimalBoneLocalRotations, t);
-            }
+            AnimalPoseApplier.BlendBoneLocalRotations(state.handoffFromAnimalBoneLocalRotations, t);
         }
 
         Vector3 blendedPosition = Vector3.Lerp(state.handoffFromPosition, instance.transform.position, t);
@@ -1315,6 +1301,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         AnimalPoseWorldData pose = RemapAnimalPoseRigid(state.cachedAnimalPose, state.cachedAnimalBasePosition, state.cachedAnimalBaseRotation, position, rotation);
+
+        if (tick.frameCount % 90 == 0)
+        {
+            Transform root = instance != null ? instance.transform : null;
+            Animator anim = root != null ? root.GetComponentInChildren<Animator>() : null;
+            Transform rigRoot = anim != null ? anim.transform : root;
+            Transform spineBone = FindDeepChildByName(rigRoot, "spine");
+            Transform neckBone = FindDeepChildByName(rigRoot, "neck");
+            Transform headBone = FindDeepChildByName(rigRoot, "head");
+            string spineFwd = spineBone != null ? spineBone.forward.ToString("F3") : "null";
+            string neckFwd = neckBone != null ? neckBone.forward.ToString("F3") : "null";
+            string headFwd = headBone != null ? headBone.forward.ToString("F3") : "null";
+            string goEuler = state.cachedAnimalHasSmalPose ? state.cachedAnimalSmalPose.globalOrient.eulerAngles.ToString("F1") : "N/A";
+            Debug.Log($"[FRAMEOUT-DBG] model={instance.name} hasSmalPose={state.cachedAnimalHasSmalPose} globalOrient.euler={goEuler} spine.fwd={spineFwd} neck.fwd={neckFwd} head.fwd={headFwd} frameOutDir={state.frameOutDirection:F3}");
+        }
+
         float loopTime = 0f;
         if (state.animalWalkClip != null)
         {

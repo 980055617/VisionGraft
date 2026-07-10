@@ -16,6 +16,7 @@ public static class InteractiveMotionSchedule
         bool enabled,
         bool isSupportedCategory,
         bool isInactive,
+        bool isRandomEventAlreadyActive,
         float nextTriggerTime,
         float now,
         float nextIntervalSeconds)
@@ -33,6 +34,11 @@ public static class InteractiveMotionSchedule
         if (now < nextTriggerTime)
         {
             return new Decision(false, nextTriggerTime);
+        }
+
+        if (isRandomEventAlreadyActive)
+        {
+            return new Decision(false, now + nextIntervalSeconds);
         }
 
         return new Decision(true, now + nextIntervalSeconds);

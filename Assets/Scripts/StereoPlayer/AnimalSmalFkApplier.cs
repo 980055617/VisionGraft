@@ -154,21 +154,30 @@ public sealed partial class AnimalPoseApplier
             return;
         }
 
-        // Auto-detect a per-model 180deg yaw need (2026-06-18, ADR-0002). The first keypoint
-        // attempt compared candidate*Vector3.forward (camera/data only, NO model-specific
-        // bindRotWorld[spine] involved at all) against kpForward - that quantity is identical
-        // for every model given the same frame, so it can only ever apply the SAME fix to
-        // every model. It happened to fix P_GermanShepherd while breaking DogRoot purely by
-        // coincidence (the same failure mode as the very first flat hardcoded test).
+        // Per-model orientation correction (2026-07-09): all models must present the same
+        // forward/up convention to the SMAL FK formula. DogRoot's T-pose has spine=identity
+        // and the dog faces -Z in local space, so LookRotation(-Z,+Y) is the reference basis.
+        // New models (Wolf, Bear, Boar…) have modelForwardLocal ≈ +X because their FBX was
+        // imported with a different axis convention.
         //
-        // Fixed by actually involving the model: cache.spineToNeckBindDirWorld (plain
-        // neck.position - spine.position at bind time) is the bind-time world direction from
-        // spine to neck. Since tw[0] = candidate * bindRotWorld[spine], and the bone's local
-        // "neck axis" is, by construction, Inverse(bindRotWorld[spine]) * spineToNeckBindDirWorld,
-        // the predicted WORLD neck direction under any candidate is simply
-        // candidate * spineToNeckBindDirWorld (bindRotWorld[spine] cancels algebraically) -
-        // genuinely model-specific despite the simple form. Compare that prediction, per
-        // candidate, against the real per-frame keypoint forward direction.
+        // Proof:  tw[0] = rawWorldFk0 * S   visual_forward = tw[0] * Inv(S) * modelFwdLocal
+        //       = rawWorldFk0 * modelFwdLocal
+        //       = (…*modelOrientFix) * modelFwdLocal
+        //       = (…*refModelBasis*Inv(thisModelBasis)) * thisModelBasis * (+Z)
+        //       = (…*refModelBasis) * (+Z)  = (…) * LookRotation(-Z,+Y) * (+Z) = (…)*(-Z) ✓
+        Quaternion refModelBasis = Quaternion.LookRotation(Vector3.back, Vector3.up);
+        // Project modelForwardLocal onto the XZ plane before building the basis.
+        // globalOrient carries all pitch/tilt; the T-pose "forward" only needs the
+        // horizontal facing direction. If modelForwardLocal has a Y component (front legs
+        // higher than rear legs in T-pose) and we pass it raw into LookRotation, the
+        // correction bakes that tilt into modelOrientFix and the model ends up pitched down.
+        Vector3 thisModelFwdRaw = cache.modelForwardLocal.sqrMagnitude > 0.001f ? cache.modelForwardLocal.normalized : Vector3.back;
+        Vector3 thisModelFwdFlat = new Vector3(thisModelFwdRaw.x, 0f, thisModelFwdRaw.z);
+        Vector3 thisModelFwd = thisModelFwdFlat.sqrMagnitude > 0.001f ? thisModelFwdFlat.normalized : thisModelFwdRaw;
+        Vector3 thisModelUp  = cache.modelUpLocal.sqrMagnitude > 0.001f  ? cache.modelUpLocal.normalized  : Vector3.up;
+        Quaternion thisModelBasis  = Quaternion.LookRotation(thisModelFwd, thisModelUp);
+        Quaternion modelOrientFix  = refModelBasis * Quaternion.Inverse(thisModelBasis);
+
         if (!state.rootYawFixDecided && jointsWorld != null && jointVis != null &&
             cache.spineToNeckBindDirWorld.sqrMagnitude > 0.000001f)
         {
@@ -176,27 +185,31 @@ public sealed partial class AnimalPoseApplier
             if (AnimalBodyBasisResolver.TryResolveFromJoints(jointsWorld, jointVis, preferredUp, out Vector3 kpForward, out _, out _) &&
                 kpForward.sqrMagnitude > 0.000001f)
             {
-                Quaternion candidate0 = pose.camRotation * pose.globalOrient * SmalDataAxisCorrection;
+                // candidate * modelOrientFix * spineToNeckBindDirWorld_world correctly predicts
+                // the neck world direction because:
+                //   tw[0] = candidate * modelOrientFix * S
+                //   neck_world = tw[0] * Inv(S) * spineToNeck_world
+                //              = candidate * modelOrientFix * spineToNeck_world
+                Quaternion candidate0 = pose.camRotation * pose.globalOrient * SmalDataAxisCorrection * modelOrientFix;
                 Quaternion candidate180 = candidate0 * Quaternion.Euler(0f, 180f, 0f);
                 float dot0 = Vector3.Dot(candidate0 * cache.spineToNeckBindDirWorld, kpForward);
                 float dot180 = Vector3.Dot(candidate180 * cache.spineToNeckBindDirWorld, kpForward);
-                state.rootYawFix = dot180 > dot0 ? Quaternion.Euler(0f, 180f, 0f) : Quaternion.identity;
+                const float kRootYawFlipMinMargin = 0.3f;
+                state.rootYawFix = (dot180 - dot0 > kRootYawFlipMinMargin) ? Quaternion.Euler(0f, 180f, 0f) : Quaternion.identity;
                 state.rootYawFixDecided = true;
-                Debug.Log($"[SMAL-FK-DBG] MODEL rootYawFix decided: dot0={dot0:F3} dot180={dot180:F3} chose180={state.rootYawFix != Quaternion.identity} kpForward={kpForward:F3} spineToNeckBindDirWorld={cache.spineToNeckBindDirWorld:F3}");
+                Debug.Log($"[SMAL-FK-DBG] MODEL rootYawFix decided: dot0={dot0:F3} dot180={dot180:F3} chose180={state.rootYawFix != Quaternion.identity} kpForward={kpForward:F3} spineToNeckBindDirWorld={cache.spineToNeckBindDirWorld:F3} modelFwd={thisModelFwd:F3} modelOrientFix={modelOrientFix.eulerAngles:F1}");
             }
         }
 
-        // Prepend the track root's own yaw, the same way a Humanoid Avatar's local joint
-        // rotations naturally compose with its root through Unity's transform hierarchy (see
-        // ShouldUseHumanSmplRootOrientation - Human keeps a tracked root orientation separate
-        // from SMPL's globalOrient for exactly this reason). instanceRoot's yaw is otherwise
-        // left untouched by normal tracking (AlignAnimalRootToSkeleton only ever moves its
-        // position, never rotation - see ApplyAnimalSkeletonPlacement), so this is a no-op
-        // during normal playback and only matters when something - e.g. an interactive-motion
-        // gesture turning the model to face the viewer - explicitly sets instanceRoot's
-        // rotation.
+        // Prepend the track root's own yaw so that interactive-motion gestures (which
+        // explicitly set instanceRoot.rotation) compose naturally into the SMAL FK.
+        // During normal playback AlignAnimalRootToSkeleton only touches position, so
+        // instanceRootYaw = identity and this term has no effect.
         Quaternion instanceRootYaw = instanceRoot != null ? ExtractYawOnly(instanceRoot.rotation) : Quaternion.identity;
-        Quaternion rawWorldFk0 = instanceRootYaw * pose.camRotation * pose.globalOrient * SmalDataAxisCorrection * state.rootYawFix;
+        // modelOrientFix aligns this model's T-pose axis convention to DogRoot (-Z fwd,
+        // +Y up) so that tw[0] = worldFk0 * spineBindW produces the same visual direction
+        // for every model. For DogRoot modelOrientFix ≡ identity (no change).
+        Quaternion rawWorldFk0 = instanceRootYaw * pose.camRotation * pose.globalOrient * SmalDataAxisCorrection * state.rootYawFix * modelOrientFix;
 
         Quaternion worldFk0 = state.smoothingInitialized
             ? Quaternion.Slerp(state.smoothedLocal[0], rawWorldFk0, smoothAlpha)
@@ -280,6 +293,13 @@ public sealed partial class AnimalPoseApplier
             if (!cache.bindRotLocal.TryGetValue(bone, out Quaternion bindLoc) || !IsFiniteQ(bindLoc))
                 bindLoc = Quaternion.identity;
 
+            if (AnimalSmalFkPolicy.ShouldKeepBindPoseForJoint(joint))
+            {
+                tw[joint] = parentTW * bindLoc;
+                TransformWriter.ApplyLocalRotation(bone, bindLoc);
+                continue;
+            }
+
             if (SmalRestDirByJoint.TryGetValue(joint, out Vector3 smalRestDir) &&
                 cache.bindRotWorld.TryGetValue(bone, out Quaternion boneBindWorld) &&
                 cache.bindDirLocal.TryGetValue(bone, out Vector3 boneBindDirLocal))
@@ -290,16 +310,19 @@ public sealed partial class AnimalPoseApplier
                 // of bend" results when reused per-joint - see ADR), derive the correction
                 // directly from comparing this joint's REST bone direction in SMAL's own native
                 // frame (smalRestDir, from the SMAL rest skeleton J array) against this exact
-                // Unity bone's REAL rest bone direction (boneBindWorld * boneBindDirLocal,
-                // captured at bind time via the existing aim-child bind direction machinery).
+                // Unity bone's REAL rest bone direction.
                 // Quaternion.FromToRotation between the two gives an unambiguous, per-joint
                 // SMAL-frame -> Unity-frame map with no global-axis guessing involved.
+                //
+                // unityRestDirWorld uses restWorldRot (= worldFk0 * boneBindWorld) instead of
+                // the static bind-time direction (boneBindWorld * boneBindDirLocal). The static
+                // version is wrong for models whose T-pose faces a different world direction than
+                // DogRoot (e.g. Wolf/Bear facing +X vs Dog facing -Z): the same SMAL neck-down
+                // bend would map to a sideways roll for those models instead of a forward-down tilt.
+                // worldFk0 already incorporates modelOrientFix, so restWorldRot * boneBindDirLocal
+                // gives the rest-pose bone direction in a model-neutral frame. (2026-07-09)
                 Vector3 smalPosedDir = (rawLocal * smalRestDir).normalized;
                 Quaternion bendSmal = Quaternion.FromToRotation(smalRestDir, smalPosedDir);
-
-                Vector3 unityRestDirWorld = (boneBindWorld * boneBindDirLocal).normalized;
-                Quaternion jointFrameMap = Quaternion.FromToRotation(smalRestDir, unityRestDirWorld);
-                Quaternion bendUnity = jointFrameMap * bendSmal * Quaternion.Inverse(jointFrameMap);
 
                 // worldFk0 * boneBindWorld (not parentTW * bindLoc): see the comment above the
                 // joint-0 block. parentTW for this joint may be a virtual SMAL joint (e.g. 6)
@@ -307,6 +330,10 @@ public sealed partial class AnimalPoseApplier
                 // multi-bone spine chain, which would silently compose bindLoc relative to the
                 // wrong frame.
                 Quaternion restWorldRot = worldFk0 * boneBindWorld;
+                Vector3 unityRestDirWorld = (restWorldRot * boneBindDirLocal).normalized;
+                Quaternion jointFrameMap = Quaternion.FromToRotation(smalRestDir, unityRestDirWorld);
+                Quaternion bendUnity = jointFrameMap * bendSmal * Quaternion.Inverse(jointFrameMap);
+
                 tw[joint] = bendUnity * restWorldRot;
             }
             else

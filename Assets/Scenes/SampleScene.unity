@@ -1047,7 +1047,7 @@ MonoBehaviour:
   displayModel: 1
   displayTrackIds: 0000000001000000
   selectedHumanIndex: 0
-  selectedAnimalIndex: 5
+  selectedAnimalIndex: 0
   enableBoneApply: 1
   boneApplyAlpha: 1
   enableJointSmoothing: 1
@@ -1056,7 +1056,7 @@ MonoBehaviour:
   otherProxyBoxColor: {r: 1, g: 0.78, b: 0.18, a: 0.32}
   enableRuntimeControls: 1
   runtimeControlsPrefab: {fileID: 3675716834162371033, guid: 19be18d74f8608a4583c4c6c4e6e8723, type: 3}
-  enableInteractiveMotion: 1
+  enableInteractiveMotion: 0
   humanStaticGestureClips:
   - {fileID: -203655887218126122, guid: e6eecc3fd4d4a4145a91ea9763a6c382, type: 3}
   - {fileID: -203655887218126122, guid: 24ba1f0f1a335744fbc564c2739d1ca2, type: 3}

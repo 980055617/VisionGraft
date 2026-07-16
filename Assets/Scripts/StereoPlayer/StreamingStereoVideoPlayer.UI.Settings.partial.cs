@@ -359,15 +359,26 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (runtimeSettingsRoot != null)
         {
             SceneObjectWriter.ApplyActive(runtimeSettingsRoot, runtimeSettingsOpen && enableRuntimeControls);
-            SetScreenColliderBlockForSettings(runtimeSettingsOpen && enableRuntimeControls);
+            SetScreenColliderBlockForRuntimePanels();
             if (runtimeSettingsOpen)
             {
+                if (runtimeModelPickerOpen)
+                {
+                    CloseRuntimeModelPickerPanel();
+                }
                 UpdateRuntimeSettingsPlacement();
                 UpdateRuntimeScreenDistanceUiState();
                 UpdateRuntimeTrackRotationUiState();
             }
         }
         UpdateSettingsButtonLabel();
+    }
+
+
+
+    private void SetScreenColliderBlockForRuntimePanels()
+    {
+        SetScreenColliderBlockForSettings(enableRuntimeControls && (runtimeSettingsOpen || runtimeModelPickerOpen));
     }
 
 
@@ -409,7 +420,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        UiComponentWriter.ApplyTextContent(runtimeSettingsButtonText, runtimeSettingsOpen ? "Close" : "Settings");
+        UiComponentWriter.ApplyTextContent(runtimeSettingsButtonText, "Settings");
     }
 
 

@@ -19,7 +19,7 @@ tw[j] = parentTW * bindRotLocal[bone] * bodyPose[j]
 
 ### Animal SMAL → カスタム Animal Rig
 
-同じ FK 公式を使用。SMAL ネイティブ座標系が Unity と異なるため `SmalDataAxisCorrection = Euler(0,90,90)` を適用（実機キャリブレーション確定値）。一部の関節（脚・首）は rest skeleton との差分から幾何的に補正（詳細 [ADR-0001](adr/0001-animal-smal-fk.md)）。
+同じ FK 公式を使用。SMAL ネイティブ座標系が Unity と異なるため `SmalDataAxisCorrection = Euler(0,90,90)` を適用（実機キャリブレーション確定値）。一部の関節（脚・首・尻尾の付け根/中間）は rest skeleton との差分から幾何的に補正（詳細 [ADR-0001](adr/0001-animal-smal-fk.md)）。尻尾は2026-07-16に追加対応（下記「調査ログ」参照）。
 
 複数モデル対応（[ADR-0002](adr/0002-animal-rig-generalization.md)）: ボーン名トークンマッチング + 前後脚の実測位置から正面方向を動的に推定。DogRoot・P_GermanShepherd で検証済み。
 
@@ -203,6 +203,50 @@ camRotation = LookRotation(-screenFront, screen.up)  // TryGetPinholeBasis() で
 ---
 
 ## 調査ログ
+
+### 2026-07-16: 尻尾が追従していなかった問題
+
+**現象:** 「しっぽは追従できているか」と確認したところ、`AnimalSmalFkPolicy.ShouldKeepBindPoseForJoint()` が SMAL joint 25-31（Tail1-7、canonicalの`tail_base`/`tail_mid`/`tail_tip`に対応）を**常にbind pose固定**にしており、body_poseの尻尾データが一切反映されていなかった（親の動きに伴う受動的な動きのみ）。
+
+**根本原因3点:**
+1. `ShouldKeepBindPoseForJoint(joint)` が `joint >= 25 && joint <= 31` を無条件でtrueにしていた（tail全体が意図的に未実装のまま放置されていた）。
+2. `AnimalSmalFkApplier.SmalRestDirByJoint`（脚・首で使っている「SMAL restポーズでの関節方向」テーブル、`Docs/smal-rest-skeleton.json`から算出）にtailのエントリが1件もなかった。
+3. `RegisterAnimalAimPairs`（tailBase→tailMid→tailTipの「どちらを向いて曲げるか」の登録）がtail分を含んでおらず、しかも**`PrimeAnimalBinds`より後に呼ばれていた**ため、他の関節（脚・首）も含めて登録が`bindDirLocal`計算に間に合っていなかった。脚・首はたまたま実際のUnity上の最初の子ボーンが登録先と一致していたため症状が出ていなかったが、tailMid→tailTipの間に未駆動の中間ボーン（例: Buffaloの`Tail2`(mid)→`Tail3`(未駆動)→`Tail4`(tip)）が挟まる種が多く、この順序バグが顕在化する。
+
+**修正:**
+- `Docs/smal-rest-skeleton.json`のjoint 25/26（Tail1→Tail2、Tail2→Tail3）の位置差分から方向ベクトルを算出し、`SmalRestDirByJoint`に追加。
+- `ShouldKeepBindPoseForJoint`の条件を`joint >= 27`に変更（tailBase/tailMidを解放、tailTipとその先は据え置き — tailTipのSMAL上の子`Tail4`にはUnity側の対応ボーンがなく、脚のpaw関節と同じ「末端は未駆動のまま」という既存方針に合わせた）。
+- `RegisterAnimalAimPairs`の呼び出しを`PrimeAnimalBinds`より**前**に移動し、`tailBase→tailMid`・`tailMid→tailTip`のペアを追加。
+
+**副次的に発見・修正した既存ルール違反:** `ShouldKeepBindPoseForJoint`がtrueの分岐で`TransformWriter.ApplyLocalRotation(bone, bindLoc)`を呼んでいた（CLAUDE.mdの絶対ルール「FKループ内ではApplyWorldRotationのみ使用」に反する既存コード）。`parentTW`はこのボーンの実際のUnity親の今フレーム適用済みワールド回転と一致するため、`ApplyWorldRotation(bone, parentTW * bindLoc)`に置き換えても数値的に同じ結果になることを確認した上で修正。
+
+**未検証:** 実際にPlay Modeでbundleを再生し、尻尾の動きが自然に見えるかは未確認。
+
+### 2026-07-17: モデルごとにデフォルトの尻尾姿勢がバラバラな問題
+
+**現象:** 「Lionのしっぽが他のモデルと違って上にそっている」という報告。上記07-16の修正でtail_base/tail_midは駆動されるようになったが、body_poseの推定値がニュートラルに近い間は、モデル固有の"デフォルトの曲がり"がそのまま画面に出続けることが判明。
+
+**根本原因:** `AnimalSmalFkApplier`のFK計算は`restWorldRot = worldFk0 * boneBindWorld`（[AnimalSmalFkApplier.cs:357](../Assets/Scripts/StereoPlayer/AnimalSmalFkApplier.cs#L357)）をベースラインにし、SMALのbody_pose由来の`bendUnity`をその上に乗せるだけの設計。`boneBindWorld`はプレハブ作成時にリガーが作ったbindポーズの向きをそのまま含むため、tail_mid/tail_tipのローカル回転（親からの相対回転）にリガー由来の"カール"が焼き込まれているモデルは、body_poseの寄与が小さい間ずっとそのカールが見え続ける。
+
+**確認方法:**
+1. `AnimalSmalFkApplier`にtail joint 25/26の`smalRestDir`と`unityRestDirWorld`のなす角をログ出力する診断（`TAIL-REST-CHECK`）を追加し、`Quaternion.FromToRotation`の軸不定（~180°付近で不安定）が原因かを検証 → Lionでは95〜122°で軸不定域には入っておらず、この経路の破綻ではないと判明。
+2. 既存の`joint=25/26/27`ログに`bindLoc`（親からのローカルbind回転）が出ていたので、Dog（基準）とLionを直接比較 → tail_mid（joint 26）のbindLocがDog≒identity、Lion≒48.6°（Euler表記）で明確な差を確認。
+3. `Assets/Editor/AnimalTailBindStraightener.cs`の`Report Tail Bind Curl`で、`Quaternion.Angle(identity, localRotation)`により全モデルのtail_mid/tail_tipのカール量を一括計測 → 47モデル中35モデルが15°超（Dogは2.3°/1.7°で基準通り低い）。`40_Mammoth`のtail_tipのみ180.0°という突出した値だった。
+
+**修正:** `AnimalTailBindStraightener.StraightenFlaggedTails`で、tail_mid/tail_tipのローカル回転が15°を超えるモデルのみidentityに矯正しprefabを保存（tail_base自体は種ごとの正当な解剖学的差異とみなし変更しない）。2026-07-17時点で35 prefabに適用済み。適用後にReportを再実行し、対象モデルが全て0.0°になったことを確認（`40_Mammoth`のtail_tip 180.0°→0.0°含む）。
+
+**未検証:** Play Modeでの実際の見た目確認はまだ行っていない。特に`40_Mammoth`は180°という大きな飛びを矯正したため、他モデルより慎重に目視確認が必要。
+
+**2026-07-17追記: tail_mid/tail_tip矯正だけでは直らなかった（Lion）:** 上記の修正をPlay Modeで確認したところ、Lionの尻尾は依然として上を向いていた。ログで`joint=26`（tail_mid）のbindLocが確かに`(0,0,0)`になっていることを確認したため、tail_mid/tail_tipの矯正自体は効いているが、**意図的に触らなかったtail_base自体の向き**が原因と判明。
+
+`Report Tail Base World Direction`（tail_baseからtail_mid/tipへの方向ベクトルと、world upとの内積 `upDot` を比較可能な形で計測 — 各モデルのボーン軸の向き自体はFBXインポート規約でバラバラなので、world Vector3.up基準で揃える）を46モデルに対して実行した結果:
+
+- Dog: upDot=-0.60、他45モデルすべて upDot=-0.07〜-0.99（下向き）
+- **Lion: upDot=+0.53 だけが唯一プラス（上向き）**
+
+体型が大きく異なる犬・熊・シカ・馬・ラクーンなど全モデルが一貫して下向きなので、これはLion固有の解剖学的差異ではなく、tail_base自体がリグ作成時点で上向きに作られていた個別の不具合と判断した。`FixLionTailBaseOrientation`でtail_baseの向きをworld upに対して垂直面(XZ平面)でミラーし、upDot=+0.53→-0.53に修正（`Assets/Resources/Models/Animal/04_Lion.prefab`のみ変更、他モデルは分布内に収まっているため未変更）。
+
+**未検証:** Play Modeでの再確認はこれから。
 
 ### 2026-06-12: 手の位置ずれ問題
 

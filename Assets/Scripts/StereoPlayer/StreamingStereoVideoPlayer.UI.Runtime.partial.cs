@@ -52,6 +52,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         UpdateRuntimeSettingsPlacement();
+        UpdateRuntimeModelPickerPlacement();
     }
 
 
@@ -181,6 +182,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             size = new Vector2(RuntimeControlsDefaultCanvasWidth, RuntimeControlsDefaultCanvasHeight);
             TransformWriter.ApplySizeDelta(rect, size);
         }
+        else if (size.y < RuntimeControlsDefaultCanvasHeight)
+        {
+            size = new Vector2(Mathf.Max(size.x, RuntimeControlsDefaultCanvasWidth), RuntimeControlsDefaultCanvasHeight);
+            TransformWriter.ApplySizeDelta(rect, size);
+        }
 
         TransformWriter.ApplyLocalScale(
             rect,
@@ -298,7 +304,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (runtimeModeButtonText != null)
         {
-            UiComponentWriter.ApplyTextContent(runtimeModeButtonText, isNormalMode ? "Normal" : "Model");
+            UiComponentWriter.ApplyTextContent(runtimeModeButtonText, "Display");
         }
 
         UpdateRuntimeTrackRotationUiState();

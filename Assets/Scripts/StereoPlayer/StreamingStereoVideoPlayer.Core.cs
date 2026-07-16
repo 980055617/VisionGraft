@@ -124,7 +124,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private static readonly Vector2 ControlsBarOffsetMeters = Vector2.zero;
     private const float ControlsBarGapMeters = 0.06f;
     private const float ControlsBarForwardOffsetMeters = 0.01f;
-    private static readonly Vector2 ControlsBarSizeMeters = new Vector2(0.6f, 0.1f);
+    private static readonly Vector2 ControlsBarSizeMeters = new Vector2(0.6f, 0.16f);
     private static readonly bool EnablePauseHotkey = true;
     private const float RuntimeFovxMinDeg = 40f;
     private const float RuntimeFovxMaxDeg = 140f;

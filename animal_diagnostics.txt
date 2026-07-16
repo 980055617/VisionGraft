@@ -1,0 +1,151 @@
+=== Assets/Resources/Models/Animal/00_Dog.prefab ===
+SkinnedMeshRenderers: 0, MeshRenderers: 22
+  MR 'body' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'foot.001.L' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'foot.002.L' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'foot.003.L' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'foot.004.L' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'foot.001.R' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'foot.002.R' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'foot.003.R' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'foot.004.R' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'tail.002' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'tail.003' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'tail.004' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'neck' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'head.001' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'er.L' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'er.R' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'arm.001.L' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'arm.002.L' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'arm.003.L' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'arm.001.R' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'arm.002.R' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'arm.003.R' materials=1
+    mat 'Dog' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+Combined world bounds size (at prefab's own scale): (1.7595, 2.2907, 5.2007)
+
+=== Assets/Resources/Models/Animal/04_Lion.prefab ===
+SkinnedMeshRenderers: 1, MeshRenderers: 0
+  SMR 'lion_male' mesh=lion_male bounds=(0.021, 0.028, 0.033)
+    mat[0] 'M_lion' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+    mat[1] 'M_lion_mane' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+Combined world bounds size (at prefab's own scale): (3.2569, 4.0904, 4.6672)
+
+=== Assets/Resources/Models/Animal/13_Bloodhund.prefab ===
+SkinnedMeshRenderers: 1, MeshRenderers: 0
+  SMR 'boty' mesh=boty bounds=(0.009, 0.012, 0.016)
+    mat[0] 'M_Bloodhund' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+Combined world bounds size (at prefab's own scale): (1.4065, 1.7702, 2.1275)
+
+=== Assets/Resources/Models/Animal/38_Lioness.prefab ===
+(load failed)
+=== Assets/Resources/Models/Animal/49_Puma.prefab ===
+(load failed)
+=== Assets/Resources/Models/Animal/51_Racoon.prefab ===
+(load failed)
+=== Assets/Resources/Models/Animal/14_BoarV2.prefab ===
+SkinnedMeshRenderers: 1, MeshRenderers: 4
+  SMR 'Boar_M_Fur.001' mesh=Boar_M_Fur.001 bounds=(1.042, 0.541, 1.764)
+    mat[0] 'MI_SusScrofa_M' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+  MR 'Boar_Lower.001' materials=1
+    mat 'Lower' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+  MR 'Boar_Lower' materials=1
+    mat 'Material.001' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+  MR 'Boar_Upper.001' materials=1
+    mat 'Lower' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+  MR 'Boar_Upper' materials=1
+    mat 'Lower' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+Combined world bounds size (at prefab's own scale): (12.2078, 9.7696, 11.6643)
+
+=== Assets/Resources/Models/Animal/15_Deer.prefab ===
+SkinnedMeshRenderers: 1, MeshRenderers: 1
+  SMR 'Hog_Deer_Body' mesh=Hog_Deer_Body bounds=(0.010, 0.017, 0.020)
+    mat[0] 'M_Deer' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+  MR 'Antler' materials=1
+    mat 'Antler' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+Combined world bounds size (at prefab's own scale): (1.1668, 1.3220, 1.1194)
+
+=== Assets/Resources/Models/Animal/16_Deer1.prefab ===
+SkinnedMeshRenderers: 3, MeshRenderers: 0
+  SMR '_000_red_deer_buck' mesh=_000_red_deer_buck bounds=(1.005, 2.128, 2.031)
+    mat[0] 'Deer' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+  SMR '_001_red_deer_buck' mesh=_001_red_deer_buck bounds=(0.854, 1.985, 1.282)
+    mat[0] 'Deer_Fur' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+  SMR 'SM_Deer_Horns_01_2' mesh=SM_Deer_Horns_01_2 bounds=(1.144, 0.580, 0.558)
+    mat[0] 'Deer' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+Combined world bounds size (at prefab's own scale): (1.0046, 2.0306, 2.1279)
+
+=== Assets/Resources/Models/Animal/17_Deer1.0.prefab ===
+SkinnedMeshRenderers: 1, MeshRenderers: 1
+  SMR 'sm_4_0_0' mesh=sm_4_0_0 bounds=(0.601, 2.559, 1.945)
+    mat[0] 'Deer_Body' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+    mat[1] 'Deer_Head' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+    mat[2] 'Deer_Eye' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+  MR 'Chifre' materials=1
+    mat 'Chifre' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+Combined world bounds size (at prefab's own scale): (1.0815, 0.5934, 0.9227)
+
+=== Assets/Resources/Models/Animal/22_Elk1.0.prefab ===
+SkinnedMeshRenderers: 1, MeshRenderers: 1
+  SMR 'sm_2_0_1' mesh=sm_2_0_1 bounds=(0.666, 2.515, 1.928)
+    mat[0] 'Head' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+    mat[1] 'Eye' shader='Universal Render Pipeline/Lit' mainTex=False baseMap=False
+    mat[2] 'Body' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+  MR 'Chifre' materials=1
+    mat 'Chifre' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+Combined world bounds size (at prefab's own scale): (1.4119, 0.7690, 1.2227)
+
+=== Assets/Resources/Models/Animal/30_Goose.prefab ===
+SkinnedMeshRenderers: 1, MeshRenderers: 0
+  SMR 'Goose.001' mesh=Goose.001 bounds=(0.373, 0.280, 0.529)
+    mat[0] 'Goose' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+Combined world bounds size (at prefab's own scale): (52.8843, 37.3229, 28.0052)
+
+=== Assets/Resources/Models/Animal/41_Moose.prefab ===
+SkinnedMeshRenderers: 1, MeshRenderers: 1
+  SMR 'moose_male' mesh=moose_male bounds=(0.018, 0.029, 0.038)
+    mat[0] 'Moose_male' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+    mat[1] 'Moose_Eyelashes' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+  MR 'Antler_Moose' materials=1
+    mat 'Moose_Antler' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+Combined world bounds size (at prefab's own scale): (2.5028, 3.6025, 4.5164)
+
+=== Assets/Resources/Models/Animal/42_Moose1.0.prefab ===
+SkinnedMeshRenderers: 1, MeshRenderers: 1
+  SMR 'sm_1_0_1' mesh=sm_1_0_1 bounds=(0.784, 2.660, 2.091)
+    mat[0] 'Moose_Head' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+    mat[1] 'Moose_Body' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+  MR 'Chifre_Moose' materials=1
+    mat 'Moose_Chifre' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+Combined world bounds size (at prefab's own scale): (1.3332, 0.8483, 1.2571)
+
+=== Assets/Resources/Models/Animal/47_Pronghorn1.0.prefab ===
+SkinnedMeshRenderers: 1, MeshRenderers: 0
+  SMR 'sm_1_0_0' mesh=sm_1_0_0 bounds=(0.688, 2.752, 2.107)
+    mat[0] 'Pronghorn_Body' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+    mat[1] 'Pronghorn_Teef' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+    mat[2] 'Pronghorn_Head' shader='Universal Render Pipeline/Lit' mainTex=True baseMap=True
+Combined world bounds size (at prefab's own scale): (0.6878, 2.1069, 2.7520)
+

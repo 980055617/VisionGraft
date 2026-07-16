@@ -1,0 +1,713 @@
+[Licensing::Module] Trying to connect to existing licensing client channel...
+Built from '6000.0/respin/6000.0.60f1-f02d6f9f9009' branch; Version is '6000.0.60f1 (61dfb374e36f) revision 6414259'; Using compiler version '193933523'; Build Type 'Release'
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-y9800" at "2026-07-15T07:08:39.8423194Z"
+OS: 'Windows 11  (10.0.26200) 64bit Core' Language: 'en' Physical Memory: 32616 MB
+BatchMode: 1, IsHumanControllingUs: 0, StartBugReporterOnCrash: 0, Is64bit: 1
+Date: 2026-07-15T07:08:39Z
+
+COMMAND LINE ARGUMENTS:
+C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Unity.exe
+-batchmode
+-nographics
+-quit
+-projectPath
+c:/Users/y9800/Unity_project/VisionGraft
+-executeMethod
+AnimalRigBoneRenamer.RenameRemaining
+-logFile
+c:/Users/y9800/Unity_project/VisionGraft/animal_rename_remaining.log
+Successfully changed project path to: c:/Users/y9800/Unity_project/VisionGraft
+C:/Users/y9800/Unity_project/VisionGraft
+[UnityMemory] Configuration Parameters - Can be set up in boot.config
+    "memorysetup-bucket-allocator-granularity=16"
+    "memorysetup-bucket-allocator-bucket-count=8"
+    "memorysetup-bucket-allocator-block-size=33554432"
+    "memorysetup-bucket-allocator-block-count=8"
+    "memorysetup-main-allocator-block-size=16777216"
+    "memorysetup-thread-allocator-block-size=16777216"
+    "memorysetup-gfx-main-allocator-block-size=16777216"
+    "memorysetup-gfx-thread-allocator-block-size=16777216"
+    "memorysetup-cache-allocator-block-size=4194304"
+    "memorysetup-typetree-allocator-block-size=2097152"
+    "memorysetup-profiler-bucket-allocator-granularity=16"
+    "memorysetup-profiler-bucket-allocator-bucket-count=8"
+    "memorysetup-profiler-bucket-allocator-block-size=33554432"
+    "memorysetup-profiler-bucket-allocator-block-count=8"
+    "memorysetup-profiler-allocator-block-size=16777216"
+    "memorysetup-profiler-editor-allocator-block-size=1048576"
+    "memorysetup-temp-allocator-size-main=16777216"
+    "memorysetup-job-temp-allocator-block-size=2097152"
+    "memorysetup-job-temp-allocator-block-size-background=1048576"
+    "memorysetup-job-temp-allocator-reduction-small-platforms=262144"
+    "memorysetup-allocator-temp-initial-block-size-main=262144"
+    "memorysetup-allocator-temp-initial-block-size-worker=262144"
+    "memorysetup-temp-allocator-size-background-worker=32768"
+    "memorysetup-temp-allocator-size-job-worker=262144"
+    "memorysetup-temp-allocator-size-preload-manager=33554432"
+    "memorysetup-temp-allocator-size-nav-mesh-worker=65536"
+    "memorysetup-temp-allocator-size-audio-worker=65536"
+    "memorysetup-temp-allocator-size-cloud-worker=32768"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gfx=262144"
+Player connection [39376]  Target information:
+
+Player connection [39376]  * "[IP] 192.168.3.2 [Port] 55504 [Flags] 2 [Guid] 2394770698 [EditorId] 2394770698 [Version] 1048832 [Id] WindowsEditor(7,kawanishi) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [39376]  * "[IP] 26.242.87.8 [Port] 55504 [Flags] 2 [Guid] 2394770698 [EditorId] 2394770698 [Version] 1048832 [Id] WindowsEditor(7,kawanishi) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [39376] Host joined multi-casting on [225.0.0.222:54997]...
+Player connection [39376] Host joined alternative multi-casting on [225.0.0.222:34997]...
+Input System module state changed to: Initialized.
+[Physics::Module] Initialized fallback backend.
+[Physics::Module] Id: 0xdecafbad
+[Licensing::Client] Code 10 while verifying Licensing Client signature (process Id: 34344, path: "C:/Program Files/Unity Hub/UnityLicensingClient_V1/Unity.Licensing.Client.exe")
+[Licensing::Module] LicensingClient has failed validation; ignoring
+[Licensing::Client] Handshaking with LicensingClient:
+  Version:                 1.17.4+4293ba1
+  Session Id:              3ab60bbc5d4c46abbdc44235b7782d8a
+  Correlation Id:          3cb88a61a4dc25c42a29acb5cef2322d
+  External correlation Id: 3848469344781782076
+  Machine Id:              H7Ma11Ci3lcP8JAg0CSIpZLwTfs=
+[Licensing::Module] Successfully connected to LicensingClient on channel: "LicenseClient-y9800" (connect: 0.00s, validation: 0.00s, handshake: 0.03s)
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-y9800-notifications" at "2026-07-15T07:08:39.8713101Z"
+[Licensing::Module] Error: Access token is unavailable; failed to update
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Module] License group:
+  Id: F4-FK67-JP9U-N883-8S9S-XXXX
+  Product: Unity Personal
+  Type: ULF
+  Expiration: Unlimited
+[Licensing::Module] License group:
+  Id: 15668689674507-UnityPersXXXX
+  Product: Unity Personal
+  Type: Assigned
+  Expiration: Unlimited
+[Licensing::Client] Successfully updated license, isAsync: True, time: 0.00
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Module] License group:
+  Id: F4-FK67-JP9U-N883-8S9S-XXXX
+  Product: Unity Personal
+  Type: ULF
+  Expiration: Unlimited
+[Licensing::Module] License group:
+  Id: 15668689674507-UnityPersXXXX
+  Product: Unity Personal
+  Type: Assigned
+  Expiration: Unlimited
+[Licensing::Module] Licensing Background thread has ended after 0.04s
+[Package Manager] Connected to IPC stream "Upm-46880" after 0.2 seconds.
+Library Redirect Path: Library/
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Module] License group:
+  Id: F4-FK67-JP9U-N883-8S9S-XXXX
+  Product: Unity Personal
+  Type: ULF
+  Expiration: Unlimited
+[Licensing::Module] License group:
+  Id: 15668689674507-UnityPersXXXX
+  Product: Unity Personal
+  Type: Assigned
+  Expiration: Unlimited
+Refreshing native plugins compatible for Editor in 2.14 ms, found 0 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Initialize engine version: 6000.0.60f1 (61dfb374e36f)
+[Subsystems] Discovering subsystems at path C:/Program Files/Unity/Hub/Editor/6000.0.60f1/Editor/Data/Resources/UnitySubsystems
+[Subsystems] Discovering subsystems at path C:/Users/y9800/Unity_project/VisionGraft/Assets
+Forcing GfxDevice: Null
+GfxDevice: creating device client; kGfxThreadingModeNonThreaded
+NullGfxDevice:
+    Version:  NULL 1.0 [1.0]
+    Renderer: Null Device
+    Vendor:   Unity Technologies
+Shader Hidden/ProbeVolume/VoxelizeScene is not supported: GPU does not support conservative rasterization
+Shader 'Meta/MRUK/Scene/HighlightsAndShadows': fallback shader 'Off' not found
+Shader 'Oculus/OVRMRCameraFrameLit': fallback shader 'Alpha-Diffuse' not found
+Initialize mono
+Mono path[0] = 'C:/Program Files/Unity/Hub/Editor/6000.0.60f1/Editor/Data/Managed'
+Mono path[1] = 'C:/Program Files/Unity/Hub/Editor/6000.0.60f1/Editor/Data/MonoBleedingEdge/lib/mono/unityjit-win32'
+Mono config path = 'C:/Program Files/Unity/Hub/Editor/6000.0.60f1/Editor/Data/MonoBleedingEdge/etc'
+Using monoOptions --debugger-agent=transport=dt_socket,embedding=1,server=y,suspend=n,address=127.0.0.1:56880
+Using cacheserver namespaces - metadata:defaultmetadata, artifacts:defaultartifacts
+Using cacheserver namespaces - metadata:defaultmetadata, artifacts:defaultartifacts
+ImportWorker Server TCP listen port: 0
+AcceleratorClientConnectionCallback - disconnected - :0
+Begin MonoManager ReloadAssembly
+Registering precompiled unity dll's ...
+Register platform support module: C:/Program Files/Unity/Hub/Editor/6000.0.60f1/Editor/Data/PlaybackEngines/WindowsStandaloneSupport/UnityEditor.WindowsStandalone.Extensions.dll
+Register platform support module: C:/Program Files/Unity/Hub/Editor/6000.0.60f1/Editor/Data/PlaybackEngines/AndroidPlayer/UnityEditor.Android.Extensions.dll
+Registered in 0.002419 seconds.
+- Loaded All Assemblies, in  0.238 seconds
+Native extension for Android target not found
+Android Extension - Scanning For ADB Devices 2158 ms
+Native extension for WindowsStandalone target not found
+Mono: successfully reloaded assembly
+- Finished resetting the current domain, in  2.369 seconds
+Domain Reload Profiling: 2606ms
+	BeginReloadAssembly (79ms)
+		ExecutionOrderSort (0ms)
+		DisableScriptedObjects (0ms)
+		BackupInstance (0ms)
+		ReleaseScriptingObjects (0ms)
+		CreateAndSetChildDomain (0ms)
+	RebuildCommonClasses (24ms)
+	RebuildNativeTypeToScriptingClass (7ms)
+	initialDomainReloadingComplete (30ms)
+	LoadAllAssembliesAndSetupDomain (97ms)
+		LoadAssemblies (78ms)
+		RebuildTransferFunctionScriptingTraits (0ms)
+		AnalyzeDomain (95ms)
+			TypeCache.Refresh (94ms)
+				TypeCache.ScanAssembly (84ms)
+			BuildScriptInfoCaches (0ms)
+			ResolveRequiredComponents (0ms)
+	FinalizeReload (2369ms)
+		ReleaseScriptCaches (0ms)
+		RebuildScriptCaches (0ms)
+		SetupLoadedEditorAssemblies (2349ms)
+			LogAssemblyErrors (0ms)
+			InitializePlatformSupportModulesInManaged (2211ms)
+			SetLoadedEditorAssemblies (2ms)
+			BeforeProcessingInitializeOnLoad (34ms)
+			ProcessInitializeOnLoadAttributes (70ms)
+			ProcessInitializeOnLoadMethodAttributes (32ms)
+			AfterProcessingInitializeOnLoad (0ms)
+			EditorAssembliesLoaded (0ms)
+		ExecutionOrderSort2 (0ms)
+		AwakeInstancesAfterBackupRestoration (0ms)
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Module] License group:
+  Id: F4-FK67-JP9U-N883-8S9S-XXXX
+  Product: Unity Personal
+  Type: ULF
+  Expiration: Unlimited
+[Licensing::Module] License group:
+  Id: 15668689674507-UnityPersXXXX
+  Product: Unity Personal
+  Type: Assigned
+  Expiration: Unlimited
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Module] License group:
+  Id: F4-FK67-JP9U-N883-8S9S-XXXX
+  Product: Unity Personal
+  Type: ULF
+  Expiration: Unlimited
+[Licensing::Module] License group:
+  Id: 15668689674507-UnityPersXXXX
+  Product: Unity Personal
+  Type: Assigned
+  Expiration: Unlimited
+Application.AssetDatabase Initial Refresh Start
+Package Manager log level set to [2]
+[Package Manager] Restoring resolved packages state from cache
+[Licensing::Client] Successfully resolved entitlement details
+[Package Manager] Registered 76 packages:
+  Packages from [https://packages.unity.com]:
+    com.meta.xr.sdk.all@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.sdk.all@3c787aa87d70)
+    com.unity.ai.navigation@2.0.9 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.ai.navigation@5218e4bf7edc)
+    com.unity.collab-proxy@2.9.3 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.collab-proxy@ab839cc7d2ad)
+    com.unity.device-simulator.devices@1.0.1 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.device-simulator.devices@2af643ceec84)
+    com.unity.ide.rider@3.0.38 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.ide.rider@1f60b3138684)
+    com.unity.ide.visualstudio@2.0.23 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.ide.visualstudio@198cdf337d13)
+    com.unity.inputsystem@1.14.2 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.inputsystem@be6c4fd0abf5)
+    com.unity.timeline@1.8.9 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.timeline@6b9e48457ddb)
+    com.unity.visualscripting@1.9.7 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.visualscripting@6279e2b7c485)
+    com.unity.xr.management@4.5.3 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.xr.management@574ebfb1e976)
+    com.unity.xr.mock-hmd@1.4.0-preview.2 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.xr.mock-hmd@bf4cb37c5d7a)
+    com.unity.xr.openxr@1.15.1 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.xr.openxr@05fb1a7d75d1)
+    com.unity.mathematics@1.3.2 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.mathematics@8017b507cc74)
+    com.unity.xr.core-utils@2.5.3 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.xr.core-utils@f0450cbac8d6)
+    com.unity.xr.legacyinputhelpers@2.1.12 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.xr.legacyinputhelpers@b7579e86f3b4)
+    com.meta.xr.sdk.core@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.sdk.core@d6da9ab40659)
+    com.meta.xr.sdk.audio@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.sdk.audio@ca86912b4d20)
+    com.meta.xr.sdk.voice@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.sdk.voice@1613052ece81)
+    com.meta.xr.simulator@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.simulator@e73b5fdb5a5a)
+    com.meta.xr.sdk.haptics@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.sdk.haptics@cd1f215a823c)
+    com.meta.xr.mrutilitykit@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.mrutilitykit@7a74cdb228ff)
+    com.meta.xr.sdk.platform@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.sdk.platform@b9f1cf4de8ae)
+    com.meta.xr.sdk.interaction@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.sdk.interaction@33d664ec3528)
+    com.meta.xr.sdk.interaction.ovr@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.sdk.interaction.ovr@2b29786f9906)
+    com.unity.searcher@4.9.3 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.searcher@1e17ce91558d)
+    com.unity.burst@1.8.25 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.burst@1df634d836b8)
+    com.unity.collections@2.6.2 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.collections@aea9d3bd5e19)
+    com.unity.nuget.newtonsoft-json@3.2.1 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.nuget.newtonsoft-json@74deb55db2a0)
+    com.unity.nuget.mono-cecil@1.11.5 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.nuget.mono-cecil@d78732e851eb)
+    com.unity.test-framework.performance@3.2.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.test-framework.performance@0840f58e4562)
+  Built-in packages:
+    com.unity.multiplayer.center@1.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.multiplayer.center@f3fb577b3546)
+    com.unity.render-pipelines.universal@17.0.4 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.render-pipelines.universal@ba24149c0920)
+    com.unity.test-framework@1.6.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.test-framework@0baaad2f700c)
+    com.unity.ugui@2.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.ugui@27299721f2fd)
+    com.unity.modules.accessibility@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.accessibility)
+    com.unity.modules.ai@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.ai)
+    com.unity.modules.androidjni@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.androidjni)
+    com.unity.modules.animation@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.animation)
+    com.unity.modules.assetbundle@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.assetbundle)
+    com.unity.modules.audio@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.audio)
+    com.unity.modules.cloth@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.cloth)
+    com.unity.modules.director@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.director)
+    com.unity.modules.imageconversion@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.imageconversion)
+    com.unity.modules.imgui@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.imgui)
+    com.unity.modules.jsonserialize@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.jsonserialize)
+    com.unity.modules.particlesystem@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.particlesystem)
+    com.unity.modules.physics@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.physics)
+    com.unity.modules.physics2d@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.physics2d)
+    com.unity.modules.screencapture@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.screencapture)
+    com.unity.modules.terrain@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.terrain)
+    com.unity.modules.terrainphysics@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.terrainphysics)
+    com.unity.modules.tilemap@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.tilemap)
+    com.unity.modules.ui@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.ui)
+    com.unity.modules.uielements@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.uielements)
+    com.unity.modules.umbra@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.umbra)
+    com.unity.modules.unityanalytics@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.unityanalytics)
+    com.unity.modules.unitywebrequest@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.unitywebrequest)
+    com.unity.modules.unitywebrequestassetbundle@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.unitywebrequestassetbundle)
+    com.unity.modules.unitywebrequestaudio@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.unitywebrequestaudio)
+    com.unity.modules.unitywebrequesttexture@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.unitywebrequesttexture)
+    com.unity.modules.unitywebrequestwww@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.unitywebrequestwww)
+    com.unity.modules.vehicles@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.vehicles)
+    com.unity.modules.video@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.video)
+    com.unity.modules.vr@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.vr)
+    com.unity.modules.wind@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.wind)
+    com.unity.modules.xr@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.xr)
+    com.unity.modules.subsystems@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.subsystems)
+    com.unity.modules.hierarchycore@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.hierarchycore)
+    com.unity.ext.nunit@2.0.5 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.ext.nunit@031a54704bff)
+    com.unity.render-pipelines.core@17.0.4 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.render-pipelines.core@3d082aa477f5)
+    com.unity.shadergraph@17.0.4 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.shadergraph@6f01d23bdcbb)
+    com.unity.render-pipelines.universal-config@17.0.3 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.render-pipelines.universal-config@dd206bf35d04)
+    com.unity.rendering.light-transport@1.0.1 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.rendering.light-transport@9bd588f963c0)
+    com.unity.textmeshpro@5.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.textmeshpro@53f43edfd2e0)
+  Embedded packages:
+    com.vrmc.gltf@file:C:\Users\y9800\Unity_project\VisionGraft\Packages\com.vrmc.gltf (location: C:\Users\y9800\Unity_project\VisionGraft\Packages\com.vrmc.gltf)
+    com.vrmc.vrm@file:C:\Users\y9800\Unity_project\VisionGraft\Packages\com.vrmc.vrm (location: C:\Users\y9800\Unity_project\VisionGraft\Packages\com.vrmc.vrm)
+[Subsystems] Looking for new subsystems at path C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.xr.mock-hmd@bf4cb37c5d7a
+[Subsystems] Novel subsystem found at Library/PackageCache/com.unity.xr.mock-hmd@bf4cb37c5d7a/Runtime/UnitySubsystemsManifest.json
+[Subsystems] Discovering subsystems at path C:/Program Files/Unity/Hub/Editor/6000.0.60f1/Editor/Data/Resources/UnitySubsystems
+[Subsystems] Discovering subsystems at path C:/Users/y9800/Unity_project/VisionGraft/Assets
+[Subsystems] Discovering subsystems at path C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.xr.mock-hmd@bf4cb37c5d7a
+[Subsystems] No descriptors matched for  examples in Library/PackageCache/com.unity.xr.mock-hmd@bf4cb37c5d7a/Runtime/UnitySubsystemsManifest.json.
+[Subsystems] 1 'inputs' descriptors matched in Library/PackageCache/com.unity.xr.mock-hmd@bf4cb37c5d7a/Runtime/UnitySubsystemsManifest.json
+[Subsystems] 1 'displays' descriptors matched in Library/PackageCache/com.unity.xr.mock-hmd@bf4cb37c5d7a/Runtime/UnitySubsystemsManifest.json
+[Subsystems] No descriptors matched for  meshings in Library/PackageCache/com.unity.xr.mock-hmd@bf4cb37c5d7a/Runtime/UnitySubsystemsManifest.json.
+[Subsystems] Discovering subsystems at path C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.xr.openxr@05fb1a7d75d1
+[Subsystems] No descriptors matched for  examples in Library/PackageCache/com.unity.xr.openxr@05fb1a7d75d1/Runtime/UnitySubsystemsManifest.json.
+[Subsystems] 1 'inputs' descriptors matched in Library/PackageCache/com.unity.xr.openxr@05fb1a7d75d1/Runtime/UnitySubsystemsManifest.json
+[Subsystems] 1 'displays' descriptors matched in Library/PackageCache/com.unity.xr.openxr@05fb1a7d75d1/Runtime/UnitySubsystemsManifest.json
+[Subsystems] No descriptors matched for  meshings in Library/PackageCache/com.unity.xr.openxr@05fb1a7d75d1/Runtime/UnitySubsystemsManifest.json.
+[Package Manager] Done registering packages in 0.03 seconds
+[ScriptCompilation] Requested script compilation because: Assetdatabase observed changes in script compilation related files
+Duplicate assembly 'System.Runtime.CompilerServices.Unsafe.dll' with different versions detected, using 'Packages/com.unity.collections/Unity.Collections.Tests/System.Runtime.CompilerServices.Unsafe/System.Runtime.CompilerServices.Unsafe.dll, AssemblyName=System.Runtime.CompilerServices.Unsafe, Version=6.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a' and ignoring 'Assets/Plugins/K4os/System.Runtime.CompilerServices.Unsafe.dll, AssemblyName=System.Runtime.CompilerServices.Unsafe, Version=5.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a'.info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://localhost:80
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Production
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: C:\Users\y9800\Unity_project\VisionGraft\
+info: Microsoft.AspNetCore.Hosting.Diagnostics[1]
+      Request starting HTTP/2 POST http://ilpp/UnityILPP.PostProcessing/Ping application/grpc -
+info: Microsoft.AspNetCore.Routing.EndpointMiddleware[0]
+      Executing endpoint 'gRPC - /UnityILPP.PostProcessing/Ping'
+info: Microsoft.AspNetCore.Routing.EndpointMiddleware[1]
+      Executed endpoint 'gRPC - /UnityILPP.PostProcessing/Ping'
+info: Microsoft.AspNetCore.Hosting.Diagnostics[2]
+      Request finished HTTP/2 POST http://ilpp/UnityILPP.PostProcessing/Ping application/grpc - - 200 - application/grpc 25.9665ms
+Starting: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\bee_backend.exe --ipc --defer-dag-verification --dagfile="Library/Bee/1300b0aE.dag" --continue-on-failure --profile="Library/Bee/backend1.traceevents" ScriptAssemblies
+WorkingDir: C:/Users/y9800/Unity_project/VisionGraft
+DisplayProgressbar: Compiling Scripts
+info: Microsoft.AspNetCore.Hosting.Diagnostics[1]
+      Request starting HTTP/2 POST http://ilpp/UnityILPP.PostProcessing/ConfigurePostProcessors application/grpc -
+info: Microsoft.AspNetCore.Routing.EndpointMiddleware[0]
+      Executing endpoint 'gRPC - /UnityILPP.PostProcessing/ConfigurePostProcessors'
+warn: Unity.ILPP.Runner.PostProcessingAssemblyLoadContext[0]
+      Assembly system.runtime.interopservices.windowsruntime has duplicate hint path. Ignoring "C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\UnityReferenceAssemblies\unity-4.8-api\Facades\System.Runtime.InteropServices.WindowsRuntime.dll" in favor of "C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\NetStandard\Extensions\2.0.0\System.Runtime.InteropServices.WindowsRuntime.dll"
+warn: Unity.ILPP.Runner.PostProcessingAssemblyLoadContext[0]
+      Assembly system.componentmodel.composition has duplicate hint path. Ignoring "C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\UnityReferenceAssemblies\unity-4.8-api\System.ComponentModel.Composition.dll" in favor of "C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\NetStandard\compat\2.1.0\shims\netfx\System.ComponentModel.Composition.dll"
+info: Unity.ILPP.Runner.PostProcessingAssemblyLoadContext[0]
+      Resolved Unity.Burst.Cecil, Version=0.11.4.0, Culture=neutral, PublicKeyToken=50cebf1cceb9d05e with Library\PackageCache\com.unity.burst@1df634d836b8\Unity.Burst.CodeGen\Unity.Burst.Cecil.dll
+info: Unity.ILPP.Runner.PostProcessingAssemblyLoadContext[0]
+      Resolved Mono.Cecil, Version=0.11.5.0, Culture=neutral, PublicKeyToken=50cebf1cceb9d05e with Library\PackageCache\com.unity.nuget.mono-cecil@d78732e851eb\Mono.Cecil.dll
+info: Microsoft.AspNetCore.Routing.EndpointMiddleware[1]
+      Executed endpoint 'gRPC - /UnityILPP.PostProcessing/ConfigurePostProcessors'
+info: Microsoft.AspNetCore.Hosting.Diagnostics[2]
+      Request finished HTTP/2 POST http://ilpp/UnityILPP.PostProcessing/ConfigurePostProcessors application/grpc - - 200 - application/grpc 33.5365ms
+info: Microsoft.AspNetCore.Hosting.Diagnostics[1]
+      Request starting HTTP/2 POST http://ilpp/UnityILPP.PostProcessing/PostProcessAssembly application/grpc -
+info: Microsoft.AspNetCore.Routing.EndpointMiddleware[0]
+      Executing endpoint 'gRPC - /UnityILPP.PostProcessing/PostProcessAssembly'
+info: Unity.ILPP.Runner.PostProcessingPipeline[0]
+      Processing assembly Library/Bee/artifacts/1300b0aE.dag/Assembly-CSharp-Editor.dll, with 131 defines and 426 references
+info: Unity.ILPP.Runner.PostProcessingPipeline[0]
+      processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+info: Unity.ILPP.Runner.PostProcessingPipeline[0]
+      running Unity.Jobs.CodeGen.JobsILPostProcessor
+info: Unity.ILPP.Runner.PostProcessingAssemblyLoadContext[0]
+      Resolved Unity.Collections, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null with Library\Bee\artifacts\1300b0aE.dag\Unity.Collections.dll
+info: Unity.ILPP.Runner.PostProcessingAssemblyLoadContext[0]
+      Resolved UnityEditor.CoreModule, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null with C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Managed\UnityEngine\UnityEditor.CoreModule.dll
+info: Unity.ILPP.Runner.PostProcessingAssemblyLoadContext[0]
+      Resolved UnityEngine.CoreModule, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null with C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Managed\UnityEngine\UnityEngine.CoreModule.dll
+info: Unity.ILPP.Runner.PostProcessingPipeline[0]
+      running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+info: Unity.ILPP.Runner.PostProcessingAssemblyLoadContext[0]
+      Resolved Unity.Burst.Cecil.Rocks, Version=0.11.4.0, Culture=neutral, PublicKeyToken=50cebf1cceb9d05e with Library\PackageCache\com.unity.burst@1df634d836b8\Unity.Burst.CodeGen\Unity.Burst.Cecil.Rocks.dll
+info: Microsoft.AspNetCore.Routing.EndpointMiddleware[1]
+      Executed endpoint 'gRPC - /UnityILPP.PostProcessing/PostProcessAssembly'
+info: Microsoft.AspNetCore.Hosting.Diagnostics[2]
+      Request finished HTTP/2 POST http://ilpp/UnityILPP.PostProcessing/PostProcessAssembly application/grpc - - 200 - application/grpc 272.7421ms
+ExitCode: 0 Duration: 2s139ms
+[1504/2040  0s] ILPP-Configuration Library/ilpp-configuration.nevergeneratedoutput
+[2036/2040  0s] Csc Library/Bee/artifacts/1300b0aE.dag/Assembly-CSharp-Editor.dll (+2 others)
+[2037/2040  0s] ILPostProcess Library/Bee/artifacts/1300b0aE.dag/post-processed/Assembly-CSharp-Editor.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1300b0aE.dag/Assembly-CSharp-Editor.dll, with 131 defines and 426 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[2038/2040  0s] CopyFiles Library/ScriptAssemblies/Assembly-CSharp-Editor.pdb
+[2039/2040  0s] CopyFiles Library/ScriptAssemblies/Assembly-CSharp-Editor.dll
+*** Tundra build success (2.12 seconds), 5 items updated, 2040 evaluated
+AssetDatabase: script compilation time: 2.447296s
+Begin MonoManager ReloadAssembly
+Duplicate assembly 'System.Runtime.CompilerServices.Unsafe.dll' with different versions detected, using 'Packages/com.unity.collections/Unity.Collections.Tests/System.Runtime.CompilerServices.Unsafe/System.Runtime.CompilerServices.Unsafe.dll, AssemblyName=System.Runtime.CompilerServices.Unsafe, Version=6.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a' and ignoring 'Assets/Plugins/K4os/System.Runtime.CompilerServices.Unsafe.dll, AssemblyName=System.Runtime.CompilerServices.Unsafe, Version=5.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a'.Symbol file LoadedFromMemory is not a mono symbol file
+- Loaded All Assemblies, in  1.103 seconds
+Script 'CharacterController' has the same name as built-in Unity component.
+AddComponent and GetComponent will not work with this script.
+'Packages/com.meta.xr.sdk.core/Editor/BuildingBlocks/BlocksWindowDetailsExtension.cs' contains partial class of Unity.Object, exactly 1 of the partial classes needs to be in a file with the same filename. This is to know the one that can be referenced from ie. GameObjects
+'Packages/com.meta.xr.sdk.core/Editor/BuildingBlocks/BlocksWindow.cs' contains partial class of Unity.Object, exactly 1 of the partial classes needs to be in a file with the same filename. This is to know the one that can be referenced from ie. GameObjects
+'Packages/com.meta.xr.sdk.core/Editor/BuildingBlocks/BlocksWindowCollectionsPageExtension.cs' contains partial class of Unity.Object, exactly 1 of the partial classes needs to be in a file with the same filename. This is to know the one that can be referenced from ie. GameObjects
+Refreshing native plugins compatible for Editor in 12.23 ms, found 17 plugins.
+Native extension for Android target not found
+Native extension for WindowsStandalone target not found
+Refreshing native plugins compatible for Editor in 9.43 ms, found 17 plugins.
+Duplicate assembly 'System.Runtime.CompilerServices.Unsafe.dll' with different versions detected, using 'Packages/com.unity.collections/Unity.Collections.Tests/System.Runtime.CompilerServices.Unsafe/System.Runtime.CompilerServices.Unsafe.dll, AssemblyName=System.Runtime.CompilerServices.Unsafe, Version=6.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a' and ignoring 'Assets/Plugins/K4os/System.Runtime.CompilerServices.Unsafe.dll, AssemblyName=System.Runtime.CompilerServices.Unsafe, Version=5.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a'.Mono: successfully reloaded assembly
+- Finished resetting the current domain, in  2.914 seconds
+Domain Reload Profiling: 4012ms
+	BeginReloadAssembly (228ms)
+		ExecutionOrderSort (0ms)
+		DisableScriptedObjects (7ms)
+		BackupInstance (0ms)
+		ReleaseScriptingObjects (0ms)
+		CreateAndSetChildDomain (133ms)
+	RebuildCommonClasses (21ms)
+	RebuildNativeTypeToScriptingClass (7ms)
+	initialDomainReloadingComplete (20ms)
+	LoadAllAssembliesAndSetupDomain (821ms)
+		LoadAssemblies (638ms)
+		RebuildTransferFunctionScriptingTraits (0ms)
+		AnalyzeDomain (245ms)
+			TypeCache.Refresh (168ms)
+				TypeCache.ScanAssembly (153ms)
+			BuildScriptInfoCaches (61ms)
+			ResolveRequiredComponents (14ms)
+	FinalizeReload (2914ms)
+		ReleaseScriptCaches (0ms)
+		RebuildScriptCaches (0ms)
+		SetupLoadedEditorAssemblies (2747ms)
+			LogAssemblyErrors (0ms)
+			InitializePlatformSupportModulesInManaged (15ms)
+			SetLoadedEditorAssemblies (4ms)
+			BeforeProcessingInitializeOnLoad (121ms)
+			ProcessInitializeOnLoadAttributes (2544ms)
+			ProcessInitializeOnLoadMethodAttributes (57ms)
+			AfterProcessingInitializeOnLoad (5ms)
+			EditorAssembliesLoaded (0ms)
+		ExecutionOrderSort2 (0ms)
+		AwakeInstancesAfterBackupRestoration (6ms)
+Refreshing native plugins compatible for Editor in 8.63 ms, found 17 plugins.
+Unity memory allocator detected: MetaXRAudio native memory allocations will be tracked.
+Preloading 2 native plugins for Editor in 1.80 ms.
+Asset Pipeline Refresh (id=4aa8079c1a7c27248a2ea1fbfe0b5dd3): Total: 7.978 seconds - Initiated by InitialRefreshV2(ForceSynchronousImport)
+	Summary:
+		Imports: total=0 (actual=0, local cache=0, cache server=0)
+		Asset DB Process Time: managed=0 ms, native=3544 ms
+		Asset DB Callback time: managed=766 ms, native=48 ms
+		Scripting: domain reloads=1, domain reload time=1103 ms, compile time=2448 ms, other=65 ms
+		Project Asset Count: scripts=2967, non-scripts=5891
+		Asset File Changes: new=0, changed=1, moved=0, deleted=0
+		Scan Filter Count: 0
+	InvokeCustomDependenciesCallbacks: 0.001ms
+	InvokePackagesCallback: 34.357ms
+	ApplyChangesToAssetFolders: 0.589ms
+	Scan: 199.196ms
+	OnSourceAssetsModified: 0.860ms
+	CategorizeAssetsWithTransientArtifact: 58.837ms
+	ProcessAssetsWithTransientArtifactChanges: 94.116ms
+	CategorizeAssets: 102.215ms
+	ImportOutOfDateAssets: 2947.523ms (496.975ms without children)
+		CompileScripts: 2448.366ms
+		ReloadNativeAssets: 0.021ms
+		UnloadImportedAssets: 0.613ms
+		EnsureUptoDateAssetsAreRegisteredWithGuidPM: 1.027ms
+		InitializingProgressBar: 0.000ms
+		PostProcessAllAssetNotificationsAddChangedAssets: 0.000ms
+		OnDemandSchedulerStart: 0.522ms
+	PostProcessAllAssets: 769.773ms
+	Hotreload: 12.148ms
+	GatherAllCurrentPrimaryArtifactRevisions: 0.002ms
+	UnloadStreamsBegin: 1.967ms
+	PersistCurrentRevisions: 0.228ms
+	UnloadStreamsEnd: 0.001ms
+	GenerateScriptTypeHashes: 25.741ms
+	Untracked: 3756.651ms
+
+Application.AssetDatabase Initial Refresh End
+Scanning for USB devices : 3.104ms
+Initializing Unity extensions:
+[MODES] ModeService[none].Initialize
+[MODES] ModeService[none].LoadModes
+[MODES] Loading mode Default (0) for mode-current-id-stereoCrafter
+Unloading 216 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 9971 unused Assets / (3.9 MB). Loaded Objects now: 13463.
+Memory consumption went from 313.3 MB to 309.4 MB.
+Total: 12.047000 ms (FindLiveObjects: 0.705400 ms CreateObjectMapping: 0.519100 ms MarkObjects: 8.688000 ms  DeleteObjects: 2.133800 ms)
+
+Start importing Assets/Resources/Models/Animal/AmericanMink.prefab using Guid(6bbd606ac17dc3442bfca8c838550d60) (PrefabImporter) -> (artifact id: 'fd94b2586a0fc87b6816fd3ce3ed9557') in 0.0084003 seconds
+Refreshing native plugins compatible for Editor in 9.17 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.13 ms.
+Asset Pipeline Refresh (id=bda1fb9491d03f048b13702612e0c3c3): Total: 0.117 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/AmericanMink.prefab
+Start importing Assets/Resources/Models/Animal/Badger.prefab using Guid(cf26416603367fe44a3b6a0cda21eb15) (PrefabImporter) -> (artifact id: '573cda94ecb6822070e36622929843d5') in 0.0037365 seconds
+Refreshing native plugins compatible for Editor in 8.92 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.10 ms.
+Asset Pipeline Refresh (id=b7d062cee02e69a43a52a15d4f5b7fad): Total: 0.055 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Badger.prefab
+Start importing Assets/Resources/Models/Animal/Bear1.0.prefab using Guid(d614b30de7bc8d94e8e0558b2dbce11b) (PrefabImporter) -> (artifact id: 'bc105c7a4b5df3b5468ea3afd7877dc3') in 0.0028147 seconds
+Refreshing native plugins compatible for Editor in 9.15 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.10 ms.
+Asset Pipeline Refresh (id=1f496f663bdacdd4c86028e14a8b3814): Total: 0.054 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Bear1.0.prefab
+Start importing Assets/Resources/Models/Animal/Bear2.0.prefab using Guid(4ac029a36d1d4b1499ade9980755534a) (PrefabImporter) -> (artifact id: '625d257f55a573640e2a24edc7294794') in 0.0040257 seconds
+Refreshing native plugins compatible for Editor in 9.81 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.10 ms.
+Asset Pipeline Refresh (id=47ccd564e83935e498c090bfa9dfb0a4): Total: 0.057 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Bear2.0.prefab
+Start importing Assets/Resources/Models/Animal/BearWITHFUR.prefab using Guid(556f61a81d0dcce44aa052f7bcefde65) (PrefabImporter) -> (artifact id: '9f578950d3f927163e52fae695d5dce3') in 0.0028985 seconds
+Refreshing native plugins compatible for Editor in 9.60 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.10 ms.
+Asset Pipeline Refresh (id=df5f5cbf1af9fd74fb4d1923e5cf8d46): Total: 0.054 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/BearWITHFUR.prefab
+Start importing Assets/Resources/Models/Animal/Beaver.prefab using Guid(854e797015dc6904c9681d130646be30) (PrefabImporter) -> (artifact id: '335cd86b801d1d0a1e8afeaf44aa99fe') in 0.0060601 seconds
+Refreshing native plugins compatible for Editor in 10.04 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.12 ms.
+Asset Pipeline Refresh (id=fd59ba418fc863d478901b8aac876897): Total: 0.060 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Beaver.prefab
+Start importing Assets/Resources/Models/Animal/BighornSheep.prefab using Guid(e04d72e408b39c1489223f13ec233bf1) (PrefabImporter) -> (artifact id: 'e23f31464eec592cb8ec8f602aa5fee8') in 0.0039959 seconds
+Refreshing native plugins compatible for Editor in 9.15 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.10 ms.
+Asset Pipeline Refresh (id=1926f646371ec9945afa9ab5b160bed0): Total: 0.051 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/BighornSheep.prefab
+Start importing Assets/Resources/Models/Animal/Bloodhund.prefab using Guid(71684a455c288024581053c7d9173547) (PrefabImporter) -> (artifact id: '0335e37f08653fab6bac5b8074fd7261') in 0.0045221 seconds
+Refreshing native plugins compatible for Editor in 9.63 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.11 ms.
+Asset Pipeline Refresh (id=e6398eb2463bf504bb1d804ae65a61d0): Total: 0.057 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Bloodhund.prefab
+Start importing Assets/Resources/Models/Animal/BoarV2.prefab using Guid(4ef2962eba7b76645a7c1806d77d17c3) (PrefabImporter) -> (artifact id: 'eab6caab494d64c4bd20e0a9ae4918f6') in 0.0045182 seconds
+Refreshing native plugins compatible for Editor in 9.55 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.11 ms.
+Asset Pipeline Refresh (id=15e6554df395b2a4097bd79fa5232419): Total: 0.059 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/BoarV2.prefab
+Start importing Assets/Resources/Models/Animal/Deer.prefab using Guid(5eb120835f488bc49b301555bff76b0f) (PrefabImporter) -> (artifact id: '00fcfb33f663b3b441343f39b670e4e8') in 0.0038291 seconds
+Refreshing native plugins compatible for Editor in 9.95 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.11 ms.
+Asset Pipeline Refresh (id=1f4a598dec1c15d4493753541538b7be): Total: 0.058 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Deer.prefab
+[AnimalRigBoneRenamer] Assets/Resources/Models/Animal/Deer1.0.prefab - bones not found (skipped): RigLBLegDigit11, RigRBLegDigit11
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:LogWarning (object)
+AnimalRigBoneRenamer:RenameOne (AnimalRigBoneRenamer/Mapping) (at Assets/Editor/AnimalRigBoneRenamer.cs:468)
+AnimalRigBoneRenamer:RenameRemaining () (at Assets/Editor/AnimalRigBoneRenamer.cs:442)
+
+(Filename: Assets/Editor/AnimalRigBoneRenamer.cs Line: 468)
+
+Start importing Assets/Resources/Models/Animal/Deer1.0.prefab using Guid(b3b6bc23cd357d240beed8f9e0af61ff) (PrefabImporter) -> (artifact id: '9b2225f3e1e9999cafa4cfb85d29ae57') in 0.0033455 seconds
+Refreshing native plugins compatible for Editor in 9.84 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.13 ms.
+Asset Pipeline Refresh (id=2ddd29ec285f18d4fac978a6997a8e23): Total: 0.057 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Deer1.0.prefab
+Start importing Assets/Resources/Models/Animal/Deer1.prefab using Guid(882fcb282640f96418742e7bfdf16785) (PrefabImporter) -> (artifact id: '83e04a3e51a20d411ad253bfd617f897') in 0.0038229 seconds
+Refreshing native plugins compatible for Editor in 9.54 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.10 ms.
+Asset Pipeline Refresh (id=0de310df23b21aa479e271cb0d3ba088): Total: 0.058 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Deer1.prefab
+Start importing Assets/Resources/Models/Animal/DeerV2.prefab using Guid(904cb582d867d3c4f8429a3f914f3cdd) (PrefabImporter) -> (artifact id: '2d8c22be88842803b219ea2f01a58385') in 0.0037866 seconds
+Refreshing native plugins compatible for Editor in 9.33 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.11 ms.
+Asset Pipeline Refresh (id=4a64e16cb91260f4887bc566f16a4315): Total: 0.055 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/DeerV2.prefab
+Start importing Assets/Resources/Models/Animal/Doe1.0.prefab using Guid(6e6665f0b289bb64da9767b9dbb49752) (PrefabImporter) -> (artifact id: '2879c7cdffe21ba8a409bbd3a9be8886') in 0.002777 seconds
+Refreshing native plugins compatible for Editor in 9.22 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.10 ms.
+Asset Pipeline Refresh (id=759e3e0c91a7aad4d9ec40210587c52c): Total: 0.052 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Doe1.0.prefab
+Start importing Assets/Resources/Models/Animal/Donkey.prefab using Guid(8b77c4e7b53e9234592bd3a861403a97) (PrefabImporter) -> (artifact id: 'eae014705e7506487cc370f9da05e1a8') in 0.002871 seconds
+Refreshing native plugins compatible for Editor in 9.06 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.09 ms.
+Asset Pipeline Refresh (id=3b88fbd7dc5743340a03e7124c0468f1): Total: 0.049 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Donkey.prefab
+Start importing Assets/Resources/Models/Animal/Donkey1.0.prefab using Guid(034f85acbe974fb489a2fa7e6b96e29f) (PrefabImporter) -> (artifact id: '0bda59cf6dc30100b6be3d0268478a5a') in 0.0029888 seconds
+Refreshing native plugins compatible for Editor in 8.99 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.10 ms.
+Asset Pipeline Refresh (id=731fd8169665eff4581eabef9f8bb88b): Total: 0.054 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Donkey1.0.prefab
+Start importing Assets/Resources/Models/Animal/Elk1.0.prefab using Guid(c0512ec0c7d1fc542921f098277736a7) (PrefabImporter) -> (artifact id: 'bf32d11199e2207718292ed5c0704606') in 0.0028339 seconds
+Refreshing native plugins compatible for Editor in 9.27 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.11 ms.
+Asset Pipeline Refresh (id=c572bf08327890d458087c5cf1bfe246): Total: 0.053 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Elk1.0.prefab
+Start importing Assets/Resources/Models/Animal/EuropeanBadger.prefab using Guid(2b7d9fa71eb1a9b4badef1e440459fd7) (PrefabImporter) -> (artifact id: '873ab5ae98aa1993e25db31ece402cb0') in 0.0037514 seconds
+Refreshing native plugins compatible for Editor in 9.26 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.10 ms.
+Asset Pipeline Refresh (id=a0b35e813e0ffcd4db00076d3b5a7257): Total: 0.056 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/EuropeanBadger.prefab
+Start importing Assets/Resources/Models/Animal/Fox.prefab using Guid(3dbeb4a68e36f75468bb8f11637005e5) (PrefabImporter) -> (artifact id: '4b02f6660473cc65472db3a82cea8172') in 0.0048184 seconds
+Refreshing native plugins compatible for Editor in 9.11 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.10 ms.
+Asset Pipeline Refresh (id=e0a15b9ba17776b4287fee3329d6195e): Total: 0.053 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Fox.prefab
+Start importing Assets/Resources/Models/Animal/FoxV2.prefab using Guid(6ee933a654b8f4c4b8b1efc1d7731f73) (PrefabImporter) -> (artifact id: 'bb1bb54805a99191c4f9d61e45bd4b45') in 0.0038437 seconds
+Refreshing native plugins compatible for Editor in 9.09 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.09 ms.
+Asset Pipeline Refresh (id=29be741f232c1d64c8c940433ef0fdb0): Total: 0.051 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/FoxV2.prefab
+Start importing Assets/Resources/Models/Animal/FoxWITHFUR.prefab using Guid(28e3e649297cc8c4eaaa491d72c3c954) (PrefabImporter) -> (artifact id: '4b04d310ad731c6f0162f4d2256d7935') in 0.0027817 seconds
+Refreshing native plugins compatible for Editor in 9.06 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.10 ms.
+Asset Pipeline Refresh (id=0fa13a7995694f342ba0f693f10aa8ee): Total: 0.051 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/FoxWITHFUR.prefab
+Start importing Assets/Resources/Models/Animal/Gnou.prefab using Guid(44d0a94c8fe8f464aa16784f93709324) (PrefabImporter) -> (artifact id: '2d63b59152a1cddc1accdf1c423bf03a') in 0.003587 seconds
+Refreshing native plugins compatible for Editor in 9.06 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.13 ms.
+Asset Pipeline Refresh (id=813787cea5d8283499810b98ce002b2e): Total: 0.054 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Gnou.prefab
+Start importing Assets/Resources/Models/Animal/Goat.prefab using Guid(cf063f8b7280a754d97e40fe7e2d0415) (PrefabImporter) -> (artifact id: '59e4e9b6237dfe4dcc92f0a250d6358c') in 0.0035436 seconds
+Refreshing native plugins compatible for Editor in 9.35 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.11 ms.
+Asset Pipeline Refresh (id=c630691cb0ab19043b127459f60eb8b0): Total: 0.048 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Goat.prefab
+Start importing Assets/Resources/Models/Animal/Goat1.prefab using Guid(ecc45022d7e182145b1f98c1bd4d6a44) (PrefabImporter) -> (artifact id: 'cc79fd5aae5a4465d660fc635080dda6') in 0.002947 seconds
+Refreshing native plugins compatible for Editor in 9.74 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.10 ms.
+Asset Pipeline Refresh (id=ba5cde277dbef3741a7366eda498a608): Total: 0.053 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Goat1.prefab
+Start importing Assets/Resources/Models/Animal/GrayWolf.prefab using Guid(09ac540245e9004419a5e50c110d01a2) (PrefabImporter) -> (artifact id: '50919407dee7e034b07c3f61ef627edc') in 0.0067044 seconds
+Refreshing native plugins compatible for Editor in 9.36 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.11 ms.
+Asset Pipeline Refresh (id=4b5984fc88597d34e85eb800fcc37533): Total: 0.060 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/GrayWolf.prefab
+Start importing Assets/Resources/Models/Animal/Hare.prefab using Guid(252e41190ccdd67428f902e8a4c29a99) (PrefabImporter) -> (artifact id: '946755ef9ddd876cf5e7e0c5ee7896d9') in 0.0032488 seconds
+Refreshing native plugins compatible for Editor in 9.23 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.11 ms.
+Asset Pipeline Refresh (id=6110ce39d6fb4304a8c37767110802f3): Total: 0.051 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Hare.prefab
+Start importing Assets/Resources/Models/Animal/Hyena.prefab using Guid(736a5431410140b439291a6d2c019fbe) (PrefabImporter) -> (artifact id: 'bc91e919a76e098cb018b4e575e8caaf') in 0.0035086 seconds
+Refreshing native plugins compatible for Editor in 8.58 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.09 ms.
+Asset Pipeline Refresh (id=2dd25a95541fc8745b576bc870f9f1ca): Total: 0.049 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Hyena.prefab
+Start importing Assets/Resources/Models/Animal/LabradorDog.prefab using Guid(ba982327bc666214183a4454a50e09da) (PrefabImporter) -> (artifact id: '4fd9f35bd01431a0ee12942ee325faae') in 0.0042612 seconds
+Refreshing native plugins compatible for Editor in 8.63 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.09 ms.
+Asset Pipeline Refresh (id=e86ec68915579344fba2a66e870d5cf7): Total: 0.053 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/LabradorDog.prefab
+Start importing Assets/Resources/Models/Animal/Lioness.prefab using Guid(622de1e919e2971428eff600a85b0c27) (PrefabImporter) -> (artifact id: 'ac063ed995e7efb4fb1bcabab63169b3') in 0.0044834 seconds
+Refreshing native plugins compatible for Editor in 9.09 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.09 ms.
+Asset Pipeline Refresh (id=6d208aaef36029146b64123f1f380af1): Total: 0.051 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Lioness.prefab
+Start importing Assets/Resources/Models/Animal/LionessV2.prefab using Guid(4803b83c6f2f5af43a500a90ffef1d9f) (PrefabImporter) -> (artifact id: '00757add088b8775a3fbeabb258b1950') in 0.0035185 seconds
+Refreshing native plugins compatible for Editor in 9.40 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.10 ms.
+Asset Pipeline Refresh (id=6f02bb0414c4ad14fb40b6c5717d858d): Total: 0.051 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/LionessV2.prefab
+Start importing Assets/Resources/Models/Animal/Lynx.prefab using Guid(937b9a1fc9144d54aa1cd6a3b740ccf4) (PrefabImporter) -> (artifact id: '1ee3775e144c17d9ddf02c3a58517251') in 0.0046471 seconds
+Refreshing native plugins compatible for Editor in 8.68 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.09 ms.
+Asset Pipeline Refresh (id=dc75109c0b3a68a48a2e60ed86588b0c): Total: 0.050 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Lynx.prefab
+Start importing Assets/Resources/Models/Animal/Mammoth.prefab using Guid(9329b420b26e22d4f81e2c78e41ac8a1) (PrefabImporter) -> (artifact id: '86fa5e8e817d67a0bf6a8039d7d1529b') in 0.0045988 seconds
+Refreshing native plugins compatible for Editor in 8.67 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.09 ms.
+Asset Pipeline Refresh (id=a704e3e8e9259e649b073188403add2f): Total: 0.056 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Mammoth.prefab
+Start importing Assets/Resources/Models/Animal/Moose.prefab using Guid(78755bca12d239c4bb902d7029eb7ff3) (PrefabImporter) -> (artifact id: 'af0e1120e6a49bb5a47526fb40100bac') in 0.0041482 seconds
+Refreshing native plugins compatible for Editor in 9.03 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.09 ms.
+Asset Pipeline Refresh (id=de0fd8e5ad48db0428a83f255bdafeb0): Total: 0.065 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Moose.prefab
+Start importing Assets/Resources/Models/Animal/Moose1.0.prefab using Guid(c052056079025674089b1b2a1791479a) (PrefabImporter) -> (artifact id: '7a196e63dec78d8111d4f79f161f1a81') in 0.0028405 seconds
+Refreshing native plugins compatible for Editor in 8.72 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.09 ms.
+Asset Pipeline Refresh (id=8020069583408c247a39db113afc4c0f): Total: 0.047 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Moose1.0.prefab
+Start importing Assets/Resources/Models/Animal/MooseF.prefab using Guid(4573af287e67a2c48996701bb19221cc) (PrefabImporter) -> (artifact id: '21a33576f31c0012fe6412dcae7a41ed') in 0.0036264 seconds
+Refreshing native plugins compatible for Editor in 8.84 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.09 ms.
+Asset Pipeline Refresh (id=e2e59ff26fad9f94ab2b43a1c77cf502): Total: 0.059 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/MooseF.prefab
+Start importing Assets/Resources/Models/Animal/MooseM.prefab using Guid(cdfb9e6364f11ed4da54f98714ae6a9a) (PrefabImporter) -> (artifact id: 'c83f9c31e6ea55866bd1be1f324e1d73') in 0.0040716 seconds
+Refreshing native plugins compatible for Editor in 8.59 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.09 ms.
+Asset Pipeline Refresh (id=a03748a12334a1d4fbb6e8a1161913ca): Total: 0.053 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/MooseM.prefab
+Start importing Assets/Resources/Models/Animal/MountainGoat.prefab using Guid(0cf5f5ee940e8964fb426347f9139d2e) (PrefabImporter) -> (artifact id: '71b3c8ec0bf1c558860eed7e6fbac4fb') in 0.0036745 seconds
+Refreshing native plugins compatible for Editor in 8.46 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.09 ms.
+Asset Pipeline Refresh (id=93a5cfb274e79df4f881396e38177115): Total: 0.050 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/MountainGoat.prefab
+Start importing Assets/Resources/Models/Animal/Pronghorn1.0.prefab using Guid(1533ccd91aa7ae6469fe5412bc787f1d) (PrefabImporter) -> (artifact id: 'a12d17984837d77eea805db215e748a1') in 0.0032253 seconds
+Refreshing native plugins compatible for Editor in 8.98 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.11 ms.
+Asset Pipeline Refresh (id=ba8d774806a2067438ce0001d0759faf): Total: 0.047 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Pronghorn1.0.prefab
+Start importing Assets/Resources/Models/Animal/Puma.prefab using Guid(a5af412318e9a70409237bc688030dc2) (PrefabImporter) -> (artifact id: 'ea7928f4a94bc52c71c0bbb28664e22b') in 0.0034989 seconds
+Refreshing native plugins compatible for Editor in 8.58 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.10 ms.
+Asset Pipeline Refresh (id=7406c47bf0b7f014b9be2356fbb6970d): Total: 0.050 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Puma.prefab
+Start importing Assets/Resources/Models/Animal/Rabbit.prefab using Guid(503871bae7f3e79448377ac18fa3d28f) (PrefabImporter) -> (artifact id: 'a24cdc064a1bc79aa5bbdaf6d7e9d02a') in 0.0034859 seconds
+Refreshing native plugins compatible for Editor in 9.14 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.09 ms.
+Asset Pipeline Refresh (id=4b17757c421b75742b668d315d286ef9): Total: 0.049 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Rabbit.prefab
+Start importing Assets/Resources/Models/Animal/Racoon.prefab using Guid(1078e0829a6e0574f99c63b80648aabd) (PrefabImporter) -> (artifact id: '77d2ea82d279f6dcb40773a6f31e5f9a') in 0.0055753 seconds
+Refreshing native plugins compatible for Editor in 8.88 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.09 ms.
+Asset Pipeline Refresh (id=cb62531dd080df54d8afd8184505fe01): Total: 0.058 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Racoon.prefab
+Start importing Assets/Resources/Models/Animal/Warthog.prefab using Guid(cd2dcf62933c92b4f986aa4014fa351d) (PrefabImporter) -> (artifact id: 'af7fdfe1119cddd3f04a8a7e54f90f17') in 0.0039208 seconds
+Refreshing native plugins compatible for Editor in 8.65 ms, found 17 plugins.
+Preloading 2 native plugins for Editor in 0.09 ms.
+Asset Pipeline Refresh (id=44d6bda94f443c8409cb04e90eeed111): Total: 0.047 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[AnimalRigBoneRenamer] Renamed Assets/Resources/Models/Animal/Warthog.prefab
+[AnimalRigBoneRenamer] Remaining batch done.
+Batchmode quit successfully invoked - shutting down!
+Killing ADB server in 0.097286 seconds.
+Input System module state changed to: ShutdownInProgress.
+Input System polling thread exited.
+Input System module state changed to: Shutdown.
+[Licensing::IpcConnector] LicenseClient-y9800-notifications channel disconnected successfully.
+[Licensing::IpcConnector] LicenseClient-y9800 channel disconnected successfully.
+AcceleratorClientConnectionCallback - disconnected - :0
+Cleanup mono
+abort_threads: Failed aborting id: 000000000000D1CC, mono_thread_manage will ignore it
+
+abort_threads: Failed aborting id: 0000000000009084, mono_thread_manage will ignore it
+
+abort_threads: Failed aborting id: 000000000000D1CC, mono_thread_manage will ignore it
+
+abort_threads: Failed aborting id: 0000000000009084, mono_thread_manage will ignore it
+
+debugger-agent: Unable to listen on 3560
+Exiting batchmode successfully now!
+Exiting without the bug reporter. Application will terminate with return code 0

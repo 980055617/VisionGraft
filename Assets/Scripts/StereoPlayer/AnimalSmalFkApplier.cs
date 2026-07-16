@@ -56,7 +56,17 @@ public sealed partial class AnimalPoseApplier
         { 18, new Vector3(-0.194889f, -0.083158f, -0.977294f) }, // LLegBack2 -> LLegBack3
         { 21, new Vector3(0.337957f, -0.086988f, -0.937133f) },  // RLegBack1 -> RLegBack2
         { 22, new Vector3(-0.194889f, 0.083158f, -0.977294f) },  // RLegBack2 -> RLegBack3
+        // Tail1 -> Tail2, Tail2 -> Tail3 (Docs/smal-rest-skeleton.json, joints 25/26).
+        // Tail3 (joint 27, tailTip) intentionally has no entry here - its own further SMAL
+        // child (Tail4, joint 28) has no corresponding Unity bone in the canonical rig, so it
+        // stays in the same passive parentTW*bindLoc fallback paws/toes already use.
+        { 25, new Vector3(-0.992647f, 0.000000f, -0.121171f) },
+        { 26, new Vector3(-0.999506f, 0.000000f, 0.031008f) },
     };
+
+    // Provisional damping for tailBase/tailMid body_pose (see comment at the joint==25/26
+    // check below) - starting conservative at half strength until visually verified.
+    private const float TailBodyPoseScale = 0.5f;
 
     // SMAL global_orient/pose rotation matrices are read from the bin in SMAL's own native
     // axis convention. This fixed correction re-expresses that raw decode into a usable Unity
@@ -274,6 +284,16 @@ public sealed partial class AnimalPoseApplier
             if (bodyPoseIdx >= 0 && bodyPoseIdx < pose.bodyPose.Length && IsFiniteQ(pose.bodyPose[bodyPoseIdx]))
                 rawLocal = pose.bodyPose[bodyPoseIdx];
 
+            if (joint == 25 || joint == 26)
+            {
+                // Tail body_pose is being driven for the first time this session (2026-07-16)
+                // and hasn't been validated the way legs/neck were - reported as clipping
+                // into the body on some models. Damp it the same way Human SMPL's over-large
+                // spine estimate needed SpineBodyPoseScale=0.25 (Docs/smpl-retargeting.md).
+                // Tune/remove once tail motion has been visually verified per-model.
+                rawLocal = Quaternion.Slerp(Quaternion.identity, rawLocal, TailBodyPoseScale);
+            }
+
             Quaternion smalLocal = state.smoothingInitialized
                 ? Quaternion.Slerp(state.smoothedLocal[joint], rawLocal, smoothAlpha)
                 : rawLocal;
@@ -295,8 +315,13 @@ public sealed partial class AnimalPoseApplier
 
             if (AnimalSmalFkPolicy.ShouldKeepBindPoseForJoint(joint))
             {
+                // ApplyWorldRotation, not ApplyLocalRotation (CLAUDE.md: FK loop uses
+                // ApplyWorldRotation only) - parentTW already is this bone's real Unity
+                // parent's current world rotation (applied earlier in this same topological
+                // walk), so parentTW * bindLoc is the world-space equivalent of setting
+                // bone.localRotation = bindLoc under that parent.
                 tw[joint] = parentTW * bindLoc;
-                TransformWriter.ApplyLocalRotation(bone, bindLoc);
+                TransformWriter.ApplyWorldRotation(bone, tw[joint]);
                 continue;
             }
 
@@ -333,6 +358,18 @@ public sealed partial class AnimalPoseApplier
                 Vector3 unityRestDirWorld = (restWorldRot * boneBindDirLocal).normalized;
                 Quaternion jointFrameMap = Quaternion.FromToRotation(smalRestDir, unityRestDirWorld);
                 Quaternion bendUnity = jointFrameMap * bendSmal * Quaternion.Inverse(jointFrameMap);
+
+                // 2026-07-17 diagnostic: FromToRotation's axis becomes ill-defined as the two
+                // vectors approach anti-parallel (~180deg), which would make jointFrameMap (and
+                // therefore bendUnity) unstable for models whose default/bind tail direction
+                // points nearly opposite SMAL's canonical tail rest direction. Logging this
+                // angle per model to check whether that's actually happening for any of the
+                // 52 animal prefabs before considering a bind-pose realignment pass.
+                if (debugLog && (joint == 25 || joint == 26))
+                {
+                    float restDirAngleDeg = Vector3.Angle(smalRestDir, unityRestDirWorld);
+                    Debug.Log($"[SMAL-FK-DBG] TAIL-REST-CHECK model={cache.root?.name} joint={joint} smalRestDir={smalRestDir:F3} unityRestDirWorld={unityRestDirWorld:F3} restDirAngleDeg={restDirAngleDeg:F1} (150+=FromToRotation軸不定の疑いあり)");
+                }
 
                 tw[joint] = bendUnity * restWorldRot;
             }
@@ -395,7 +432,8 @@ public sealed partial class AnimalPoseApplier
 
             if (debugLog && (joint == 7 || joint == 8 || joint == 9 || joint == 10 ||
                               joint == 11 || joint == 12 || joint == 13 || joint == 14 ||
-                              joint == 15 || joint == 16 || joint == 17 || joint == 21 || joint == 25))
+                              joint == 15 || joint == 16 || joint == 17 || joint == 21 ||
+                              joint == 25 || joint == 26 || joint == 27))
             {
                 // Compare against the snapshot taken at the PREVIOUS logged sample (~30
                 // ticks ago), not the previous single tick, so the angle reflects motion
@@ -407,7 +445,7 @@ public sealed partial class AnimalPoseApplier
                 state.lastLoggedTw[joint] = tw[joint];
                 state.hasLoggedTw[joint] = true;
 
-                Debug.Log($"[SMAL-FK-DBG] joint={joint} smalLocal={smalLocal.eulerAngles:F1} bindLoc={bindLoc.eulerAngles:F1} tw={tw[joint].eulerAngles:F1} boneRotAfter={bone.rotation.eulerAngles:F1} posDelta={(bone.position - posBeforeApply).magnitude:F4} trueDeltaDegSincePrevSample={trueDeltaDegSincePrevSample:F1}");
+                Debug.Log($"[SMAL-FK-DBG] model={cache.root?.name} joint={joint} smalLocal={smalLocal.eulerAngles:F1} bindLoc={bindLoc.eulerAngles:F1} tw={tw[joint].eulerAngles:F1} boneRotAfter={bone.rotation.eulerAngles:F1} posDelta={(bone.position - posBeforeApply).magnitude:F4} trueDeltaDegSincePrevSample={trueDeltaDegSincePrevSample:F1}");
             }
 
             // Live visual calibration aid: lets us see in Scene view whether each limb/head

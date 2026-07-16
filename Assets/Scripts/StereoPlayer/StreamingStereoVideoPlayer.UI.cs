@@ -6,15 +6,20 @@ using UnityEngine.XR;
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
     private const float RuntimeControlsDefaultCanvasWidth = 1000f;
-    private const float RuntimeControlsDefaultCanvasHeight = 200f;
+    private const float RuntimeControlsDefaultCanvasHeight = 300f;
     private const float RuntimeSettingsDefaultCanvasWidth = 900f;
     private const float RuntimeSettingsDefaultCanvasHeight = 520f;
+    private const float RuntimeModelPickerDefaultCanvasWidth = 980f;
+    private const float RuntimeModelPickerDefaultCanvasHeight = 660f;
+    private const int RuntimeModelPickerEntriesPerPage = 6;
 
     private GameObject runtimeControlsRoot;
     private Text runtimePauseButtonText;
     private Text runtimeSettingsButtonText;
     private Text runtimeModeButtonText;
+    private Text runtimeModelPickerButtonText;
     private GameObject runtimeSettingsRoot;
+    private GameObject runtimeModelPickerRoot;
     private Slider runtimeProgressSlider;
     private Text runtimeProgressText;
     private Slider runtimeFovxSlider;
@@ -27,12 +32,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private Text runtimeTrackFrontGuideText;
     private Text runtimeTrackKeyInfoText;
     private Text runtimeInteractiveMotionValueText;
+    private Text runtimeModelPickerTitleText;
+    private Text runtimeModelPickerStatusText;
+    private Text runtimeModelPickerPageText;
+    private Button runtimeModelPickerPrevButton;
+    private Button runtimeModelPickerNextButton;
+    private readonly List<Button> runtimeModelPickerEntryButtons = new List<Button>();
+    private readonly List<GameObject> runtimeModelPickerPreviewInstances = new List<GameObject>();
     private bool runtimeSettingsOpen;
+    private bool runtimeModelPickerOpen;
     private bool runtimeFovxInitialized;
     private bool suppressRuntimeProgressCallback;
     private bool suppressRuntimeScreenDistanceCallback;
     private bool suppressRuntimeTrackYawCallback;
     private int runtimeSettingsPlacementLockDepth;
+    private int runtimeModelPickerPageIndex;
+    private int runtimeModelPickerTrackId = -1;
     private readonly List<InputDevice> xrInputDevices = new List<InputDevice>();
     private void EnsureRuntimeControls()
     {
@@ -46,6 +61,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             {
                 SceneObjectWriter.ApplyActive(runtimeSettingsRoot, false);
             }
+            if (runtimeModelPickerRoot != null)
+            {
+                SceneObjectWriter.ApplyActive(runtimeModelPickerRoot, false);
+            }
             SetScreenColliderBlockForSettings(false);
             return;
         }
@@ -58,6 +77,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             runtimeSettingsRoot = BuildRuntimeSettingsUi();
         }
+        if (runtimeModelPickerRoot == null)
+        {
+            runtimeModelPickerRoot = BuildRuntimeModelPickerUi();
+        }
 
         if (runtimeControlsRoot != null)
         {
@@ -67,17 +90,26 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             UpdatePauseButtonLabel();
             UpdateSettingsButtonLabel();
             UpdateRuntimeModeUiState();
+            UpdateModelPickerButtonLabel();
             UpdateRuntimeProgressUi();
         }
 
         if (runtimeSettingsRoot != null)
         {
             SceneObjectWriter.ApplyActive(runtimeSettingsRoot, runtimeSettingsOpen);
-            SetScreenColliderBlockForSettings(runtimeSettingsOpen);
+            SetScreenColliderBlockForRuntimePanels();
             UpdateRuntimeSettingsPlacement();
             UpdateRuntimeScreenDistanceUiState();
             UpdateRuntimeTrackRotationUiState();
             UpdateRuntimeInteractiveMotionUiState();
+        }
+
+        if (runtimeModelPickerRoot != null)
+        {
+            SceneObjectWriter.ApplyActive(runtimeModelPickerRoot, runtimeModelPickerOpen);
+            SetScreenColliderBlockForRuntimePanels();
+            UpdateRuntimeModelPickerPlacement();
+            UpdateRuntimeModelPickerUiState();
         }
     }
 
@@ -93,6 +125,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             UnbindRuntimeButton(pauseButton, TogglePausePlayback);
             UnbindRuntimeButton(FindButton(runtimeControlsRoot, "setting"), ToggleRuntimeSettingsPanel);
             UnbindRuntimeButton(FindButton(runtimeControlsRoot, "mode"), ToggleNormalMode);
+            UnbindRuntimeButton(FindButton(runtimeControlsRoot, "prefabselect"), ToggleRuntimeModelPickerPanel);
             UnbindRuntimeSlider(FindSlider(runtimeControlsRoot, "progressslider"), OnRuntimeProgressSliderChanged);
         }
 
@@ -105,6 +138,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             UnbindRuntimeButton(FindButton(runtimeSettingsRoot, "tracknext"), OnRuntimeTrackNextClicked);
             UnbindRuntimeButton(FindButton(runtimeSettingsRoot, "trackyawreset"), OnRuntimeTrackYawResetClicked);
             UnbindRuntimeButton(FindButton(runtimeSettingsRoot, "interactivemotiontoggle"), OnRuntimeInteractiveMotionToggleClicked);
+        }
+
+        if (runtimeModelPickerRoot != null)
+        {
+            UnbindRuntimeModelPickerButtons();
         }
     }
 

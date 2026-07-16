@@ -260,7 +260,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private GameObject GetOrCreateTrackInstance(uint trackId, byte categoryId)
     {
-        GameObject prefab = ResolveTrackPrefab(categoryId);
+        GameObject prefab = ResolveTrackPrefab(trackId, categoryId);
         return TrackInstanceLifecycle.GetOrCreate(
             trackId,
             prefab,
@@ -271,23 +271,36 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private GameObject ResolveTrackPrefab(byte categoryId)
+    private GameObject ResolveTrackPrefab(uint trackId, byte categoryId)
     {
         if (IsCategoryAnimal(categoryId))
         {
             if (animalPrefabs != null && animalPrefabs.Length > 0)
             {
-                int idx = Mathf.Clamp(selectedAnimalIndex, 0, animalPrefabs.Length - 1);
+                int idx = ResolveSelectedModelIndex(trackId, true);
+                idx = Mathf.Clamp(idx, 0, animalPrefabs.Length - 1);
                 return animalPrefabs[idx];
             }
             return null;
         }
         if (humanPrefabs != null && humanPrefabs.Length > 0)
         {
-            int idx = Mathf.Clamp(selectedHumanIndex, 0, humanPrefabs.Length - 1);
+            int idx = ResolveSelectedModelIndex(trackId, false);
+            idx = Mathf.Clamp(idx, 0, humanPrefabs.Length - 1);
             return humanPrefabs[idx];
         }
         return null;
+    }
+
+
+    private int ResolveSelectedModelIndex(uint trackId, bool animal)
+    {
+        if (selectedModelIndexByTrack.TryGetValue(trackId, out int selectedIndex))
+        {
+            return selectedIndex;
+        }
+
+        return animal ? selectedAnimalIndex : selectedHumanIndex;
     }
 
 

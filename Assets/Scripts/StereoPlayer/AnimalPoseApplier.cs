@@ -930,30 +930,31 @@ public sealed partial class AnimalPoseApplier
         AnimalRigCache cache = new AnimalRigCache();
         cache.root = root;
         Transform[] bones = root.GetComponentsInChildren<Transform>(true);
+        AnimalBoneMappingOverride boneOverride = root.GetComponentInChildren<AnimalBoneMappingOverride>();
 
-        cache.neck = FindAnimalBone(bones, AnimalRigDefinition.Neck);
-        cache.head = FindAnimalBone(bones, AnimalRigDefinition.Head);
-        cache.spine = FindAnimalBone(bones, AnimalRigDefinition.Spine);
-        cache.tailBase = FindBoneByTokens(bones, AnimalRigDefinition.TailBaseTokens);
+        cache.neck = ResolveBone(bones, boneOverride?.neck, AnimalRigDefinition.Neck);
+        cache.head = ResolveBone(bones, boneOverride?.head, AnimalRigDefinition.Head);
+        cache.spine = ResolveBone(bones, boneOverride?.spine, AnimalRigDefinition.Spine);
+        cache.tailBase = ResolveBoneByTokens(bones, boneOverride?.tailBase, AnimalRigDefinition.TailBaseTokens);
 
         FillAnimalSpineFallbacks(cache, root, bones, settings);
 
-        cache.leftFrontUpper = FindAnimalBone(bones, AnimalRigDefinition.LeftFrontUpper);
-        cache.leftFrontLower = FindAnimalBone(bones, AnimalRigDefinition.LeftFrontLower);
-        cache.leftFrontPaw = FindAnimalBone(bones, AnimalRigDefinition.LeftFrontPaw);
-        cache.rightFrontUpper = FindAnimalBone(bones, AnimalRigDefinition.RightFrontUpper);
-        cache.rightFrontLower = FindAnimalBone(bones, AnimalRigDefinition.RightFrontLower);
-        cache.rightFrontPaw = FindAnimalBone(bones, AnimalRigDefinition.RightFrontPaw);
-        cache.leftRearUpper = FindAnimalBone(bones, AnimalRigDefinition.LeftRearUpper);
-        cache.leftRearLower = FindAnimalBone(bones, AnimalRigDefinition.LeftRearLower);
-        cache.leftRearPaw = FindAnimalBone(bones, AnimalRigDefinition.LeftRearPaw);
-        cache.leftRearToe = FindAnimalBone(bones, AnimalRigDefinition.LeftRearToe);
-        cache.rightRearUpper = FindAnimalBone(bones, AnimalRigDefinition.RightRearUpper);
-        cache.rightRearLower = FindAnimalBone(bones, AnimalRigDefinition.RightRearLower);
-        cache.rightRearPaw = FindAnimalBone(bones, AnimalRigDefinition.RightRearPaw);
-        cache.rightRearToe = FindAnimalBone(bones, AnimalRigDefinition.RightRearToe);
-        cache.tailMid = FindAnimalBone(bones, AnimalRigDefinition.TailMid);
-        cache.tailTip = FindAnimalBone(bones, AnimalRigDefinition.TailTip);
+        cache.leftFrontUpper = ResolveBone(bones, boneOverride?.frontLUpper, AnimalRigDefinition.LeftFrontUpper);
+        cache.leftFrontLower = ResolveBone(bones, boneOverride?.frontLLower, AnimalRigDefinition.LeftFrontLower);
+        cache.leftFrontPaw = ResolveBone(bones, boneOverride?.frontLPaw, AnimalRigDefinition.LeftFrontPaw);
+        cache.rightFrontUpper = ResolveBone(bones, boneOverride?.frontRUpper, AnimalRigDefinition.RightFrontUpper);
+        cache.rightFrontLower = ResolveBone(bones, boneOverride?.frontRLower, AnimalRigDefinition.RightFrontLower);
+        cache.rightFrontPaw = ResolveBone(bones, boneOverride?.frontRPaw, AnimalRigDefinition.RightFrontPaw);
+        cache.leftRearUpper = ResolveBone(bones, boneOverride?.rearLUpper, AnimalRigDefinition.LeftRearUpper);
+        cache.leftRearLower = ResolveBone(bones, boneOverride?.rearLLower, AnimalRigDefinition.LeftRearLower);
+        cache.leftRearPaw = ResolveBone(bones, boneOverride?.rearLPaw, AnimalRigDefinition.LeftRearPaw);
+        cache.leftRearToe = ResolveBone(bones, boneOverride?.rearLToe, AnimalRigDefinition.LeftRearToe);
+        cache.rightRearUpper = ResolveBone(bones, boneOverride?.rearRUpper, AnimalRigDefinition.RightRearUpper);
+        cache.rightRearLower = ResolveBone(bones, boneOverride?.rearRLower, AnimalRigDefinition.RightRearLower);
+        cache.rightRearPaw = ResolveBone(bones, boneOverride?.rearRPaw, AnimalRigDefinition.RightRearPaw);
+        cache.rightRearToe = ResolveBone(bones, boneOverride?.rearRToe, AnimalRigDefinition.RightRearToe);
+        cache.tailMid = ResolveBone(bones, boneOverride?.tailMid, AnimalRigDefinition.TailMid);
+        cache.tailTip = ResolveBone(bones, boneOverride?.tailTip, AnimalRigDefinition.TailTip);
         ResolveAnimalModelBasis(root, cache, settings);
 
         if (cache.spine != null && cache.neck != null)
@@ -965,16 +966,14 @@ public sealed partial class AnimalPoseApplier
             }
         }
 
-        PrimeAnimalBinds(
-            cache,
-            cache.neck, cache.head, cache.spine, cache.tailBase,
-            cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw,
-            cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw,
-            cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw,
-            cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw,
-            cache.leftRearToe, cache.rightRearToe,
-            cache.tailMid, cache.tailTip);
-
+        // Registered before PrimeAnimalBinds (not after, as it read previously): PrimeAnimalBind
+        // captures bindDirLocal via ResolveAnimalAimChild, which prefers the registered aim
+        // child over a bone's natural first Unity child. For leg/neck bones the two happened
+        // to already coincide (their real first child always is the next canonical joint), so
+        // the old order never visibly mattered there - but tailMid's first real Unity child is
+        // often an intermediate undriven bone before tailTip (e.g. Buffalo's Tail2 -> Tail3 ->
+        // Tail4, where Tail3 has no canonical name), so tail needs the registration to actually
+        // be in effect at prime time.
         RegisterAnimalAimPairs(
             cache,
             cache.leftFrontUpper, cache.leftFrontLower,
@@ -986,7 +985,19 @@ public sealed partial class AnimalPoseApplier
             cache.rightRearUpper, cache.rightRearLower,
             cache.rightRearLower, cache.rightRearPaw,
             cache.neck, cache.head,
-            cache.spine, cache.neck);
+            cache.spine, cache.neck,
+            cache.tailBase, cache.tailMid,
+            cache.tailMid, cache.tailTip);
+
+        PrimeAnimalBinds(
+            cache,
+            cache.neck, cache.head, cache.spine, cache.tailBase,
+            cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw,
+            cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw,
+            cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw,
+            cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw,
+            cache.leftRearToe, cache.rightRearToe,
+            cache.tailMid, cache.tailTip);
 
         // spineToNeckBindDirWorld is kept in world space (bind-time direction from spine to neck).
         // The rootYawFix detection formula uses: candidate * modelOrientFix * spineToNeckBindDirWorld,
@@ -1189,6 +1200,20 @@ public sealed partial class AnimalPoseApplier
     private Transform FindAnimalBone(Transform[] bones, AnimalBoneRule rule)
     {
         return FindAnimalBone(bones, rule.exactNames, rule.tokens);
+    }
+
+    private Transform ResolveBone(Transform[] bones, string overrideName, AnimalBoneRule rule)
+    {
+        if (!string.IsNullOrEmpty(overrideName))
+            return FindBoneByExactNames(bones, overrideName);
+        return FindAnimalBone(bones, rule);
+    }
+
+    private Transform ResolveBoneByTokens(Transform[] bones, string overrideName, params string[] tokens)
+    {
+        if (!string.IsNullOrEmpty(overrideName))
+            return FindBoneByExactNames(bones, overrideName);
+        return FindBoneByTokens(bones, tokens);
     }
 
     private Transform FindBoneByTokens(Transform[] bones, params string[] tokens)

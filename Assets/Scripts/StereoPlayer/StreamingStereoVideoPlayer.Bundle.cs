@@ -13,46 +13,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             yield break;
         }
 
-        string bundlePathToLoad = selectedBundlePath;
-        if (string.IsNullOrEmpty(bundlePathToLoad))
-        {
-            string streamingBundleUrl = Path.Combine(Application.streamingAssetsPath, bundleFileName);
-            streamingBundleUrl = streamingBundleUrl.Replace("\\", "/");
-            string persistentBundlePath = Path.Combine(Application.persistentDataPath, bundleFileName);
-            // Always refresh the persistent bundle so replaced StreamingAssets/bundle.svb is picked up.
-            using (UnityWebRequest request = UnityWebRequest.Get(streamingBundleUrl))
-            {
-                yield return request.SendWebRequest();
-                if (request.result != UnityWebRequest.Result.Success)
-                {
-                    yield break;
-                }
-
-                try
-                {
-                    string bundleDir = Path.GetDirectoryName(persistentBundlePath);
-                    if (!string.IsNullOrEmpty(bundleDir))
-                    {
-                        Directory.CreateDirectory(bundleDir);
-                    }
-
-                    File.WriteAllBytes(persistentBundlePath, request.downloadHandler.data);
-                }
-                catch
-                {
-                    yield break;
-                }
-            }
-
-            bundlePathToLoad = persistentBundlePath;
-        }
-
-        if (string.IsNullOrEmpty(bundlePathToLoad) || !File.Exists(bundlePathToLoad))
-        {
-            yield break;
-        }
-
-        string cacheDir = Path.Combine(Application.persistentDataPath, "svb_cache");
+        // Use Android's getCacheDir() for truly internal storage accessible to the media codec
+        string cacheDir = GetSvbCacheDir();
         try
         {
             if (Directory.Exists(cacheDir))
@@ -72,60 +34,86 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         string extractedHumanSmplPath = Path.Combine(cacheDir, ExtractedHumanSmplFileName);
         string extractedNormalModeVideoPath = Path.Combine(cacheDir, ExtractedNormalModeVideoFileName);
 
-        // Always extract fresh files after cache clear.
+        bool useStreamingAssets = string.IsNullOrEmpty(selectedBundlePath);
+        byte[] streamingBytes = null;
+
+        if (useStreamingAssets)
         {
-            try
+            string streamingBundleUrl = Path.Combine(Application.streamingAssetsPath, bundleFileName);
+            streamingBundleUrl = streamingBundleUrl.Replace("\\", "/");
+            Debug.Log($"[Bundle] Requesting: {streamingBundleUrl}");
+            using (UnityWebRequest request = UnityWebRequest.Get(streamingBundleUrl))
             {
-                Directory.CreateDirectory(cacheDir);
-                using (var fs = new FileStream(bundlePathToLoad, FileMode.Open, FileAccess.Read))
-                using (var za = new ZipArchive(fs, ZipArchiveMode.Read))
+                yield return request.SendWebRequest();
+                if (request.result != UnityWebRequest.Result.Success)
                 {
-                    LogBundleEntries(za);
-
-                    if (!BundleExtractor.ExtractWithRequirement(za, BundleVideoEntryName, extractedVideoPath, SpatialVideoBundleEntryRequirement.Required))
-                    {
-                        yield break;
-                    }
-
-                    if (!BundleExtractor.ExtractWithRequirement(za, BundleManifestEntryName, extractedManifestPath, SpatialVideoBundleEntryRequirement.Required))
-                    {
-                        yield break;
-                    }
-
-                    if (!BundleExtractor.ExtractWithRequirement(za, BundleMetaEntryName, extractedMetaPath, SpatialVideoBundleEntryRequirement.Required))
-                    {
-                        yield break;
-                    }
-
-                    if (!BundleExtractor.ExtractWithRequirement(za, BundleAnimalControlTargetsEntryName, extractedAnimalControlTargetsPath, SpatialVideoBundleEntryRequirement.Optional))
-                    {
-                        yield break;
-                    }
-
-                    if (!BundleExtractor.ExtractWithRequirement(za, BundleOtherObjectProxiesEntryName, extractedOtherObjectProxiesPath, SpatialVideoBundleEntryRequirement.Optional))
-                    {
-                        yield break;
-                    }
-
-                    BundleExtractor.ExtractWithRequirement(za, BundleHumanSmplEntryName, extractedHumanSmplPath, SpatialVideoBundleEntryRequirement.Optional);
-                    BundleExtractor.ExtractWithRequirement(za, BundleNormalModeVideoEntryName, extractedNormalModeVideoPath, SpatialVideoBundleEntryRequirement.Optional);
+                    Debug.LogError($"[Bundle] Download failed: {request.result} | {request.error} | URL: {streamingBundleUrl}");
+                    yield break;
                 }
+
+                streamingBytes = request.downloadHandler.data;
+                Debug.Log($"[Bundle] Downloaded {streamingBytes?.Length} bytes (in-memory, no disk write)");
             }
-            catch
+        }
+        else
+        {
+            if (!File.Exists(selectedBundlePath))
             {
+                Debug.LogError($"[Bundle] File not found: {selectedBundlePath}");
                 yield break;
             }
+            Debug.Log($"[Bundle] Opening: {selectedBundlePath}");
+        }
+
+        try
+        {
+            Directory.CreateDirectory(cacheDir);
+
+            if (useStreamingAssets)
+            {
+                using (var ms = new MemoryStream(streamingBytes))
+                using (var za = new ZipArchive(ms, ZipArchiveMode.Read))
+                {
+                    if (!ExtractBundleEntries(za, extractedVideoPath, extractedManifestPath, extractedMetaPath,
+                            extractedAnimalControlTargetsPath, extractedOtherObjectProxiesPath,
+                            extractedHumanSmplPath, extractedNormalModeVideoPath))
+                    {
+                        yield break;
+                    }
+                }
+            }
+            else
+            {
+                using (var fs = new FileStream(selectedBundlePath, FileMode.Open, FileAccess.Read))
+                using (var za = new ZipArchive(fs, ZipArchiveMode.Read))
+                {
+                    if (!ExtractBundleEntries(za, extractedVideoPath, extractedManifestPath, extractedMetaPath,
+                            extractedAnimalControlTargetsPath, extractedOtherObjectProxiesPath,
+                            extractedHumanSmplPath, extractedNormalModeVideoPath))
+                    {
+                        yield break;
+                    }
+                }
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogError($"[Bundle] Extraction failed: {ex.Message}");
+            yield break;
         }
 
         if (!File.Exists(extractedVideoPath))
         {
+            Debug.LogError($"[Bundle] Extracted video not found: {extractedVideoPath}");
             yield break;
         }
 
         if (!ManifestLoader.TryLoad(extractedManifestPath, out manifest))
         {
+            Debug.LogError($"[Bundle] Manifest load failed: {extractedManifestPath}");
             yield break;
         }
+        Debug.Log($"[Bundle] Manifest loaded. Video: {extractedVideoPath}");
         LoadMeta(extractedMetaPath);
         LoadBundleSidecars(extractedAnimalControlTargetsPath, extractedOtherObjectProxiesPath);
         LoadHumanSmplSidecar(extractedHumanSmplPath);
@@ -138,6 +126,51 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         vp.url = modelModePlaybackVideoPath;
 
         RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Prepare);
+    }
+
+    private bool ExtractBundleEntries(ZipArchive za,
+        string videoPath, string manifestPath, string metaPath,
+        string animalControlTargetsPath, string otherObjectProxiesPath,
+        string humanSmplPath, string normalModeVideoPath)
+    {
+        LogBundleEntries(za);
+
+        if (!BundleExtractor.ExtractWithRequirement(za, BundleVideoEntryName, videoPath, SpatialVideoBundleEntryRequirement.Required))
+            return false;
+        if (!BundleExtractor.ExtractWithRequirement(za, BundleManifestEntryName, manifestPath, SpatialVideoBundleEntryRequirement.Required))
+            return false;
+        if (!BundleExtractor.ExtractWithRequirement(za, BundleMetaEntryName, metaPath, SpatialVideoBundleEntryRequirement.Required))
+            return false;
+        if (!BundleExtractor.ExtractWithRequirement(za, BundleAnimalControlTargetsEntryName, animalControlTargetsPath, SpatialVideoBundleEntryRequirement.Optional))
+            return false;
+        if (!BundleExtractor.ExtractWithRequirement(za, BundleOtherObjectProxiesEntryName, otherObjectProxiesPath, SpatialVideoBundleEntryRequirement.Optional))
+            return false;
+
+        BundleExtractor.ExtractWithRequirement(za, BundleHumanSmplEntryName, humanSmplPath, SpatialVideoBundleEntryRequirement.Optional);
+        BundleExtractor.ExtractWithRequirement(za, BundleNormalModeVideoEntryName, normalModeVideoPath, SpatialVideoBundleEntryRequirement.Optional);
+        return true;
+    }
+
+    private static string GetSvbCacheDir()
+    {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        try
+        {
+            using (var unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer"))
+            using (var activity = unityPlayer.GetStatic<AndroidJavaObject>("currentActivity"))
+            using (var dir = activity.Call<AndroidJavaObject>("getCacheDir"))
+            {
+                string internalPath = dir.Call<string>("getAbsolutePath");
+                Debug.Log($"[Bundle] Internal cache path: {internalPath}");
+                return Path.Combine(internalPath, "svb_cache");
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogWarning($"[Bundle] getCacheDir failed ({ex.Message}), falling back to temporaryCachePath");
+        }
+#endif
+        return Path.Combine(Application.temporaryCachePath, "svb_cache");
     }
 
     private void LogBundleEntries(ZipArchive za)

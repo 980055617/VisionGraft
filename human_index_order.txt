@@ -1,0 +1,14 @@
+0	00_Female_A_01	Assets/Resources/Models/Human/00_Female_A_01.prefab
+1	01_Female_A_02	Assets/Resources/Models/Human/01_Female_A_02.prefab
+2	02_Female_A_03	Assets/Resources/Models/Human/02_Female_A_03.prefab
+3	03_Female_B_01	Assets/Resources/Models/Human/03_Female_B_01.prefab
+4	04_Female_B_02	Assets/Resources/Models/Human/04_Female_B_02.prefab
+5	05_Female_B_03	Assets/Resources/Models/Human/05_Female_B_03.prefab
+6	06_Female_C	Assets/Resources/Models/Human/06_Female_C.vrm
+7	07_Human_Beta	Assets/Resources/Models/Human/07_Human_Beta.prefab
+8	08_Male_A_01	Assets/Resources/Models/Human/08_Male_A_01.prefab
+9	09_Male_A_02	Assets/Resources/Models/Human/09_Male_A_02.prefab
+10	10_Male_A_03	Assets/Resources/Models/Human/10_Male_A_03.prefab
+11	11_Male_B_01	Assets/Resources/Models/Human/11_Male_B_01.prefab
+12	12_Male_B_02	Assets/Resources/Models/Human/12_Male_B_02.prefab
+13	13_Male_B_03	Assets/Resources/Models/Human/13_Male_B_03.prefab

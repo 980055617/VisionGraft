@@ -7,6 +7,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private int lastAutoTrackId = int.MinValue;
     private readonly Dictionary<uint, GameObject> trackInstances = new Dictionary<uint, GameObject>();
     private readonly Dictionary<uint, GameObject> trackPrefabSources = new Dictionary<uint, GameObject>();
+    private readonly Dictionary<uint, int> selectedModelIndexByTrack = new Dictionary<uint, int>();
     private readonly Dictionary<uint, Vector3> lockedModelLocalScaleByTrack = new Dictionary<uint, Vector3>();
     private readonly Dictionary<uint, SortedDictionary<int, float>> manualYawKeyframesByTrack = new Dictionary<uint, SortedDictionary<int, float>>();
     private int selectedManualRotationTrackId = -1;
@@ -19,4 +20,3 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private readonly Dictionary<Animator, HumanoidRigCache> humanoidCaches = new Dictionary<Animator, HumanoidRigCache>();
     private readonly AnimalPoseApplier animalPoseApplier = new AnimalPoseApplier(AnimalFilterConfig.Default);
 }
-

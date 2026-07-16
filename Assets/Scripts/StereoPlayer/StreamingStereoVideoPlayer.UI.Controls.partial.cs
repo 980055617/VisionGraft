@@ -17,6 +17,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             EnsurePauseButtonExists(prefabRoot);
             EnsureSettingsButtonExists(prefabRoot);
             EnsureModeButtonExists(prefabRoot);
+            EnsureModelPickerButtonExists(prefabRoot);
             EnsureProgressControlsExists(prefabRoot);
             BindRuntimeControlsUi(prefabRoot);
             return prefabRoot;
@@ -49,15 +50,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Image panelImage = RuntimeUiElementFactory.AddImage(panelObj);
         UiComponentWriter.ApplyGraphicColor(panelImage, new Color(0f, 0f, 0f, 0.45f));
 
-        Button pauseButton = CreateBarButton(panelObj.transform, "PauseToggleButton", new Vector2(-300f, -38f));
-        runtimePauseButtonText = GetButtonText(pauseButton);
-        BindRuntimeButton(pauseButton, TogglePausePlayback);
-
-        Button modeButton = CreateBarButton(panelObj.transform, "ModeToggleButton", new Vector2(0f, -38f));
+        Button modeButton = CreateBarButton(panelObj.transform, "ModeToggleButton", new Vector2(-210f, -12f));
         runtimeModeButtonText = GetButtonText(modeButton);
         BindRuntimeButton(modeButton, ToggleNormalMode);
 
-        Button settingsButton = CreateBarButton(panelObj.transform, "SettingsButton", new Vector2(300f, -38f));
+        Button modelPickerButton = CreateBarButton(panelObj.transform, "PrefabSelectButton", new Vector2(210f, -12f));
+        runtimeModelPickerButtonText = GetButtonText(modelPickerButton);
+        BindRuntimeButton(modelPickerButton, ToggleRuntimeModelPickerPanel);
+
+        Button pauseButton = CreateBarButton(panelObj.transform, "PauseToggleButton", new Vector2(-210f, -100f));
+        runtimePauseButtonText = GetButtonText(pauseButton);
+        BindRuntimeButton(pauseButton, TogglePausePlayback);
+
+        Button settingsButton = CreateBarButton(panelObj.transform, "SettingsButton", new Vector2(210f, -100f));
         runtimeSettingsButtonText = GetButtonText(settingsButton);
         BindRuntimeButton(settingsButton, ToggleRuntimeSettingsPanel);
 
@@ -77,7 +82,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private Button CreateBarButton(Transform parent, string name, Vector2 anchoredPos)
     {
         RectTransform buttonRect = RuntimeUiElementFactory.CreateRectChild(name, parent, out GameObject buttonObj);
-        TransformWriter.ApplyCenteredRect(buttonRect, anchoredPos, new Vector2(260f, 120f));
+        TransformWriter.ApplyCenteredRect(buttonRect, anchoredPos, new Vector2(360f, 76f));
 
         Image buttonImage = RuntimeUiElementFactory.AddImage(buttonObj);
         UiComponentWriter.ApplyGraphicColor(buttonImage, new Color(0.13f, 0.13f, 0.13f, 0.9f));
@@ -98,10 +103,33 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Vector2.zero);
 
         Text text = RuntimeUiElementFactory.AddText(textObj);
-        UiComponentWriter.ApplyTextStyle(text, GetRuntimeUiFont(), 52, TextAnchor.MiddleCenter, Color.white);
-        UiComponentWriter.ApplyTextContent(text, name.Contains("Settings") ? "Settings" : (name.Contains("Mode") ? "Model" : "Pause"));
+        UiComponentWriter.ApplyTextStyle(text, GetRuntimeUiFont(), 36, TextAnchor.MiddleCenter, Color.white);
+        UiComponentWriter.ApplyTextOverflow(text, HorizontalWrapMode.Wrap, VerticalWrapMode.Truncate);
+        UiComponentWriter.ApplyTextContent(text, ResolveBarButtonInitialLabel(name));
 
         return button;
+    }
+
+
+    private static string ResolveBarButtonInitialLabel(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+        {
+            return "Button";
+        }
+        if (name.Contains("Settings"))
+        {
+            return "Settings";
+        }
+        if (name.Contains("Mode"))
+        {
+            return "Display";
+        }
+        if (name.Contains("PrefabSelect"))
+        {
+            return "Change";
+        }
+        return "Pause";
     }
 
 
@@ -124,8 +152,32 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             parent = settings.transform.parent;
         }
 
-        Button mode = CreateBarButton(parent, "ModeToggleButton", new Vector2(0f, -38f));
+        Button mode = CreateBarButton(parent, "ModeToggleButton", new Vector2(-210f, -12f));
         BindRuntimeButton(mode, ToggleNormalMode);
+    }
+
+
+    private void EnsureModelPickerButtonExists(GameObject root)
+    {
+        if (root == null)
+        {
+            return;
+        }
+
+        if (FindButton(root, "prefabselect") != null)
+        {
+            return;
+        }
+
+        Transform parent = EnsureRuntimeControlsCanvasTransform(root);
+        Button settings = FindButton(root, "setting");
+        if (settings != null && settings.transform.parent != null)
+        {
+            parent = settings.transform.parent;
+        }
+
+        Button modelPicker = CreateBarButton(parent, "PrefabSelectButton", new Vector2(210f, -12f));
+        BindRuntimeButton(modelPicker, ToggleRuntimeModelPickerPanel);
     }
 
 
@@ -148,7 +200,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             parent = settings.transform.parent;
         }
 
-        Button pause = CreateBarButton(parent, "PauseToggleButton", new Vector2(-300f, -38f));
+        Button pause = CreateBarButton(parent, "PauseToggleButton", new Vector2(-210f, -100f));
         BindRuntimeButton(pause, TogglePausePlayback);
     }
 
@@ -172,7 +224,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             parent = pause.transform.parent;
         }
 
-        Button settings = CreateBarButton(parent, "SettingsButton", new Vector2(300f, -38f));
+        Button settings = CreateBarButton(parent, "SettingsButton", new Vector2(210f, -100f));
         BindRuntimeButton(settings, ToggleRuntimeSettingsPanel);
     }
 
@@ -218,6 +270,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 canvasRect,
                 new Vector2(RuntimeControlsDefaultCanvasWidth, RuntimeControlsDefaultCanvasHeight));
         }
+        else if (canvasRect != null && canvasRect.sizeDelta.y < RuntimeControlsDefaultCanvasHeight)
+        {
+            TransformWriter.ApplySizeDelta(
+                canvasRect,
+                new Vector2(Mathf.Max(canvasRect.sizeDelta.x, RuntimeControlsDefaultCanvasWidth), RuntimeControlsDefaultCanvasHeight));
+        }
 
         return canvas.transform;
     }
@@ -233,6 +291,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         runtimePauseButtonText = null;
         runtimeSettingsButtonText = null;
         runtimeModeButtonText = null;
+        runtimeModelPickerButtonText = null;
         runtimeProgressSlider = null;
         runtimeProgressText = null;
 
@@ -259,6 +318,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             BindRuntimeButton(modeButton, ToggleNormalMode);
             runtimeModeButtonText = GetButtonText(modeButton);
+        }
+
+        Button modelPickerButton = FindButton(root, "prefabselect");
+        if (modelPickerButton != null)
+        {
+            BindRuntimeButton(modelPickerButton, ToggleRuntimeModelPickerPanel);
+            runtimeModelPickerButtonText = GetButtonText(modelPickerButton);
         }
 
         runtimeProgressSlider = FindSlider(root, "progressslider");
@@ -304,7 +370,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         RectTransform sliderRect = RuntimeUiElementFactory.CreateRectChild("ProgressSlider", parent, out GameObject sliderObj);
-        TransformWriter.ApplyCenteredRect(sliderRect, new Vector2(0f, 56f), new Vector2(780f, 42f));
+        TransformWriter.ApplyCenteredRect(sliderRect, new Vector2(0f, 94f), new Vector2(780f, 42f));
 
         Image background = RuntimeUiElementFactory.AddImage(sliderObj);
         UiComponentWriter.ApplyGraphicColor(background, new Color(1f, 1f, 1f, 0.2f));
@@ -350,7 +416,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         UiComponentWriter.ApplySliderRects(slider, fillRect, handleRect);
 
         RectTransform textRect = RuntimeUiElementFactory.CreateRectChild("ProgressText", parent, out GameObject textObj);
-        TransformWriter.ApplyCenteredRect(textRect, new Vector2(0f, 88f), new Vector2(420f, 30f));
+        TransformWriter.ApplyCenteredRect(textRect, new Vector2(0f, 126f), new Vector2(420f, 30f));
 
         Text text = RuntimeUiElementFactory.AddText(textObj);
         UiComponentWriter.ApplyTextStyle(text, GetRuntimeUiFont(), 24, TextAnchor.MiddleCenter, Color.white);
@@ -371,7 +437,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             RectTransform r = pause.transform as RectTransform;
             if (r != null)
             {
-                TransformWriter.ApplyAnchoredPosition(r, new Vector2(-300f, -62f));
+                TransformWriter.ApplyAnchoredPosition(r, new Vector2(-210f, -100f));
             }
         }
 
@@ -381,7 +447,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             RectTransform r = mode.transform as RectTransform;
             if (r != null)
             {
-                TransformWriter.ApplyAnchoredPosition(r, new Vector2(0f, -62f));
+                TransformWriter.ApplyAnchoredPosition(r, new Vector2(-210f, -12f));
+            }
+        }
+
+        Button modelPicker = FindButton(root, "prefabselect");
+        if (modelPicker != null)
+        {
+            RectTransform r = modelPicker.transform as RectTransform;
+            if (r != null)
+            {
+                TransformWriter.ApplyAnchoredPosition(r, new Vector2(210f, -12f));
             }
         }
 
@@ -391,7 +467,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             RectTransform r = settings.transform as RectTransform;
             if (r != null)
             {
-                TransformWriter.ApplyAnchoredPosition(r, new Vector2(300f, -62f));
+                TransformWriter.ApplyAnchoredPosition(r, new Vector2(210f, -100f));
             }
         }
 
@@ -401,7 +477,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             RectTransform r = progress.transform as RectTransform;
             if (r != null)
             {
-                TransformWriter.ApplyAnchoredPosition(r, new Vector2(0f, 56f));
+                TransformWriter.ApplyAnchoredPosition(r, new Vector2(0f, 94f));
             }
         }
 
@@ -411,7 +487,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             RectTransform r = progressText.transform as RectTransform;
             if (r != null)
             {
-                TransformWriter.ApplyAnchoredPosition(r, new Vector2(0f, 88f));
+                TransformWriter.ApplyAnchoredPosition(r, new Vector2(0f, 126f));
             }
         }
     }

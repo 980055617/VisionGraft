@@ -465,11 +465,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             return;
         }
-        if (displayTrackIds != null && displayTrackIds.Length > 0)
-        {
-            return;
-        }
-
         int frame = GetCurrentPlaybackFrame();
         if (!TryReadFrameObjects(frame, metaFrameObjects) || metaFrameObjects.Count == 0)
         {
@@ -494,6 +489,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (bestTrack >= 0)
         {
             displayTrackIds = new[] { bestTrack };
+            selectedManualRotationTrackId = bestTrack;
+            runtimeModelPickerTrackId = bestTrack;
+            runtimeModelPickerPageIndex = 0;
+            UpdateRuntimeModelPickerUiState();
         }
     }
 }

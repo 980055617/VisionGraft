@@ -1,9 +1,9 @@
 [Licensing::Module] Trying to connect to existing licensing client channel...
 Built from '6000.0/respin/6000.0.60f1-f02d6f9f9009' branch; Version is '6000.0.60f1 (61dfb374e36f) revision 6414259'; Using compiler version '193933523'; Build Type 'Release'
-[Licensing::IpcConnector] Successfully connected to: "LicenseClient-y9800" at "2026-06-24T07:51:36.3522978Z"
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-y9800" at "2026-07-16T06:22:59.7358593Z"
 OS: 'Windows 11  (10.0.26200) 64bit Core' Language: 'en' Physical Memory: 32616 MB
 BatchMode: 1, IsHumanControllingUs: 0, StartBugReporterOnCrash: 0, Is64bit: 1
-Date: 2026-06-24T07:51:36Z
+Date: 2026-07-16T06:22:59Z
 
 COMMAND LINE ARGUMENTS:
 C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Unity.exe
@@ -11,120 +11,67 @@ C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Unity.exe
 -nographics
 -quit
 -projectPath
-C:/Users/y9800/Unity_project/VisionGraft
+c:/Users/y9800/Unity_project/VisionGraft
 -logFile
-C:/Users/y9800/Unity_project/VisionGraft/compile_check2.log
-Successfully changed project path to: C:/Users/y9800/Unity_project/VisionGraft
+c:/Users/y9800/Unity_project/VisionGraft/compile_check2.log
+Successfully changed project path to: c:/Users/y9800/Unity_project/VisionGraft
 C:/Users/y9800/Unity_project/VisionGraft
-It looks like another Unity instance is running with this project open.
+[UnityMemory] Configuration Parameters - Can be set up in boot.config
+    "memorysetup-bucket-allocator-granularity=16"
+    "memorysetup-bucket-allocator-bucket-count=8"
+    "memorysetup-bucket-allocator-block-size=33554432"
+    "memorysetup-bucket-allocator-block-count=8"
+    "memorysetup-main-allocator-block-size=16777216"
+    "memorysetup-thread-allocator-block-size=16777216"
+    "memorysetup-gfx-main-allocator-block-size=16777216"
+    "memorysetup-gfx-thread-allocator-block-size=16777216"
+    "memorysetup-cache-allocator-block-size=4194304"
+    "memorysetup-typetree-allocator-block-size=2097152"
+    "memorysetup-profiler-bucket-allocator-granularity=16"
+    "memorysetup-profiler-bucket-allocator-bucket-count=8"
+    "memorysetup-profiler-bucket-allocator-block-size=33554432"
+    "memorysetup-profiler-bucket-allocator-block-count=8"
+    "memorysetup-profiler-allocator-block-size=16777216"
+    "memorysetup-profiler-editor-allocator-block-size=1048576"
+    "memorysetup-temp-allocator-size-main=16777216"
+    "memorysetup-job-temp-allocator-block-size=2097152"
+    "memorysetup-job-temp-allocator-block-size-background=1048576"
+    "memorysetup-job-temp-allocator-reduction-small-platforms=262144"
+    "memorysetup-allocator-temp-initial-block-size-main=262144"
+    "memorysetup-allocator-temp-initial-block-size-worker=262144"
+    "memorysetup-temp-allocator-size-background-worker=32768"
+    "memorysetup-temp-allocator-size-job-worker=262144"
+    "memorysetup-temp-allocator-size-preload-manager=33554432"
+    "memorysetup-temp-allocator-size-nav-mesh-worker=65536"
+    "memorysetup-temp-allocator-size-audio-worker=65536"
+    "memorysetup-temp-allocator-size-cloud-worker=32768"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gfx=262144"
+Player connection [27664]  Target information:
 
-Multiple Unity instances cannot open the same project.
+Player connection [27664]  * "[IP] 192.168.3.2 [Port] 55504 [Flags] 2 [Guid] 2806867899 [EditorId] 2806867899 [Version] 1048832 [Id] WindowsEditor(7,kawanishi) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
 
-Project: C:/Users/y9800/Unity_project/VisionGraft
-Fatal Error! It looks like another Unity instance is running with this project open.
+Player connection [27664]  * "[IP] 26.242.87.8 [Port] 55504 [Flags] 2 [Guid] 2806867899 [EditorId] 2806867899 [Version] 1048832 [Id] WindowsEditor(7,kawanishi) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
 
-Multiple Unity instances cannot open the same project.
-
-Project: C:/Users/y9800/Unity_project/VisionGraft
-Crash!!!
-SymInit: Symbol-SearchPath: 'C:/Program Files/Unity/Hub/Editor/6000.0.60f1/Editor/Data/Mono;.;C:\Users\y9800\Unity_project\VisionGraft;C:\Users\y9800\Unity_project\VisionGraft\Library\BurstCache\JIT;C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor;C:\WINDOWS;C:\WINDOWS\system32;', symOptions: 534, UserName: 'y9800'
-OS-Version: 10.0.0
-C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Unity.exe:Unity.exe (00007FF76A100000), size: 299008 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 6000.0.60.57267
-C:\WINDOWS\SYSTEM32\ntdll.dll:ntdll.dll (00007FFF3A4C0000), size: 2514944 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\System32\KERNEL32.DLL:KERNEL32.DLL (00007FFF393E0000), size: 823296 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\System32\KERNELBASE.dll:KERNELBASE.dll (00007FFF37960000), size: 4169728 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8655
-C:\WINDOWS\System32\USER32.dll:USER32.dll (00007FFF39650000), size: 1863680 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\System32\win32u.dll:win32u.dll (00007FFF37750000), size: 159744 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8655
-C:\WINDOWS\System32\GDI32.dll:GDI32.dll (00007FFF38230000), size: 176128 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8328
-C:\WINDOWS\System32\gdi32full.dll:gdi32full.dll (00007FFF37780000), size: 1224704 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\System32\msvcp_win.dll:msvcp_win.dll (00007FFF378B0000), size: 667648 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\System32\ucrtbase.dll:ucrtbase.dll (00007FFF37FA0000), size: 1359872 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\System32\IMM32.DLL:IMM32.DLL (00007FFF3A440000), size: 204800 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Unity.dll:Unity.dll (00007FFD92990000), size: 87146496 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 6000.0.60.57267
-C:\WINDOWS\System32\CRYPT32.dll:CRYPT32.dll (00007FFF37D60000), size: 1540096 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\System32\ADVAPI32.dll:ADVAPI32.dll (00007FFF39590000), size: 745472 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\System32\msvcrt.dll:msvcrt.dll (00007FFF389C0000), size: 692224 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 7.0.26100.8246
-C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\s3tcompress.dll:s3tcompress.dll (00007FFF09BD0000), size: 180224 (result: 0), SymType: '-deferred-', PDB: ''
-C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\libfbxsdk.dll:libfbxsdk.dll (00007FFE50DF0000), size: 8019968 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 2020.3.7.0
-C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\etccompress.dll:etccompress.dll (00007FFE61CD0000), size: 5070848 (result: 0), SymType: '-deferred-', PDB: ''
-C:\WINDOWS\System32\sechost.dll:sechost.dll (00007FFF39200000), size: 696320 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\ispc_texcomp.dll:ispc_texcomp.dll (00007FFE66E50000), size: 1826816 (result: 0), SymType: '-deferred-', PDB: ''
-C:\WINDOWS\System32\RPCRT4.dll:RPCRT4.dll (00007FFF392C0000), size: 1146880 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\compress_bc7e.dll:compress_bc7e.dll (00007FFE69AB0000), size: 1433600 (result: 0), SymType: '-deferred-', PDB: ''
-C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\FreeImage.dll:FreeImage.dll (0000000180000000), size: 5783552 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 3.18.0.0
-C:\WINDOWS\System32\ole32.dll:ole32.dll (00007FFF3A290000), size: 1671168 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\WinPixEventRuntime.dll:WinPixEventRuntime.dll (00007FFF32310000), size: 57344 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 1.0.2403.8001
-C:\WINDOWS\System32\WS2_32.dll:WS2_32.dll (00007FFF38460000), size: 524288 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\umbraoptimizer64.dll:umbraoptimizer64.dll (00007FFE667A0000), size: 1187840 (result: 0), SymType: '-deferred-', PDB: ''
-C:\WINDOWS\System32\combase.dll:combase.dll (00007FFF39F00000), size: 3682304 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\System32\SETUPAPI.dll:SETUPAPI.dll (00007FFF39A70000), size: 4747264 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\SYSTEM32\MSVCP140.dll:MSVCP140.dll (00007FFF195C0000), size: 561152 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 14.44.35211.0
-C:\WINDOWS\System32\SHELL32.dll:SHELL32.dll (00007FFF38A70000), size: 7880704 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8655
-C:\WINDOWS\SYSTEM32\VCRUNTIME140.dll:VCRUNTIME140.dll (00007FFF19670000), size: 122880 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 14.44.35211.0
-C:\WINDOWS\SYSTEM32\VCRUNTIME140_1.dll:VCRUNTIME140_1.dll (00007FFF19580000), size: 49152 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 14.44.35211.0
-C:\WINDOWS\System32\SHLWAPI.dll:SHLWAPI.dll (00007FFF39920000), size: 421888 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\SYSTEM32\bcrypt.dll:bcrypt.dll (00007FFF37640000), size: 172032 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\SYSTEM32\d3d11.dll:d3d11.dll (00007FFF34F00000), size: 2494464 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\System32\OLEAUT32.dll:OLEAUT32.dll (00007FFF394B0000), size: 888832 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8655
-C:\WINDOWS\SYSTEM32\d3d12.dll:d3d12.dll (00007FFF0A020000), size: 151552 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\System32\WINTRUST.dll:WINTRUST.dll (00007FFF381A0000), size: 536576 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\SYSTEM32\dwmapi.dll:dwmapi.dll (00007FFF33BA0000), size: 192512 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\SYSTEM32\IPHLPAPI.DLL:IPHLPAPI.DLL (00007FFF35E80000), size: 208896 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8655
-C:\WINDOWS\SYSTEM32\HID.DLL:HID.DLL (00007FFF35B80000), size: 61440 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.1150
-C:\WINDOWS\SYSTEM32\dxgi.dll:dxgi.dll (00007FFF35170000), size: 1286144 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\SYSTEM32\OPENGL32.dll:OPENGL32.dll (00007FFEECF10000), size: 1097728 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\SYSTEM32\GLU32.dll:GLU32.dll (00007FFEECEE0000), size: 184320 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.1150
-C:\WINDOWS\SYSTEM32\WINHTTP.dll:WINHTTP.dll (00007FFF2FBD0000), size: 1216512 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\SYSTEM32\WINMM.dll:WINMM.dll (00007FFF2EFD0000), size: 221184 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\SketchUpAPI.dll:SketchUpAPI.dll (00007FFE50550000), size: 8990720 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 23.0.0.0
-C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\NativeProxyHelper.dll:NativeProxyHelper.dll (00007FFE64590000), size: 1789952 (result: 0), SymType: '-deferred-', PDB: ''
-C:\WINDOWS\SYSTEM32\VERSION.dll:VERSION.dll (00007FFF2FE90000), size: 45056 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.1150
-C:\WINDOWS\SYSTEM32\WSOCK32.dll:WSOCK32.dll (00007FFF2EEC0000), size: 40960 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.1
-C:\WINDOWS\SYSTEM32\powrprof.dll:powrprof.dll (00007FFF37500000), size: 385024 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.3912
-C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\SketchUpCommonPreferences.dll:SketchUpCommonPreferences.dll (00007FFEEB7D0000), size: 499712 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 23.0.0.0
-C:\WINDOWS\SYSTEM32\Secur32.dll:Secur32.dll (00007FFF33910000), size: 53248 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.7705
-C:\WINDOWS\SYSTEM32\dxcore.dll:dxcore.dll (00007FFF33DE0000), size: 278528 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\SYSTEM32\SSPICLI.DLL:SSPICLI.DLL (00007FFF36750000), size: 299008 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\OpenRL.dll:OpenRL.dll (000001A09A270000), size: 12779520 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 1.5.0.2907
-C:\WINDOWS\SYSTEM32\MSVCR100.dll:MSVCR100.dll (0000000065990000), size: 860160 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.40219.325
-C:\WINDOWS\SYSTEM32\MSVCP100.dll:MSVCP100.dll (0000000065A70000), size: 622592 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.40219.325
-C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\embree.dll:embree.dll (00007FFE4F560000), size: 16711680 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 2.14.0.0
-C:\WINDOWS\SYSTEM32\cfgmgr32.DLL:cfgmgr32.DLL (00007FFF37330000), size: 331776 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8115
-C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\tbb.dll:tbb.dll (00007FFF02050000), size: 303104 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 2020.3.2022.1111
-C:\WINDOWS\SYSTEM32\MSWSOCK.DLL:MSWSOCK.DLL (00007FFF36A00000), size: 442368 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\OpenRL_pthread.dll:OpenRL_pthread.dll (000001A09AEC0000), size: 61440 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 2.9.0.0
-C:\WINDOWS\SYSTEM32\UMPDC.dll:UMPDC.dll (00007FFF374E0000), size: 81920 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8115
-C:\WINDOWS\SYSTEM32\MSASN1.dll:MSASN1.dll (00007FFF36DA0000), size: 77824 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8246
-C:\WINDOWS\System32\bcryptprimitives.dll:bcryptprimitives.dll (00007FFF380F0000), size: 688128 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8328
-C:\WINDOWS\SYSTEM32\kernel.appcore.dll:kernel.appcore.dll (00007FFF364A0000), size: 110592 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\system32\uxtheme.dll:uxtheme.dll (00007FFF33AA0000), size: 696320 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\SYSTEM32\windows.storage.dll:windows.storage.dll (00007FFF352F0000), size: 8912896 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8655
-C:\WINDOWS\System32\SHCORE.dll:SHCORE.dll (00007FFF38790000), size: 1007616 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8655
-C:\WINDOWS\SYSTEM32\profapi.dll:profapi.dll (00007FFF37670000), size: 167936 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\SYSTEM32\CRYPTSP.dll:CRYPTSP.dll (00007FFF36D30000), size: 110592 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\system32\IconCodecService.dll:IconCodecService.dll (00007FFEF8AC0000), size: 45056 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.1
-C:\WINDOWS\system32\rsaenh.dll:rsaenh.dll (00007FFF36400000), size: 233472 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.7705
-C:\WINDOWS\SYSTEM32\WindowsCodecs.dll:WindowsCodecs.dll (00007FFF32BD0000), size: 2277376 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8655
-C:\WINDOWS\SYSTEM32\CRYPTBASE.dll:CRYPTBASE.dll (00007FFF36D50000), size: 49152 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8246
-C:\WINDOWS\System32\clbcatq.dll:clbcatq.dll (00007FFF399B0000), size: 712704 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 2001.12.10941.16384
-C:\WINDOWS\System32\imagehlp.dll:imagehlp.dll (00007FFF38580000), size: 131072 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.4202
-C:\WINDOWS\System32\netprofm.dll:netprofm.dll (00007FFF31CE0000), size: 450560 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8521
-C:\WINDOWS\SYSTEM32\dbghelp.dll:dbghelp.dll (00007FFF34AE0000), size: 2367488 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8328
-C:\WINDOWS\System32\npmproxy.dll:npmproxy.dll (00007FFF2EA30000), size: 102400 (result: 0), SymType: '-deferred-', PDB: '', fileVersion: 10.0.26100.8328
-
-========== OUTPUTTING STACK TRACE ==================
-
-0x00007FFF37A21B6A (KERNELBASE) RaiseException
-[Licensing::Client] Code 10 while verifying Licensing Client signature (process Id: 34316, path: "C:/Program Files/Unity Hub/UnityLicensingClient_V1/Unity.Licensing.Client.exe")
+Player connection [27664] Host joined multi-casting on [225.0.0.222:54997]...
+Player connection [27664] Host joined alternative multi-casting on [225.0.0.222:34997]...
+Input System module state changed to: Initialized.
+[Physics::Module] Initialized fallback backend.
+[Physics::Module] Id: 0xdecafbad
+[Licensing::Client] Code 10 while verifying Licensing Client signature (process Id: 34344, path: "C:/Program Files/Unity Hub/UnityLicensingClient_V1/Unity.Licensing.Client.exe")
 [Licensing::Module] LicensingClient has failed validation; ignoring
 [Licensing::Client] Handshaking with LicensingClient:
   Version:                 1.17.4+4293ba1
-  Session Id:              a44ad04c352f462498c8476974d322a3
-  Correlation Id:          1aa1e4bdfed2c7cf51883e88dab13878
-  External correlation Id: 7529482554144099522
+  Session Id:              06e01c6558d1412cab0855ac8bb01762
+  Correlation Id:          3cb88a61a4dc25c42a29acb5cef2322d
+  External correlation Id: 5089393520169557112
   Machine Id:              H7Ma11Ci3lcP8JAg0CSIpZLwTfs=
-[Licensing::Module] Successfully connected to LicensingClient on channel: "LicenseClient-y9800" (connect: 0.00s, validation: 0.00s, handshake: 0.03s)
-[Licensing::IpcConnector] Successfully connected to: "LicenseClient-y9800-notifications" at "2026-06-24T07:51:36.3838629Z"
+[Licensing::Module] Successfully connected to LicensingClient on channel: "LicenseClient-y9800" (connect: 0.00s, validation: 0.00s, handshake: 0.04s)
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-y9800-notifications" at "2026-07-16T06:22:59.7754Z"
 [Licensing::Module] Error: Access token is unavailable; failed to update
 [Licensing::Client] Successfully resolved entitlement details
 [Licensing::Module] License group:
@@ -149,19 +96,394 @@ C:\WINDOWS\System32\npmproxy.dll:npmproxy.dll (00007FFF2EA30000), size: 102400 (
   Product: Unity Personal
   Type: Assigned
   Expiration: Unlimited
-[Licensing::Module] Licensing Background thread has ended after 0.04s
-0x00007FFD94530075 (Unity) EditorMonoConsole::LogToConsoleImplementation
-0x00007FFD94530D3A (Unity) EditorMonoConsole::LogToConsoleImplementation
-0x00007FFD951C488D (Unity) DebugStringToFilePostprocessedStacktrace
-0x00007FFD951C3C28 (Unity) DebugStringToFile
-0x00007FFD9462EBA6 (Unity) HandleProjectAlreadyOpenInAnotherInstance
-0x00007FFD946309B8 (Unity) Application::InitializeProject
-0x00007FFD94C1F1D5 (Unity) UnityMain
-0x00007FF76A102FBA (Unity) __scrt_common_main_seh
-0x00007FFF3940E957 (KERNEL32) BaseThreadInitThunk
-0x00007FFF3A547C1C (ntdll) RtlUserThreadStart
+[Licensing::Module] Licensing Background thread has ended after 0.05s
+[Package Manager] Connected to IPC stream "Upm-40864" after 0.2 seconds.
+Library Redirect Path: Library/
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Module] License group:
+  Id: F4-FK67-JP9U-N883-8S9S-XXXX
+  Product: Unity Personal
+  Type: ULF
+  Expiration: Unlimited
+[Licensing::Module] License group:
+  Id: 15668689674507-UnityPersXXXX
+  Product: Unity Personal
+  Type: Assigned
+  Expiration: Unlimited
+Refreshing native plugins compatible for Editor in 2.07 ms, found 0 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Initialize engine version: 6000.0.60f1 (61dfb374e36f)
+[Subsystems] Discovering subsystems at path C:/Program Files/Unity/Hub/Editor/6000.0.60f1/Editor/Data/Resources/UnitySubsystems
+[Subsystems] Discovering subsystems at path C:/Users/y9800/Unity_project/VisionGraft/Assets
+Forcing GfxDevice: Null
+GfxDevice: creating device client; kGfxThreadingModeNonThreaded
+NullGfxDevice:
+    Version:  NULL 1.0 [1.0]
+    Renderer: Null Device
+    Vendor:   Unity Technologies
+Shader Hidden/ProbeVolume/VoxelizeScene is not supported: GPU does not support conservative rasterization
+Shader 'Meta/MRUK/Scene/HighlightsAndShadows': fallback shader 'Off' not found
+Shader 'Oculus/OVRMRCameraFrameLit': fallback shader 'Alpha-Diffuse' not found
+Initialize mono
+Mono path[0] = 'C:/Program Files/Unity/Hub/Editor/6000.0.60f1/Editor/Data/Managed'
+Mono path[1] = 'C:/Program Files/Unity/Hub/Editor/6000.0.60f1/Editor/Data/MonoBleedingEdge/lib/mono/unityjit-win32'
+Mono config path = 'C:/Program Files/Unity/Hub/Editor/6000.0.60f1/Editor/Data/MonoBleedingEdge/etc'
+Using monoOptions --debugger-agent=transport=dt_socket,embedding=1,server=y,suspend=n,address=127.0.0.1:56864
+Using cacheserver namespaces - metadata:defaultmetadata, artifacts:defaultartifacts
+Using cacheserver namespaces - metadata:defaultmetadata, artifacts:defaultartifacts
+ImportWorker Server TCP listen port: 0
+AcceleratorClientConnectionCallback - disconnected - :0
+Begin MonoManager ReloadAssembly
+Registering precompiled unity dll's ...
+Register platform support module: C:/Program Files/Unity/Hub/Editor/6000.0.60f1/Editor/Data/PlaybackEngines/WindowsStandaloneSupport/UnityEditor.WindowsStandalone.Extensions.dll
+Register platform support module: C:/Program Files/Unity/Hub/Editor/6000.0.60f1/Editor/Data/PlaybackEngines/AndroidPlayer/UnityEditor.Android.Extensions.dll
+Registered in 0.003291 seconds.
+- Loaded All Assemblies, in  0.294 seconds
+Native extension for Android target not found
+Android Extension - Scanning For ADB Devices 2173 ms
+Native extension for WindowsStandalone target not found
+Mono: successfully reloaded assembly
+- Finished resetting the current domain, in  2.434 seconds
+Domain Reload Profiling: 2726ms
+	BeginReloadAssembly (98ms)
+		ExecutionOrderSort (0ms)
+		DisableScriptedObjects (0ms)
+		BackupInstance (0ms)
+		ReleaseScriptingObjects (0ms)
+		CreateAndSetChildDomain (1ms)
+	RebuildCommonClasses (27ms)
+	RebuildNativeTypeToScriptingClass (8ms)
+	initialDomainReloadingComplete (40ms)
+	LoadAllAssembliesAndSetupDomain (120ms)
+		LoadAssemblies (96ms)
+		RebuildTransferFunctionScriptingTraits (0ms)
+		AnalyzeDomain (117ms)
+			TypeCache.Refresh (116ms)
+				TypeCache.ScanAssembly (106ms)
+			BuildScriptInfoCaches (0ms)
+			ResolveRequiredComponents (0ms)
+	FinalizeReload (2434ms)
+		ReleaseScriptCaches (0ms)
+		RebuildScriptCaches (0ms)
+		SetupLoadedEditorAssemblies (2408ms)
+			LogAssemblyErrors (0ms)
+			InitializePlatformSupportModulesInManaged (2238ms)
+			SetLoadedEditorAssemblies (3ms)
+			BeforeProcessingInitializeOnLoad (39ms)
+			ProcessInitializeOnLoadAttributes (86ms)
+			ProcessInitializeOnLoadMethodAttributes (43ms)
+			AfterProcessingInitializeOnLoad (0ms)
+			EditorAssembliesLoaded (0ms)
+		ExecutionOrderSort2 (0ms)
+		AwakeInstancesAfterBackupRestoration (0ms)
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Module] License group:
+  Id: F4-FK67-JP9U-N883-8S9S-XXXX
+  Product: Unity Personal
+  Type: ULF
+  Expiration: Unlimited
+[Licensing::Module] License group:
+  Id: 15668689674507-UnityPersXXXX
+  Product: Unity Personal
+  Type: Assigned
+  Expiration: Unlimited
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Module] License group:
+  Id: F4-FK67-JP9U-N883-8S9S-XXXX
+  Product: Unity Personal
+  Type: ULF
+  Expiration: Unlimited
+[Licensing::Module] License group:
+  Id: 15668689674507-UnityPersXXXX
+  Product: Unity Personal
+  Type: Assigned
+  Expiration: Unlimited
+Application.AssetDatabase Initial Refresh Start
+Package Manager log level set to [2]
+[Package Manager] Restoring resolved packages state from cache
+[Licensing::Client] Successfully resolved entitlement details
+[Package Manager] Registered 76 packages:
+  Packages from [https://packages.unity.com]:
+    com.meta.xr.sdk.all@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.sdk.all@3c787aa87d70)
+    com.unity.ai.navigation@2.0.9 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.ai.navigation@5218e4bf7edc)
+    com.unity.collab-proxy@2.9.3 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.collab-proxy@ab839cc7d2ad)
+    com.unity.device-simulator.devices@1.0.1 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.device-simulator.devices@2af643ceec84)
+    com.unity.ide.rider@3.0.38 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.ide.rider@1f60b3138684)
+    com.unity.ide.visualstudio@2.0.23 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.ide.visualstudio@198cdf337d13)
+    com.unity.inputsystem@1.14.2 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.inputsystem@be6c4fd0abf5)
+    com.unity.timeline@1.8.9 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.timeline@6b9e48457ddb)
+    com.unity.visualscripting@1.9.7 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.visualscripting@6279e2b7c485)
+    com.unity.xr.management@4.5.3 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.xr.management@574ebfb1e976)
+    com.unity.xr.mock-hmd@1.4.0-preview.2 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.xr.mock-hmd@bf4cb37c5d7a)
+    com.unity.xr.openxr@1.15.1 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.xr.openxr@05fb1a7d75d1)
+    com.unity.mathematics@1.3.2 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.mathematics@8017b507cc74)
+    com.unity.xr.core-utils@2.5.3 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.xr.core-utils@f0450cbac8d6)
+    com.unity.xr.legacyinputhelpers@2.1.12 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.xr.legacyinputhelpers@b7579e86f3b4)
+    com.meta.xr.sdk.core@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.sdk.core@d6da9ab40659)
+    com.meta.xr.sdk.audio@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.sdk.audio@ca86912b4d20)
+    com.meta.xr.sdk.voice@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.sdk.voice@1613052ece81)
+    com.meta.xr.simulator@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.simulator@e73b5fdb5a5a)
+    com.meta.xr.sdk.haptics@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.sdk.haptics@cd1f215a823c)
+    com.meta.xr.mrutilitykit@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.mrutilitykit@7a74cdb228ff)
+    com.meta.xr.sdk.platform@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.sdk.platform@b9f1cf4de8ae)
+    com.meta.xr.sdk.interaction@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.sdk.interaction@33d664ec3528)
+    com.meta.xr.sdk.interaction.ovr@81.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.meta.xr.sdk.interaction.ovr@2b29786f9906)
+    com.unity.searcher@4.9.3 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.searcher@1e17ce91558d)
+    com.unity.burst@1.8.25 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.burst@1df634d836b8)
+    com.unity.collections@2.6.2 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.collections@aea9d3bd5e19)
+    com.unity.nuget.newtonsoft-json@3.2.1 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.nuget.newtonsoft-json@74deb55db2a0)
+    com.unity.nuget.mono-cecil@1.11.5 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.nuget.mono-cecil@d78732e851eb)
+    com.unity.test-framework.performance@3.2.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.test-framework.performance@0840f58e4562)
+  Built-in packages:
+    com.unity.multiplayer.center@1.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.multiplayer.center@f3fb577b3546)
+    com.unity.render-pipelines.universal@17.0.4 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.render-pipelines.universal@ba24149c0920)
+    com.unity.test-framework@1.6.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.test-framework@0baaad2f700c)
+    com.unity.ugui@2.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.ugui@27299721f2fd)
+    com.unity.modules.accessibility@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.accessibility)
+    com.unity.modules.ai@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.ai)
+    com.unity.modules.androidjni@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.androidjni)
+    com.unity.modules.animation@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.animation)
+    com.unity.modules.assetbundle@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.assetbundle)
+    com.unity.modules.audio@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.audio)
+    com.unity.modules.cloth@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.cloth)
+    com.unity.modules.director@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.director)
+    com.unity.modules.imageconversion@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.imageconversion)
+    com.unity.modules.imgui@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.imgui)
+    com.unity.modules.jsonserialize@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.jsonserialize)
+    com.unity.modules.particlesystem@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.particlesystem)
+    com.unity.modules.physics@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.physics)
+    com.unity.modules.physics2d@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.physics2d)
+    com.unity.modules.screencapture@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.screencapture)
+    com.unity.modules.terrain@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.terrain)
+    com.unity.modules.terrainphysics@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.terrainphysics)
+    com.unity.modules.tilemap@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.tilemap)
+    com.unity.modules.ui@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.ui)
+    com.unity.modules.uielements@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.uielements)
+    com.unity.modules.umbra@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.umbra)
+    com.unity.modules.unityanalytics@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.unityanalytics)
+    com.unity.modules.unitywebrequest@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.unitywebrequest)
+    com.unity.modules.unitywebrequestassetbundle@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.unitywebrequestassetbundle)
+    com.unity.modules.unitywebrequestaudio@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.unitywebrequestaudio)
+    com.unity.modules.unitywebrequesttexture@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.unitywebrequesttexture)
+    com.unity.modules.unitywebrequestwww@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.unitywebrequestwww)
+    com.unity.modules.vehicles@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.vehicles)
+    com.unity.modules.video@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.video)
+    com.unity.modules.vr@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.vr)
+    com.unity.modules.wind@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.wind)
+    com.unity.modules.xr@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.xr)
+    com.unity.modules.subsystems@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.subsystems)
+    com.unity.modules.hierarchycore@1.0.0 (location: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Resources\PackageManager\BuiltInPackages\com.unity.modules.hierarchycore)
+    com.unity.ext.nunit@2.0.5 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.ext.nunit@031a54704bff)
+    com.unity.render-pipelines.core@17.0.4 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.render-pipelines.core@3d082aa477f5)
+    com.unity.shadergraph@17.0.4 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.shadergraph@6f01d23bdcbb)
+    com.unity.render-pipelines.universal-config@17.0.3 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.render-pipelines.universal-config@dd206bf35d04)
+    com.unity.rendering.light-transport@1.0.1 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.rendering.light-transport@9bd588f963c0)
+    com.unity.textmeshpro@5.0.0 (location: C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.textmeshpro@53f43edfd2e0)
+  Embedded packages:
+    com.vrmc.gltf@file:C:\Users\y9800\Unity_project\VisionGraft\Packages\com.vrmc.gltf (location: C:\Users\y9800\Unity_project\VisionGraft\Packages\com.vrmc.gltf)
+    com.vrmc.vrm@file:C:\Users\y9800\Unity_project\VisionGraft\Packages\com.vrmc.vrm (location: C:\Users\y9800\Unity_project\VisionGraft\Packages\com.vrmc.vrm)
+[Subsystems] Looking for new subsystems at path C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.xr.mock-hmd@bf4cb37c5d7a
+[Subsystems] Novel subsystem found at Library/PackageCache/com.unity.xr.mock-hmd@bf4cb37c5d7a/Runtime/UnitySubsystemsManifest.json
+[Subsystems] Discovering subsystems at path C:/Program Files/Unity/Hub/Editor/6000.0.60f1/Editor/Data/Resources/UnitySubsystems
+[Subsystems] Discovering subsystems at path C:/Users/y9800/Unity_project/VisionGraft/Assets
+[Subsystems] Discovering subsystems at path C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.xr.mock-hmd@bf4cb37c5d7a
+[Subsystems] No descriptors matched for  examples in Library/PackageCache/com.unity.xr.mock-hmd@bf4cb37c5d7a/Runtime/UnitySubsystemsManifest.json.
+[Subsystems] 1 'inputs' descriptors matched in Library/PackageCache/com.unity.xr.mock-hmd@bf4cb37c5d7a/Runtime/UnitySubsystemsManifest.json
+[Subsystems] 1 'displays' descriptors matched in Library/PackageCache/com.unity.xr.mock-hmd@bf4cb37c5d7a/Runtime/UnitySubsystemsManifest.json
+[Subsystems] No descriptors matched for  meshings in Library/PackageCache/com.unity.xr.mock-hmd@bf4cb37c5d7a/Runtime/UnitySubsystemsManifest.json.
+[Subsystems] Discovering subsystems at path C:\Users\y9800\Unity_project\VisionGraft\Library\PackageCache\com.unity.xr.openxr@05fb1a7d75d1
+[Subsystems] No descriptors matched for  examples in Library/PackageCache/com.unity.xr.openxr@05fb1a7d75d1/Runtime/UnitySubsystemsManifest.json.
+[Subsystems] 1 'inputs' descriptors matched in Library/PackageCache/com.unity.xr.openxr@05fb1a7d75d1/Runtime/UnitySubsystemsManifest.json
+[Subsystems] 1 'displays' descriptors matched in Library/PackageCache/com.unity.xr.openxr@05fb1a7d75d1/Runtime/UnitySubsystemsManifest.json
+[Subsystems] No descriptors matched for  meshings in Library/PackageCache/com.unity.xr.openxr@05fb1a7d75d1/Runtime/UnitySubsystemsManifest.json.
+[Package Manager] Done registering packages in 0.03 seconds
+[ScriptCompilation] Requested script compilation because: Assetdatabase observed changes in script compilation related files
+Duplicate assembly 'System.Runtime.CompilerServices.Unsafe.dll' with different versions detected, using 'Packages/com.unity.collections/Unity.Collections.Tests/System.Runtime.CompilerServices.Unsafe/System.Runtime.CompilerServices.Unsafe.dll, AssemblyName=System.Runtime.CompilerServices.Unsafe, Version=6.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a' and ignoring 'Assets/Plugins/K4os/System.Runtime.CompilerServices.Unsafe.dll, AssemblyName=System.Runtime.CompilerServices.Unsafe, Version=5.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a'.info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://localhost:80
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Production
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: C:\Users\y9800\Unity_project\VisionGraft\
+info: Microsoft.AspNetCore.Hosting.Diagnostics[1]
+      Request starting HTTP/2 POST http://ilpp/UnityILPP.PostProcessing/Ping application/grpc -
+info: Microsoft.AspNetCore.Routing.EndpointMiddleware[0]
+      Executing endpoint 'gRPC - /UnityILPP.PostProcessing/Ping'
+info: Microsoft.AspNetCore.Routing.EndpointMiddleware[1]
+      Executed endpoint 'gRPC - /UnityILPP.PostProcessing/Ping'
+info: Microsoft.AspNetCore.Hosting.Diagnostics[2]
+      Request finished HTTP/2 POST http://ilpp/UnityILPP.PostProcessing/Ping application/grpc - - 200 - application/grpc 29.8327ms
+Starting: C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\bee_backend.exe --ipc --defer-dag-verification --dagfile="Library/Bee/1300b0aE.dag" --continue-on-failure --profile="Library/Bee/backend1.traceevents" ScriptAssemblies
+WorkingDir: C:/Users/y9800/Unity_project/VisionGraft
+DisplayProgressbar: Compiling Scripts
+info: Microsoft.AspNetCore.Hosting.Diagnostics[1]
+      Request starting HTTP/2 POST http://ilpp/UnityILPP.PostProcessing/ConfigurePostProcessors application/grpc -
+info: Microsoft.AspNetCore.Routing.EndpointMiddleware[0]
+      Executing endpoint 'gRPC - /UnityILPP.PostProcessing/ConfigurePostProcessors'
+warn: Unity.ILPP.Runner.PostProcessingAssemblyLoadContext[0]
+      Assembly system.runtime.interopservices.windowsruntime has duplicate hint path. Ignoring "C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\UnityReferenceAssemblies\unity-4.8-api\Facades\System.Runtime.InteropServices.WindowsRuntime.dll" in favor of "C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\NetStandard\Extensions\2.0.0\System.Runtime.InteropServices.WindowsRuntime.dll"
+warn: Unity.ILPP.Runner.PostProcessingAssemblyLoadContext[0]
+      Assembly system.componentmodel.composition has duplicate hint path. Ignoring "C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\UnityReferenceAssemblies\unity-4.8-api\System.ComponentModel.Composition.dll" in favor of "C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\NetStandard\compat\2.1.0\shims\netfx\System.ComponentModel.Composition.dll"
+info: Unity.ILPP.Runner.PostProcessingAssemblyLoadContext[0]
+      Resolved Unity.Burst.Cecil, Version=0.11.4.0, Culture=neutral, PublicKeyToken=50cebf1cceb9d05e with Library\PackageCache\com.unity.burst@1df634d836b8\Unity.Burst.CodeGen\Unity.Burst.Cecil.dll
+info: Unity.ILPP.Runner.PostProcessingAssemblyLoadContext[0]
+      Resolved Mono.Cecil, Version=0.11.5.0, Culture=neutral, PublicKeyToken=50cebf1cceb9d05e with Library\PackageCache\com.unity.nuget.mono-cecil@d78732e851eb\Mono.Cecil.dll
+info: Microsoft.AspNetCore.Routing.EndpointMiddleware[1]
+      Executed endpoint 'gRPC - /UnityILPP.PostProcessing/ConfigurePostProcessors'
+info: Microsoft.AspNetCore.Hosting.Diagnostics[2]
+      Request finished HTTP/2 POST http://ilpp/UnityILPP.PostProcessing/ConfigurePostProcessors application/grpc - - 200 - application/grpc 47.8683ms
+info: Microsoft.AspNetCore.Hosting.Diagnostics[1]
+      Request starting HTTP/2 POST http://ilpp/UnityILPP.PostProcessing/PostProcessAssembly application/grpc -
+info: Microsoft.AspNetCore.Routing.EndpointMiddleware[0]
+      Executing endpoint 'gRPC - /UnityILPP.PostProcessing/PostProcessAssembly'
+info: Unity.ILPP.Runner.PostProcessingPipeline[0]
+      Processing assembly Library/Bee/artifacts/1300b0aE.dag/Assembly-CSharp-Editor.dll, with 131 defines and 426 references
+info: Unity.ILPP.Runner.PostProcessingPipeline[0]
+      processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+info: Unity.ILPP.Runner.PostProcessingPipeline[0]
+      running Unity.Jobs.CodeGen.JobsILPostProcessor
+info: Unity.ILPP.Runner.PostProcessingAssemblyLoadContext[0]
+      Resolved Unity.Collections, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null with Library\Bee\artifacts\1300b0aE.dag\Unity.Collections.dll
+info: Unity.ILPP.Runner.PostProcessingAssemblyLoadContext[0]
+      Resolved UnityEditor.CoreModule, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null with C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Managed\UnityEngine\UnityEditor.CoreModule.dll
+info: Unity.ILPP.Runner.PostProcessingAssemblyLoadContext[0]
+      Resolved UnityEngine.CoreModule, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null with C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Data\Managed\UnityEngine\UnityEngine.CoreModule.dll
+info: Unity.ILPP.Runner.PostProcessingPipeline[0]
+      running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+info: Unity.ILPP.Runner.PostProcessingAssemblyLoadContext[0]
+      Resolved Unity.Burst.Cecil.Rocks, Version=0.11.4.0, Culture=neutral, PublicKeyToken=50cebf1cceb9d05e with Library\PackageCache\com.unity.burst@1df634d836b8\Unity.Burst.CodeGen\Unity.Burst.Cecil.Rocks.dll
+info: Microsoft.AspNetCore.Routing.EndpointMiddleware[1]
+      Executed endpoint 'gRPC - /UnityILPP.PostProcessing/PostProcessAssembly'
+info: Microsoft.AspNetCore.Hosting.Diagnostics[2]
+      Request finished HTTP/2 POST http://ilpp/UnityILPP.PostProcessing/PostProcessAssembly application/grpc - - 200 - application/grpc 316.8909ms
+ExitCode: 0 Duration: 2s892ms
+[1504/2040  0s] ILPP-Configuration Library/ilpp-configuration.nevergeneratedoutput
+[2036/2040  1s] Csc Library/Bee/artifacts/1300b0aE.dag/Assembly-CSharp-Editor.dll (+2 others)
+[2037/2040  0s] ILPostProcess Library/Bee/artifacts/1300b0aE.dag/post-processed/Assembly-CSharp-Editor.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1300b0aE.dag/Assembly-CSharp-Editor.dll, with 131 defines and 426 references
 
-========== END OF STACKTRACE ===========
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
 
-A crash has been intercepted by the crash handler. For call stack and other details, see the latest crash report generated in:
- * C:/Users/y9800/AppData/Local/Temp/Unity/Editor/Crashes
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[2038/2040  0s] CopyFiles Library/ScriptAssemblies/Assembly-CSharp-Editor.pdb
+[2039/2040  0s] CopyFiles Library/ScriptAssemblies/Assembly-CSharp-Editor.dll
+*** Tundra build success (2.86 seconds), 5 items updated, 2040 evaluated
+AssetDatabase: script compilation time: 3.275883s
+Begin MonoManager ReloadAssembly
+Duplicate assembly 'System.Runtime.CompilerServices.Unsafe.dll' with different versions detected, using 'Packages/com.unity.collections/Unity.Collections.Tests/System.Runtime.CompilerServices.Unsafe/System.Runtime.CompilerServices.Unsafe.dll, AssemblyName=System.Runtime.CompilerServices.Unsafe, Version=6.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a' and ignoring 'Assets/Plugins/K4os/System.Runtime.CompilerServices.Unsafe.dll, AssemblyName=System.Runtime.CompilerServices.Unsafe, Version=5.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a'.Symbol file LoadedFromMemory is not a mono symbol file
+- Loaded All Assemblies, in  1.424 seconds
+Script 'CharacterController' has the same name as built-in Unity component.
+AddComponent and GetComponent will not work with this script.
+'Packages/com.meta.xr.sdk.core/Editor/BuildingBlocks/BlocksWindowDetailsExtension.cs' contains partial class of Unity.Object, exactly 1 of the partial classes needs to be in a file with the same filename. This is to know the one that can be referenced from ie. GameObjects
+'Packages/com.meta.xr.sdk.core/Editor/BuildingBlocks/BlocksWindow.cs' contains partial class of Unity.Object, exactly 1 of the partial classes needs to be in a file with the same filename. This is to know the one that can be referenced from ie. GameObjects
+'Packages/com.meta.xr.sdk.core/Editor/BuildingBlocks/BlocksWindowCollectionsPageExtension.cs' contains partial class of Unity.Object, exactly 1 of the partial classes needs to be in a file with the same filename. This is to know the one that can be referenced from ie. GameObjects
+Refreshing native plugins compatible for Editor in 14.57 ms, found 17 plugins.
+Native extension for Android target not found
+Native extension for WindowsStandalone target not found
+Refreshing native plugins compatible for Editor in 10.99 ms, found 17 plugins.
+Duplicate assembly 'System.Runtime.CompilerServices.Unsafe.dll' with different versions detected, using 'Packages/com.unity.collections/Unity.Collections.Tests/System.Runtime.CompilerServices.Unsafe/System.Runtime.CompilerServices.Unsafe.dll, AssemblyName=System.Runtime.CompilerServices.Unsafe, Version=6.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a' and ignoring 'Assets/Plugins/K4os/System.Runtime.CompilerServices.Unsafe.dll, AssemblyName=System.Runtime.CompilerServices.Unsafe, Version=5.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a'.Mono: successfully reloaded assembly
+- Finished resetting the current domain, in  3.449 seconds
+Domain Reload Profiling: 4867ms
+	BeginReloadAssembly (254ms)
+		ExecutionOrderSort (0ms)
+		DisableScriptedObjects (9ms)
+		BackupInstance (0ms)
+		ReleaseScriptingObjects (0ms)
+		CreateAndSetChildDomain (134ms)
+	RebuildCommonClasses (27ms)
+	RebuildNativeTypeToScriptingClass (9ms)
+	initialDomainReloadingComplete (25ms)
+	LoadAllAssembliesAndSetupDomain (1104ms)
+		LoadAssemblies (889ms)
+		RebuildTransferFunctionScriptingTraits (0ms)
+		AnalyzeDomain (292ms)
+			TypeCache.Refresh (199ms)
+				TypeCache.ScanAssembly (183ms)
+			BuildScriptInfoCaches (73ms)
+			ResolveRequiredComponents (16ms)
+	FinalizeReload (3449ms)
+		ReleaseScriptCaches (0ms)
+		RebuildScriptCaches (0ms)
+		SetupLoadedEditorAssemblies (3243ms)
+			LogAssemblyErrors (0ms)
+			InitializePlatformSupportModulesInManaged (18ms)
+			SetLoadedEditorAssemblies (5ms)
+			BeforeProcessingInitializeOnLoad (139ms)
+			ProcessInitializeOnLoadAttributes (2999ms)
+			ProcessInitializeOnLoadMethodAttributes (78ms)
+			AfterProcessingInitializeOnLoad (4ms)
+			EditorAssembliesLoaded (0ms)
+		ExecutionOrderSort2 (0ms)
+		AwakeInstancesAfterBackupRestoration (5ms)
+Refreshing native plugins compatible for Editor in 12.02 ms, found 17 plugins.
+Unity memory allocator detected: MetaXRAudio native memory allocations will be tracked.
+Preloading 2 native plugins for Editor in 2.66 ms.
+Asset Pipeline Refresh (id=b4628ed2f80fc5d448cbd8879034e70b): Total: 9.735 seconds - Initiated by InitialRefreshV2(ForceSynchronousImport)
+	Summary:
+		Imports: total=0 (actual=0, local cache=0, cache server=0)
+		Asset DB Process Time: managed=0 ms, native=4174 ms
+		Asset DB Callback time: managed=729 ms, native=56 ms
+		Scripting: domain reloads=1, domain reload time=1425 ms, compile time=3277 ms, other=71 ms
+		Project Asset Count: scripts=2967, non-scripts=5904
+		Asset File Changes: new=0, changed=3, moved=0, deleted=0
+		Scan Filter Count: 0
+	InvokeCustomDependenciesCallbacks: 0.001ms
+	InvokePackagesCallback: 36.971ms
+	ApplyChangesToAssetFolders: 0.716ms
+	Scan: 223.401ms
+	OnSourceAssetsModified: 0.943ms
+	CategorizeAssetsWithTransientArtifact: 68.008ms
+	ProcessAssetsWithTransientArtifactChanges: 118.939ms
+	CategorizeAssets: 113.349ms
+	ImportOutOfDateAssets: 3490.856ms (210.710ms without children)
+		CompileScripts: 3277.284ms
+		ReloadNativeAssets: 0.031ms
+		UnloadImportedAssets: 0.698ms
+		EnsureUptoDateAssetsAreRegisteredWithGuidPM: 1.351ms
+		InitializingProgressBar: 0.000ms
+		PostProcessAllAssetNotificationsAddChangedAssets: 0.001ms
+		OnDemandSchedulerStart: 0.780ms
+	PostProcessAllAssets: 733.535ms
+	Hotreload: 16.759ms
+	GatherAllCurrentPrimaryArtifactRevisions: 0.002ms
+	UnloadStreamsBegin: 2.287ms
+	PersistCurrentRevisions: 0.237ms
+	UnloadStreamsEnd: 0.002ms
+	GenerateScriptTypeHashes: 18.935ms
+	Untracked: 4928.920ms
+
+Application.AssetDatabase Initial Refresh End
+Scanning for USB devices : 3.117ms
+Initializing Unity extensions:
+[MODES] ModeService[none].Initialize
+[MODES] ModeService[none].LoadModes
+[MODES] Loading mode Default (0) for mode-current-id-stereoCrafter
+Unloading 216 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 9977 unused Assets / (3.2 MB). Loaded Objects now: 13469.
+Memory consumption went from 309.3 MB to 306.2 MB.
+Total: 12.708000 ms (FindLiveObjects: 0.770800 ms CreateObjectMapping: 0.519200 ms MarkObjects: 9.375400 ms  DeleteObjects: 2.041300 ms)
+
+Batchmode quit successfully invoked - shutting down!
+Curl error 23: Failure writing output to destination, passed 17 returned 0
+Killing ADB server in 0.0416462 seconds.
+Input System module state changed to: ShutdownInProgress.
+Input System polling thread exited.
+Input System module state changed to: Shutdown.
+[Licensing::IpcConnector] LicenseClient-y9800-notifications channel disconnected successfully.
+[Licensing::IpcConnector] LicenseClient-y9800 channel disconnected successfully.
+AcceleratorClientConnectionCallback - disconnected - :0
+Cleanup mono
+abort_threads: Failed aborting id: 000000000000889C, mono_thread_manage will ignore it
+
+abort_threads: Failed aborting id: 0000000000003C64, mono_thread_manage will ignore it
+
+abort_threads: Failed aborting id: 000000000000889C, mono_thread_manage will ignore it
+
+abort_threads: Failed aborting id: 0000000000003C64, mono_thread_manage will ignore it
+
+debugger-agent: Unable to listen on 3576
+Exiting batchmode successfully now!
+Exiting without the bug reporter. Application will terminate with return code 0

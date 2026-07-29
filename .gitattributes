@@ -30,7 +30,6 @@
 *.wav binary
 *.aif binary
 *.aiff binary
-*.fbx binary
 *.obj binary
 *.3ds binary
 *.dae binary

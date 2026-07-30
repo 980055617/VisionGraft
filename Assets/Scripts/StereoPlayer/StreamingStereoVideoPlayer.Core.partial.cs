@@ -336,7 +336,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         humanPrefabs  = LoadPrefabsFromResources("Models/Human");
         animalPrefabs = SortByPriority(LoadPrefabsFromResources("Models/Animal"), AnimalModelPriorityOrder);
-        Debug.Log($"[Model] Human: {humanPrefabs.Length} prefab, Animal: {animalPrefabs.Length} prefab");
+        elsePrefabs   = LoadPrefabsFromResources("Models/Else");
+        Debug.Log($"[Model] Human: {humanPrefabs.Length} prefab, Animal: {animalPrefabs.Length} prefab, Else: {elsePrefabs.Length} prefab");
     }
 
     // Resources.LoadAll は Sources/ 内 FBX も拾うため、大文字始まり／数字始まりの名前のみ使用する

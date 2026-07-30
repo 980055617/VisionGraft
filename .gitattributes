@@ -49,3 +49,4 @@
 # Improve diffs for C#
 *.cs diff=csharp
 *.fbx filter=lfs diff=lfs merge=lfs -text
+*.svb filter=lfs diff=lfs merge=lfs -text

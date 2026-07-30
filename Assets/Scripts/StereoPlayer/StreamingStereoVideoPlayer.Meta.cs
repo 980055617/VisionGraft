@@ -38,6 +38,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public byte[] jointsVis;
         public bool hasSkeletonRootCam;
         public Vector3 skeletonRootCam;
+        // 以下は source/other_object_proxies.json 由来の debug 可視化 (showOtherProxyBoxes) 専用。
+        // units="same_as_depth_npz" の正規化深度でメートルではないため配置・スケールには使わない。
         public bool hasOtherProxy;
         public bool hasOtherProxyCenter;
         public bool hasOtherProxySize;

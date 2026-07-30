@@ -235,7 +235,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         string category = isAnimal ? "Animal" : "Human";
-        int selectedIndex = Mathf.Clamp(ResolveSelectedModelIndex(trackId, isAnimal), 0, prefabs.Length - 1);
+        int selectedIndex = Mathf.Clamp(ResolveSelectedModelIndex(trackId, isAnimal ? selectedAnimalIndex : selectedHumanIndex), 0, prefabs.Length - 1);
         int pageCount = GetRuntimeModelPickerPageCount(prefabs.Length);
         runtimeModelPickerPageIndex = Mathf.Clamp(runtimeModelPickerPageIndex, 0, Mathf.Max(0, pageCount - 1));
 

@@ -36,6 +36,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // Animal の姿勢追従は meta.bin の skeleton (jointsCam/anchorZ) と SMAL block のみを参照する。
     }
 
+    // source/other_object_proxies.json は debug/検証用。runtime 配置・スケールには使用しない。
+    // Else の配置は meta.bin の anchor (u/v + anchorZ) と bbox のみを参照する。
     private void LoadOtherObjectProxiesSidecar(string path)
     {
         if (string.IsNullOrEmpty(path) || !File.Exists(path))
@@ -126,6 +128,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                byTrack.TryGetValue(trackId, out pose);
     }
 
+    // debug 可視化 (showOtherProxyBoxes) 専用。runtime 配置には使わない。
+    // sidecar の cameraXyz / proxy3d は units="same_as_depth_npz"、つまり 0=far/1=near の
+    // 正規化深度でメートルではないため、この world 変換はスケールも前後関係も正しくない
+    // （meta.bin の anchorZ は DecodeAnchorDepthMetersFromBundle で反転処理してから使う）。
+    // sidecar 側のカメラは 1280x720 だが manifest の eye は 1280x640 で fy が異なるため、
+    // 縦位置も一致しない。あくまで「sidecar に何が入っているか」を見るための箱として扱う。
     private bool TryOtherProxyWorld(MetaObj obj, Transform screen, out Vector3 centerWorld, out Vector3 sizeMeters)
     {
         centerWorld = Vector3.zero;

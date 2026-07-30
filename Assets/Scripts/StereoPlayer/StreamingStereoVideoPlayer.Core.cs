@@ -36,16 +36,28 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public Vector3 screenOffsetMeters = Vector3.zero;
     public bool fitScreenToFov = false;
 
+    [System.Serializable]
+    public struct TrackModelIndexOverride
+    {
+        public int trackId;
+        public int modelIndex; // 対象 track の categoryId に応じて humanPrefabs/animalPrefabs のインデックスとして使う
+    }
+
     [Header("Model Debug")]
     [FormerlySerializedAs("useMetaFollow")]
     public bool displayModel = true;
     public int[] displayTrackIds = new int[0]; // 空 = 全トラック表示, 指定あり = そのIDのみ
     public int selectedHumanIndex = 0;
     public int selectedAnimalIndex = 0;
+    public int selectedElseIndex = 0;
+    // displayTrackIds で表示した track ごとに使うモデルを個別指定したい場合のみ使用。
+    // 未指定の track は selectedHumanIndex/selectedAnimalIndex/selectedElseIndex にフォールバックする。
+    public TrackModelIndexOverride[] trackModelIndices = new TrackModelIndexOverride[0];
 
-    // Resources/Models/Human と Resources/Models/Animal から起動時に自動ロード
+    // Resources/Models/Human, Resources/Models/Animal, Resources/Models/Else から起動時に自動ロード
     private GameObject[] humanPrefabs;
     private GameObject[] animalPrefabs;
+    private GameObject[] elsePrefabs;
 
     [Header("Bones")]
     public bool enableBoneApply = true;

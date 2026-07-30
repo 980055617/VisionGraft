@@ -53,7 +53,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private bool HasAnyDisplayPrefabConfigured()
     {
         return (humanPrefabs != null && humanPrefabs.Length > 0) ||
-               (animalPrefabs != null && animalPrefabs.Length > 0);
+               (animalPrefabs != null && animalPrefabs.Length > 0) ||
+               (elsePrefabs != null && elsePrefabs.Length > 0);
     }
 
 
@@ -169,12 +170,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float bboxWAdjusted = target.bboxW;
         float bboxHAdjusted = target.bboxH;
 
+        // Else も Human/Animal と同じく meta.bin の anchor (u/v + anchorZ) だけで配置する。
+        // source/other_object_proxies.json の cameraXyz / proxy3d は units="same_as_depth_npz"、
+        // つまり 0=far/1=near の正規化深度でメートルではないため runtime 配置には使えない
+        // （そのまま world に流すと前後関係が反転する）。sidecar は debug 可視化専用。
         Vector3 anchorWorld = AnchorUvZToWorldPinhole(screen, uEyeF, vEyeF, target.anchorZ);
-        if (IsCategoryOther(target.categoryId) && target.hasOtherProxy &&
-            TryOtherProxyWorld(target, screen, out Vector3 otherWorld, out _))
-        {
-            anchorWorld = otherWorld;
-        }
 
         GameObject instance = GetOrCreateTrackInstance(target.trackId, target.categoryId);
         if (instance == null)
@@ -277,15 +277,25 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             if (animalPrefabs != null && animalPrefabs.Length > 0)
             {
-                int idx = ResolveSelectedModelIndex(trackId, true);
+                int idx = ResolveSelectedModelIndex(trackId, selectedAnimalIndex);
                 idx = Mathf.Clamp(idx, 0, animalPrefabs.Length - 1);
                 return animalPrefabs[idx];
             }
             return null;
         }
+        if (IsCategoryOther(categoryId))
+        {
+            if (elsePrefabs != null && elsePrefabs.Length > 0)
+            {
+                int idx = ResolveSelectedModelIndex(trackId, selectedElseIndex);
+                idx = Mathf.Clamp(idx, 0, elsePrefabs.Length - 1);
+                return elsePrefabs[idx];
+            }
+            return null;
+        }
         if (humanPrefabs != null && humanPrefabs.Length > 0)
         {
-            int idx = ResolveSelectedModelIndex(trackId, false);
+            int idx = ResolveSelectedModelIndex(trackId, selectedHumanIndex);
             idx = Mathf.Clamp(idx, 0, humanPrefabs.Length - 1);
             return humanPrefabs[idx];
         }
@@ -293,14 +303,38 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private int ResolveSelectedModelIndex(uint trackId, bool animal)
+    private int ResolveSelectedModelIndex(uint trackId, int defaultIndex)
     {
         if (selectedModelIndexByTrack.TryGetValue(trackId, out int selectedIndex))
         {
             return selectedIndex;
         }
 
-        return animal ? selectedAnimalIndex : selectedHumanIndex;
+        if (TryGetInspectorTrackModelIndex(trackId, out int inspectorIndex))
+        {
+            return inspectorIndex;
+        }
+
+        return defaultIndex;
+    }
+
+
+    private bool TryGetInspectorTrackModelIndex(uint trackId, out int modelIndex)
+    {
+        if (trackModelIndices != null)
+        {
+            for (int i = 0; i < trackModelIndices.Length; i++)
+            {
+                if (trackModelIndices[i].trackId == (int)trackId)
+                {
+                    modelIndex = trackModelIndices[i].modelIndex;
+                    return true;
+                }
+            }
+        }
+
+        modelIndex = 0;
+        return false;
     }
 
 
@@ -332,14 +366,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float userScale = model != null ? model.userScale : 1f;
         Vector3 baseScale = model != null ? model.baseLocalScale : Vector3.one;
         Vector2 baseBounds = model != null ? model.baseBoundsSize : Vector2.zero;
-        bool isOther = IsCategoryOther(obj.categoryId);
         bool isAnimal = IsCategoryAnimal(obj.categoryId);
         bool lockScale = IsCategoryPerson(obj.categoryId) || isAnimal;
         bool hasFocalLengths = TryGetFocalLengths(out float fxScale, out float fyScale);
         Vector3 desiredScale = TrackModelPlacement.ResolveDesiredLocalScale(new TrackModelPlacement.ScaleRequest(
             baseScale,
             baseBounds,
-            obj.otherProxySize,
             userScale,
             modelHeight,
             targetHeightMeters,
@@ -350,8 +382,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             fyScale,
             manifest != null ? manifest.eye_w : 0,
             manifest != null ? manifest.eye_h : 0,
-            isOther,
-            obj.hasOtherProxySize,
             isAnimal,
             hasFocalLengths));
 
@@ -361,17 +391,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             rotation,
             instance.transform.localScale,
             model != null ? model.anchor : null);
-
-        if (isOther && obj.hasOtherProxySize && obj.otherProxySize.sqrMagnitude > 0.000001f)
-        {
-            TrackPlacementWriter.Apply(
-                instance.transform,
-                TrackPlacementCommand.LocalScaleOnly(
-                    instance.transform.position,
-                    instance.transform.rotation,
-                    desiredScale));
-            return;
-        }
 
         if (hasFocalLengths)
         {

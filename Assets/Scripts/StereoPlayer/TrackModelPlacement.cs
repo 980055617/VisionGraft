@@ -6,7 +6,6 @@ public static class TrackModelPlacement
     {
         public readonly Vector3 baseLocalScale;
         public readonly Vector2 baseBoundsSize;
-        public readonly Vector3 otherProxySize;
         public readonly float userScale;
         public readonly float modelHeightMeters;
         public readonly float targetHeightMeters;
@@ -17,15 +16,12 @@ public static class TrackModelPlacement
         public readonly float fy;
         public readonly int eyeWidthPixels;
         public readonly int eyeHeightPixels;
-        public readonly bool isOther;
-        public readonly bool hasOtherProxySize;
         public readonly bool isAnimal;
         public readonly bool hasFocalLengths;
 
         public ScaleRequest(
             Vector3 baseLocalScale,
             Vector2 baseBoundsSize,
-            Vector3 otherProxySize,
             float userScale,
             float modelHeightMeters,
             float targetHeightMeters,
@@ -36,14 +32,11 @@ public static class TrackModelPlacement
             float fy,
             int eyeWidthPixels,
             int eyeHeightPixels,
-            bool isOther,
-            bool hasOtherProxySize,
             bool isAnimal,
             bool hasFocalLengths)
         {
             this.baseLocalScale = baseLocalScale;
             this.baseBoundsSize = baseBoundsSize;
-            this.otherProxySize = otherProxySize;
             this.userScale = userScale;
             this.modelHeightMeters = modelHeightMeters;
             this.targetHeightMeters = targetHeightMeters;
@@ -54,8 +47,6 @@ public static class TrackModelPlacement
             this.fy = fy;
             this.eyeWidthPixels = eyeWidthPixels;
             this.eyeHeightPixels = eyeHeightPixels;
-            this.isOther = isOther;
-            this.hasOtherProxySize = hasOtherProxySize;
             this.isAnimal = isAnimal;
             this.hasFocalLengths = hasFocalLengths;
         }
@@ -77,20 +68,8 @@ public static class TrackModelPlacement
             ? (request.targetHeightMeters / request.modelHeightMeters) * request.userScale
             : request.userScale;
 
-        if (request.isOther && request.hasOtherProxySize && request.otherProxySize.sqrMagnitude > 0.000001f)
-        {
-            Vector3 proxySize = AbsVector(request.otherProxySize);
-            float scaleW = request.baseBoundsSize.x > 0.000001f ? proxySize.x / request.baseBoundsSize.x : targetUniform;
-            float scaleH = request.baseBoundsSize.y > 0.000001f ? proxySize.y / request.baseBoundsSize.y : targetUniform;
-            float proxyUniform = Mathf.Max(scaleW, scaleH) * request.userScale;
-            if (proxyUniform <= 0.000001f)
-            {
-                proxyUniform = targetUniform;
-            }
-
-            return request.baseLocalScale * proxyUniform;
-        }
-
+        // Else も含めて bbox + anchorZ からスケールを出す。source/other_object_proxies.json の
+        // proxy3d.size は units="same_as_depth_npz" でメートルではないため使わない。
         if (request.hasFocalLengths && request.eyeWidthPixels > 0 && request.eyeHeightPixels > 0 && request.fx > 0f && request.fy > 0f)
         {
             float bboxWorldW = (2f * request.bboxWidthPixels / request.eyeWidthPixels) * (request.anchorDepthMeters / request.fx);
@@ -102,10 +81,5 @@ public static class TrackModelPlacement
         }
 
         return request.baseLocalScale * targetUniform;
-    }
-
-    private static Vector3 AbsVector(Vector3 v)
-    {
-        return new Vector3(Mathf.Abs(v.x), Mathf.Abs(v.y), Mathf.Abs(v.z));
     }
 }

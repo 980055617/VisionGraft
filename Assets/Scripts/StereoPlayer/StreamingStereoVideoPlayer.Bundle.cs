@@ -108,12 +108,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             yield break;
         }
 
-        if (!ManifestLoader.TryLoad(extractedManifestPath, out manifest))
+        if (!ManifestLoader.TryLoad(extractedManifestPath, out manifest, out ShotBoundaries loadedShotBoundaries))
         {
             Debug.LogError($"[Bundle] Manifest load failed: {extractedManifestPath}");
             yield break;
         }
         Debug.Log($"[Bundle] Manifest loaded. Video: {extractedVideoPath}");
+        ApplyLoadedShotBoundaries(loadedShotBoundaries);
         LoadMeta(extractedMetaPath);
         LoadBundleSidecars(extractedAnimalControlTargetsPath, extractedOtherObjectProxiesPath);
         LoadHumanSmplSidecar(extractedHumanSmplPath);

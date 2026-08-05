@@ -99,6 +99,32 @@ public static class PinholePlacementSpace
         return camOrigin + (camRotation * camLocal);
     }
 
+    public static bool TryProjectCamLocalToEyePixel(
+        ManifestData manifest,
+        Vector3 camLocal,
+        float fx,
+        float fy,
+        out Vector2 eyePixel)
+    {
+        eyePixel = Vector2.zero;
+        if (manifest == null ||
+            manifest.eye_w <= 0 ||
+            manifest.eye_h <= 0 ||
+            fx <= 0f ||
+            fy <= 0f ||
+            camLocal.z <= 0.001f)
+        {
+            return false;
+        }
+
+        float cxNorm = ResolvePrincipalPointNorm(manifest.cx, manifest.eye_w);
+        float cyNorm = ResolvePrincipalPointNorm(manifest.cy, manifest.eye_h);
+        eyePixel = new Vector2(
+            (cxNorm + (camLocal.x * fx / camLocal.z) * 0.5f) * manifest.eye_w,
+            (cyNorm - (camLocal.y * fy / camLocal.z) * 0.5f) * manifest.eye_h);
+        return true;
+    }
+
     private static float ResolvePrincipalPointNorm(float value, float dimension)
     {
         if (value <= 0f)

@@ -12,6 +12,14 @@ public sealed partial class AnimalPoseApplier
         motionFilter = new AnimalMotionFilter(resolved);
     }
 
+    // shot 境界で持ち越してはいけないのは平滑化状態だけ。animalRigCaches はモデルの
+    // ボーン解決結果でカットとは無関係なので保持する（作り直すと bind pose の再取得が走る）。
+    public void ResetMotionState()
+    {
+        motionFilter.Reset();
+        ResetSmalSmoothing();
+    }
+
     // Snapshot every resolved canonical bone's local rotation, so a caller can blend the body
     // pose back toward whatever the tracked pipeline writes next (mirroring
     // CaptureHumanoidBoneLocalRotations/BlendHumanoidBoneLocalRotations for Human) - without

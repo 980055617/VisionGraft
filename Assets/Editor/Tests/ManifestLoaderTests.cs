@@ -37,6 +37,46 @@ public class ManifestLoaderTests
     }
 
     [Test]
+    public void TryLoad_ManifestWithShots_PopulatesShotBoundaries()
+    {
+        File.WriteAllText(tempFile,
+            "{\"quant_pos_scale\":0.001,\"quant_joint_scale\":0.002," +
+            "\"joints_space\":\"camera_xyz_root_relative\",\"shots\":[[0,258],[258,338]]}");
+
+        bool result = ManifestLoader.TryLoad(tempFile, out _, out ShotBoundaries shots);
+
+        Assert.That(result, Is.True);
+        Assert.That(shots.Count, Is.EqualTo(2));
+        Assert.That(shots.ResolveShotIndex(257), Is.EqualTo(0));
+        Assert.That(shots.ResolveShotIndex(258), Is.EqualTo(1));
+    }
+
+    // shots を持たない旧 bundle でもロード自体は成功し、全編 1 shot 扱いになる。
+    [Test]
+    public void TryLoad_ManifestWithoutShots_ReturnsEmptyShotBoundaries()
+    {
+        File.WriteAllText(tempFile, ValidJson);
+
+        bool result = ManifestLoader.TryLoad(tempFile, out _, out ShotBoundaries shots);
+
+        Assert.That(result, Is.True);
+        Assert.That(shots.HasShots, Is.False);
+    }
+
+    [Test]
+    public void TryLoad_InvalidManifest_ReturnsEmptyShotBoundaries()
+    {
+        File.WriteAllText(tempFile,
+            "{\"quant_pos_scale\":0.0,\"quant_joint_scale\":0.002," +
+            "\"joints_space\":\"camera_xyz_root_relative\",\"shots\":[[0,258],[258,338]]}");
+
+        bool result = ManifestLoader.TryLoad(tempFile, out _, out ShotBoundaries shots);
+
+        Assert.That(result, Is.False);
+        Assert.That(shots.HasShots, Is.False);
+    }
+
+    [Test]
     public void TryLoad_FileMissing_ReturnsFalse()
     {
         bool result = ManifestLoader.TryLoad(tempFile + "_doesnotexist", out ManifestData manifest);

@@ -16,6 +16,20 @@ public sealed class AnimalMotionFilter
         this.config = config;
     }
 
+    // shot 境界で呼ぶ。フィルタ本体を破棄することで、次フレームの観測値が初期値として
+    // そのまま採用される（各 Filter* は未登録キーに対し Reset(target) して target を返す）。
+    // shot をまたいだ位置・向きは前 shot からの連続運動ではないため、平滑化で追従させると
+    // 新しいカットの先頭で数フレームかけて滑り込む挙動になる。
+    public void Reset()
+    {
+        rootYawForward.Clear();
+        rootYawLastSeenFrame.Clear();
+        rootForwardFilters.Clear();
+        rootUpFilters.Clear();
+        rootPositionFilters.Clear();
+        limbTargetFilters.Clear();
+    }
+
     public void MarkRootSeen(Transform root, int frame)
     {
         rootYawLastSeenFrame[root] = frame;

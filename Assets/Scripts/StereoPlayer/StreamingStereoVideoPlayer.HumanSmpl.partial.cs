@@ -80,7 +80,29 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         // source/human_smpl_from_sam2.json は debug/検証用。runtime 配置には使用しない。
         // SMPL FK は meta.bin の SMPL block (humanSmplPosesMetaBin) のみを参照する。
+        // Human-Other 接触判定に必要な「元映像上の 2D keypoint」も、meta.bin の
+        // keypoints3d (jointsCam) を投影して作るため sidecar には依存しない
+        // （ResetHumanOtherContactState / TryBuildHumanSourceContactPose 参照）。
         humanSmplRetargetStateByCache.Clear();
+        ResetHumanOtherContactState();
+    }
+
+    // shot 境界で呼ぶ。humanSmplRetargetStateByCache 自体は破棄しない: referenceUnityLocal /
+    // referenceSmplLocal はモデルの参照姿勢で shot とは無関係なため。時間方向の平滑化だけ
+    // 未初期化に戻し、root 位置・深度の平滑化も捨てて新しい shot の先頭フレームへスナップさせる。
+    private void ResetHumanSmplSmoothingForShotBoundary()
+    {
+        foreach (KeyValuePair<HumanoidRigCache, HumanSmplRetargetState> kv in humanSmplRetargetStateByCache)
+        {
+            if (kv.Value != null)
+            {
+                kv.Value.smoothingInitialized = false;
+            }
+        }
+
+        humanSmplSmoothedRoot.Clear();
+        humanSmplSmoothedDepth.Clear();
+        humanSmplSmoothedRootInit.Clear();
     }
 
     private bool TryGetHumanSmplPose(int frameIndex, uint trackId, out HumanSmplPose pose)
@@ -534,7 +556,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (charMinY == float.MaxValue) return;
 
         float yOffset = smplMinY - charMinY;
-        Debug.Log($"[FOOT-Y] smplAnkleY={smplMinY:F3} charFootY={charMinY:F3} offset={yOffset:F3}");
         if (Mathf.Abs(yOffset) < 0.001f) return;
 
         root.position += new Vector3(0f, yOffset, 0f);

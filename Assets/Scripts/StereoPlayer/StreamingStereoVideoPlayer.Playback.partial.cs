@@ -8,6 +8,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     public void DisplayModelTick()
     {
+        // 診断用（一時的・調査後に削除）: DisplayModelTick が呼ばれているか、
+        // および各フラグの実行時の値を 2 秒ごとに出力する。フラグに依存させない。
+        if (Time.frameCount % 120 == 0)
+        {
+            Debug.Log(
+                $"[TICK] displayModel={displayModel} metaLoaded={metaLoaded} " +
+                $"isNormalMode={isNormalMode} " +
+                $"enableContact={enableHumanOtherContactCorrection} " +
+                $"logContact={logHumanOtherContact} " +
+                $"everyN={logHumanOtherContactEveryNFrames}");
+        }
+
         if (!displayModel || !metaLoaded || isNormalMode)
         {
             return;
@@ -23,19 +35,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         RuntimePlaybackTimeline.FrameSnapshot frameSnapshot = GetPlaybackFrameSnapshot();
-        int frame = frameSnapshot.currentFrame;
         int metaFrameUsed = frameSnapshot.displayMetadataFrame;
-
-        if (!TryReadFrameObjects(metaFrameUsed, metaFrameObjects) || metaFrameObjects.Count == 0)
+        if (!TryReadFrameObjects(metaFrameUsed, metaFrameObjects) ||
+            metaFrameObjects.Count == 0)
         {
             return;
         }
 
-        frame = metaFrameUsed;
+        int frame = metaFrameUsed;
+        SyncShotBoundaryForFrame(frame);
         ApplyOtherProxyBoxesForFrame(metaFrameObjects, frame);
 
         if (TryApplyDisplayedTracks(frame))
         {
+            ApplyHumanOtherContactCorrectionForFrame();
             return;
         }
 
@@ -47,6 +60,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         ApplyMetaTarget(target, frame);
+        ApplyHumanOtherContactCorrectionForFrame();
     }
 
 

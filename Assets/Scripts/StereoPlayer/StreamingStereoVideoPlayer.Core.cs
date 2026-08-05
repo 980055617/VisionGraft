@@ -70,6 +70,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool showOtherProxyBoxes = true;
     public Color otherProxyBoxColor = new Color(1f, 0.78f, 0.18f, 0.32f);
 
+    [Header("Human-Other Contact Correction")]
+    public bool enableHumanOtherContactCorrection = false;
+    // 診断用: どの部位にどれだけ吸着したか、補正が適用されない場合はその理由を出力する。
+    // 原因調査中のため既定 ON。調査が終わったら false に戻すこと。
+    public bool logHumanOtherContact = true;
+    public int logHumanOtherContactEveryNFrames = 5;
+    [Min(0f)] public float humanOtherFullContactRadiusMultiplier = 1.25f;
+    [Min(0f)] public float humanOtherReleaseRadiusMultiplier = 2f;
+    [Min(0f)] public float humanOtherContactSurfacePaddingPixels = 2f;
+
     [Header("Runtime Controls")]
     public bool enableRuntimeControls = true;
     public GameObject runtimeControlsPrefab;

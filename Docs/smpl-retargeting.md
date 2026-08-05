@@ -204,6 +204,43 @@ camRotation = LookRotation(-screenFront, screen.up)  // TryGetPinholeBasis() で
 
 ## 調査ログ
 
+### 2026-07-30: jointsWorld にモデルスケールが未適用（`AlignHumanoidFeetYToSmplAnkles` が機能していない）
+
+**症状**: `[FOOT-Y]` ログの offset が異常値。
+
+```
+[FOOT-Y] smplAnkleY=-0.816  charFootY=-0.139  offset=-0.677
+```
+
+配置身長は 0.15〜0.34 m しかないのに **67.7 cm のズレ**。身長の 2〜4 倍で、脚長差では説明できない。
+
+**原因**: `StreamingStereoVideoPlayer.PosePipeline.partial.cs` の `jointsWorld` 生成でモデルスケールが掛かっていない。
+
+```csharp
+jointsWorld[i] = anchorWorld + (camRotation * obj.jointsCam[i]);   // ← スケール未適用
+```
+
+`obj.jointsCam` は HMR2 の実寸（`bundle_human.svb` の keypoints3d から測った推定身長 1.53 m、root 相対メートル）。一方 Unity モデルは bbox から決めた配置身長 0.34 m（uniform scale 約 0.22）。つまり `jointsWorld` は**モデルの約 4.5 倍の大きさの骨格**を表している。
+
+数値が一致することで確認できる:
+
+```
+モデルの root（Hips）Y ≈ -0.16     （anchor v=525 の逆投影）
+実寸骨格の ankle は pelvis から約 0.65 下
+  → -0.16 - 0.65 = -0.81           実測 smplAnkleY = -0.816 ✓
+モデルの足ボーン → charFootY = -0.139（仰向けで足を上げているため root 付近）
+```
+
+**なぜ実害が出ていないか**: `AlignHumanoidFeetYToSmplAnkles` はこの巨大骨格の ankle にキャラの足を合わせようとして root を 67.7 cm 動かすが、直後に `ResolveRootPositionPreservingScreenHeight`（`ShouldPreserveRootScreenHeightAfterHumanSkeletonPlacement() = true`）が「skeleton 適用前の垂直成分」に戻すため、移動が丸ごと打ち消されている。
+
+**NG パターン（重要）**: この打ち消しを「脚長差の補正が効いていないから」という理由で解除してはいけない。補正自体がスケール不整合で壊れているため、解除するとモデルが 67 cm 下に飛ぶ。打ち消しは偶然それを防いでいる。
+
+**影響範囲**: `jointsWorld` を使う処理のうち、`TryApplySmplLegsFromJointPositions` / `TryApplySmplArmsFromJointPositions` などの AimAt 系は**方向（B-A の正規化ベクトル）だけを使う**のでスケール不整合の影響を受けない。絶対位置を使う `AlignHumanoidFeetYToSmplAnkles` のみが壊れている。姿勢そのものは `ShouldUseSmplOnlyPose() = true` により SMPL rotations の FK で決まるため、この件は姿勢の正しさには影響しない。
+
+**状態**: 未修正。修正するなら (1) `jointsWorld` にモデルの uniform scale を適用し、(2) 同時に `ResolveRootPositionPreservingScreenHeight` との関係を整理する、の 2 段階が必要。片方だけ直すと壊れるので注意。
+
+**副次対応（実施済み）**: `[FOOT-Y]` の `Debug.Log` を `logFootBallGap` フラグでガードした。フラグ導入前は 1 回の再生で **87,202 件**出力されており、Editor / 実機ともに負荷になっていた。
+
 ### 2026-07-16: 尻尾が追従していなかった問題
 
 **現象:** 「しっぽは追従できているか」と確認したところ、`AnimalSmalFkPolicy.ShouldKeepBindPoseForJoint()` が SMAL joint 25-31（Tail1-7、canonicalの`tail_base`/`tail_mid`/`tail_tip`に対応）を**常にbind pose固定**にしており、body_poseの尻尾データが一切反映されていなかった（親の動きに伴う受動的な動きのみ）。

@@ -110,6 +110,21 @@ public sealed partial class AnimalPoseApplier
     private readonly Dictionary<AnimalRigCache, AnimalSmalRetargetState> smalRetargetStates
         = new Dictionary<AnimalRigCache, AnimalSmalRetargetState>();
 
+    // shot 境界で呼ぶ。state 自体は破棄しない: rootYawFix は「実データから一度だけ決めて
+    // セッション中キャッシュする」もので shot とは無関係なため（消すとカットごとに
+    // 向き判定がやり直しになりちらつく）。時間方向の平滑化だけ未初期化に戻して、
+    // 新しい shot の先頭フレームでは前 shot の姿勢と混ざらない生値を採用させる。
+    private void ResetSmalSmoothing()
+    {
+        foreach (KeyValuePair<AnimalRigCache, AnimalSmalRetargetState> kv in smalRetargetStates)
+        {
+            if (kv.Value != null)
+            {
+                kv.Value.smoothingInitialized = false;
+            }
+        }
+    }
+
     private AnimalSmalRetargetState GetOrCreateSmalRetargetState(AnimalRigCache cache)
     {
         if (smalRetargetStates.TryGetValue(cache, out AnimalSmalRetargetState existing))

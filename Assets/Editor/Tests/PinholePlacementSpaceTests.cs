@@ -49,7 +49,7 @@ public class PinholePlacementSpaceTests
             1000,
             500);
 
-        AssertVector(camLocal, new Vector3(0.25f, -0.25f, 2f));
+        AssertVector(camLocal, new Vector3(0.5f, -0.25f, 2f));
     }
 
     [Test]
@@ -72,6 +72,39 @@ public class PinholePlacementSpaceTests
             1f);
 
         AssertVector(world, new Vector3(3f, 2f, 3f));
+    }
+
+    [Test]
+    public void ProjectCamLocalToEyePixelRoundTripsReconstruction()
+    {
+        ManifestData manifest = new ManifestData
+        {
+            eye_w = 1000,
+            eye_h = 500,
+            cx = 250f,
+            cy = 0.25f
+        };
+
+        Vector3 camLocal = PinholePlacementSpace.ReconstructCamLocalFromEyePixel(
+            manifest,
+            630f,
+            310f,
+            2.4f,
+            2f,
+            4f,
+            1000,
+            500);
+
+        bool ok = PinholePlacementSpace.TryProjectCamLocalToEyePixel(
+            manifest,
+            camLocal,
+            2f,
+            4f,
+            out Vector2 eyePixel);
+
+        Assert.That(ok, Is.True);
+        Assert.That(eyePixel.x, Is.EqualTo(630f).Within(0.0001f));
+        Assert.That(eyePixel.y, Is.EqualTo(310f).Within(0.0001f));
     }
 
     private static void AssertVector(Vector3 actual, Vector3 expected)

@@ -7,7 +7,7 @@
 ```
 .svb (ZIP)
 ├─ video.mp4        必須・Runtime 再生
-├─ manifest.json    必須・解像度/fps/FOV/座標系
+├─ manifest.json    必須・解像度/fps/FOV/座標系/カット境界
 ├─ meta.bin         必須・フレームごとの検出データ（位置・姿勢・種別）
 └─ source/*         任意・debug 専用（Runtime 配置には使わない）
 ```
@@ -33,7 +33,8 @@
 - **位置**: `anchor_u / anchor_v`（画面 UV）+ `anchor_z`（深度）→ `AnchorUvZToWorldPinhole` → world 座標
   - 深度の符号: bundle 側は **0=far / 1=near** の正規化値。`DecodeAnchorDepthMetersFromBundle` で変換（2026-06-19 に符号反転バグ修正済み）
 - **向き・姿勢**: SMPL/SMAL block の 3×3 回転行列群（row-major、9float ずつ）
-- **スケール**: `bboxWorldH` 基準の uniform scale（`TrackModelPlacement.ResolveDesiredLocalScale`）。モデル間の体型差は吸収しない（既知の制限、[DogMetaBoneMapping.md](DogMetaBoneMapping.md) 参照）
+- **スケール**: `bboxWorldH` 基準の uniform scale（`TrackModelPlacement.ResolveDesiredLocalScale`）。Human/Animal は track ごとに初回フレームでロックし、カット（shot）境界で解除する（後述）。モデル間の体型差は吸収しない（既知の制限、[DogMetaBoneMapping.md](DogMetaBoneMapping.md) 参照）
+- **カット**: `manifest.json` の `shots`（`[[start, end), ...]`）。同じ trackId でも shot をまたげば見かけサイズが正当に変わるため、境界でスケールと平滑化をリセットする（後述）
 - **形状（betas）**: 読み込むが現状未使用
 
 ### 関連ファイル
@@ -45,6 +46,8 @@
 | `StreamingStereoVideoPlayer.Manifest.partial.cs` | `manifest.json` パース・座標系設定 |
 | `PinholePlacementSpace.cs` | UV + 深度 → world 座標変換 |
 | `TrackModelPlacement.cs` | bbox ベースのスケール決定 |
+| `ShotBoundaries.cs` | `manifest.json` の `shots`（カット境界）のパース・フレーム → shot index 解決 |
+| `StreamingStereoVideoPlayer.ShotBoundary.partial.cs` | shot 境界の検出と track ごとの状態リセット |
 
 ### NG パターン: `source/other_object_proxies.json` を配置に使う（2026-07-30 修正済み）
 
@@ -156,6 +159,55 @@ sidecar の読み込みと `showOtherProxyBoxes` によるデバッグボック�
 - **CPU コスト**。毎フレーム bounds を再計算する。表示は 2〜3 体なので許容範囲と判断
 
 効果が不十分だった場合の次案は「`HumanoidRigCache` から足ボーン（LeftFoot / RightFoot / Toes）の world 位置を取り、その最下点を bbox 下端に合わせる」。bounds に依存せずジッターも出にくいが、床座りで尻が最下点になるケースは足ボーンでは捉えられない。
+
+### カット（shot 境界）でスケールと平滑化をリセットする（2026-08-02 実装）
+
+**症状**: カットが多い bundle（`bundle_animal.svb` は 15 shot）で、カットが切り替わった後もモデルが前のカットの大きさのまま表示され、極端に大きい／小さい見た目になる。
+
+**原因**: Human / Animal のスケールは `GetOrLockModelLocalScale`（`StreamingStereoVideoPlayer.Playback.partial.cs`）が **trackId ごとに初回フレームで確定してロックし続ける**。ロックが解除されるのは prefab の差し替え時（`TrackInstanceLifecycle`）と VR 内 Change Model パネルでの手動変更時だけだった。ロック自体は必要な設計で、外すと bbox のブレでモデルが毎フレーム伸縮する。問題は解除点にカット境界が含まれていなかったこと。
+
+**bundle 側は既に対応済み**。`manifest.json` に `shots` と `shot_boundary_policy` がある。
+
+```json
+"shots": [[0, 258], [258, 338], [338, 427], ...],
+"shot_boundary_policy": {
+  "schema": "master_project.shot_boundary_policy.v1",
+  "unity_guidance": "Do not interpolate or spring position/scale across a shot boundary
+                     for the same trackId; snap to the new shot's first-frame anchor instead."
+}
+```
+
+`shots` の各要素は `[start, end)` のフレーム範囲で、範囲内にハードカットがない連続テイクを表す。**同じ trackId でも shot をまたげばカメラ距離・見かけサイズが正当に変わる**（被写体が動いたのではない）ため、track ごとに持ち越している状態は境界で捨てる必要がある。
+
+bundle ごとの `shots`（2026-08-02 時点）:
+
+| bundle | num_frames | shots |
+|---|---|---|
+| `bundle_animal.svb` | 2120 | 15 shot |
+| `bundle_human.svb` | 2167 | 1 shot（`[[0, 2167]]`） |
+| `bundle.svb` / `bundle_old.svb` | 289 | フィールドなし（旧 bundle） |
+
+**実装**:
+
+- `ShotBoundaries.cs`: `shots` を開始フレームの昇順配列に正規化し、`ResolveShotIndex(frame)` で「そのフレームがどの shot に属すか」を二分探索で返す。`JsonUtility` は `[[start, end), ...]` のような入れ子配列を扱えないため、`ManifestLoader` が生 JSON から `MiniJson` で読む
+- `StreamingStereoVideoPlayer.ShotBoundary.partial.cs`: `DisplayModelTick` から `SyncShotBoundaryForFrame(frame)` を呼び、shot index が変わったフレームで `ResetPerShotTrackState()` を実行する。シークも shot index の変化として検出される（同一 shot 内へのシークはカメラが連続しているのでリセットしない）
+
+**リセットするもの**（すべて「前フレームからの連続性」を前提にした状態）:
+
+| 状態 | 理由 |
+|---|---|
+| `lockedModelLocalScaleByTrack` | 前 shot のカメラ距離で確定した表示スケール（**主対象**） |
+| `smoothedJointsByTrack` / `personRootYawForwardByRoot` | ジョイント位置・root yaw の平滑化 |
+| `AnimalPoseApplier.ResetMotionState()` | Animal の OneEuro フィルタと SMAL 回転平滑化 |
+| `ResetHumanSmplSmoothingForShotBoundary()` | SMPL 回転平滑化と root 位置・深度の平滑化 |
+| `lastGoodBottomAlign{Area,VEye}` | 前 shot の bbox を基準にした下端合わせのホールド |
+| `humanOtherContactStateByTrack` | 前 shot で確定した接触オフセット |
+
+**リセットしないもの**: `HumanoidRigCache` / `AnimalRigCache`（ボーン解決結果）、`rootYawFix`（実データから一度だけ決めてセッション中保持する向き判定。消すとカットごとにやり直しになりちらつく）、SMPL/SMAL の参照姿勢、`humanKeypointHeightMetersByTrack`（root 相対の実寸から求めた骨長でカメラ距離に依存しない）、ユーザーが選んだモデル、手動 yaw キーフレーム。いずれも shot とは無関係。
+
+`shots` を持たない旧 bundle では `ShotBoundaries.Empty` になり `ResolveShotIndex` が常に 0 を返すため、全編 1 shot 扱い = 従来どおりロックしっぱなしの挙動になる。
+
+**betas は shot でリセットしない**。`shot_boundary_policy` が明記しているとおり、SMPL/SMAL の betas はフレームごとに独立推定される値で、そのフレーム間ノイズは shot 境界とは無関係の別問題。
 
 ### モデルアセット（`Resources/Models/`）
 

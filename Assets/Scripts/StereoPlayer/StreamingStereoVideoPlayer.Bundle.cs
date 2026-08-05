@@ -122,11 +122,34 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         modelModePlaybackVideoPath = extractedVideoPath.Replace("\\", "/");
         hasNormalModeVideo = File.Exists(extractedNormalModeVideoPath);
         normalModePlaybackVideoPath = hasNormalModeVideo ? extractedNormalModeVideoPath.Replace("\\", "/") : null;
-        isNormalMode = false;
+        isNormalMode = ResolveInitialNormalMode();
 
-        vp.url = modelModePlaybackVideoPath;
+        vp.url = isNormalMode ? normalModePlaybackVideoPath : modelModePlaybackVideoPath;
 
         RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Prepare);
+    }
+
+    // 起動時点のモードを決める。startInNormalMode は実験の StereoOnly 条件で使う。
+    // SetNormalMode（再生中の切り替え）と違い、Prepare する url そのものを差し替えるので
+    // 置換モデルが一瞬も表示されない。
+    private bool ResolveInitialNormalMode()
+    {
+        if (!startInNormalMode)
+        {
+            return false;
+        }
+
+        if (!hasNormalModeVideo)
+        {
+            // 実験の対照条件が成立しない状態。黙って置換モードで再生すると条件が入れ替わった
+            // データが取れてしまうので、必ず気付けるようにエラーで出す。
+            Debug.LogError(
+                $"[Bundle] normal mode 指定だが {BundleNormalModeVideoEntryName} が bundle にありません: " +
+                $"{bundleFileName}. 置換モードで再生します。");
+            return false;
+        }
+
+        return true;
     }
 
     private bool ExtractBundleEntries(ZipArchive za,

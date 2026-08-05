@@ -324,6 +324,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.originPosition = state.hasLiveSample ? state.livePosition : Vector3.zero;
         state.originRotation = state.hasLiveSample ? state.liveRotation : Quaternion.identity;
 
+        ExperimentLog.Interaction(
+            trackId,
+            $"random_{kind}",
+            $"subject={(isAnimal ? "animal" : "human")}");
+
         if (state.kind == InteractiveEventKind.Static)
         {
             BeginGesturePhase(state, trackId, isAnimal, state.originPosition, state.originRotation, now);
@@ -514,6 +519,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.triggerStartFrame = frame;
         state.hasFrameInPosition = false;
         state.frameInFrame = -1;
+
+        ExperimentLog.Interaction(
+            trackId,
+            "system_frameout",
+            $"subject={(isAnimal ? "animal" : "human")} frame={frame}");
 
         Vector3 pixelRight = Vector3.right;
         Vector3 pixelUp = Vector3.up;

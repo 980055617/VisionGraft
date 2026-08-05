@@ -51,6 +51,7 @@ bundle 内の検出オブジェクト（Human / Animal / Else）を、対応す�
 | [docs/bundle-placement.md](docs/bundle-placement.md) | bundle 構造・meta.bin・anchor 配置（発表用まとめ + 実装リファレンス） |
 | [docs/smpl-retargeting.md](docs/smpl-retargeting.md) | Human SMPL / Animal SMAL FK・座標変換・調査ログ（発表用まとめ付き） |
 | [docs/interactive-motion-events.md](docs/interactive-motion-events.md) | インタラクティブモーションイベント（発表用まとめ付き） |
+| [docs/experiment-flow.md](docs/experiment-flow.md) | 被験者実験フロー・シーン構成・ログ仕様（発表用まとめ付き） |
 | [docs/DogMetaBoneMapping.md](docs/DogMetaBoneMapping.md) | 犬モデルのボーンマッピング・スケール調査 |
 | [docs/human-animation-test-scene.md](docs/human-animation-test-scene.md) | Human アニメーションテストシーンの使い方 |
 | [docs/presentations/weekly/](docs/presentations/weekly/) | 週次進捗ファイル（`YYYY-MM-DD.md`、金曜日の日付） |

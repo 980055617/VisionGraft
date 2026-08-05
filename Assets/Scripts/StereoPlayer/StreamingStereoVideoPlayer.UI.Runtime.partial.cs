@@ -548,6 +548,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             totalFrames);
         RuntimePlaybackController.ApplySeekTarget(vp, target);
 
+        ExperimentLog.Operation("seek", ExperimentCsv.Format(normalized));
         UpdateRuntimeProgressUi();
     }
 
@@ -628,6 +629,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             vp,
             RuntimePlaybackController.ResolveToggleCommand(vp.isPlaying));
 
+        ExperimentLog.Operation(vp.isPlaying ? "resume" : "pause");
         UpdatePauseButtonLabel();
     }
 

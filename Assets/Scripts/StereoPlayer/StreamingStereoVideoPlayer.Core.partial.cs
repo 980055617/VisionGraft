@@ -32,6 +32,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private IEnumerator Start()
     {
+        ApplyPendingExperimentTrialRequest();
         LoadModelPrefabs();
 
         vp = GetComponent<VideoPlayer>();
@@ -45,6 +46,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         vp.frameReady += OnVideoFrameReady;
         vp.prepareCompleted -= OnPrepared;
         vp.prepareCompleted += OnPrepared;
+        vp.loopPointReached -= OnVideoLoopPointReached;
+        vp.loopPointReached += OnVideoLoopPointReached;
 
         if (showBundlePickerOnStart)
         {
@@ -104,6 +107,42 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         vp.frameReady -= OnVideoFrameReady;
         vp.prepareCompleted -= OnPrepared;
         vp.prepareCompleted -= OnModeSwitchPrepared;
+        vp.loopPointReached -= OnVideoLoopPointReached;
+    }
+
+
+    // 実験モードでは ExperimentController が試行ごとにこのシーンをロードし直し、
+    // 「どの bundle をどの条件で再生するか」を ExperimentTrialHandoff に置いてくる。
+    // 通常シーン（SampleScene 等）では Pending が null なので Inspector の設定で動く。
+    private void ApplyPendingExperimentTrialRequest()
+    {
+        ExperimentTrialRequest request = ExperimentTrialHandoff.Consume();
+        if (request == null)
+        {
+            return;
+        }
+
+        bundleFileName = request.bundleFileName;
+        showBundlePickerOnStart = false;
+        startInNormalMode = request.StartInNormalMode;
+        // 被験者に表示条件を切り替えさせない。
+        enableNormalModeToggleButton = false;
+
+        Debug.Log(
+            $"[Experiment] trial {request.trialIndex}: {request.video} / {request.mode} → {bundleFileName}");
+    }
+
+
+    // 実験ログが再生位置を記録し、ExperimentController が再生開始を待つための読み取り口。
+    public double CurrentVideoTimeSeconds
+    {
+        get { return vp != null ? vp.time : 0d; }
+    }
+
+
+    public bool IsVideoPlaying
+    {
+        get { return vp != null && vp.isPlaying; }
     }
 
 
@@ -111,6 +150,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         lastFrameReadyFrame = RuntimePlaybackTimeline.NormalizeFrameReadyFrame(frame);
         ApplyVideoFrameTexture(player);
+    }
+
+
+    // isLooping = true なので動画は最後まで再生すると先頭に戻って再生し続ける
+    // （被験者が納得するまで何周でも見られる設計）。実験ログには何周見たかを残す。
+    private void OnVideoLoopPointReached(VideoPlayer source)
+    {
+        ExperimentLog.VideoLooped();
     }
 
 

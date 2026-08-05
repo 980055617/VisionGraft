@@ -367,6 +367,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         selectedModelIndexByTrack[trackId] = modelIndex;
         RecreateTrackInstanceForModelSelection(trackId);
+
+        // どの試行でどのモデルを見ていたかは分析時の交絡要因になり得るので、
+        // prefab 名まで残す（Docs/experiment-flow.md「操作の統制」参照）。
+        GameObject selectedPrefab = prefabs[modelIndex];
+        ExperimentLog.Operation(
+            "change_model",
+            $"track={trackId} category={(isAnimal ? "animal" : "human")} " +
+            $"index={modelIndex} prefab={(selectedPrefab != null ? selectedPrefab.name : "null")}");
+
         UpdateRuntimeModelPickerUiState();
     }
 

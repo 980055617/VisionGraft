@@ -50,9 +50,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Image panelImage = RuntimeUiElementFactory.AddImage(panelObj);
         UiComponentWriter.ApplyGraphicColor(panelImage, new Color(0f, 0f, 0f, 0.45f));
 
-        Button modeButton = CreateBarButton(panelObj.transform, "ModeToggleButton", new Vector2(-210f, -12f));
-        runtimeModeButtonText = GetButtonText(modeButton);
-        BindRuntimeButton(modeButton, ToggleNormalMode);
+        if (enableNormalModeToggleButton)
+        {
+            Button modeButton = CreateBarButton(panelObj.transform, "ModeToggleButton", new Vector2(-210f, -12f));
+            runtimeModeButtonText = GetButtonText(modeButton);
+            BindRuntimeButton(modeButton, ToggleNormalMode);
+        }
 
         Button modelPickerButton = CreateBarButton(panelObj.transform, "PrefabSelectButton", new Vector2(210f, -12f));
         runtimeModelPickerButtonText = GetButtonText(modelPickerButton);
@@ -136,6 +139,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private void EnsureModeButtonExists(GameObject root)
     {
         if (root == null)
+        {
+            return;
+        }
+
+        // 実験中は表示条件を被験者に変えさせないため、そもそも作らない。
+        // prefab 側に既にあるボタンは BindRuntimeControlsUi で無効化する。
+        if (!enableNormalModeToggleButton)
         {
             return;
         }
@@ -316,8 +326,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Button modeButton = FindButton(root, "mode");
         if (modeButton != null)
         {
-            BindRuntimeButton(modeButton, ToggleNormalMode);
-            runtimeModeButtonText = GetButtonText(modeButton);
+            if (enableNormalModeToggleButton)
+            {
+                BindRuntimeButton(modeButton, ToggleNormalMode);
+                runtimeModeButtonText = GetButtonText(modeButton);
+            }
+            else
+            {
+                // runtimeControlsPrefab が Display ボタンを持っている場合はここに来る。
+                // 非アクティブにすれば押せず、レイキャストにも反応しない。
+                SceneObjectWriter.ApplyActive(modeButton.gameObject, false);
+            }
         }
 
         Button modelPickerButton = FindButton(root, "prefabselect");

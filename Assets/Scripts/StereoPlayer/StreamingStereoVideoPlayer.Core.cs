@@ -84,6 +84,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool enableRuntimeControls = true;
     public GameObject runtimeControlsPrefab;
 
+    [Header("Experiment")]
+    // 被験者実験の StereoOnly 条件用。最初のフレームから normal mode
+    // (source/pre_removal_stereo_video.mp4) で再生する。再生開始後に ToggleNormalMode で
+    // 切り替えると、切り替わるまでの数フレームだけ置換モデルが見えてしまい条件が崩れる。
+    public bool startInNormalMode = false;
+    // false にすると Display（normal mode 切り替え）ボタンを生成しない。実験中に被験者が
+    // 表示条件そのものを変えてしまうのを防ぐ。詳細は Docs/experiment-flow.md。
+    public bool enableNormalModeToggleButton = true;
+
     [Header("Interactive Motion")]
     public bool enableInteractiveMotion = true;
     [FormerlySerializedAs("humanInteractiveClips")]

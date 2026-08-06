@@ -70,6 +70,45 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool showOtherProxyBoxes = true;
     public Color otherProxyBoxColor = new Color(1f, 0.78f, 0.18f, 0.32f);
 
+    [Header("Anchor Depth")]
+    // bundle の z01 は背景（床・観客席）を含めた全画面で 0..1 に正規化されているため、
+    // 検出オブジェクトだけを見ると狭い範囲にしか分布しない（bundle_human.svb で 0.178〜0.406）。
+    // その結果 PopoutRangeMeters 0.35m のうち 23% しか使われず、奥行きが潰れていた。
+    // ON にすると、その bundle で実際に使われている範囲を 0..1 に引き伸ばしてから配置する。
+    // 前後関係は単調変換なので保たれる。
+    //
+    // 2026-08-06 実測の結果、既定は OFF。理由は 2 つ:
+    //   1. 接触関係から逆算した適正な深度差は 0.021m で、正規化なし 0.0192m が既に一致する。
+    //      正規化すると 0.0718m と 3.4 倍過大になる。
+    //   2. 深度を広げると、頭を動かしたときに 2D 映像と 3D モデルの上下ずれが拡大する
+    //      （camLocal.y が z に比例するため）。実機でも y のずれが増えることを確認済み。
+    public bool enableAnchorDepthRangeNormalization = false;
+    public bool logAnchorDepthRange = false;
+
+    // 診断用: disparity → 距離の変換に使っている実効レンジを 1 度だけ出す。
+    public bool logInverseDepthRange = false;
+
+    // スクリーン面からどれだけ手前に出せるかの幅。奥行きの「強さ」を決める。
+    //
+    // 反比例変換に直したことで奥行きの比は正しくなったが、anchor_z 自体の誤差も実寸で
+    // 出るようになった。実測（bundle_human.svb, f=1500〜1800 の頭上のボール）では、
+    // 頭に接しているボールが人より 7〜13cm 手前に浮く。ボールの world 直径が 0.049m
+    // なので、本来は半径 0.024m 程度に収まるべき差である。
+    //
+    // 値の目安:
+    //   0.35 … 実世界の奥行き変化をほぼそのまま再現するが、depth の誤差も等倍で出る
+    //   0.25 … 実世界の変化幅（配置後の身長の約 0.88 倍）に相当。理屈上の適正値
+    //   0.15 … 接触物の浮きは目立たなくなるが、奥行き感は乏しくなる
+    // 実機で見ながら調整できるよう Inspector に出している。
+    [Min(0f)] public float popoutRangeMeters = 0.35f;
+
+    [Header("Human Bone Length")]
+    // 表示モデルと元映像の脚の骨長比を合わせる。既定 Human モデルは胴で正規化した脚が
+    // 映像より 8.3% 短く、足首が bbox 高さの約 10% 上にずれていた（2026-08-06 実測）。
+    // モデル切り替え時は新しいインスタンスの生成時に自動で掛かる。
+    public bool enableHumanBoneLengthCorrection = true;
+    public bool logHumanBoneLengthCorrection = false;
+
     [Header("Human-Other Contact Correction")]
     public bool enableHumanOtherContactCorrection = false;
     // 診断用: どの部位にどれだけ吸着したか、補正が適用されない場合はその理由を出力する。
@@ -81,9 +120,35 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 配置の検算に使う。手順は Docs/smpl-retargeting.md の「配置の実測方法」を参照。
     public bool logPlacementMeasurement = false;
     public int logPlacementMeasurementEveryNFrames = 30;
+
+    // 計測: Human と Other の位置関係を「視線方向」と「画面平行方向」に分解して出す。
+    // 「ボールが足に埋もれる」原因が深度不足なのか画面上の位置ずれなのかを切り分けるための
+    // 観測専用フラグで、配置には一切影響しない。[GAP] を出力する。
+    public bool logHumanOtherGap = false;
+    public int logHumanOtherGapEveryNFrames = 15;
+
+    // 計測: ボールと頭の高さ関係（[BALLHEAD]）。「深度を合わせてもボールが頭の上に浮く」
+    // 症状を、画面上の位置と 3D 空間の高さの両方で切り分ける。
+    public bool logBallHead = false;
+
+    // 計測: 主要ボーンが bbox のどの高さにあるか（[BONEREL]）。
+    // 「頭が低い」原因が全体スケール・胴の短さ・頭の小ささのどれかを切り分ける。
+    public bool logBoneBBoxRelative = false;
+
+    // 計測: meta.bin の keypoints3d と表示モデルのボーンを同じ eye pixel 空間へ投影し、
+    // 部位ごとのずれを出す（[POSE]）。姿勢再現の誤差だけを抽出するための観測専用フラグで、
+    // 配置には一切影響しない。[GAP] の lateralGap には「ボールが実際に体から離れている分」も
+    // 含まれるため、そこから誤差成分を切り分けるのに使う。
+    public bool logHumanPoseError = false;
+    public int logHumanPoseErrorEveryNFrames = 30;
     [Min(0f)] public float humanOtherFullContactRadiusMultiplier = 1.25f;
     [Min(0f)] public float humanOtherReleaseRadiusMultiplier = 2f;
     [Min(0f)] public float humanOtherContactSurfacePaddingPixels = 2f;
+
+    [Header("Audio")]
+    // 音声を消す。バッチテストのように繰り返し再生する場面で使う。
+    // 再生中に切り替えても効く。
+    public bool mute = false;
 
     [Header("Runtime Controls")]
     public bool enableRuntimeControls = true;
@@ -116,7 +181,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public float animalApproachStopDistanceMeters = 0.5f;
     public float animalWalkSpeedMetersPerSecond = 0.5f;
 
-    private const float PopoutRangeMeters = 0.35f;
+    // popoutRangeMeters（Inspector 調整可）へ移行済み。
     private const float EpsilonMeters = 0.02f;
     private const float MinDistanceFromHeadMeters = 0.25f;
     private const float BaseHeight = 1f;
@@ -197,6 +262,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private Vector3 lastHeadPos;
     private Quaternion lastHeadRot = Quaternion.identity;
     private bool prevPrimaryButtonPressed;
+    private bool appliedMute;
     private bool useRuntimeFovxOverride;
     private float runtimeFovxDeg;
     private Camera cachedViewCamera;

@@ -74,8 +74,18 @@ public static class TrackModelPlacement
         {
             float bboxWorldW = (2f * request.bboxWidthPixels / request.eyeWidthPixels) * (request.anchorDepthMeters / request.fx);
             float bboxWorldH = (2f * request.bboxHeightPixels / request.eyeHeightPixels) * (request.anchorDepthMeters / request.fy);
+
+            // 高さの基準は modelHeightMeters を使う。Humanoid では ReplaceableModel が
+            // 骨格から推定した身長を返すので、bbox に合わせる対象が「メッシュの外形」ではなく
+            // 「骨格」になる。AABB（baseBoundsSize.y）を基準にすると髪・靴・広げた腕のぶん
+            // 骨格が縮み、実測で bbox の 73% まで小さくなっていた（頭上のボールが浮く原因）。
+            // Humanoid でないモデルでは modelHeightMeters は AABB 高さと同じ値になるため、
+            // Animal / Else の挙動は変わらない。
+            float heightBasis = request.modelHeightMeters > 0f
+                ? request.modelHeightMeters
+                : request.baseBoundsSize.y;
             float scaleW = request.baseBoundsSize.x > 0f ? bboxWorldW / request.baseBoundsSize.x : targetUniform;
-            float scaleH = request.baseBoundsSize.y > 0f ? bboxWorldH / request.baseBoundsSize.y : targetUniform;
+            float scaleH = heightBasis > 0f ? bboxWorldH / heightBasis : targetUniform;
             float uniformScale = request.isAnimal ? Mathf.Min(scaleW, scaleH) : scaleH;
             return request.baseLocalScale * uniformScale;
         }

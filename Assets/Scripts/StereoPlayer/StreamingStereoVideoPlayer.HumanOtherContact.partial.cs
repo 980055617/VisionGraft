@@ -213,10 +213,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const int HumanSourceKeypointPelvis = 39;
     private const int HumanSourceKeypointMinimumCount = 40;
 
-    // 脚（大腿+下腿）と胴の合計に対する全身高の比。頭部ぶんを補う。
-    // bundle_human.svb 実測: thigh 0.388 + shin 0.403 + torso 0.478 = 1.269、
-    // head_top→ankle から推定した身長 1.455 → 比 1.15。
-    private const float HumanSourceKeypointHeightFromLimbTorsoRatio = 1.15f;
+    // 脚（大腿+下腿）と胴の合計に対する全身高の比。頭部ぶんと足首から下を補う。
+    //
+    // 2026-08-06 に 1.15 → 1.27 へ較正。旧値は「head_top→ankle から推定した身長」を基準に
+    // していたが、これは足首から下（足の高さ）を含まないため身長を約 10% 過小評価しており、
+    // scale = bboxWorldHeight / heightMeters が過大になって source pose 全体が実際より
+    // 大きく投影されていた。この関数は接触補正が本番で使うため、Other の吸着先が
+    // 系統的に下へずれる原因になっていた。
+    //
+    // 較正方法: bundle_human.svb の立位フレーム（bbox 縦横比 > 1.8）107 件で、投影した
+    // 足首が bbox 下端から bboxH の 5.5%（人体計測の外果高 4.5% + 靴）に来る係数を逆算。
+    // 中央値 1.271、四分位 1.258〜1.303。実映像に基準線を重ねて、この位置が実際の
+    // くるぶしと一致することを目視でも確認済み（Docs/smpl-retargeting.md の調査ログ）。
+    // 解剖学的な理論値 1 / (胴 30% + 大腿 24% + 下腿 24%) = 1.28 とも独立に一致する。
+    private const float HumanSourceKeypointHeightFromLimbTorsoRatio = 1.27f;
 
     private readonly Dictionary<uint, HumanOtherContactState>
         humanOtherContactStateByTrack =

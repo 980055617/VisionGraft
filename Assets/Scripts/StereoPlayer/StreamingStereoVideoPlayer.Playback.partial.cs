@@ -37,6 +37,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (TryApplyDisplayedTracks(frame))
         {
             ApplyHumanOtherContactCorrectionForFrame();
+            LogHumanOtherGapIfEnabled(frame);
+            LogBallHeadIfEnabled(frame);
             return;
         }
 
@@ -49,6 +51,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         ApplyMetaTarget(target, frame);
         ApplyHumanOtherContactCorrectionForFrame();
+        LogHumanOtherGapIfEnabled(frame);
+        LogBallHeadIfEnabled(frame);
     }
 
 
@@ -185,6 +189,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         SceneObjectWriter.ApplyActive(instance, true);
+        // 脚の骨長合わせはインスタンスごとに一度だけ。モデルを切り替えると
+        // TrackInstanceLifecycle がインスタンスを作り直すので、新しいモデルにも掛かる。
+        TryApplyHumanBoneLengthCorrection(instance, target);
         Quaternion rotationPinhole = GetPinholeBasisRotation(screen);
         rotationPinhole = ApplyManualTrackYawOffset(target.trackId, frame, rotationPinhole, screen != null ? screen.up : Vector3.up);
 
@@ -216,10 +223,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     instance.transform.rotation,
                     instance.transform.localScale));
         }
+        // ⑦ の投影ベース下端合わせが ④ の結果をどれだけ動かすかを測るため、直前の位置を控える。
+        Vector3 preBottomFitPosition = instance.transform.position;
         if (!ShouldUseHumanSmplRootPlacement(target, frame))
         {
             FitDisplayedModelToBBox(instance, target, screen, bboxHAdjusted);
         }
+        LogBottomAlignmentDeltaIfEnabled(target, instance, screen, frame, preBottomFitPosition);
         ObserveInteractiveMotionDisplayedRoot(target.trackId, instance);
         ApplyInteractiveHandoffBlendIfActive(target.trackId, instance, frame);
         LogPlacementMeasurementIfEnabled(target, instance, screen, frame);
@@ -372,6 +382,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         bool isAnimal = IsCategoryAnimal(obj.categoryId);
         bool lockScale = IsCategoryPerson(obj.categoryId) || isAnimal;
         bool hasFocalLengths = TryGetFocalLengths(out float fxScale, out float fyScale);
+
+        // スケールは現在フレームの bbox から決め、track 初回でロックする（GetOrLockModelLocalScale）。
+        // 「立位に最も近いフレームを基準にする」案は実測で悪化した（2026-08-07）。
+        // アスペクト比が最大のフレームは人物が横向きで細く写っているだけのことがあり、
+        // bbox 高さで絞り直しても骨格スパンが bbox の 112%（初回基準では 86%）と過大になった。
+        // 詳細は Docs/bundle-placement.md の「スケール基準フレームの選択（不採用）」。
         Vector3 desiredScale = TrackModelPlacement.ResolveDesiredLocalScale(new TrackModelPlacement.ScaleRequest(
             baseScale,
             baseBounds,
@@ -404,7 +420,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 model != null ? model.baseBottomOffsetLocal : 0f);
             Vector3 lossy = instance.transform.lossyScale;
 
-            if (AlignModelToBBoxBottom && model != null)
+            // 姿勢を持つカテゴリ（Human / Animal）は、姿勢適用後に FitDisplayedModelToBBox が
+            // 「実際のメッシュの投影下端」で合わせ直す。ここで先に合わせても上書きされるだけで、
+            // しかも baseBottomOffsetLocal は Awake 時（bind pose）の値で固定されているため、
+            // 座位・仰向けでは root を大きく外す。実測では後段の補正量が bboxH の最大 98%
+            // （175px）に達していた（2026-08-06）。姿勢を持たない Else だけがここで合わせる。
+            bool alignsBottomAfterSkeleton =
+                IsCategoryPerson(obj.categoryId) || IsCategoryAnimal(obj.categoryId);
+            if (AlignModelToBBoxBottom && model != null && !alignsBottomAfterSkeleton)
             {
                 Vector3 up = screen != null ? screen.up : Vector3.up;
                 float vBottom = ResolveReliableBBoxBottomVEye(obj);
@@ -442,6 +465,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
+    // 縦位置の基準。anchor_v ではなく bbox 下端を使うのは意図的で、anchor_v は
+    // depth をサンプルした点（体の中心付近）であって接地点ではないため。
+    // その結果 anchor_v は初期配置にしか効かず、最終的な縦位置は bbox 下端だけで決まる。
+    // Human / Animal / Else すべてこの基準に揃えている。
     private float ResolveBBoxBottomVEye(MetaObj obj)
     {
         if (manifest == null || manifest.eye_h <= 0)
@@ -497,6 +524,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // 姿勢を持つカテゴリ専用。Else は姿勢で形が変わらないので ApplyReplaceableModelTransform
+        // 側の bind pose ベースの下端合わせで足り、ここは通らない。
         if (!IsCategoryPerson(obj.categoryId) && !IsCategoryAnimal(obj.categoryId))
         {
             return;
@@ -512,20 +541,32 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        AlignProjectedModelBottomToBBox(instance.transform, screen, projectedBottomV, depthMeters, ResolveReliableBBoxBottomVEye(obj));
-    }
-
-    private bool ShouldUseHumanSmplRootPlacement(MetaObj obj, int frame)
-    {
-        if (!IsCategoryPerson(obj.categoryId))
+        // 位置合わせの基準はスケールの基準と揃える。スケールは骨格（ReplaceableModel の
+        // baseSkeletonHeightMeters）を bbox に合わせているので、下端も骨格の最下点で合わせる。
+        // AABB 下端（靴底・服の裾）を使うと、スケール拡大に伴ってメッシュ余白も拡大し、
+        // 足首が bbox 下端から 15% 浮く（2026-08-07 実測）。
+        // ボーンが取れないモデルでは従来どおり AABB 下端にフォールバックする。
+        float bottomV = projectedBottomV;
+        if (TryProjectBonesToEyeHeight(instance, screen, out _, out float boneBottomV, out _, out _, out _))
         {
-            return false;
+            bottomV = boneBottomV;
         }
 
-        bool hasHumanSmplTranslation =
-            TryGetHumanSmplPose(frame, obj.trackId, out HumanSmplPose pose) &&
-            pose.hasTransl;
-        return ShouldUseHumanSmplRootPlacementPolicy(true, hasHumanSmplTranslation);
+        // depthMeters はモデル AABB 中心の深度で、anchorZ とは 3〜4% ずれる。
+        // ここは「投影した下端を bbox 下端に一致させる」処理なので、投影に使ったのと同じ
+        // 深度（depthMeters）で逆算するのが正しい。anchorZ を混ぜてはいけない。
+        AlignProjectedModelBottomToBBox(instance.transform, screen, bottomV, depthMeters, ResolveReliableBBoxBottomVEye(obj));
+    }
+
+    // SMPL の transl で root を置く経路は無効化されている
+    // （ShouldUseHumanSmplRootPlacementPolicy が引数によらず常に false を返す）。
+    // 以前はここで TryGetHumanSmplPose を呼んで hasTransl を調べていたが、その結果は
+    // ポリシー側で捨てられるため、毎フレームの辞書引きが完全に無駄になっていた。
+    // ポリシー関数自体は将来の切り替え点として残す。
+    private bool ShouldUseHumanSmplRootPlacement(MetaObj obj, int frame)
+    {
+        return IsCategoryPerson(obj.categoryId) &&
+               ShouldUseHumanSmplRootPlacementPolicy(true, false);
     }
 
     private bool TryProjectRendererBoundsToEyeHeight(GameObject instance, Transform screen, out float topV, out float bottomV, out float heightPixels, out float depthMeters)

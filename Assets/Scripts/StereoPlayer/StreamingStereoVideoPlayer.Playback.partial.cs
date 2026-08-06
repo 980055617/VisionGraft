@@ -8,18 +8,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     public void DisplayModelTick()
     {
-        // 診断用（一時的・調査後に削除）: DisplayModelTick が呼ばれているか、
-        // および各フラグの実行時の値を 2 秒ごとに出力する。フラグに依存させない。
-        if (Time.frameCount % 120 == 0)
-        {
-            Debug.Log(
-                $"[TICK] displayModel={displayModel} metaLoaded={metaLoaded} " +
-                $"isNormalMode={isNormalMode} " +
-                $"enableContact={enableHumanOtherContactCorrection} " +
-                $"logContact={logHumanOtherContact} " +
-                $"everyN={logHumanOtherContactEveryNFrames}");
-        }
-
         if (!displayModel || !metaLoaded || isNormalMode)
         {
             return;
@@ -234,6 +222,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         ObserveInteractiveMotionDisplayedRoot(target.trackId, instance);
         ApplyInteractiveHandoffBlendIfActive(target.trackId, instance, frame);
+        LogPlacementMeasurementIfEnabled(target, instance, screen, frame);
     }
 
 

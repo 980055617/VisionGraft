@@ -209,6 +209,63 @@ bundle ごとの `shots`（2026-08-02 時点）:
 
 **betas は shot でリセットしない**。`shot_boundary_policy` が明記しているとおり、SMPL/SMAL の betas はフレームごとに独立推定される値で、そのフレーム間ノイズは shot 境界とは無関係の別問題。
 
+### anchor_z（z01）は disparity 系（2026-08-05 確定）
+
+**生成側の調査で確定した事実**:
+
+- `depth.npz` の中身は **disparity（視差 = 1/距離 に比例）系**。コード中では一貫して "depth" と呼ばれているが、規約は「近い = 大きい値 / 遠い = 小さい値」で metric depth ではない
+- DepthCrafter の正規化済み出力をそのまま線形スケールして disparity として使っており、`disparity ∝ 1/depth` の逆数変換はパイプラインのどこにも無い
+- 正規化は min-max [0,1] 化のみで、規約変換はしていない
+- プロジェクト過去の実測（2026-06-19）でも「0.0 = far / 1.0 = near」と確認済み
+
+**Unity 側の含意**: `DecodeAnchorDepthMetersFromBundle` は `z01` に**線形**（`screenDist - eps - popout × z01`）だが、`z01 ∝ 1/Z` である以上、本来は**反比例**（`Z ∝ 1/z01`）にすべき。**未修正**。
+
+ただし min-max 正規化で `Zmin`/`Zmax` が捨てられているため、変換式を直しても得られるのは「相対的な前後関係の正しさ」までで、メートル単位の絶対距離は復元できない（affine-invariant な相対深度）。絶対距離が必要になった時点で metric depth モデルへの置き換えかカメラキャリブレーションが要る。
+
+### チャンク間ドリフトによる z01 の破綻と修正（2026-08-05）
+
+**症状**: `z01` が実距離とまったく相関しない（人物のサイズは一定なので、姿勢を補正した投影サイズから相対距離が逆算できる。その相対距離と `z01` の相関を測った）。
+
+```
+旧 bundle: z01 と 1/Z の全体 R² = 0.0037   ← 使い物にならない
+           ただし chunk 11 単体では R² = 0.9261 ← disparity として正常に機能している
+```
+
+**原因**: `--depth-chunk-size=140`（overlap 25）でチャンク分割され、`_fit_depth_affine` が隣接チャンクのオーバーラップ 25 フレームだけを使って percentile ベースのアフィン合わせをチェーン式に繋いでいた。2167 フレームでは 19 チャンクになり、アフィン係数の誤差が蓄積して動画全体で `z01` の意味がドリフトする。
+
+境界での急な不連続は出ない（`|Δz01|` は境界付近 0.00153 / それ以外 0.00146 = 1.05 倍）ため、「つなぎ目は滑らかなのに全体では壊れている」という気づきにくい壊れ方をする。**チャンク境界を探すのではなく、チャンク内 R² と全体 R² を比較することで検出できる。**
+
+**修正後（再生成した bundle）**:
+
+| 指標 | 旧 | 新 |
+|---|---|---|
+| 全体 R² | 0.0037 | **0.1657**（45 倍） |
+| disparity/depth の判別 | 決め手なし | disparity 系と判別可能 |
+| 境界の \|Δz01\| 比 | 1.05 倍 | 0.78 倍（不連続なし） |
+
+なお同じ再生成で `shots` / `shot_boundary_policy` も追加されているが、こちらは Unity 側で対応済み（後述の「カット（shot 境界）でスケールと平滑化をリセットする」を参照）。`bundle_human.svb` は 1 ショットなので、今回の深度調査の結果には影響しない。
+
+### 配置の検算結果（2026-08-06 実測）
+
+配置したモデルを画面へ再投影して `meta.bin` の bbox と比べた実測。計測手順は [smpl-retargeting.md](smpl-retargeting.md) の「配置の実測方法」を参照。
+
+| 対象 | 大きさ | 位置 | 判定 |
+|---|---|---|---|
+| **Else（ボール）** | `sizeRatio` 全 70 サンプルで **1.000** | 上端・下端とも **0.0 px** | **完全に正しい** |
+| **Human** | `sizeRatio` median 1.169 / p90 1.537 / max 1.741 | 下端 0.0 px、**上端 median -61.5 px（最悪 -163.4）** | 姿勢が深いほど縦にはみ出す |
+
+**Else が完璧なのは毎フレーム bbox からスケールを計算し直しているため。** Human/Animal は `GetOrLockModelLocalScale` で初回フレームに固定する設計で、これ自体は正しい（人体のサイズは不変であるべき）。実際 `scale` のユニーク値は 1 個で、frame 0 では `sizeRatio = 1.020` と一致している。
+
+崩れるのは姿勢が深くなったときだけ:
+
+```
+立位   : 1.020 / 1.045 / 1.052    ← 正しい
+仰向け : 1.569                     ← 縦に 1.57 倍
+座位   : 1.537 / 1.582             ← 縦に 1.5 倍
+```
+
+**この件でボール側を疑う必要はない。** 「ボールが体の正しい位置に来ない」と見えていた症状は、ボールではなく Human 側が映像とずれていたことによる。原因の切り分けと消去した仮説の一覧は [smpl-retargeting.md](smpl-retargeting.md) の調査ログ（2026-08-06）に記録した。
+
 ### モデルアセット（`Resources/Models/`）
 
 `Assets/Resources/Models/{Human,Animal,Else}/` 配下の各 prefab は、2 桁ゼロ埋めの番号プレフィックス（例: `00_Baseball`）をファイル名先頭に付ける運用。番号は `selected{Human,Animal}Index`（Inspector の生配列インデックス）や実行時 UI のインデックスと一致させるため、モデルを追加・削除したら欠番なく連番になっているか必ず確認・振り直すこと。
@@ -220,3 +277,6 @@ bundle ごとの `shots`（2026-08-02 時点）:
   - track ごとにモデルを個別指定したい場合は `trackModelIndices`（`{trackId, modelIndex}` の Inspector 配列）を使う。優先順位は「VR 内 Change Model パネルでの変更 > `trackModelIndices` > `selectedHumanIndex`/`selectedAnimalIndex`/`selectedElseIndex` のグローバルデフォルト」。ただし VR 内 Change Model パネルは Person/Animal の track のみが対象で、Else の track には現状表示されない（`TryGetRuntimeModelPickerTarget` が Person/Animal のみを候補にしているため）。
 - **`.glb` インポーターの競合に注意**: プロジェクトには UniGLTF（VRM 用、`Packages/com.vrmc.gltf`）と glTFast（`com.unity.cloud.gltfast`）の両方が入っており、どちらも `.glb`/`.gltf` の ScriptedImporter を登録する。UniGLTF 側の自動棲み分け（`UniGLTF.Editor.asmdef` の `versionDefines`）は旧パッケージ名 `com.atteneder.gltfast` を見ているため、現行の `com.unity.cloud.gltfast` とは噛み合わず、新規 `.glb` を追加すると両方拒否されて `DefaultImporter` にフォールバックする（既存の `50+ Animated Animals` 内の `.glb` は `.meta` に旧来のインポーター参照が焼き込まれているため影響を受けない）。対処として Scripting Define Symbols に `UNIGLTF_DISABLE_DEFAULT_GLB_IMPORTER` / `UNIGLTF_DISABLE_DEFAULT_GLTF_IMPORTER` を追加済み（`ElseModelImporter.DisableUniGltfDefaultGlbImporter`）。今後 `.glb` を追加する際はこの設定により glTFast 側が自動で使われる。
 - いずれのツールも Unity Editor を閉じてバッチモード（`Unity.exe -batchmode -nographics -quit -projectPath <path> -executeMethod <クラス.メソッド> -logFile <path>`）で実行する必要がある（同一プロジェクトの多重起動不可のため）。`Resources.LoadAll<GameObject>` は `Sources/` サブフォルダ内の `.glb`/`.fbx` もメインアセットが `GameObject` である限り拾ってしまう点に注意（`PrefixWithIndex` はパスに `/Sources/` を含むものを除外するよう対応済み）。
+
+- **runtime 側のフィルタも 2026-08-05 に修正済み**。`LoadPrefabsFromResources` は当初「大文字始まりまたは数字始まり」で絞っていたため、`Resources/Models/Else/Sources/DieselLocomotive.glb` が通過して Else が 8 件（本来 7 件）になっていた。現在は **2 桁ゼロ埋め番号 + `_` で始まる名前のみ**を採用する（`IsIndexedPrefabName`）。`Sources/` 配下の素材はこの規則に合わないので自動的に除外される。あわせて `Resources.LoadAll` の戻り順が保証されない問題に対処するため、読み込み後に名前順（= 番号順）へ整列させ、`selectedHumanIndex` / `selectedElseIndex` / `trackModelIndices` の index を安定させている。
+  - Animal だけはこの後に `SortByPriority(AnimalModelPriorityOrder)` が掛かるため、**配列の index は番号ではなく優先順位順**になる。`Assets/Editor/AnimalIndexDumper.cs` が実際の index を出力できるので、`selectedAnimalIndex` を指定する際はそちらで確認すること。

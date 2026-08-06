@@ -3,6 +3,16 @@ using UnityEngine;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
+    // 表示 Humanoid と元映像は体型（骨長比）が異なるため、姿勢によっては対応部位の位置が
+    // 大きく食い違う。実測では仰向け付近で 40〜80 px の乖離が出る。
+    // そのまま吸着させると Other が元映像の位置から引き剥がされて破綻するので、
+    // Other 半径を基準に「頭打ち」と「諦め」の 2 段の上限を設ける。
+    //   desired <= 半径 x Maximum            → そのまま適用
+    //   半径 x Maximum < desired <= 半径 x Abandon → 半径 x Maximum に頭打ち
+    //   desired > 半径 x Abandon             → 部位選択の誤りか体型差が大きすぎる。補正しない
+    private const float HumanOtherMaximumOffsetToRadiusRatio = 1.5f;
+    private const float HumanOtherAbandonOffsetToRadiusRatio = 3.75f;
+
     private const float HumanOtherMaximumCorrectionDeltaPerFramePixels = 18f;
     private const float HumanOtherMaximumDepthDeltaPerFrameMeters = 0.015f;
     private const float HumanOtherMaximumContactParameterDeltaPerFrame = 0.15f;
@@ -463,25 +473,38 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             float desiredDepthOffset =
                 (targetDepthMeters - other.anchorZ) *
                 bestCandidate.contactWeight;
-            Vector2 appliedPixelOffset = desiredPixelOffset;
-            float appliedDepthOffset = desiredDepthOffset;
+            ClampHumanOtherDesiredOffset(
+                displayedOtherRadiusPixels,
+                ref desiredPixelOffset,
+                ref desiredDepthOffset);
+
+            // 直前フレームの適用量から MoveTowards することで、初回接触やフレーム跳びでも
+            // 1 フレームあたりの移動量が上限を超えないようにする。
+            // （従来は hasPreviousState が false のとき desired がそのまま適用され、
+            //   接触開始時やフレームスキップ時に Other が瞬間移動していた）
+            Vector2 previousPixelOffset = hasPreviousState
+                ? previousState.appliedPixelOffset
+                : Vector2.zero;
+            float previousDepthOffset = hasPreviousState
+                ? previousState.appliedDepthOffsetMeters
+                : 0f;
+            Vector2 appliedPixelOffset;
+            float appliedDepthOffset;
             if (hasPreviousState &&
                 previousState.lastFrame == frameIndex)
             {
-                appliedPixelOffset =
-                    previousState.appliedPixelOffset;
-                appliedDepthOffset =
-                    previousState.appliedDepthOffsetMeters;
+                // 同じ動画フレームで 2 回目以降の呼び出し。時間平滑化を二重に進めない。
+                appliedPixelOffset = previousPixelOffset;
+                appliedDepthOffset = previousDepthOffset;
             }
-            else if (hasPreviousState &&
-                     previousState.lastFrame == frameIndex - 1)
+            else
             {
                 appliedPixelOffset = Vector2.MoveTowards(
-                    previousState.appliedPixelOffset,
+                    previousPixelOffset,
                     desiredPixelOffset,
                     HumanOtherMaximumCorrectionDeltaPerFramePixels);
                 appliedDepthOffset = Mathf.MoveTowards(
-                    previousState.appliedDepthOffsetMeters,
+                    previousDepthOffset,
                     desiredDepthOffset,
                     HumanOtherMaximumDepthDeltaPerFrameMeters);
             }
@@ -540,7 +563,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         bool hasPreviousState,
         HumanOtherContactState previousState)
     {
-        if (frameIndex == lastHumanOtherContactLoggedFrame ||
+        if (!logHumanOtherContact ||
+            frameIndex == lastHumanOtherContactLoggedFrame ||
             frameIndex % Mathf.Max(1, logHumanOtherContactEveryNFrames) != 0)
         {
             return;
@@ -566,16 +590,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private int lastHumanOtherEntryLoggedFrame = -1;
 
-    // 【調査中の一時措置】以下 3 つのログは logHumanOtherContact のガードを外してある。
-    // フラグを既定 true にしても Unity がシーン側の旧値 (false) を優先して反映されず、
-    // 診断が進まなかったため。調査が終わったら 3 メソッドとも
-    // `if (!logHumanOtherContact || ...)` のガードを戻すか、ログ自体を削除すること。
+    // 以下 3 つは logHumanOtherContact（既定 OFF）で制御する診断ログ。
+    // 注意: このフィールドをシーンに保存していない場合、コード側の既定値を変えても
+    // Unity がシーン側に保持している旧値を優先することがある。ON にしても出ないときは
+    // Inspector で明示的にチェックを入れること。
 
     // ApplyHumanOtherContactCorrectionForFrame が実際に呼ばれているかを確認する入口ログ。
     // これすら出ない場合は DisplayModelTick が補正の呼び出しまで到達していない。
     private void LogHumanOtherContactEntryIfEnabled(int frameIndex)
     {
-        if (frameIndex == lastHumanOtherEntryLoggedFrame ||
+        if (!logHumanOtherContact ||
+            frameIndex == lastHumanOtherEntryLoggedFrame ||
             frameIndex % Mathf.Max(1, logHumanOtherContactEveryNFrames * 6) != 0)
         {
             return;
@@ -595,7 +620,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         uint otherTrackId,
         string reason)
     {
-        if (frameIndex == lastHumanOtherContactLoggedFrame ||
+        if (!logHumanOtherContact ||
+            frameIndex == lastHumanOtherContactLoggedFrame ||
             frameIndex % Mathf.Max(1, logHumanOtherContactEveryNFrames) != 0)
         {
             return;
@@ -604,6 +630,44 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         lastHumanOtherContactLoggedFrame = frameIndex;
         Debug.Log(
             $"[CONTACT] f={frameIndex} track={otherTrackId} 補正なし: {reason}");
+    }
+
+    // 体型差による過大な吸着を抑える。閾値の意味は
+    // HumanOtherMaximumOffsetToRadiusRatio / HumanOtherAbandonOffsetToRadiusRatio のコメント参照。
+    private static void ClampHumanOtherDesiredOffset(
+        float otherRadiusPixels,
+        ref Vector2 desiredPixelOffset,
+        ref float desiredDepthOffsetMeters)
+    {
+        if (otherRadiusPixels <= 0f)
+        {
+            return;
+        }
+
+        float magnitude = desiredPixelOffset.magnitude;
+        if (magnitude <= 0.0001f)
+        {
+            return;
+        }
+
+        if (magnitude >
+            otherRadiusPixels * HumanOtherAbandonOffsetToRadiusRatio)
+        {
+            // ここまで離れているのは対応部位の取り違えか体型差が大きすぎる場合。
+            // 引きずるより元映像の位置を保つ方が破綻しない。
+            desiredPixelOffset = Vector2.zero;
+            desiredDepthOffsetMeters = 0f;
+            return;
+        }
+
+        float maximum =
+            otherRadiusPixels * HumanOtherMaximumOffsetToRadiusRatio;
+        if (magnitude > maximum)
+        {
+            float ratio = maximum / magnitude;
+            desiredPixelOffset *= ratio;
+            desiredDepthOffsetMeters *= ratio;
+        }
     }
 
     private static Vector2 RotateDirectionTowards(

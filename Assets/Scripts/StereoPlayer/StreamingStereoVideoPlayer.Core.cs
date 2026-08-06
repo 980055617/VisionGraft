@@ -73,9 +73,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     [Header("Human-Other Contact Correction")]
     public bool enableHumanOtherContactCorrection = false;
     // 診断用: どの部位にどれだけ吸着したか、補正が適用されない場合はその理由を出力する。
-    // 原因調査中のため既定 ON。調査が終わったら false に戻すこと。
-    public bool logHumanOtherContact = true;
+    public bool logHumanOtherContact = false;
     public int logHumanOtherContactEveryNFrames = 5;
+
+    // 計測用: 配置したモデルを実際に画面へ再投影し、meta.bin の bbox とどれだけ一致するかを出す。
+    // [PLACE] = 大きさ（投影高さ/bbox高さ）と位置（上端・下端のずれ）、[BONELEN] = 表示モデルの骨長。
+    // 配置の検算に使う。手順は Docs/smpl-retargeting.md の「配置の実測方法」を参照。
+    public bool logPlacementMeasurement = false;
+    public int logPlacementMeasurementEveryNFrames = 30;
     [Min(0f)] public float humanOtherFullContactRadiusMultiplier = 1.25f;
     [Min(0f)] public float humanOtherReleaseRadiusMultiplier = 2f;
     [Min(0f)] public float humanOtherContactSurfacePaddingPixels = 2f;
@@ -130,6 +135,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const float Smpl24LimbIkAlpha = 0.9f;
     private const float Smpl24SpineAlpha = 0.35f;
     private static readonly bool EnableHumanSmplMotion = true;
+    // 2026-08-06 検証済み: この値を 1.0 にしても [PLACE] 計測の sizeRatio は
+    // 小数第3位まで一切変わらなかった。ShouldUseSmplOnlyPose() 経路では姿勢の深さに
+    // 効いていないので、姿勢の再現精度を調べる際にここを触っても無駄。
     private const float HumanSmplRotationAlpha = 0.65f;
     private static readonly bool HumanSmplFlipY = true;
     private static readonly bool EnableYawDepthDisambiguation = true;

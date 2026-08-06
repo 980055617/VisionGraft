@@ -202,7 +202,97 @@ camRotation = LookRotation(-screenFront, screen.up)  // TryGetPinholeBasis() で
 
 ---
 
+## 配置の実測方法（2026-08-06 整備）
+
+推測で修正案を出す前に、**配置したモデルを画面へ再投影して meta.bin の bbox と直接比べる**。`StreamingStereoVideoPlayer.logPlacementMeasurement`（既定 OFF）を ON にすると 2 種類のログが出る。
+
+```
+[PLACE] f=300 track=0 Person sizeRatio=1.569 topDelta=-134.9 bottomDelta=0.0
+        proj[top=190.1 bot=562.0 h=371.9] bbox[top=325 bot=562 h=237]
+        anchorV=525 depth=0.757 scale=0.1753
+        boneRatio=1.334 boneTopDelta=-95.9 boneBottomDelta=-16.6
+        topBone=RightToes bottomBone=LeftLittleDistal
+
+[BONELEN] thigh=0.0781 shin=0.0729 torso=0.1006 ... | 胴で正規化: leg=1.501 ...
+```
+
+| 値 | 意味 |
+|---|---|
+| `sizeRatio` | `renderer.bounds`（world 軸平行 AABB）の投影高さ ÷ bbox 高さ。1.0 なら映像どおり |
+| `boneRatio` | Humanoid の**全ボーン位置**の投影高さ ÷ bbox 高さ。AABB と違い姿勢が傾いても過大評価しない |
+| `topBone` / `bottomBone` | 最上端・最下端がどのボーンか。**姿勢によって足にも手の指にもなる** |
+| `[BONELEN]` | 表示モデルの骨長。meta.bin の keypoints3d から測った骨長と比べて体型差を見る |
+
+**`sizeRatio` と `boneRatio` の両方を見ること。** AABB は姿勢が傾くと過大に出るので、`sizeRatio` だけが大きい場合は計測アーティファクトの可能性がある。両方大きければモデルが実際に大きい。
+
+### バッチモードでの実行
+
+Unity Editor を閉じた状態で `PlacementMeasurementTests` を実行する（`bundle_human.svb` を実際に再生して 70 秒ぶんのログを取る）。
+
+```
+& "C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Unity.exe" `
+  -batchmode -projectPath <project> -runTests -testPlatform EditMode `
+  -testFilter "PlacementMeasurementTests" -logFile <log> -testResults <xml>
+```
+
+- `-nographics` は付けない（VideoPlayer のデコードに必要）
+- `Start-Process` で起動する。`& $unity ...` を PowerShell のバックグラウンド実行から呼ぶとプロセスが立ち上がらないことがあった
+- **テストが参照するシーン名に注意**。2026-08-05 に `SampleScene` → `TestScene` へリネームされており、追従を忘れると `Scene file not found` で全テストが失敗する
+
 ## 調査ログ
+
+### 2026-08-06: 配置の実測 — ボールは完璧、Human は姿勢が深いほど縦にはみ出す
+
+`bundle_human.svb` を実際に再生して全区間を計測した結果。接触補正は OFF（素の配置）。
+
+**Other（ボール）は完全に正しい**:
+
+```
+sizeRatio  : 全 70 サンプルで 1.000
+topDelta   : 0.0 px    bottomDelta: 0.0 px
+```
+
+毎フレーム bbox からスケールを計算し直しているため、大きさも位置も 1 ピクセルの誤差もない。**ボール側を疑う必要はない。**
+
+**Human は立位なら正しく、姿勢が深いとずれる**:
+
+| 時刻 | 姿勢 | sizeRatio | boneRatio | topBone |
+|---|---|---|---|---|
+| 0.0s | 立位 | 1.020 | 0.788 | Head |
+| 50.0s | 立位 | 1.045 | 0.821 | LeftMiddleIntermediate |
+| 60.0s | 立位 | 1.052 | 0.857 | LeftIndexIntermediate |
+| **10.0s** | **仰向け** | **1.569** | **1.334** | **RightToes** |
+| **20.0s** | **座位** | **1.537** | 0.973 | LeftLowerLeg |
+| **40.0s** | **座位** | **1.582** | 1.214 | Head |
+
+`scale` はユニーク値 1 個（完全固定＝設計どおり）、`bottomDelta` はほぼ全サンプルで 0.0（下端合わせは機能している）。**下端を軸にモデルが上へはみ出している。**
+
+### 2026-08-06: 上記の原因として消去した仮説（同じ道を辿らないこと）
+
+| 仮説 | 検証 | 結果 |
+|---|---|---|
+| スケールの決め方・基準値が悪い | frame 0 の `sizeRatio` | **否定** 1.020（数式どおり一致） |
+| スケール固定が悪い | `scale` のユニーク値 | **否定** 1 個。固定は正常に機能 |
+| 下端合わせが効いていない | `bottomDelta` | **否定** 0.0 px |
+| `HumanSmplRotationAlpha`(0.65) が姿勢を減衰 | 1.0 にして再計測 | **否定** 小数第3位まで不変。`ShouldUseSmplOnlyPose()` 経路では姿勢の深さに効かない |
+| 時間平滑化 `SmplSmoothHalfLifeSec`(0.05) | 0（平滑化なし）で再計測 | **否定** median 1.169→1.174 |
+| AABB の過大評価（計測の問題） | ボーン位置ベースで再計測 | **否定** ボーンだけで bbox の 1.334 倍 |
+| 最下点が手の指になる（基準点ずれ） | `bottomBone` を確認 | **否定** 映像側の bbox も手が最下点なら正しい。問題は上端 |
+| **体型差（骨長比）** | `[BONELEN]` と keypoints3d を比較 | **否定** かつ**逆方向**（下記） |
+
+**体型差の実測**（胴で正規化）:
+
+| 部位 | keypoints3d（映像） | Unity モデル | 差 |
+|---|---|---|---|
+| 大腿 / 胴 | 0.812 | 0.776 | -4.4% |
+| 下腿 / 胴 | 0.843 | 0.725 | -14.0% |
+| **脚全体 / 胴** | **1.655** | **1.501** | **-9.3%** |
+
+**Unity モデルの脚はむしろ 9.3% 短い。** 脚が短いのに縦幅が 1.33 倍になるということは、体型差では説明できない。「モデルの脚が長いから足がはみ出す」という仮説は棄却された。
+
+なお SMPL の `betas` から骨長を求めるには SMPL のモデルファイル（shape blend shapes / J_regressor）が必要で bundle に含まれていない。**keypoints3d から直接骨長を測る方が確実**（上表はその方法で測っている）。
+
+**残る原因**: 骨長が 9% 短いのに縦幅が 1.33 倍になる以上、**モデルの姿勢が映像より「開いている」**（関節を折りたたむ角度が浅い）ことになる。FK の計算そのもの（回転の適用式・座標変換・関節マッピング）に踏み込む必要がある。未調査。
 
 ### 2026-07-30: jointsWorld にモデルスケールが未適用（`AlignHumanoidFeetYToSmplAnkles` が機能していない）
 

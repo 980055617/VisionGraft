@@ -182,6 +182,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             //
             // Each smplLocal is exponentially smoothed toward the new value to reduce capture noise.
             // Half-life = SmplSmoothHalfLifeSec: at 30fps a value moves ~37% toward target per frame.
+            // 2026-08-06 検証済み: 0f（平滑化なし）にしても [PLACE] の sizeRatio は
+            // median 1.169→1.174 とほぼ変わらない。姿勢の再現の浅さは平滑化が原因ではない。
             const float SmplSmoothHalfLifeSec = 0.05f; // 50ms: smooth enough to cut jitter, fast enough to track motion
             float dt = Time.deltaTime;
             // alpha: fraction of the way toward the new value this frame (frame-rate independent)

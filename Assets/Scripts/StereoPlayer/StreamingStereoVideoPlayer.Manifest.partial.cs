@@ -41,10 +41,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     //
     // 2026-08-06 の生成側修正で anchor_z は larger=farther に統一され、その目印として
     // depth_policy ブロックが manifest に入るようになった。それ以前の bundle
-    // (bundle.svb / bundle_old.svb / bundle_train.svb) は depth_policy を持たず、
-    // anchor_z は larger=nearer のままなので、両方を同じ runtime で再生できるよう
-    // ここで分岐する。値そのものから向きを推定しない（bundle によっては深度が
-    // 中央付近に固まっていて推定が成立しない）。
+    // （手元に残っているのは bundle.svb）は depth_policy を持たず、anchor_z は
+    // larger=nearer のままなので、両方を同じ runtime で再生できるようここで分岐する。
+    // 値そのものから向きを推定しない（bundle によっては深度が中央付近に固まっていて
+    // 推定が成立しない）。bundle_human / bundle_animal / bundle_train は 2026-08-07 の
+    // 再生成で depth_policy 付きになった。
     private bool IsAnchorDepthLargerMeansFarther()
     {
         return manifest != null &&

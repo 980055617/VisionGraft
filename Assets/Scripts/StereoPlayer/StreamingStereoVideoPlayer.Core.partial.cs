@@ -48,6 +48,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         vp.prepareCompleted += OnPrepared;
         vp.loopPointReached -= OnVideoLoopPointReached;
         vp.loopPointReached += OnVideoLoopPointReached;
+        vp.errorReceived -= OnVideoErrorReceived;
+        vp.errorReceived += OnVideoErrorReceived;
 
         if (showBundlePickerOnStart)
         {
@@ -108,6 +110,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         vp.prepareCompleted -= OnPrepared;
         vp.prepareCompleted -= OnModeSwitchPrepared;
         vp.loopPointReached -= OnVideoLoopPointReached;
+        vp.errorReceived -= OnVideoErrorReceived;
+    }
+
+
+    // 端末のデコーダが対応しない動画（例: MPEG-4 Part 2 / mp4v で書かれた
+    // source/pre_removal_stereo_video.mp4）を url に入れると prepare が黙って失敗し、
+    // frameReady が来ないので画面が黒いままになる。原因が分かるよう必ずログに出す。
+    private void OnVideoErrorReceived(VideoPlayer source, string message)
+    {
+        Debug.LogError($"[Video] error: {message} | url={(source != null ? source.url : "null")}");
     }
 
 

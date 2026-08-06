@@ -47,6 +47,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             StopAllInteractiveMotion();
         }
 
+        Debug.Log(
+            $"[Mode] switch normal={isNormalMode} url={targetUrl} " +
+            $"resume={pendingModeSwitchResume} t={pendingModeSwitchTimeSeconds:F2}");
+
         RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Pause);
         vp.prepareCompleted -= OnModeSwitchPrepared;
         vp.prepareCompleted += OnModeSwitchPrepared;
@@ -60,6 +64,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private void OnModeSwitchPrepared(VideoPlayer source)
     {
         source.prepareCompleted -= OnModeSwitchPrepared;
+        Debug.Log($"[Mode] prepared {source.width}x{source.height} url={source.url}");
         source.time = pendingModeSwitchTimeSeconds;
         if (pendingModeSwitchResume)
         {

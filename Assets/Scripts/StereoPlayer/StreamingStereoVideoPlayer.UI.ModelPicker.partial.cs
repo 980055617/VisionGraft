@@ -10,24 +10,46 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         EnsureEventSystem();
 
-        GameObject root = RuntimeUiRootFactory.Create("RuntimeModelPickerPanel", null);
-        Canvas canvas = RuntimeCanvasComponentFactory.EnsureCanvas(root);
-        UiComponentWriter.ApplyWorldSpaceCamera(canvas, GetViewCamera());
-        RuntimeCanvasComponentFactory.EnsureGraphicRaycaster(root, false);
+        // Settings パネルと同じく runtimeControlsPrefab（CanvasWithInteractionRay）から作る。
+        // 素の Canvas + GraphicRaycaster だけだと ISDK_RayCanvasInteraction
+        // （RayInteractable / PointableCanvas）が無く、コントローラのレイが当たらない。
+        GameObject root;
+        if (runtimeControlsPrefab != null)
+        {
+            root = RuntimeUiRootFactory.Create("RuntimeModelPickerPanel", runtimeControlsPrefab);
+        }
+        else
+        {
+            root = RuntimeUiRootFactory.Create("RuntimeModelPickerPanel", null);
+            Canvas canvas = RuntimeCanvasComponentFactory.EnsureCanvas(root);
+            UiComponentWriter.ApplyWorldSpaceCamera(canvas, GetViewCamera());
+            RuntimeCanvasComponentFactory.EnsureGraphicRaycaster(root, false);
+        }
         EnsureCanvasRaycasters(root);
 
-        RectTransform rect = root.GetComponent<RectTransform>();
-        TransformWriter.ApplySizeDelta(
-            rect,
-            new Vector2(RuntimeModelPickerDefaultCanvasWidth, RuntimeModelPickerDefaultCanvasHeight));
-        TransformWriter.ApplyLocalScale(
-            rect,
-            new Vector3(
-                RuntimeModelPickerSizeMeters.x / RuntimeModelPickerDefaultCanvasWidth,
-                RuntimeModelPickerSizeMeters.y / RuntimeModelPickerDefaultCanvasHeight,
-                1f));
+        Canvas rootCanvas = root.GetComponent<Canvas>();
+        if (rootCanvas == null)
+        {
+            rootCanvas = root.GetComponentInChildren<Canvas>(true);
+        }
 
-        RectTransform panelRect = RuntimeUiElementFactory.CreateRectChild("Panel", root.transform, out GameObject panelObj);
+        Transform uiRoot = rootCanvas != null ? rootCanvas.transform : root.transform;
+
+        RectTransform rect = uiRoot as RectTransform;
+        if (rect != null)
+        {
+            TransformWriter.ApplySizeDelta(
+                rect,
+                new Vector2(RuntimeModelPickerDefaultCanvasWidth, RuntimeModelPickerDefaultCanvasHeight));
+            TransformWriter.ApplyLocalScale(
+                rect,
+                new Vector3(
+                    RuntimeModelPickerSizeMeters.x / RuntimeModelPickerDefaultCanvasWidth,
+                    RuntimeModelPickerSizeMeters.y / RuntimeModelPickerDefaultCanvasHeight,
+                    1f));
+        }
+
+        RectTransform panelRect = RuntimeUiElementFactory.CreateRectChild("Panel", uiRoot, out GameObject panelObj);
         TransformWriter.ApplyStretchRect(
             panelRect,
             Vector2.zero,

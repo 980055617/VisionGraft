@@ -579,10 +579,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (bestTrack >= 0)
         {
-            displayTrackIds = new[] { bestTrack };
+            // displayTrackIds は「どの track を表示するか」の絞り込みなので触らない。
+            // ここで単一 track に差し替えると、指した対象以外のモデルが画面から消える
+            // （Inspector で [0, 1] を出している構成なら、人を指しただけでボールが消える）。
+            // モデル変更の対象は runtimeModelPickerTrackId が最優先で見られるため、
+            // 選択の反映にはこちらの更新だけで足りる。
             selectedManualRotationTrackId = bestTrack;
             runtimeModelPickerTrackId = bestTrack;
             runtimeModelPickerPageIndex = 0;
+            Debug.Log($"[Pick] track={bestTrack} pixel={pick.pixel} eye={pick.eye}");
             UpdateRuntimeModelPickerUiState();
         }
     }

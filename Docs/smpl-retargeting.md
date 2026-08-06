@@ -70,14 +70,21 @@ body_pose = identity のとき R = R^T = I なので row/column 抽出で差が�
 
 ## FK 公式
 
-### 正しい公式（2026-06-13 確定・標準FK）
+> ⚠️ **2026-08-07 追記**: 以下の公式と NG パターン表は **npc_casual_set 1 種類のリグでの実測**に基づく。
+> この公式は展開すると `G * bindRotWorld[j] * bodyPose[j]` で、body_pose を**ボーンのローカル軸**で
+> 掛けているため、**bindRotWorld ≈ identity のリグでしか成立しない**。npc_casual は胴・肩・腕が
+> 0-20° と identity 近傍なので偶然成立していた。Renderpeople（14-16）は全ボーンが 90-120° 乖離しており
+> 破綻する。リグ非依存にするには `Θ[j] * bindRotWorld[j]`（Θ = world 累積）と左から掛ける。
+> 詳細と実測値は[調査ログ 2026-08-07](#2026-08-07-renderpeople-モデル14-16で手足が破綻--fk-公式がbindrotworld--identity-のリグでしか成立していなかった)。
+
+### 現行の公式（2026-06-13 確定・標準FK / リグ依存）
 
 ```
 tw[j] = parentTW[j] * bindRotLocal[j] * bodyPose[j]
 bone.rotation = tw[j]
 ```
 
-**根拠:**
+**根拠（npc_casual_set での実測時点）:**
 - SMPL body_pose[j] は親 joint の現在フレームで定義（標準FK規約）
 - body_pose は「T-pose 姿勢からの変位」→ 先に `bindRotLocal` で T-pose フレームを確立してから body_pose を重ねる
 - T-pose 検証（bodyPose=identity）: `tw[j] = parentTW * bindRotLocal * I` → 展開して `worldGlobalOrient * bindRotWorld[j]` ✓
@@ -141,6 +148,11 @@ camRotation = LookRotation(-screenFront, screen.up)  // TryGetPinholeBasis() で
 
 ### NG パターン（FK 公式）
 
+> ⚠️ この表の「現象」は **npc_casual_set 1 リグでの観測**。同リグは胴・肩・腕の bindRotWorld が
+> identity 近傍という特殊性があるため、ここでの却下理由が他リグでも成り立つとは限らない。
+> 特に 1 行目の `globalOrient * fk_body * bindRotWorld` は「bindRot → body_pose の順が逆」と
+> されているが、`Θ` を world 累積で作れば `Θ[j] * bindRotWorld[j]` は全リグで正しい（2026-08-07 実測）。
+
 | パターン | 現象 |
 |---|---|
 | `globalOrient * fk_body * bindRotWorld` | body_pose → bindRot の順（逆）。bindRotLocal が小さい脚・腰は偶然近いが、右腕 bindRotLocal の 180°Z で約 77° ズレ ✗ |
@@ -169,6 +181,11 @@ camRotation = LookRotation(-screenFront, screen.up)  // TryGetPinholeBasis() で
 - HumanPoseHandler で muscles=0 にして計測（GetOrBuildHumanoidCache で実施）
 
 ### UpperChest（joint=9）の特殊ケース
+
+> 2026-08-07 追記: この特殊扱いは現行公式が `bindRotLocal`（親相対）を使うために必要なもの。
+> 左掛け `Θ[j] * bindRotWorld[j]` に変えると Θ は bindRot を含まないため、ボーンが無い joint は
+> `Θ[j] = Θ[parent] * θ[j]` を積むだけでよく、この分岐は不要になる。
+> なお UpperChest を持つリグは Renderpeople が初ではない（07_Human_Beta / Mixamo が `Spine2` を持つ）。
 
 - Unity Humanoid Avatar に登録されていないが bone hierarchy に transform として存在する場合がある
 - `Animator.GetBoneTransform(HumanBodyBones.UpperChest)` = null → **BONE MISSING** 扱い
@@ -240,6 +257,83 @@ Unity Editor を閉じた状態で `PlacementMeasurementTests` を実行する�
 - **テストが参照するシーン名に注意**。2026-08-05 に `SampleScene` → `TestScene` へリネームされており、追従を忘れると `Scene file not found` で全テストが失敗する
 
 ## 調査ログ
+
+### 2026-08-07: Renderpeople モデル（14-16）で手足が破綻 — FK 公式が「bindRotWorld ≈ identity のリグ」でしか成立していなかった
+
+`16_Male_Eric` を `bundle_human.svb` で再生すると手足が大きく崩れる。14・15（同じ Renderpeople）も同条件。
+
+**検証方法**（実機不要・オフライン）
+
+`bundle_human.svb` の `meta.bin` から実 body_pose を取り出し（frame 300/600/900/1200/1500、track 0）、
+2 つのリグに同じ θ を入れて各ボーンの**長軸 world 方向**を比較した。
+リグの bind pose は Renderpeople が FBX `.meta` の `skeleton`（T-pose と確認済み）、
+npc_casual は prefab の保存姿勢の長軸だけ T-pose に補正し roll（軸規約）は保持したもの。
+
+**結果: 現行公式 `tw[j] = parentTW * bindRotLocal[j] * θ[j]` は展開すると `G * bindRotWorld[j] * θ[j]`**
+
+θ を **bindRotWorld の右**から掛けている＝ θ をボーンのローカル軸で解釈している。
+SMPL の body_pose は canonical フレーム（rest で world 軸平行）の回転なので、
+正しくは `Θ[j] * bindRotWorld[j]`（Θ = world 累積）と**左**から掛ける。
+両者が一致する条件は **bindRotWorld[j] ≈ identity**。
+
+各モデルの bindRotWorld の identity からの乖離 [deg]:
+
+| モデル | Hips | Spine | Chest | UpperChest | Neck | Shoulder | UpperArm | LowerArm | UpperLeg | Foot | Toes |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| npc_casual_set (00-05, 08-13) | 0 | 3 | 4 | 無し | 10 | 8 | 20 | 51 | 119 | 160 | 178 |
+| 07_Human_Beta (Mixamo) | 1 | 8 | 8 | 7 | 7 | **129** | 120 | 120 | 180 | 180 | 180 |
+| 14-16 (Renderpeople) | **120** | **120** | **120** | **120** | **116** | **90** | **90** | **90** | **121** | **120** | **90** |
+
+npc_casual は胴・肩・腕が identity 近傍なので現行公式が**偶然**成立していた。
+脚は 119-178° と大きいが、後段の `TryApplySmplArmSegment`（AimAt）が SMPL joint 位置から
+方向を上書きするため誤差が隠れる。Renderpeople は全ボーンが 90-120° なので全滅する。
+
+**現行公式の誤差（正しい公式との長軸方向のずれ、5 フレーム平均 [deg]）**
+
+| ボーン | Eric | npc_casual | AimAt の有無 |
+|---|---|---|---|
+| Spine / Chest | 35.5 / 37.3 | 0.0 / 0.0 | **無し → 見える** |
+| UpperChest | 43.7 | （ボーン無し） | **無し → 見える** |
+| Neck / Head | 56.6 / 55.0 | 8.0 / - | **無し → 見える** |
+| LeftShoulder / RightShoulder | 67.6 / 61.0 | 1.0 / 0.9 | **無し → 見える** |
+| LeftToes / RightToes | 31.3 / 35.9 | （子ボーン無しで測定不可） | **無し → 見える** |
+| LeftUpperArm / LeftLowerArm | 128.3 / 118.9 | 0.9 / 6.1 | 有り（方向は救われるが **roll は残る**） |
+| UpperLeg / LowerLeg / Foot | 26-53 | 29-45 | 有り（同上） |
+| LeftHand / RightHand | 110.1 / 71.8 | 6.3 / 17.8 | `TryApplyHandFkAfterAimAt` が world rotation を直接上書き |
+
+**同じ θ を 2 リグに入れたときの食い違い（0 が正解）**
+
+| 公式 | 全ボーン平均 |
+|---|---|
+| 現行 `parentTW * bindRotLocal * θ` | **58.6°** |
+| 左掛け `Θ[j] * bindRotWorld[j]` | **0.0°**（全ボーンで完全一致） |
+
+**結論**
+
+- 手・足が目立つのは、AimAt が四肢の**方向**しか直さないため。roll（ねじれ）と、AimAt を持たない
+  Shoulder・Toes・胴の誤差がそのまま残り、末端ほど累積して見える
+- 左掛けに直すとリグ非依存になる。`ApplyWorldRotation` のままで実現でき、IK も不要
+- 既存モデルへの影響は小さい見込み（npc_casual の胴・肩・腕の誤差は 0-6°、脚は AimAt が上書き）
+- BONE MISSING の特殊扱いも不要になる。Θ は bindRot を含まないため、ボーンが無い joint は
+  `Θ[j] = Θ[parent] * θ[j]` を積むだけでよい
+
+**独立した第 2 の問題: Renderpeople の twist ボーンが動かない**
+
+`upperarm_twist_l/r`・`lowerarm_twist_l/r`・`upperleg_twist_l/r`・`lowerleg_twist_l/r` の 8 本は
+`HumanBodyBones` に対応がなく Avatar に登録できないため `HumanoidRigCache.bones` に入らず、
+FK でも AimAt でも書き換えられない。DCC 側の constraint は FBX に焼かれていないので静止したまま。
+前腕・すねをひねると手首・足首のメッシュが破綻する（candy-wrapper）。
+**Animator を有効に戻しても解決しない**（`armTwist: 0.5` は Avatar にマップされた UpperArm/LowerArm 間の
+ひねり配分パラメータで、追加 twist ボーンを駆動するものではない）。
+npc_casual・Mixamo には twist ボーンが無いため、Renderpeople で初めて出る問題。
+
+**この調査で否定した仮説**
+
+- 「UpperChest がマップされたのが原因」→ 07_Human_Beta（Mixamo）が既に `Spine2` → UpperChest を
+  持っており、UpperChest 経路自体は新規ではない。乖離の主因は bindRotWorld であって
+  ボーンの有無ではない
+- 「Renderpeople が A-pose だから」→ FBX の skeleton から計算した結果、腕は水平・脚は真下の
+  完全な T-pose だった
 
 ### 2026-08-06: 真因は `SpineBodyPoseScale = 0.25`（脊椎の曲げを 75% 捨てていた）→ 1.0 に修正
 

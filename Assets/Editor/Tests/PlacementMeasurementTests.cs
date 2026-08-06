@@ -31,10 +31,22 @@ public class PlacementMeasurementTests
         }
         else
         {
+            // バッチで何度も再生するため音は切る。
+            player.mute = true;
             // 素の配置を測りたいので接触補正は切る。計測ログは有効にする。
             player.enableHumanOtherContactCorrection = false;
             player.logPlacementMeasurement = true;
             player.logPlacementMeasurementEveryNFrames = 30;
+            // Human と Other の位置関係（[GAP]）。埋もれの原因が深度方向か画面平行方向かを分ける。
+            player.logHumanOtherGap = true;
+            player.logHumanOtherGapEveryNFrames = 30;
+            // 姿勢再現の誤差（[POSE]）。[GAP] の lateralGap から誤差成分を切り分けるために測る。
+            player.logHumanPoseError = true;
+            player.logHumanPoseErrorEveryNFrames = 30;
+            player.logHumanBoneLengthCorrection = true;
+            player.logAnchorDepthRange = true;
+            player.logBallHead = true;
+            player.logBoneBBoxRelative = true;
 
             float prepareDeadline = Time.realtimeSinceStartup + 60f;
             while (!videoPlayer.isPrepared && Time.realtimeSinceStartup < prepareDeadline)

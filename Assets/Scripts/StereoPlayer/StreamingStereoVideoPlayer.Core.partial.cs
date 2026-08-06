@@ -193,6 +193,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void Update()
     {
+        // 再生中の切り替えにも追従させたいので毎フレーム適用する。
+        // audioTrackCount は Prepare 後に確定するため、ここで見るのが確実。
+        if (mute != appliedMute || (mute && vp != null && vp.isPrepared))
+        {
+            RuntimePlaybackController.ApplyMute(vp, mute);
+            appliedMute = mute;
+        }
+
         StreamingStereoUpdateFlow.Decision decision = StreamingStereoUpdateFlow.Resolve(bundlePickerActive);
         if (decision.updateBundlePickerPlacement)
         {

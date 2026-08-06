@@ -35,6 +35,22 @@ public static class RuntimePlaybackController
         videoPlayer.sendFrameReadyEvents = true;
     }
 
+
+    // 音声のミュート切り替え。バッチテストのように繰り返し再生する場面で使う。
+    // トラック数は Prepare 前だと 0 のことがあるため、Prepare 後にも呼べるよう分離してある。
+    public static void ApplyMute(VideoPlayer videoPlayer, bool mute)
+    {
+        if (videoPlayer == null)
+        {
+            return;
+        }
+
+        for (ushort track = 0; track < videoPlayer.audioTrackCount; track++)
+        {
+            videoPlayer.SetDirectAudioMute(track, mute);
+        }
+    }
+
     public static void Apply(VideoPlayer videoPlayer, Command command)
     {
         if (videoPlayer == null)

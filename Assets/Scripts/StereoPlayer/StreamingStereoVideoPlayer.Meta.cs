@@ -63,6 +63,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private ulong[] frameOffsets;
     private string metaFilePath;
     private readonly List<MetaObj> metaFrameObjects = new List<MetaObj>(64);
+
+    // CalibrateAnchorDepthRange が求める、この bundle の z01 の実効レンジ。
+    private const int AnchorDepthCalibrationSampleCount = 120;
+    private const float AnchorDepthRangeMinimumSpan = 0.02f;
+    // disparity の逆数を取るときの下限。これ未満だと 1/d が発散するので逆数変換をやめる。
+    private const float AnchorDisparityMinimum = 0.01f;
+    private float anchorZ01RangeMin;
+    private float anchorZ01RangeMax = 1f;
+    private bool hasAnchorZ01Range;
+    private bool loggedInverseDepthRange;
     private float GetQuantPosScale()
     {
         return GetManifestQuantPosScale();
@@ -102,9 +112,77 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
 
             metaLoaded = frameOffsets != null && frameOffsets.Length > 0;
+            if (metaLoaded)
+            {
+                CalibrateAnchorDepthRange();
+            }
         }
         catch
         {
+        }
+    }
+
+
+    // この bundle で anchor_z が実際に取る範囲を粗いサンプリングで求める。
+    // z01 は背景込みで正規化されているため検出オブジェクトの分布は狭く、そのまま
+    // popout レンジへ流すと奥行きがほとんど使われない（実測で 23%）。
+    // 外れ値に引きずられないよう 2〜98 パーセンタイルを採る。
+    private void CalibrateAnchorDepthRange()
+    {
+        hasAnchorZ01Range = false;
+        anchorZ01RangeMin = 0f;
+        anchorZ01RangeMax = 1f;
+        loggedInverseDepthRange = false;
+        if (metaHeader.numFrames == 0)
+        {
+            return;
+        }
+
+        List<float> samples = new List<float>(AnchorDepthCalibrationSampleCount * 2);
+        List<MetaObj> buffer = new List<MetaObj>(16);
+        int step = Mathf.Max(1, (int)metaHeader.numFrames / AnchorDepthCalibrationSampleCount);
+        for (int frame = 0; frame < (int)metaHeader.numFrames; frame += step)
+        {
+            if (!TryReadFrameObjects(frame, buffer))
+            {
+                continue;
+            }
+
+            for (int i = 0; i < buffer.Count; i++)
+            {
+                samples.Add(buffer[i].anchorZ01);
+            }
+        }
+
+        // 較正のために読んだフレームの SMPL/SMAL は再生に使わないので捨てる。
+        humanSmplPosesMetaBin.Clear();
+        animalSmalPosesMetaBin.Clear();
+
+        if (samples.Count < 8)
+        {
+            return;
+        }
+
+        samples.Sort();
+        int lowIndex = Mathf.Clamp(Mathf.RoundToInt(samples.Count * 0.02f), 0, samples.Count - 1);
+        int highIndex = Mathf.Clamp(Mathf.RoundToInt(samples.Count * 0.98f), 0, samples.Count - 1);
+        float low = samples[lowIndex];
+        float high = samples[highIndex];
+        if (high - low < AnchorDepthRangeMinimumSpan)
+        {
+            return;
+        }
+
+        anchorZ01RangeMin = low;
+        anchorZ01RangeMax = high;
+        hasAnchorZ01Range = true;
+
+        if (logAnchorDepthRange)
+        {
+            Debug.Log(
+                $"[DEPTHRANGE] samples={samples.Count} range={low:F4}〜{high:F4} " +
+                $"span={high - low:F4} (raw {samples[0]:F4}〜{samples[samples.Count - 1]:F4}) " +
+                $"→ popout 使用率 {100f * (high - low):F0}% から 100% へ");
         }
     }
 

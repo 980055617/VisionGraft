@@ -209,6 +209,37 @@ bundle ごとの `shots`（2026-08-02 時点）:
 
 **betas は shot でリセットしない**。`shot_boundary_policy` が明記しているとおり、SMPL/SMAL の betas はフレームごとに独立推定される値で、そのフレーム間ノイズは shot 境界とは無関係の別問題。
 
+### スケールの基準フレームは shot 先頭に固定する（2026-08-07 実装）
+
+**症状**: VR 内の Change Model パネルでモデルを差し替えると、その瞬間のフレームの bbox で大きさが決まる。同じ shot の同じ track を見ていても、**いつモデルを変えたかで表示サイズが変わる**。
+
+**原因**: スケールのロックが外れる契機は 2 つあり、基準フレームが揃っていなかった。
+
+| きっかけ | 処理 | ロックされる bbox |
+|---|---|---|
+| shot 境界 | `ResetPerShotTrackState()` の `lockedModelLocalScaleByTrack.Clear()` | その shot の先頭フレーム |
+| モデル変更 | `RecreateTrackInstanceForModelSelection` の `Remove(trackId)` | **変更した瞬間のフレーム** |
+
+`GetOrLockModelLocalScale` は「ロックが無ければ、いま渡された `desiredScale` をそのまま焼き付ける」だけなので、解除したタイミングのフレームがそのまま基準になる。
+
+**なぜ揃えるべきか**:
+
+- 通常再生の基準（shot 先頭）と食い違う。ユーザーから見ると「モデルを変えただけなのに大きさも変わった」挙動になる
+- 被験者実験ではモデル変更を開放しているので、**変更タイミングが人によって違えば表示サイズも人によって変わる**。`operations.csv` には prefab 名しか残らず、後から統制できない
+- 変更した瞬間に bbox が潰れていれば（画面端で切れている等）、その値が以後ずっと固定される
+
+**実装**: `TryResolveShotStartScaleReference(trackId, out MetaObj)`（`Playback.partial.cs`）。ロックが無い track についてのみ、現在の shot の先頭フレームを `TryReadFrameObjects` で読み直し、その bbox（`bboxW` / `bboxH` / `anchorZ`）で `desiredScale` を計算する。ロック済みなら早期 return するので、毎フレーム meta.bin を引くことはない。
+
+**フォールバックする条件**（いずれも従来どおり現在フレームでロックする）:
+
+- shot 先頭にその track が存在しない（shot 途中から登場する被写体）
+- shot 先頭の bbox の幅か高さが 0
+- shot 先頭フレーム == 現在フレーム（読み直す意味がない）
+
+**副次的な効果**: シークでも基準が揃う。同じ shot の中央へ飛んだ場合、従来は「シーク先のフレーム」でロックされていたが、shot 先頭に揃うようになった。`shots` を持たない旧 bundle は `GetStartFrame` が 0 を返すので、全編 1 shot = フレーム 0 が基準になる。
+
+**不採用にした案**: 「shot 内から立位に最も近いフレーム（bbox のアスペクト比が最大のフレーム）を基準にする」案は 2026-08-07 に実測で悪化した。アスペクト比が最大のフレームは人物が横向きで細く写っているだけのことがあり、bbox 高さで絞り直しても骨格スパンが bbox の 112%（初回基準では 86%）と過大になった。今回の変更は「基準を増やさず通常再生と同じ 1 点に揃える」方向なので、この不採用理由は当てはまらない。
+
 ### anchor_z（z01）は disparity 系（2026-08-05 確定）
 
 **生成側の調査で確定した事実**:
@@ -307,6 +338,9 @@ Unity 側は `IsAnchorDepthLargerMeansFarther()` で `depth_policy` の有無を
 `Assets/Resources/Models/{Human,Animal,Else}/` 配下の各 prefab は、2 桁ゼロ埋めの番号プレフィックス（例: `00_Baseball`）をファイル名先頭に付ける運用。番号は `selected{Human,Animal}Index`（Inspector の生配列インデックス）や実行時 UI のインデックスと一致させるため、モデルを追加・削除したら欠番なく連番になっているか必ず確認・振り直すこと。
 
 - **Human/Animal**: `Assets/Editor/HumanIndexPrefixer.cs` / `AnimalIndexPrefixer.cs`（`Tools > VisionGraft > Prefix All {Human,Animal} Models With Index`）で振り直す。
+  - Human は 2026-08-07 に Renderpeople の無償 rigged モデル 3 体（`rp_carla_rigged_001` / `rp_claudia_rigged_002` / `rp_eric_rigged_001`）を追加して **14 体 → 17 体**（`00_Female_A_01`〜`16_Male_Eric`）。**既存の末尾に 14/15/16 として足したので `selectedHumanIndex` や `trackModelIndices`、これまでの実験ログの index はズレていない**（振り直しは不要だった）。生成は `Assets/Editor/RenderpeopleHumanPrefabBuilder.cs`（`Tools > VisionGraft > Build Renderpeople Human Prefabs`）。
+  - **Renderpeople 同梱の shader は取り込まないこと**。`RP_Rigged_MasterShader.shader` は Amplify Shader Editor 製の **Built-in RP 用 surface shader**（`CGINCLUDE` + `#pragma surface`）で、URP では動かずマテリアルがマゼンタになる。shader だけ除外して取り込み、マテリアルは URP/Lit（shader guid `933532a4fcc9baf4fa0491de14d08ed7`）で作り直した。`_BaseMap` / `_MainTex` に `*_dif.jpg`、`_BumpMap` に `*_norm.jpg` を割り当て、smoothness は 0.25 固定。**`*_gm.tga`（Renderpeople の gloss/mask）は未使用**（URP/Lit の `_MetallicGlossMap` は R=metallic / A=smoothness という前提でチャンネル構成が一致しないため、貼らずに固定値にした）。
+  - FBX 本体とテクスチャは unitypackage 内の `asset` + `asset.meta` をそのまま `Assets/RP_Character/` に配置して GUID を維持している。**FBX の meta が `animationType: 3`（Humanoid）/ `avatarSetup: 1`（CreateFromThisModel）+ 55 ボーンの `humanDescription` を持っている**ので、Avatar 設定の作業は不要（生成後に `isHuman=True isValid=True` を確認済み）。メッシュ実寸は身長 1.73〜1.86 m で既存 Human と同じ実寸スケール。
 - **Else**: `Assets/Saritasa/Models/Sport_Balls/` の 6 種（Baseball/Basketball/Football/Golf/Soccer/Tennis）を `Assets/Editor/ElseModelImporter.cs`（`Tools > VisionGraft > Import And Prefix Else Models`）で `Resources/Models/Else/00_Baseball.prefab`〜`05_Tennis.prefab` としてコピー・採番した（2026-07-17）。元の fbx/material は `Assets/Saritasa/Models/Sport_Balls/` に残したまま GUID 参照する構成（Animal の `Sources/` と同じパターン）で、`AssetDatabase.CopyAsset` を使い GUID 衝突を避けている。
   - 追加で Sketchfab 製のディーゼル機関車モデル（`2ТЭ116УД`, 作者 Leafia dev., **CC-BY-4.0**）を `06_DieselLocomotive.prefab` として取り込んだ。元の `.glb` は `Resources/Models/Else/Sources/DieselLocomotive.glb` に保管。スケルトン・アニメーションなしの静的剛体メッシュなので Else に適合。**CC-BY-4.0 のため最終成果物にクレジット表示が必要**（未対応、要フォロー）。
   - ランタイム側の選択ロジックを実装済み（2026-07-30）。`StreamingStereoVideoPlayer.Core.cs` に `selectedElseIndex`（グローバルデフォルト）と `elsePrefabs`（`Resources/Models/Else` から自動ロード）を追加し、`ResolveTrackPrefab`（`StreamingStereoVideoPlayer.Playback.partial.cs`）に `IsCategoryOther` 分岐を追加した。修正前は Animal 以外のカテゴリを無条件に Human 用ロジックへフォールバックしていたため、Else の track にも Human プレハブが割り当てられていた（既知のバグ、修正済み）。

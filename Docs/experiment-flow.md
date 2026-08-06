@@ -247,6 +247,16 @@ adb pull /sdcard/Android/data/<パッケージ名>/files/ExperimentLogs ./logs
 
 `operations.csv` に `change_model` として **prefab 名まで**記録しているので、分析時に統制できる。統制が難しいと判断した場合は、`StreamingStereoVideoPlayer.enableRuntimeControls` を false にするか、モデルピッカーのボタンを Display ボタンと同様に非生成にする。
 
+**表示サイズの交絡は 2026-08-07 に解消した**。以前はモデルを差し替えた瞬間のフレームの bbox で大きさが決まっていたため、変更タイミングが違う参加者どうしで同じ track が別のサイズに見えていた。現在はスケールの基準を shot 先頭フレームに固定してあるので、いつ変えても同じ大きさになる（[bundle-placement.md](bundle-placement.md) の「スケールの基準フレームは shot 先頭に固定する」）。
+
+### モデル変更の対象選択
+
+Change Model パネルが操作する track は `TryGetRuntimeModelPickerTarget` が決める。優先順位は「直前に選んだ track（`runtimeModelPickerTrackId`）→ `displayTrackIds[0]` → Settings の Track `<` `>` → 直近の自動選択 → 現フレーム最初の person/animal」。
+
+被験者が対象を選ぶ手段は**動画の中の人／動物をコントローラで指してトリガー**（`TrySelectDisplayTrackFromPick`、anchor から 80px 以内の最近傍）。2026-08-07 まではこの入力がマウス専用（`Mouse.current`）で、**Quest では一度も発火せず `displayTrackIds[0]` に固定されていた**。現在はコントローラの aim pose からレイを作って同じ経路に流している。
+
+パネル（Settings / Change Model / bundle picker）を開いている間は、UI 操作のトリガーで背後のスクリーンを拾わないよう pick を止める。選択は `[Pick] track=... pixel=...` としてログに出るので、被験者がどの対象を選んだかは操作ログと突き合わせて確認できる。
+
 ### 試行の終了操作
 
 現状は**被験者自身が「視聴を終了」を押す**。Quest 単体では実験者に入力手段がないための設計。パネルは映像を隠さないよう視線の下（既定 -0.5m）に置いてあり、位置は `ExperimentController.trialPanelVerticalOffsetMeters` で調整できる。

@@ -383,20 +383,37 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         bool lockScale = IsCategoryPerson(obj.categoryId) || isAnimal;
         bool hasFocalLengths = TryGetFocalLengths(out float fxScale, out float fyScale);
 
-        // スケールは現在フレームの bbox から決め、track 初回でロックする（GetOrLockModelLocalScale）。
+        // スケールは shot 先頭フレームの bbox から決め、track ごとにロックする
+        // （GetOrLockModelLocalScale）。ロックが外れる契機は shot 境界とモデル変更の 2 つで、
+        // 基準を先頭フレームに固定しておかないと「同じ shot の同じ track なのに、モデルを
+        // 変えたタイミングで大きさが変わる」ことになる（ResolveShotStartScaleReference）。
+        //
         // 「立位に最も近いフレームを基準にする」案は実測で悪化した（2026-08-07）。
         // アスペクト比が最大のフレームは人物が横向きで細く写っているだけのことがあり、
         // bbox 高さで絞り直しても骨格スパンが bbox の 112%（初回基準では 86%）と過大になった。
-        // 詳細は Docs/bundle-placement.md の「スケール基準フレームの選択（不採用）」。
+        // あちらは shot 内から都合のよいフレームを探す話で、ここは通常再生と同じ 1 点に
+        // 揃える話なので目的が違う。
+        float scaleTargetHeightMeters = targetHeightMeters;
+        float scaleBBoxW = bboxWAdjusted;
+        float scaleBBoxH = bboxHAdjusted;
+        float scaleAnchorZ = obj.anchorZ;
+        if (lockScale && TryResolveShotStartScaleReference(obj.trackId, out MetaObj shotStartObj))
+        {
+            scaleBBoxW = shotStartObj.bboxW;
+            scaleBBoxH = shotStartObj.bboxH;
+            scaleAnchorZ = shotStartObj.anchorZ;
+            scaleTargetHeightMeters = ComputeTargetHeightMeters(scaleBBoxH, scaleAnchorZ);
+        }
+
         Vector3 desiredScale = TrackModelPlacement.ResolveDesiredLocalScale(new TrackModelPlacement.ScaleRequest(
             baseScale,
             baseBounds,
             userScale,
             modelHeight,
-            targetHeightMeters,
-            bboxWAdjusted,
-            bboxHAdjusted,
-            obj.anchorZ,
+            scaleTargetHeightMeters,
+            scaleBBoxW,
+            scaleBBoxH,
+            scaleAnchorZ,
             fxScale,
             fyScale,
             manifest != null ? manifest.eye_w : 0,
@@ -462,6 +479,60 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         lockedModelLocalScaleByTrack[trackId] = desiredLocalScale;
         return desiredLocalScale;
+    }
+
+
+    // ロックが外れている track について、いま表示している shot の先頭フレームの bbox を返す。
+    // ロック済みなら desiredScale は捨てられるので読みに行かない（毎フレーム meta.bin を
+    // 引かないための早期 return でもある）。
+    //
+    // shot 途中から登場する track は先頭フレームに存在しないので false を返し、呼び出し元は
+    // 従来どおり現在フレームの bbox でロックする。bbox が潰れているフレーム（画面端で切れて
+    // いる等）を基準にしないよう、幅・高さが 0 のものも採用しない。
+    private readonly List<MetaObj> shotStartFrameObjects = new List<MetaObj>();
+
+    private bool TryResolveShotStartScaleReference(uint trackId, out MetaObj result)
+    {
+        result = default;
+        if (lockedModelLocalScaleByTrack.ContainsKey(trackId))
+        {
+            return false;
+        }
+
+        if (lastAppliedShotIndex < 0)
+        {
+            return false;
+        }
+
+        int startFrame = shotBoundaries.GetStartFrame(lastAppliedShotIndex);
+        if (startFrame == GetCurrentPlaybackFrame())
+        {
+            return false;
+        }
+
+        if (!TryReadFrameObjects(startFrame, shotStartFrameObjects))
+        {
+            return false;
+        }
+
+        for (int i = 0; i < shotStartFrameObjects.Count; i++)
+        {
+            MetaObj candidate = shotStartFrameObjects[i];
+            if (candidate.trackId != trackId)
+            {
+                continue;
+            }
+
+            if (candidate.bboxW <= 0 || candidate.bboxH <= 0)
+            {
+                return false;
+            }
+
+            result = candidate;
+            return true;
+        }
+
+        return false;
     }
 
 

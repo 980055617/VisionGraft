@@ -37,6 +37,21 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             : 0f;
     }
 
+    // meta.bin の anchor_z がどちら向きかを manifest から判定する。
+    //
+    // 2026-08-06 の生成側修正で anchor_z は larger=farther に統一され、その目印として
+    // depth_policy ブロックが manifest に入るようになった。それ以前の bundle
+    // (bundle.svb / bundle_old.svb / bundle_train.svb) は depth_policy を持たず、
+    // anchor_z は larger=nearer のままなので、両方を同じ runtime で再生できるよう
+    // ここで分岐する。値そのものから向きを推定しない（bundle によっては深度が
+    // 中央付近に固まっていて推定が成立しない）。
+    private bool IsAnchorDepthLargerMeansFarther()
+    {
+        return manifest != null &&
+               manifest.depth_policy != null &&
+               !string.IsNullOrEmpty(manifest.depth_policy.convention);
+    }
+
     private float DecodeAnchorDepthMetersFromBundle(float zRaw01)
     {
         if (float.IsNaN(zRaw01) || float.IsInfinity(zRaw01))
@@ -45,9 +60,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         float z01 = Mathf.Clamp01(zRaw01);
+        // popout は「スクリーンからどれだけ手前に出すか」なので近さが要る。
+        // larger=farther の bundle で z01 をそのまま使うと前後関係が反転し、
+        // 例えば bundle_human.svb ではボールが人物の奥に回り込む。
+        float nearness = IsAnchorDepthLargerMeansFarther() ? (1f - z01) : z01;
         float screenDist = Mathf.Max(0.001f, screenDistanceMeters);
         float eps = Mathf.Max(0f, EpsilonMeters);
-        float popout = Mathf.Max(0f, PopoutRangeMeters) * z01;
+        float popout = Mathf.Max(0f, PopoutRangeMeters) * nearness;
 
         float zPlacement = screenDist - eps - popout;
         zPlacement = Mathf.Max(zPlacement, Mathf.Max(0.001f, MinDistanceFromHeadMeters));

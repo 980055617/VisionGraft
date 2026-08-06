@@ -31,7 +31,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public ushort bboxH;
         public ushort anchorU;
         public ushort anchorV;
-        public float anchorZ;  // camera-space depth in meters, larger = farther (decoded via DecodeAnchorDepthMetersFromBundle from the bundle's 0=far/1=near normalized value)
+        // camera-space depth in meters, larger = farther。bundle 世代ごとの向きの違いは
+        // DecodeAnchorDepthMetersFromBundle が吸収済みなので、ここは常に larger = farther。
+        public float anchorZ;
+        // bundle の正規化深度そのもの。向きは bundle 世代に依存する（depth_policy あり =
+        // larger:farther / なし = larger:nearer）ため、比較に使うときは
+        // IsAnchorDepthLargerMeansFarther() で向きを確認すること。
+        // 絶対距離としては当てにならないが、同一 depth map 由来の track 同士なら
+        // 「どちらが手前か」の比較に使える。
+        public float anchorZ01;
         public bool hasSkeleton;
         public ushort skeletonKpCount;
         public Vector3[] jointsCam;
@@ -310,10 +318,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                             StoreSmalBlockFromBin(pr, frameIndex, trackId);
                         }
 
-                        // anchorZq * quant_pos_scale decodes to a normalized depth where 0=far, 1=near.
-                        // DecodeAnchorDepthMetersFromBundle converts that into an actual camera-space
-                        // distance (larger = farther) relative to the configured screen/popout range.
-                        float anchorZ = DecodeAnchorDepthMetersFromBundle(anchorZq * GetQuantPosScale());
+                        // anchorZq * quant_pos_scale で bundle の正規化深度に戻る。向きは bundle
+                        // 世代によって異なり (depth_policy あり = larger:farther / なし = larger:nearer)、
+                        // DecodeAnchorDepthMetersFromBundle が manifest を見て吸収したうえで
+                        // camera-space の距離 (larger = farther) に変換する。
+                        float anchorZ01 = anchorZq * GetQuantPosScale();
+                        float anchorZ = DecodeAnchorDepthMetersFromBundle(anchorZ01);
                         MetaObj obj = new MetaObj
                         {
                             trackId = trackId,
@@ -325,6 +335,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                             anchorU = anchorU,
                             anchorV = anchorV,
                             anchorZ = anchorZ,
+                            anchorZ01 = anchorZ01,
                             hasSkeleton = hasSkeleton,
                             skeletonKpCount = kpCount,
                             jointsCam = jointsCam,

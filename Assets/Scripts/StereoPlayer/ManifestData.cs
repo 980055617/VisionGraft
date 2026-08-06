@@ -22,4 +22,25 @@ public sealed class ManifestData
     public float cy;
     public float fovy_deg;
     public float fovy;
+    // 生成側が深度の規約を明示するために 2026-08-06 に追加したブロック。
+    // このキーを持つ bundle は meta.bin の anchor_z が larger=farther に統一されている。
+    // 持たない旧 bundle は larger=nearer なので、有無で向きを判定する
+    // （IsAnchorDepthLargerMeansFarther）。
+    public DepthPolicyData depth_policy;
+}
+
+[System.Serializable]
+public sealed class DepthPolicyData
+{
+    // convention / near_far_direction は depth_npz そのものの規約（0=far, 1=near）を指す。
+    // meta.bin の anchor_z は生成側で反転済みの別量なので、この向きを anchor_z に
+    // 適用してはいけない（manifest の unrelated_to_anchor_z に明記されている）。
+    public string convention;
+    public string near_far_direction;
+    public string normalization;
+    // DepthCrafter が正規化前に出した min/max。DepthCrafter は affine-invariant
+    // (disp_raw ≈ a/Z + b, a,b は clip ごとに未知) なので、この 2 値だけでは
+    // 絶対距離に較正できない。古い depth_npz から作られた bundle では 0 のまま。
+    public float disp_min;
+    public float disp_max;
 }

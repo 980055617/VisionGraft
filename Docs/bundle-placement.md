@@ -31,7 +31,7 @@
 ### 配置に使う実データ
 
 - **位置**: `anchor_u / anchor_v`（画面 UV）+ `anchor_z`（深度）→ `AnchorUvZToWorldPinhole` → world 座標
-  - 深度の符号: bundle 側は **0=far / 1=near** の正規化値。`DecodeAnchorDepthMetersFromBundle` で変換（2026-06-19 に符号反転バグ修正済み）
+  - 深度の符号: **bundle 世代によって向きが逆**。`manifest.json` に `depth_policy` があれば `anchor_z` は `larger = farther`、無ければ `larger = nearer`。`DecodeAnchorDepthMetersFromBundle` が `IsAnchorDepthLargerMeansFarther()` で判定して吸収する（2026-08-06、後述の「anchor_z の向きは bundle 世代で異なる」を参照）
 - **向き・姿勢**: SMPL/SMAL block の 3×3 回転行列群（row-major、9float ずつ）
 - **スケール**: `bboxWorldH` 基準の uniform scale（`TrackModelPlacement.ResolveDesiredLocalScale`）。Human/Animal は track ごとに初回フレームでロックし、カット（shot）境界で解除する（後述）。モデル間の体型差は吸収しない（既知の制限、[DogMetaBoneMapping.md](DogMetaBoneMapping.md) 参照）
 - **カット**: `manifest.json` の `shots`（`[[start, end), ...]`）。同じ trackId でも shot をまたげば見かけサイズが正当に変わるため、境界でスケールと平滑化をリセットする（後述）
@@ -244,6 +244,42 @@ bundle ごとの `shots`（2026-08-02 時点）:
 | 境界の \|Δz01\| 比 | 1.05 倍 | 0.78 倍（不連続なし） |
 
 なお同じ再生成で `shots` / `shot_boundary_policy` も追加されているが、こちらは Unity 側で対応済み（後述の「カット（shot 境界）でスケールと平滑化をリセットする」を参照）。`bundle_human.svb` は 1 ショットなので、今回の深度調査の結果には影響しない。
+
+### anchor_z の向きは bundle 世代で異なる（2026-08-06 確定・実装済み）
+
+生成側が深度規約を統一し、`manifest.json` に `depth_policy` ブロックを追加した。この結果 **`anchor_z` の向きが bundle 世代で逆になった**。
+
+| bundle | `depth_policy` | `anchor_z` の向き |
+|---|---|---|
+| `bundle.svb` / `bundle_old.svb` / `bundle_train.svb`（〜8/5） | なし | `larger = nearer` |
+| `bundle_human.svb` / `bundle_animal.svb`（8/6 以降） | あり | **`larger = farther`** |
+
+Unity 側は `IsAnchorDepthLargerMeansFarther()` で `depth_policy` の有無を見て分岐する（`StreamingStereoVideoPlayer.Manifest.partial.cs`）。**値そのものから向きを推定してはいけない** — 深度が中央付近に固まっている bundle では推定が成立しない。
+
+修正の効果（`bundle_human.svb`、共存 2156 フレーム）:
+
+| | ボールが人より手前 |
+|---|---|
+| 修正前（`larger=nearer` 前提） | 16.4% |
+| 修正後 | **83.0%** |
+
+#### 符号の判定方法（NG パターンを含む）
+
+この符号の特定には遠回りをした。再発防止のため手法ごとの可否を残す。
+
+| 手法 | 可否 | 理由 |
+|---|---|---|
+| `rawAnchor.z` と `depthStats.median` の照合 | **経路による** | `depth_sample` / `bbox_center_depth` では有効。**`animal_camera_root` では `median` が `anchor_z` のコピーなので同語反復になり無効** |
+| `z` と bbox サイズの相関（無条件） | **NG** | `edgeTouch`（bbox が画面端で切れる）と `held_previous_high_conf`（z 固定のまま bbox だけ動く）が混ざると符号がショットごとにバラつく。`bundle_animal.svb` は edgeTouch 80.5% / hold 22.6% |
+| `z` と bbox サイズの相関（`edgeTouch` と `hold` を除外・ショット内） | **有効** | 符号既知の `bundle_human.svb` で較正できる（person -0.217 / other -0.428 = `larger=farther`）。同条件で animal は修正前 +0.628 → 修正後 -0.591 と符号だけ反転し、絶対値はほぼ保存された |
+| `z` と SMPL `transl.z` の相関 | **NG** | `transl.z` は `pred_cam_t` 系で bbox サイズから決まる量。深度の独立検証にならない（循環参照） |
+| `depth.npz` を anchor の `(u,v)` で直接サンプルして照合 | **決定的** | 生成側でのみ実行可能。これで「未反転」が確定した |
+
+**教訓**: 「bundle の値 A と sidecar の値 B が一致する」は**搬送の証明であって規約の証明ではない**。反転漏れ・二重反転のどちらでも一致は起こる。規約を確かめるには、その値が作られる**前段のデータ**（`depth.npz`）まで遡る必要がある。
+
+#### 未解決のまま残ること
+
+符号は直ったが、**人とボールの配置深度差は平均 1.9 cm のまま**（`PopoutRangeMeters = 0.35` に 0..1 を線形で押し込むため）。`disp_min` / `disp_max` は manifest に載るようになったが、DepthCrafter は affine-invariant（`disp_raw ≈ a/Z + b`、`a`,`b` は clip ごとに未知）なので、この 2 値だけでは絶対距離に較正できない。
 
 ### 配置の検算結果（2026-08-06 実測）
 

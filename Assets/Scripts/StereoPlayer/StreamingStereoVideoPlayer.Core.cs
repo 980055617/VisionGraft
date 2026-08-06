@@ -65,6 +65,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool enableJointSmoothing = true;
     [Range(0f, 1f)] public float jointSmoothingAlpha = 0.35f;
 
+    // SMPL FK のあとに keypoint(jointsWorld) で四肢の向きを上書きするか（AimAt）。
+    //
+    // AimAt は 2026-06-13 に「FK 座標フレーム変換の限界」への対処として入れたもので、その実体は
+    // body_pose の基底変換が抜けていたこと（ConvertSmplBodyPoseToUnityBasis 参照）。変換漏れを
+    // 修正する前は素の FK が keypoint と平均 78.2° ずれており、AimAt は補助ではなく
+    // **四肢の姿勢を作っている主役**だった。off にすると腕が破綻するのはこのため。
+    //
+    // 2026-08-07 に基底変換を入れて素の FK は平均 8.5° まで一致するようになったので、
+    // AimAt は残差を詰める補正の位置づけに変わる。false で純 FK と比較できる
+    // （手の向きも TryApplyHandFkAfterAimAt ではなく FK ループ内で決まる）。
+    //
+    // 残差の性質: keypoint と body_pose は独立した推定で、左肘では 22〜30° 食い違う。
+    // AimAt を有効にすると「腕の付け根は SMPL / 腕の向きは keypoint」という混在になり、
+    // かつ AimAt は向きだけで位置を合わせないので骨長差が手先に出る
+    // （Docs/smpl-retargeting.md 調査ログ 2026-08-07）。
+    public bool enableKeypointAimAt = true;
+
 
     [Header("Other Proxy")]
     public bool showOtherProxyBoxes = true;

@@ -60,6 +60,81 @@ public class HumanSmplRootPlacementMathTests
         Assert.That(Quaternion.Angle(expected, target), Is.LessThan(0.001f));
     }
 
+    // body_pose を bindRotWorld の左から掛けるので、T-pose からの world 回転はリグの軸規約に
+    // 依らず同じになる。旧公式（rootWorld * bindWorld * bodyFk）はこれを満たさず、
+    // bindRotWorld が identity から離れたリグ（Renderpeople は 90〜120°）で姿勢が破綻した。
+    // 詳細は Docs/smpl-retargeting.md 調査ログ 2026-08-07。
+    [Test]
+    public void HumanSmplTargetWorldAppliesTheSameWorldRotationRegardlessOfRigBindAxes()
+    {
+        Quaternion rootWorld = Quaternion.Euler(0f, 30f, 0f);
+        Quaternion bodyFk = Quaternion.Euler(0f, 0f, 40f);
+
+        // identity 近傍のリグ（npc_casual_set の胴に相当）と、軸規約が全く違うリグ（Renderpeople 相当）
+        Quaternion bindIdentityLike = Quaternion.identity;
+        Quaternion bindRotatedAxes = Quaternion.Euler(90f, 0f, 90f);
+
+        Quaternion targetA = StreamingStereoVideoPlayer.ResolveHumanSmplTargetWorldRotation(
+            rootWorld, bodyFk, bindIdentityLike);
+        Quaternion targetB = StreamingStereoVideoPlayer.ResolveHumanSmplTargetWorldRotation(
+            rootWorld, bodyFk, bindRotatedAxes);
+
+        // 各リグの T-pose 姿勢からの差分（world 空間）が一致すること
+        Quaternion deltaA = targetA * Quaternion.Inverse(rootWorld * bindIdentityLike);
+        Quaternion deltaB = targetB * Quaternion.Inverse(rootWorld * bindRotatedAxes);
+
+        Assert.That(Quaternion.Angle(deltaA, deltaB), Is.LessThan(0.001f));
+    }
+
+    // body_pose は meta.bin では bundle の座標系のまま入っている（global_orient と違い row1 反転を
+    // 通っていない）。基底変換 S R S^-1（S = diag(1,-1,-1)）で Unity 系へ揃える。
+    // 2026-08-07 実測: 変換なしだと keypoint と平均 78.2° ずれ、変換ありで 8.5° に一致する。
+    [Test]
+    public void SmplBodyPoseBasisConversionNegatesYAndZ()
+    {
+        Quaternion raw = new Quaternion(0.1f, 0.2f, 0.3f, 0.927f);
+
+        Quaternion converted = StreamingStereoVideoPlayer.ConvertSmplBodyPoseToUnityBasis(raw);
+
+        Assert.That(converted.x, Is.EqualTo(raw.x).Within(0.0001f));
+        Assert.That(converted.y, Is.EqualTo(-raw.y).Within(0.0001f));
+        Assert.That(converted.z, Is.EqualTo(-raw.z).Within(0.0001f));
+        Assert.That(converted.w, Is.EqualTo(raw.w).Within(0.0001f));
+    }
+
+    // T-pose（body_pose = identity）が変換後も identity でなければ、T-pose 検証そのものが崩れる。
+    [Test]
+    public void SmplBodyPoseBasisConversionKeepsIdentityUnchanged()
+    {
+        Quaternion converted = StreamingStereoVideoPlayer.ConvertSmplBodyPoseToUnityBasis(Quaternion.identity);
+
+        Assert.That(Quaternion.Angle(Quaternion.identity, converted), Is.LessThan(0.001f));
+    }
+
+    // 基底変換なので二回かけると元に戻る（S^2 = I）。
+    [Test]
+    public void SmplBodyPoseBasisConversionIsItsOwnInverse()
+    {
+        Quaternion raw = new Quaternion(0.1f, 0.2f, 0.3f, 0.927f);
+
+        Quaternion twice = StreamingStereoVideoPlayer.ConvertSmplBodyPoseToUnityBasis(
+            StreamingStereoVideoPlayer.ConvertSmplBodyPoseToUnityBasis(raw));
+
+        Assert.That(Quaternion.Angle(raw, twice), Is.LessThan(0.001f));
+    }
+
+    [Test]
+    public void HumanSmplTargetWorldReturnsBindPoseWhenBodyPoseIsIdentity()
+    {
+        Quaternion rootWorld = Quaternion.Euler(0f, 30f, 0f);
+        Quaternion bindRotatedAxes = Quaternion.Euler(90f, 0f, 90f);
+
+        Quaternion target = StreamingStereoVideoPlayer.ResolveHumanSmplTargetWorldRotation(
+            rootWorld, Quaternion.identity, bindRotatedAxes);
+
+        Assert.That(Quaternion.Angle(rootWorld * bindRotatedAxes, target), Is.LessThan(0.001f));
+    }
+
     [Test]
     public void HumanSmplLocalRotationRetargetPreservesUnityReferencePose()
     {

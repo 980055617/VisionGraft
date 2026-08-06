@@ -58,14 +58,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             AlignHumanoidHipsToSmplRoot(instance.transform, cache, GetSmoothedSmplRootWorld(cache, pose.rootWorld, pose.camOrigin, cameraForward));
 
             TryApplyHumanSmplRotationOverlay(cache, smplPose);
-            // FK の body_pose 座標フレームと Unity bone フレームの不一致を
-            // SMPL joint 世界座標（2点間ベクトル）で各 bone 方向を直接整合することで解消する。
-            TryApplySmplArmsFromJointPositions(cache, pose.jointsWorld, pose.jointVis);
-            TryApplySmplLegsFromJointPositions(cache, pose.jointsWorld, pose.jointVis);
-            // 手の FK は AimAt で前腕方向が統一された後に適用する。
-            // FK ループ内では親の tw[] がキャラクター固有のため、AimAt後の bone.rotation を親とすることで
-            // 全キャラクター間で手の向きを一致させる。
-            TryApplyHandFkAfterAimAt(cache, pose.jointsWorld, pose.jointVis);
+            if (enableKeypointAimAt)
+            {
+                // keypoint(jointsWorld) の 2 点間ベクトルで各 bone の向きを直接整合する。
+                // 向きだけを合わせ、位置は合わせない点に注意（付け根のずれはそのまま手先に出る）。
+                TryApplySmplArmsFromJointPositions(cache, pose.jointsWorld, pose.jointVis);
+                TryApplySmplLegsFromJointPositions(cache, pose.jointsWorld, pose.jointVis);
+                // 手の FK は AimAt で前腕方向が統一された後に適用する。
+                // FK ループ内では親の bodyFk[] がキャラクター固有のため、AimAt 後の bone.rotation を
+                // 親とすることで全キャラクター間で手の向きを一致させる。
+                TryApplyHandFkAfterAimAt(cache, pose.jointsWorld, pose.jointVis);
+            }
+            // enableKeypointAimAt = false のときは手も FK ループ内で適用済み（純 FK）。
             // 骨盤基準配置後にキャラのモデル脚長と SMPL 脚長の差を Y オフセットで吸収する。
             // XZ は骨盤 anchor のまま、Y だけ SMPL ankle 基準に揃える。
             AlignHumanoidFeetYToSmplAnkles(instance.transform, cache, pose.jointsWorld, pose.jointVis);

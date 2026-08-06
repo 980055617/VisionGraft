@@ -237,38 +237,42 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     Debug.Log($"[SMPL-FK-DBG] bindHipsWorld={dbgHipsWorld.eulerAngles}");
             }
 
-            // 正しい標準FK公式（2026-06-13 修正）:
-            // bone.rotation[j] = parentTargetWorld[j] * bindRotLocal[j] * bodyPose[j]
+            // FK 公式（2026-08-07 修正・リグ非依存）:
+            // bodyFk[j] = bodyFk[parent] * bodyPose[j]                     （body_pose の world 累積）
+            // bone.rotation[j] = worldGlobalOrient * bodyFk[j] * bindRotWorld[j]
             //
-            // bindRotLocal[j] = T-pose での joint j の親相対ローカル回転。
-            // bodyPose[j] は親フレームで定義されるので、bindRotLocal を先に適用して
-            // T-pose フレームを確立してから bodyPose を重ねるのが正しい順序。
+            // 右辺は公開ヘルパー ResolveHumanSmplTargetWorldRotation そのもので、Hips に使っている
+            // 式と同じ形（Hips は bodyFk = identity のケース）。
+            //
+            // SMPL の rest 姿勢では全 joint のフレームが world 軸と平行なので、bodyPose[j] は
+            // world 軸で表現された回転として親から順に world 空間で積める。モデル側の bind 回転は
+            // 最後に一度だけ右から掛ける。
             //
             // T-pose 検証（bodyPose=identity）:
-            //   tw[j] = parentTW * bindRotLocal[j] * identity = parentTW * bindRotLocal[j]
-            //   → 展開すると worldGlobalOrient * bindRotWorld[j]  ✓
+            //   bodyFk[j] = identity → bone.rotation = worldGlobalOrient * bindRotWorld[j] ✓
             //
-            // 旧公式 (globalOrient * fk_body * bindRotWorld) との違い:
-            //   旧: ... * bodyPose * bindRotWorld  （body_pose → bindRot の順 → 右腕 180°Z で約77°ズレ）
-            //   新: ... * bindRotLocal * bodyPose  （bindRot → body_pose の順 → 全ジョイント正しい）
+            // 旧公式 (parentTW * bindRotLocal[j] * bodyPose[j]) との違い:
+            //   旧は展開すると worldGlobalOrient * bindRotWorld[j] * bodyPose[j] で、bodyPose を
+            //   ボーンのローカル軸で解釈していた。これは bindRotWorld[j] ≈ identity のリグでしか
+            //   成立しない。npc_casual_set は胴・肩・腕が 0〜20° と identity 近傍のため偶然
+            //   成立していたが、Renderpeople（14-16）は全ボーンが 90〜120° 乖離しており破綻する
+            //   （実測値と検証方法は Docs/smpl-retargeting.md 調査ログ 2026-08-07）。
             //
-            // NG (旧 cumulative local): parentTargetWorld * bindRotLocal * smplLocal
-            //   ApplyLocalRotation を使うと UpperChest BONE MISSING で腕が誤方向
-            //   → ApplyWorldRotation + tw[] 追跡で解決済み
+            // BONE MISSING に特別扱いが要らない理由:
+            //   bodyFk[] は bindRot を含まないので、Unity ボーンが無い joint は積むだけでよい。
+            //   旧公式では bindRotLocal が「Unity 親」相対だったため、途中の joint が欠けると
+            //   フレームがずれ、UpperChest の特殊処理が必要だった。
             Quaternion worldGlobalOrient = fk[0];
-            // tw[] = 各 joint のターゲット world rotation（fk 配列を再利用）
-            Quaternion[] tw = fk;
-            if (cache.bindRotWorld.TryGetValue(HumanBodyBones.Hips, out Quaternion bindHipsW) && IsFinite(bindHipsW))
-                tw[0] = worldGlobalOrient * bindHipsW;
-            else
-                tw[0] = worldGlobalOrient;
+            // bodyFk[] = body_pose だけを world 空間で累積したもの（globalOrient も bindRot も含まない）。
+            // fk 配列を再利用するので、worldGlobalOrient を先に控えてから identity で初期化する。
+            Quaternion[] bodyFk = fk;
+            bodyFk[0] = Quaternion.identity;
 
 
             for (int i = 0; i < SmplJointTopologicalOrder.Length; i++)
             {
                 int joint = SmplJointTopologicalOrder[i];
                 int parentJoint = SmplJointParentArray[joint];
-                Quaternion parentTW = tw[parentJoint];
 
                 Quaternion rawSmplLocal = Quaternion.identity;
                 TryGetHumanSmplLocalRotation(pose, joint, out rawSmplLocal);
@@ -290,35 +294,37 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     ? Quaternion.Slerp(Quaternion.identity, smplLocal, SpineBodyPoseScale)
                     : smplLocal;
 
-                // HumanBone マッピングなし → bindLoc=identity で tw 積算してスキップ
+                // world 累積は Unity ボーンの有無と無関係に常に積む
+                bodyFk[joint] = bodyFk[parentJoint] * fkLocal;
+
+                // HumanBone マッピングなし → bodyFk は積算済みなのでスキップしてよい
                 if (!SmplJointToHumanBone.TryGetValue(joint, out HumanBodyBones boneId))
                 {
-                    tw[joint] = parentTW * fkLocal;
                     continue;
                 }
 
-                // bindRotLocal を取得（マッピングあり・キャッシュなしは identity）
-                if (!cache.bindRotLocal.TryGetValue(boneId, out Quaternion bindLoc) || !IsFinite(bindLoc))
-                    bindLoc = Quaternion.identity;
-
-                // 標準FK: tw[j] = parentTW * bindRotLocal[j] * bodyPose[j]
-                tw[joint] = parentTW * bindLoc * fkLocal;
-
-                // BONE MISSING → bone 設定はスキップするが tw chain は積算済み
-                // （UpperChest 等の tw は子 joint（肩・腕）の parentTW として使われる）
+                // BONE MISSING（UpperChest 等）→ bodyFk は子 joint（肩・腕）が使うので積算済み
                 if (!cache.bones.TryGetValue(boneId, out Transform bone) || bone == null)
                 {
-                    if (debugLog) Debug.Log($"[SMPL-FK-DBG] joint={joint}({boneId}) BONE MISSING smplLocal={smplLocal.eulerAngles} tw={tw[joint].eulerAngles}");
+                    if (debugLog) Debug.Log($"[SMPL-FK-DBG] joint={joint}({boneId}) BONE MISSING smplLocal={smplLocal.eulerAngles} bodyFk={bodyFk[joint].eulerAngles}");
                     continue;
                 }
 
+                // AimAt 有効時は手を TryApplyHandFkAfterAimAt が world rotation で上書きするので
+                // ここでは触らない。AimAt を切っているときは手も FK で決める（純 FK）。
                 if (IsTerminalHumanSmplHandBone(boneId) &&
+                    enableKeypointAimAt &&
                     !ShouldApplyHumanSmplTerminalHandRotationInSmplOnlyPose())
                 {
                     continue;
                 }
 
-                Quaternion targetWorld = tw[joint];
+                // bindRotWorld が無ければ姿勢を決められないのでこの bone は触らない
+                // （bodyFk は積算済みなので子 joint には影響しない）
+                if (!cache.bindRotWorld.TryGetValue(boneId, out Quaternion bindW) || !IsFinite(bindW))
+                    continue;
+
+                Quaternion targetWorld = ResolveHumanSmplTargetWorldRotation(worldGlobalOrient, bodyFk[joint], bindW);
 
                 if (!IsFinite(targetWorld))
                     continue;
@@ -326,13 +332,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 bool logThisJoint = debugLog && (joint == 3 || joint == 6 || joint == 13 || joint == 14 || joint == 16 || joint == 17 || joint == 18 || joint == 19 || joint == 20);
                 if (logThisJoint)
                 {
-                    if (cache.bindRotWorld.TryGetValue(boneId, out Quaternion dbgBindW))
-                    {
-                        Vector3 tposeFwd = (worldGlobalOrient * dbgBindW) * Vector3.forward;
-                        Debug.Log($"[SMPL-FK-DBG] joint={joint}({boneId}) smplLocal={smplLocal.eulerAngles:F1} fkLocal={fkLocal.eulerAngles:F1} " +
-                            $"bindLoc={bindLoc.eulerAngles:F1} tw={tw[joint].eulerAngles:F1}");
-                        Debug.Log($"[SMPL-FK-DBG]   tpose.fwd={tposeFwd:F2}");
-                    }
+                    Vector3 tposeFwd = (worldGlobalOrient * bindW) * Vector3.forward;
+                    Debug.Log($"[SMPL-FK-DBG] joint={joint}({boneId}) smplLocal={smplLocal.eulerAngles:F1} fkLocal={fkLocal.eulerAngles:F1} " +
+                        $"bindW={bindW.eulerAngles:F1} bodyFk={bodyFk[joint].eulerAngles:F1} tw={targetWorld.eulerAngles:F1}");
+                    Debug.Log($"[SMPL-FK-DBG]   tpose.fwd={tposeFwd:F2}");
                 }
 
                 TransformWriter.ApplyWorldRotation(bone, targetWorld);
@@ -737,6 +740,31 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return referenceUnityLocal * (Quaternion.Inverse(referenceSmplLocal) * currentSmplLocal);
     }
 
+    // body_pose を bundle の座標系から Unity の座標系へ揃える。
+    //
+    // meta.bin では global_orient だけが flipCameraY（row1 反転）を通っており、body_pose は
+    // 生のまま入っている。一方 keypoint は DecodeJointCamFromBundle が無変換で返す
+    // （= bundle の joint は既に Unity と同じ Y-up）。つまり body_pose だけ基底が揃っていない。
+    //
+    // 必要なのは基底変換の共役 S * R * S^-1（S = diag(1,-1,-1)、右手 Y-down → 左手 Y-up）。
+    // クォータニオンでは (x, y, z, w) → (x, -y, -z, w)。
+    //
+    // 2026-08-07 実測: この変換なしだと SMPL FK の四肢の向きは keypoint と平均 78.2° ずれており
+    // （腕は 97〜132°、ランダムな向きの期待値 90° と同等 = 姿勢として成立していない）、
+    // 変換を入れると平均 8.5°（全セグメント 3〜13°）まで一致する。
+    // 座標系変換の候補 16 通りを総当たりして、これが唯一の最良解だった。
+    //
+    // 2026-06-13 の「右腕が約 77° ズレる」も、Q_Y180 補正（x,z 反転 = S=diag(-1,1,-1) の共役）を
+    // 右腕だけに当てていたのも、この変換漏れの部分的な代償だった。
+    public static Quaternion ConvertSmplBodyPoseToUnityBasis(Quaternion bundleLocalRotation)
+    {
+        return new Quaternion(
+            bundleLocalRotation.x,
+            -bundleLocalRotation.y,
+            -bundleLocalRotation.z,
+            bundleLocalRotation.w);
+    }
+
     public static Quaternion ResolveHumanSmplFkRootWorldRotation(
         Quaternion cameraToWorld,
         Quaternion cameraSpaceGlobalOrient)
@@ -829,32 +857,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         Vector3 up = screenUp.sqrMagnitude > 0.000001f ? screenUp.normalized : Vector3.up;
         return currentPosition + up * Vector3.Dot(referencePosition - currentPosition, up);
-    }
-
-    // Returns the body-relative FK of the nearest SMPL ancestor that has a real Unity bone.
-    // When a SMPL parent joint (e.g. UpperChest) is absent from the rig, bindRotLocal[j] is
-    // in the actual Unity parent's frame (the next present ancestor), so the correctedLocal
-    // formula must use that ancestor's FK rather than the missing joint's FK.
-    private static Quaternion FindEffectiveParentFk(HumanoidRigCache cache, int parentJoint, Quaternion[] fk)
-    {
-        int p = parentJoint;
-        while (p >= 0)
-        {
-            bool hasBone;
-            if (p == 0)
-            {
-                hasBone = cache.bones.ContainsKey(HumanBodyBones.Hips);
-            }
-            else
-            {
-                hasBone = SmplJointToHumanBone.TryGetValue(p, out HumanBodyBones pBoneId) &&
-                          cache.bones.ContainsKey(pBoneId);
-            }
-            if (hasBone)
-                return fk[p];
-            p = SmplJointParentArray[p];
-        }
-        return Quaternion.identity;
     }
 
     private static bool TryGetSmplJointForHumanBone(HumanBodyBones boneId, out int smplJoint)
@@ -963,11 +965,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // rotations[0] = global_orient: flipCameraY=true (D*R)
             pose.hasGlobalOrient = TryReadRotationMatrixFromBin(br, flipCameraY: true, out pose.globalOrient);
 
-            // rotations[1..23] = body_pose: flipCameraY=false
+            // rotations[1..23] = body_pose: flipCameraY=false で読み、基底変換で Unity 系へ揃える。
+            // global_orient と違い row1 反転を通していないので、bundle の座標系のままになっている。
             int bodyCount = Mathf.Min(23, rotCount - 1);
             for (int i = 0; i < bodyCount; i++)
             {
-                if (!TryReadRotationMatrixFromBin(br, flipCameraY: false, out pose.bodyPose[i]))
+                if (TryReadRotationMatrixFromBin(br, flipCameraY: false, out Quaternion rawBodyPose))
+                {
+                    pose.bodyPose[i] = ConvertSmplBodyPoseToUnityBasis(rawBodyPose);
+                }
+                else
                 {
                     pose.bodyPose[i] = Quaternion.identity;
                 }

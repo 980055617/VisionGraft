@@ -113,7 +113,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     // 実験モードでは ExperimentController が試行ごとにこのシーンをロードし直し、
     // 「どの bundle をどの条件で再生するか」を ExperimentTrialHandoff に置いてくる。
-    // 通常シーン（SampleScene 等）では Pending が null なので Inspector の設定で動く。
+    // 通常シーン（TestScene 等）では Pending が null なので Inspector の設定で動く。
     private void ApplyPendingExperimentTrialRequest()
     {
         ExperimentTrialRequest request = ExperimentTrialHandoff.Consume();
@@ -392,22 +392,32 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private static GameObject[] LoadPrefabsFromResources(string resourcePath)
     {
         GameObject[] all = Resources.LoadAll<GameObject>(resourcePath);
-        int count = 0;
+        var result = new List<GameObject>(all.Length);
         for (int i = 0; i < all.Length; i++)
-            if (all[i] != null && all[i].name.Length > 0 && IsPrefabNameStart(all[i].name[0]))
-                count++;
+        {
+            if (all[i] != null && IsIndexedPrefabName(all[i].name))
+            {
+                result.Add(all[i]);
+            }
+        }
 
-        GameObject[] result = new GameObject[count];
-        int j = 0;
-        for (int i = 0; i < all.Length; i++)
-            if (all[i] != null && all[i].name.Length > 0 && IsPrefabNameStart(all[i].name[0]))
-                result[j++] = all[i];
-        return result;
+        // Resources.LoadAll の戻り順は保証されないため番号順に整列させ、
+        // selectedHumanIndex / selectedElseIndex / trackModelIndices の index を安定させる。
+        result.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
+        return result.ToArray();
     }
 
-    private static bool IsPrefabNameStart(char c)
+    // 運用: Resources/Models/{Human,Animal,Else} 直下の prefab は 2 桁ゼロ埋め番号 + "_" で始める
+    // （例: 00_Baseball）。Sources/ 配下の素材はこの規則に合わないため自動的に除外される。
+    // 旧実装は「大文字始まりも許可」だったので Else/Sources/DieselLocomotive.glb が紛れ込み、
+    // Else が 8 件（本来 7 件）になって index がずれる恐れがあった。
+    private static bool IsIndexedPrefabName(string name)
     {
-        return char.IsUpper(c) || char.IsDigit(c);
+        return !string.IsNullOrEmpty(name) &&
+               name.Length >= 3 &&
+               char.IsDigit(name[0]) &&
+               char.IsDigit(name[1]) &&
+               name[2] == '_';
     }
 
     private static GameObject[] SortByPriority(GameObject[] prefabs, string[] priorityOrder)

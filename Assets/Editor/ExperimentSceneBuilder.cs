@@ -4,21 +4,21 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
-// 被験者実験用の 2 シーンを SampleScene から生成する。
+// 被験者実験用の 2 シーンを TestScene から生成する。
 //
 //   ExperimentScene … ベースシーン。XR リグ・EventSystem・ExperimentController を持ち、
 //                     セッション中ずっと常駐する。
 //   TrialScene      … 試行ごとに Additive でロード／アンロードされる再生シーン。
 //                     VideoPlayerRoot とライティングのみを持ち、XR リグは持たない。
 //
-// SampleScene をコピー元にするのは、OVRCameraRig / OVRInteractionComprehensive の
+// TestScene をコピー元にするのは、OVRCameraRig / OVRInteractionComprehensive の
 // prefab インスタンスとその override をそのまま引き継ぐため。手でシーンを組み直すと
 // リグの設定ズレに気付きにくい。
 //
 // 詳細は Docs/experiment-flow.md を参照。
 public static class ExperimentSceneBuilder
 {
-    private const string SourceScenePath = "Assets/Scenes/SampleScene.unity";
+    private const string SourceScenePath = "Assets/Scenes/TestScene.unity";
     private const string ExperimentScenePath = "Assets/Scenes/ExperimentScene.unity";
     private const string TrialScenePath = "Assets/Scenes/TrialScene.unity";
 
@@ -165,11 +165,11 @@ public static class ExperimentSceneBuilder
     }
 
     // 通常の単体再生に戻すとき用。
-    [MenuItem("VisionGraft/Experiment/Set Sample Scene As Startup")]
-    public static void SetSampleSceneAsStartup()
+    [MenuItem("VisionGraft/Experiment/Set Test Scene As Startup")]
+    public static void SetTestSceneAsStartup()
     {
         MoveSceneToTop(SourceScenePath);
-        Debug.Log("[Experiment] 起動シーンを SampleScene に戻しました。");
+        Debug.Log("[Experiment] 起動シーンを TestScene に戻しました。");
     }
 
     private static void MoveSceneToTop(string path)

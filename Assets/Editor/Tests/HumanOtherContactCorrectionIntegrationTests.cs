@@ -10,7 +10,7 @@ using UnityEngine.Video;
 
 public class HumanOtherContactCorrectionIntegrationTests
 {
-    private const string SampleScenePath = "Assets/Scenes/SampleScene.unity";
+    private const string TestScenePath = "Assets/Scenes/TestScene.unity";
     private const int ContactFrame = 300;
     private const int SpinStartFrame = 540;
     private const int SpinEndFrame = 720;
@@ -114,7 +114,7 @@ public class HumanOtherContactCorrectionIntegrationTests
     [UnityTest]
     public IEnumerator BundleHumanActualPlaybackPlacesBallOnSourceFacingSideOfFoot()
     {
-        EditorSceneManager.OpenScene(SampleScenePath, OpenSceneMode.Single);
+        EditorSceneManager.OpenScene(TestScenePath, OpenSceneMode.Single);
         yield return new EnterPlayMode();
 
         string failure = null;
@@ -132,7 +132,7 @@ public class HumanOtherContactCorrectionIntegrationTests
         VideoPlayer videoPlayer = player != null ? player.GetComponent<VideoPlayer>() : null;
         if (player == null || videoPlayer == null)
         {
-            failure = "SampleScene did not create StreamingStereoVideoPlayer and VideoPlayer.";
+            failure = "TestScene did not create StreamingStereoVideoPlayer and VideoPlayer.";
         }
         else
         {
@@ -225,7 +225,7 @@ public class HumanOtherContactCorrectionIntegrationTests
     [UnityTest]
     public IEnumerator BundleHumanActualPlaybackDoesNotAddBallTeleportDuringFrame600Spin()
     {
-        EditorSceneManager.OpenScene(SampleScenePath, OpenSceneMode.Single);
+        EditorSceneManager.OpenScene(TestScenePath, OpenSceneMode.Single);
         yield return new EnterPlayMode();
 
         string failure = null;
@@ -239,7 +239,7 @@ public class HumanOtherContactCorrectionIntegrationTests
         VideoPlayer videoPlayer = player != null ? player.GetComponent<VideoPlayer>() : null;
         if (player == null || videoPlayer == null)
         {
-            failure = "SampleScene did not create StreamingStereoVideoPlayer and VideoPlayer.";
+            failure = "TestScene did not create StreamingStereoVideoPlayer and VideoPlayer.";
         }
         else
         {
@@ -326,7 +326,7 @@ public class HumanOtherContactCorrectionIntegrationTests
     [UnityTest]
     public IEnumerator BundleHumanActualPlaybackDoesNotEmbedBallInReportedContactScenes()
     {
-        EditorSceneManager.OpenScene(SampleScenePath, OpenSceneMode.Single);
+        EditorSceneManager.OpenScene(TestScenePath, OpenSceneMode.Single);
         yield return new EnterPlayMode();
 
         string failure = null;
@@ -339,7 +339,7 @@ public class HumanOtherContactCorrectionIntegrationTests
         VideoPlayer videoPlayer = player != null ? player.GetComponent<VideoPlayer>() : null;
         if (player == null || videoPlayer == null)
         {
-            failure = "SampleScene did not create StreamingStereoVideoPlayer and VideoPlayer.";
+            failure = "TestScene did not create StreamingStereoVideoPlayer and VideoPlayer.";
         }
         else
         {

@@ -4,7 +4,7 @@
 // Inspector 値を事前に書き換えることができない（インスタンスがまだ存在しない）。
 // static に置いておき、プレイヤーの Start() が起動直後に Consume して自分に適用する。
 //
-// 実験を行わない通常シーン（SampleScene 等）では Pending が null のままなので、
+// 実験を行わない通常シーン（TestScene 等）では Pending が null のままなので、
 // プレイヤーは従来どおり Inspector の設定で動く。
 public static class ExperimentTrialHandoff
 {

@@ -1051,7 +1051,7 @@ MonoBehaviour:
   selectedElseIndex: 0
   trackModelIndices:
   - trackId: 0
-    modelIndex: 0
+    modelIndex: 16
   - trackId: 1
     modelIndex: 4
   enableBoneApply: 1
@@ -1060,12 +1060,27 @@ MonoBehaviour:
   jointSmoothingAlpha: 0.35
   showOtherProxyBoxes: 0
   otherProxyBoxColor: {r: 1, g: 0.78, b: 0.18, a: 0.32}
+  enableAnchorDepthRangeNormalization: 0
+  logAnchorDepthRange: 0
+  logInverseDepthRange: 0
+  popoutRangeMeters: 0.35
+  enableHumanBoneLengthCorrection: 1
+  logHumanBoneLengthCorrection: 0
   enableHumanOtherContactCorrection: 0
   logHumanOtherContact: 1
   logHumanOtherContactEveryNFrames: 5
+  logPlacementMeasurement: 0
+  logPlacementMeasurementEveryNFrames: 30
+  logHumanOtherGap: 0
+  logHumanOtherGapEveryNFrames: 15
+  logBallHead: 0
+  logBoneBBoxRelative: 0
+  logHumanPoseError: 0
+  logHumanPoseErrorEveryNFrames: 30
   humanOtherFullContactRadiusMultiplier: 1.25
   humanOtherReleaseRadiusMultiplier: 2
   humanOtherContactSurfacePaddingPixels: 2
+  mute: 0
   enableRuntimeControls: 1
   runtimeControlsPrefab: {fileID: 3675716834162371033, guid: 19be18d74f8608a4583c4c6c4e6e8723, type: 3}
   startInNormalMode: 0

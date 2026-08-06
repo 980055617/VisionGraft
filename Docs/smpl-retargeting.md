@@ -70,60 +70,67 @@ body_pose = identity のとき R = R^T = I なので row/column 抽出で差が�
 
 ## FK 公式
 
-> ⚠️ **2026-08-07 追記**: 以下の公式と NG パターン表は **npc_casual_set 1 種類のリグでの実測**に基づく。
-> この公式は展開すると `G * bindRotWorld[j] * bodyPose[j]` で、body_pose を**ボーンのローカル軸**で
-> 掛けているため、**bindRotWorld ≈ identity のリグでしか成立しない**。npc_casual は胴・肩・腕が
-> 0-20° と identity 近傍なので偶然成立していた。Renderpeople（14-16）は全ボーンが 90-120° 乖離しており
-> 破綻する。リグ非依存にするには `Θ[j] * bindRotWorld[j]`（Θ = world 累積）と左から掛ける。
-> 詳細と実測値は[調査ログ 2026-08-07](#2026-08-07-renderpeople-モデル14-16で手足が破綻--fk-公式がbindrotworld--identity-のリグでしか成立していなかった)。
+### 正しい公式（2026-08-07 確定・リグ非依存）
 
-### 現行の公式（2026-06-13 確定・標準FK / リグ依存）
+```
+bodyFk[0] = identity
+bodyFk[j] = bodyFk[parent] * bodyPose[j]                        （body_pose の world 累積）
+bone.rotation[j] = worldGlobalOrient * bodyFk[j] * bindRotWorld[j]
+```
+
+右辺は公開ヘルパー `ResolveHumanSmplTargetWorldRotation(worldGlobalOrient, bodyFk[j], bindRotWorld[j])`
+そのもので、Hips に使っている式と同じ形（Hips は `bodyFk = identity` のケース）。
+
+**根拠:**
+- SMPL の rest 姿勢では**全 joint のフレームが world 軸と平行**（= rest rotation が identity）。
+  したがって body_pose は world 軸で表現された回転であり、親から順に world 空間で積める
+- モデル側の bind 回転は最後に一度だけ右から掛ける。**リグの軸規約は bindRotWorld[j] に閉じ込められ、
+  body_pose の解釈には影響しない**
+- T-pose 検証（bodyPose=identity）: `bodyFk[j] = identity` → `worldGlobalOrient * bindRotWorld[j]` ✓
+- リグ非依存性の実測: 同じ body_pose を npc_casual_set と Renderpeople に入れたときの向きの
+  食い違いが**全ボーンで 0.0°**（旧公式は平均 58.6°）。[調査ログ 2026-08-07](#2026-08-07-renderpeople-モデル14-16で手足が破綻--fk-公式がbindrotworld--identity-のリグでしか成立していなかった)
+- 回帰テスト: `HumanSmplTargetWorldAppliesTheSameWorldRotationRegardlessOfRigBindAxes`
+
+### 旧公式（2026-06-13〜2026-08-07・リグ依存・破棄）
 
 ```
 tw[j] = parentTW[j] * bindRotLocal[j] * bodyPose[j]
-bone.rotation = tw[j]
+      = worldGlobalOrient * bindRotWorld[j] * bodyPose[j]      （展開形）
 ```
 
-**根拠（npc_casual_set での実測時点）:**
-- SMPL body_pose[j] は親 joint の現在フレームで定義（標準FK規約）
-- body_pose は「T-pose 姿勢からの変位」→ 先に `bindRotLocal` で T-pose フレームを確立してから body_pose を重ねる
-- T-pose 検証（bodyPose=identity）: `tw[j] = parentTW * bindRotLocal * I` → 展開して `worldGlobalOrient * bindRotWorld[j]` ✓
-- 右腕: `bindRotLocal[RightUpperArm]` に 180°Z → 先に 180°Z フレームを確立し body_pose が正しく乗る ✓
+body_pose を `bindRotWorld` の**右**から掛けており、body_pose をボーンのローカル軸で解釈していた。
+**`bindRotWorld[j] ≈ identity` のリグでしか成立しない**。npc_casual_set は胴・肩・腕が 0〜20° と
+identity 近傍だったため偶然成立していたが、Renderpeople（14-16）は全ボーンが 90〜120° 乖離しており破綻する。
 
 ### FK ループ実装（HumanSmpl.partial.cs）
 
 ```csharp
 Quaternion worldGlobalOrient = fk[0];  // smoothed globalOrient
-// fk 配列を tw（targetWorld per joint）として再利用
-Quaternion[] tw = fk;
-tw[0] = worldGlobalOrient * bindRotWorld[Hips];  // Hips target world rotation
+// fk 配列を bodyFk（body_pose の world 累積）として再利用する。
+// worldGlobalOrient を先に控えてから identity で初期化すること。
+Quaternion[] bodyFk = fk;
+bodyFk[0] = Quaternion.identity;
 
 for each joint in SmplJointTopologicalOrder (1..21):
-    Quaternion parentTW = tw[SmplJointParentArray[joint]];
-
     // Spine/Chest は SpineBodyPoseScale でスケールダウン（SMPL 過大推定対策）
     Quaternion fkLocal = (joint == 3 || joint == 6)
         ? Quaternion.Slerp(Quaternion.identity, smplLocal, SpineBodyPoseScale)
         : smplLocal;
 
-    // HumanBone マッピングなし → bindLoc=identity で tw 積算してスキップ
-    if (!SmplJointToHumanBone.TryGetValue(joint, out boneId))
-    {
-        tw[joint] = parentTW * fkLocal;
-        continue;
-    }
+    // world 累積は Unity ボーンの有無と無関係に常に積む
+    bodyFk[joint] = bodyFk[SmplJointParentArray[joint]] * fkLocal;
 
-    // bindRotLocal 取得（なければ identity）
-    bindLoc = cache.bindRotLocal[boneId] ?? Quaternion.identity;
+    // HumanBone マッピングなし / BONE MISSING (UpperChest 等) → 積算済みなのでスキップしてよい
+    if (!SmplJointToHumanBone.TryGetValue(joint, out boneId)) continue;
+    if (!cache.bones.TryGetValue(boneId, out bone) || bone == null) continue;
+    if (!cache.bindRotWorld.TryGetValue(boneId, out bindW)) continue;
 
-    // 標準FK: parentTW * bindRotLocal * bodyPose
-    tw[joint] = parentTW * bindLoc * fkLocal;
-
-    // BONE MISSING (UpperChest 等): tw は積算済み、bone 設定はスキップ
-    // → 子 joint（肩・腕）は tw[9] を parentTW として使用するため伝播は維持される
-
-    ApplyWorldRotation(bone, tw[joint]);
+    ApplyWorldRotation(bone, ResolveHumanSmplTargetWorldRotation(worldGlobalOrient, bodyFk[joint], bindW));
 ```
+
+BONE MISSING に特別扱いが要らないのは、`bodyFk[]` が bindRot を含まないため。
+旧公式では `bindRotLocal` が「Unity 親」相対だったので、途中の joint が欠けるとフレームがずれ、
+UpperChest の特殊処理が必要だった。
 
 ### なぜ ApplyWorldRotation が必要か
 
@@ -150,12 +157,11 @@ camRotation = LookRotation(-screenFront, screen.up)  // TryGetPinholeBasis() で
 
 > ⚠️ この表の「現象」は **npc_casual_set 1 リグでの観測**。同リグは胴・肩・腕の bindRotWorld が
 > identity 近傍という特殊性があるため、ここでの却下理由が他リグでも成り立つとは限らない。
-> 特に 1 行目の `globalOrient * fk_body * bindRotWorld` は「bindRot → body_pose の順が逆」と
-> されているが、`Θ` を world 累積で作れば `Θ[j] * bindRotWorld[j]` は全リグで正しい（2026-08-07 実測）。
+> **1 行目は 2026-08-07 に撤回した**（下記）。
 
 | パターン | 現象 |
 |---|---|
-| `globalOrient * fk_body * bindRotWorld` | body_pose → bindRot の順（逆）。bindRotLocal が小さい脚・腰は偶然近いが、右腕 bindRotLocal の 180°Z で約 77° ズレ ✗ |
+| ~~`globalOrient * fk_body * bindRotWorld`~~ | **撤回（2026-08-07）**: これが正しい公式。当時 `fk_body` を world 累積ではなく親相対のまま作っていたため誤差が出ていた。`fk_body[j] = fk_body[parent] * bodyPose[j]` と world で積めば全リグで正しい |
 | `targetWorld = bindRotWorld[j] * globalOrient * body_pose` | 乗算順序が逆。足が後ろ向き |
 | `targetWorld = bindRotWorld[j] * fk[j]`（fk[0] リセットなし） | 同上 |
 | `correctedLocal = tPoseLocal * smplLocal` + ApplyLocalRotation | UpperChest BONE MISSING 問題で腕が誤方向 |
@@ -182,9 +188,9 @@ camRotation = LookRotation(-screenFront, screen.up)  // TryGetPinholeBasis() で
 
 ### UpperChest（joint=9）の特殊ケース
 
-> 2026-08-07 追記: この特殊扱いは現行公式が `bindRotLocal`（親相対）を使うために必要なもの。
-> 左掛け `Θ[j] * bindRotWorld[j]` に変えると Θ は bindRot を含まないため、ボーンが無い joint は
-> `Θ[j] = Θ[parent] * θ[j]` を積むだけでよく、この分岐は不要になる。
+> ⚠️ **2026-08-07: この特殊扱いは不要になった**（以下は旧公式時代の記録）。
+> 新公式の `bodyFk[]` は bindRot を含まないので、Unity ボーンが無い joint は
+> `bodyFk[j] = bodyFk[parent] * bodyPose[j]` を積むだけでよく、`FindEffectiveParentFk` も削除した。
 > なお UpperChest を持つリグは Renderpeople が初ではない（07_Human_Beta / Mixamo が `Spine2` を持つ）。
 
 - Unity Humanoid Avatar に登録されていないが bone hierarchy に transform として存在する場合がある
@@ -308,14 +314,88 @@ npc_casual は胴・肩・腕が identity 近傍なので現行公式が**偶然
 | 現行 `parentTW * bindRotLocal * θ` | **58.6°** |
 | 左掛け `Θ[j] * bindRotWorld[j]` | **0.0°**（全ボーンで完全一致） |
 
-**結論**
+**結論と対応（実装済み）**
 
 - 手・足が目立つのは、AimAt が四肢の**方向**しか直さないため。roll（ねじれ）と、AimAt を持たない
   Shoulder・Toes・胴の誤差がそのまま残り、末端ほど累積して見える
-- 左掛けに直すとリグ非依存になる。`ApplyWorldRotation` のままで実現でき、IK も不要
-- 既存モデルへの影響は小さい見込み（npc_casual の胴・肩・腕の誤差は 0-6°、脚は AimAt が上書き）
-- BONE MISSING の特殊扱いも不要になる。Θ は bindRot を含まないため、ボーンが無い joint は
-  `Θ[j] = Θ[parent] * θ[j]` を積むだけでよい
+- **FK 公式を左掛けに修正した**（`HumanSmpl.partial.cs`）。`ApplyWorldRotation` のままで実現でき、
+  IK も不要。[FK 公式](#正しい公式2026-08-07-確定リグ非依存)を参照
+- BONE MISSING の特殊扱いを削除した（`FindEffectiveParentFk` も未使用のため削除）
+- 回帰テストを追加: `HumanSmplTargetWorldAppliesTheSameWorldRotationRegardlessOfRigBindAxes` /
+  `HumanSmplTargetWorldReturnsBindPoseWhenBodyPoseIsIdentity`
+- **既存 14 体の実機確認が未了**。オフラインでは npc_casual の胴・肩・腕の変化は 0〜6°、脚は
+  AimAt が上書きするので小さい見込みだが、07_Human_Beta（Mixamo）は肩の bindRotWorld が 129° 乖離
+  しており**旧公式では既にずれていたはず**なので、見た目が変わる
+
+**真因の追加発見（2026-08-07 夜）: body_pose の基底変換が抜けていた**
+
+上記の FK 公式修正のあと `enableKeypointAimAt` を false にして純 FK を確認したところ、**腕が大きく破綻した**。
+調べると FK 公式とは別に、**body_pose の座標系変換が最初から抜けていた**。
+
+| 読み込み経路 | 変換 |
+|---|---|
+| `global_orient` | `flipCameraY: true`（row1 反転）✓ |
+| `body_pose` | `flipCameraY: false` → **無変換** ✗ |
+| keypoint (`DecodeJointCamFromBundle`) | `return bundleCam`（無変換 = bundle の joint は既に Unity と同じ Y-up）|
+
+body_pose だけ基底が揃っていない。必要なのは基底変換の共役 `S R S⁻¹`（`S = diag(1,-1,-1)`、
+右手 Y-down → 左手 Y-up）。クォータニオンでは `(x, y, z, w) → (x, -y, -z, w)`。
+
+**検証**: 座標系変換の候補 16 通り（基底 4 種 × 転置有無 × global_orient 側 4 種）を総当たりし、
+SMPL FK した四肢の向きと keypoint の向きの角度差を実測（15 フレーム平均）。
+
+| body_pose の扱い | 平均 | L上腕 | L前腕 | R上腕 | R前腕 | L腿 | L脛 | R腿 | R脛 |
+|---|---|---|---|---|---|---|---|---|---|
+| **無変換（修正前の実装）** | **78.2°** | 132 | 107 | 128 | 97 | 39 | 28 | 47 | 48 |
+| **conj X（採用）** | **8.5°** | 13 | 10 | 12 | 13 | 6 | 5 | 6 | 3 |
+| conj Y（= 旧 Q_Y180 補正の形） | 65.2° | 83 | 70 | 103 | 71 | 47 | 68 | 34 | 45 |
+
+ランダムな向きの期待値は 90°。**修正前の腕は 97〜132° で、姿勢として成立していなかった**。
+`conj X` が 16 通り中の唯一の最良解で、次点（16.5°）とも明確に差がある。
+
+**これで過去の経緯がすべて説明できる:**
+
+- 2026-06-13「右腕が約 77° ズレる」→ 基底変換漏れ。左右で bindRotWorld が 180°Z 違うため右腕に強く出た
+- Q_Y180 補正（x,z 反転 = `conj Y`）を右腕だけに当てた → 上表のとおり `conj Y` は 65.2° で改善が中途半端。
+  「複数関節への累積適用で 77° ズレる」という当時の観察と整合する
+- AimAt 導入 → keypoint の位置から向きを作り直すので、**body_pose の座標系が壊れていても見た目が合う**。
+  つまり AimAt は補助ではなく**四肢の姿勢を作る主役**だった。off にすると破綻するのはこのため
+- **`enableKeypointAimAt = false` で腕が壊れたことが、この真因を炙り出した**
+
+**対応**: `ConvertSmplBodyPoseToUnityBasis` を `StoreSmplBlockFromBin` の読み込み時に適用。
+回帰テスト 3 本（Y/Z 反転・identity 不変・自己逆元）を追加。
+
+**派生: 手が体に埋もれる問題（frame 38-40 付近、index 0 / 16 の両方）**
+
+keypoint を疑ったが**健全**だった。frame 28-55 で `vis` は全て 1/1/1、値も連続で飛びがなく、
+手首の体幹軸からの距離は 0.25〜0.40 m（肩幅 0.33 m）で体に食い込む値ではない。
+
+原因は meta.bin に**独立した推定が 2 つ**入っていて、それを部位ごとに混ぜていること。
+
+| 部位 | 従うソース |
+|---|---|
+| 肩（Collar, joint 13/14） | SMPL body_pose（AimAt なし） |
+| 上腕・前腕 | keypoint（`TryApplySmplArmSegment` が向きを上書き） |
+| 手のねじれ | SMPL body_pose |
+
+左肘の曲げ角の実測（keypoint / SMPL）: frame 38 = 107.7° / 85.7°、44 = 94.4° / 64.6°、46 = 84.3° / 54.8°。
+**右肘は 0〜8° でよく一致しており、左腕だけ割れている**。付け根が SMPL で内側に入ったところから
+keypoint 方向へ腕を伸ばすので、腕全体が内側に平行移動する。
+
+骨長比（体幹長で正規化、keypoint は frame 30-50 平均）:
+
+| | upperArm | foreArm | 腕全長 | 肩幅 | 肩の横オフセット |
+|---|---|---|---|---|---|
+| keypoint | 0.488 | 0.477 | 0.965 | 0.642 | 0.319 |
+| 16_Male_Eric | 109% | **77%** | 93% | **89%** | **−0.036**（内側） |
+| 08_Male_A_01 | 104% | 103% | 104% | 99% | +0.001 |
+| 07_Human_Beta | 123% | **128%** | **126%** | 102% | — |
+
+**08_Male_A_01 は骨格がほぼ完全に一致している**ので、index 0 でも症状が出る以上、骨長は主因ではない。
+Eric は前腕 23% 短・肩 1.8cm 内側という固有の悪化要因が上乗せされる。
+なお**体の太さ（服・体型）は keypoint に含まれない**ので、骨格を合わせてもメッシュが太ければ埋もれる。
+
+→ 対応: `enableKeypointAimAt` を追加し、純 FK と現状を切り替えて比較できるようにした（既定は現状維持の true）。
 
 **独立した第 2 の問題: Renderpeople の twist ボーンが動かない**
 
@@ -621,6 +701,21 @@ Q_Y180 補正後も視覚的には手の向きが依然ずれていた。分析�
 ---
 
 ### 2026-06-13: 右腕方向の位置ベース補正（AimAt）
+
+> ⚠️ **2026-08-07: ここでいう「FK 座標フレーム変換の限界」の実体は body_pose の基底変換漏れだった**
+> （[調査ログ 2026-08-07](#2026-08-07-renderpeople-モデル14-16で手足が破綻--fk-公式がbindrotworld--identity-のリグでしか成立していなかった)）。
+> Q_Y180 補正（x,z 反転 = `conj Y`）は必要だった変換 `conj X`（y,z 反転）と別物で、しかも右腕だけに
+> 当てていたため中途半端にしか効かなかった。
+>
+> **したがって AimAt は補助ではなく、四肢の姿勢を作る主役として機能していた**。基底変換が抜けた
+> 素の FK は keypoint と平均 78.2°（腕は 97〜132°）ずれており、AimAt が keypoint の位置から向きを
+> 作り直すことで見た目が成立していた。`enableKeypointAimAt = false` にすると腕が破綻する。
+>
+> 基底変換を修正した後は素の FK が平均 8.5° まで一致するので、AimAt は残差を詰める補正の位置づけになる。
+> ただし残す場合は **「腕の付け根は SMPL / 腕の向きは keypoint」という混在**になる点に注意。
+> keypoint と body_pose は独立した推定で、左肘では 22〜30° 食い違う
+> （frame 38: kp 107.7° / smpl 85.7°、frame 46: kp 84.3° / smpl 54.8°）。
+> さらに AimAt は**向きしか合わせず位置を合わせない**ので、付け根のずれはそのまま手先に出る。
 
 **問題:** Q_Y180 FK 補正後も右腕方向が ~77° ズレ。FK 座標フレーム変換の限界。
 

@@ -280,7 +280,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
                 // SMPL エスティメーターは Spine・Chest の前傾角を過大推定する傾向がある。
                 // FK 伝播に使うスケール済み回転（smoothedSmplLocal には未スケール値を保存）。
-                const float SpineBodyPoseScale = 0.25f;
+                // 2026-08-06: 旧値 0.25f は「SMPL が前傾を過大推定する」という理由で入っていたが、
+                // 実測すると曲げの 75% を捨てており、座位・仰向けで上半身が起き上がったままになって
+                // モデルが縦に 1.33 倍はみ出す原因になっていた（Docs/smpl-retargeting.md 調査ログ）。
+                // 1.0（減衰なし）にすると Hips-Neck-Head の角度が meta.bin の期待値と -15〜+4° まで一致し、
+                // 投影高さ/bbox 高さ（boneRatio）も frame600 で 1.334 → 0.962 に改善する。
+                const float SpineBodyPoseScale = 1.0f;
                 Quaternion fkLocal = (joint == 3 || joint == 6)
                     ? Quaternion.Slerp(Quaternion.identity, smplLocal, SpineBodyPoseScale)
                     : smplLocal;

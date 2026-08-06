@@ -67,6 +67,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         LogBoneLengthsOnce(instance);
+        LogJointAnglesIfEnabled(obj, instance, frame);
 
         if (!TryProjectRendererBoundsToEyeHeight(
                 instance,
@@ -112,6 +113,71 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             $"bbox[top={bboxTop:F0} bot={bboxBottom:F0} h={obj.bboxH}] " +
             $"anchorV={obj.anchorV} depth={depthMeters:F3} scale={localScale.x:F4}" +
             boneInfo);
+    }
+
+
+    // 表示モデルの関節角度を出す。角度は座標系・スケールに依存しないので、
+    // meta.bin の keypoints3d から測った同じ角度と直接比較できる。
+    // 180° = まっすぐ伸びた状態、小さいほど深く曲げている。
+    private void LogJointAnglesIfEnabled(MetaObj obj, GameObject instance, int frame)
+    {
+        if (!logPlacementMeasurement ||
+            instance == null ||
+            !IsCategoryPerson(obj.categoryId) ||
+            frame % Mathf.Max(1, logPlacementMeasurementEveryNFrames) != 0)
+        {
+            return;
+        }
+
+        Animator animator = instance.GetComponentInChildren<Animator>(true);
+        if (animator == null || !animator.isHuman)
+        {
+            return;
+        }
+
+        HumanoidRigCache cache = GetOrBuildHumanoidCache(animator);
+        if (cache == null || !cache.ready)
+        {
+            return;
+        }
+
+        float Angle(HumanBodyBones a, HumanBodyBones pivot, HumanBodyBones b)
+        {
+            if (!cache.bones.TryGetValue(a, out Transform ta) || ta == null ||
+                !cache.bones.TryGetValue(pivot, out Transform tp) || tp == null ||
+                !cache.bones.TryGetValue(b, out Transform tb) || tb == null)
+            {
+                return -1f;
+            }
+
+            Vector3 v1 = ta.position - tp.position;
+            Vector3 v2 = tb.position - tp.position;
+            if (v1.sqrMagnitude < 1e-10f || v2.sqrMagnitude < 1e-10f)
+            {
+                return -1f;
+            }
+
+            return Vector3.Angle(v1, v2);
+        }
+
+        float lKnee = Angle(HumanBodyBones.LeftUpperLeg, HumanBodyBones.LeftLowerLeg, HumanBodyBones.LeftFoot);
+        float rKnee = Angle(HumanBodyBones.RightUpperLeg, HumanBodyBones.RightLowerLeg, HumanBodyBones.RightFoot);
+        float lHip = Angle(HumanBodyBones.Neck, HumanBodyBones.LeftUpperLeg, HumanBodyBones.LeftLowerLeg);
+        float rHip = Angle(HumanBodyBones.Neck, HumanBodyBones.RightUpperLeg, HumanBodyBones.RightLowerLeg);
+        float lElbow = Angle(HumanBodyBones.LeftUpperArm, HumanBodyBones.LeftLowerArm, HumanBodyBones.LeftHand);
+        float rElbow = Angle(HumanBodyBones.RightUpperArm, HumanBodyBones.RightLowerArm, HumanBodyBones.RightHand);
+
+        // 股のずれが「胴側」か「大腿側」かを切り分けるための追加測定。
+        // neck = 胴の曲がり（Hips-Neck-Head）、shoulder = 肩と胴（Hips-Neck-UpperArm）
+        // spread = 脚の開き（UpperLeg-Hips-UpperLeg）
+        float neckAngle = Angle(HumanBodyBones.Hips, HumanBodyBones.Neck, HumanBodyBones.Head);
+        float shoulderAngle = Angle(HumanBodyBones.Hips, HumanBodyBones.Neck, HumanBodyBones.LeftUpperArm);
+        float legSpread = Angle(HumanBodyBones.LeftUpperLeg, HumanBodyBones.Hips, HumanBodyBones.RightUpperLeg);
+
+        Debug.Log(
+            $"[ANGLE] f={frame} lKnee={lKnee:F1} rKnee={rKnee:F1} " +
+            $"lHip={lHip:F1} rHip={rHip:F1} lElbow={lElbow:F1} rElbow={rElbow:F1} " +
+            $"neck={neckAngle:F1} shoulder={shoulderAngle:F1} spread={legSpread:F1}");
     }
 
 

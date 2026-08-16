@@ -33,7 +33,7 @@
 - **位置**: `anchor_u / anchor_v`（画面 UV）+ `anchor_z`（深度）→ `AnchorUvZToWorldPinhole` → world 座標
   - 深度の符号: **bundle 世代によって向きが逆**。`manifest.json` に `depth_policy` があれば `anchor_z` は `larger = farther`、無ければ `larger = nearer`。`DecodeAnchorDepthMetersFromBundle` が `IsAnchorDepthLargerMeansFarther()` で判定して吸収する（2026-08-06、後述の「anchor_z の向きは bundle 世代で異なる」を参照）
 - **向き・姿勢**: SMPL/SMAL block の 3×3 回転行列群（row-major、9float ずつ）
-- **スケール**: `bboxWorldH` 基準の uniform scale（`TrackModelPlacement.ResolveDesiredLocalScale`）。Human/Animal は track ごとに初回フレームでロックし、カット（shot）境界で解除する（後述）。モデル間の体型差は吸収しない（既知の制限、[DogMetaBoneMapping.md](DogMetaBoneMapping.md) 参照）
+- **スケール**: `bboxWorldH` 基準の uniform scale（`TrackModelPlacement.ResolveDesiredLocalScale`）。**Human / Animal / Else すべて bbox の高さだけで決める**（幅は使わない。2026-08-07 に Animal の幅制限を撤廃、後述の NG パターン参照）。Human/Animal は track ごとに初回フレームでロックし、カット（shot）境界で解除する（後述）。モデル間の体型差は吸収しない（既知の制限、[DogMetaBoneMapping.md](DogMetaBoneMapping.md) 参照）
 - **カット**: `manifest.json` の `shots`（`[[start, end), ...]`）。同じ trackId でも shot をまたげば見かけサイズが正当に変わるため、境界でスケールと平滑化をリセットする（後述）
 - **形状（betas）**: 読み込むが現状未使用
 
@@ -239,6 +239,51 @@ bundle ごとの `shots`（2026-08-02 時点）:
 **副次的な効果**: シークでも基準が揃う。同じ shot の中央へ飛んだ場合、従来は「シーク先のフレーム」でロックされていたが、shot 先頭に揃うようになった。`shots` を持たない旧 bundle は `GetStartFrame` が 0 を返すので、全編 1 shot = フレーム 0 が基準になる。
 
 **不採用にした案**: 「shot 内から立位に最も近いフレーム（bbox のアスペクト比が最大のフレーム）を基準にする」案は 2026-08-07 に実測で悪化した。アスペクト比が最大のフレームは人物が横向きで細く写っているだけのことがあり、bbox 高さで絞り直しても骨格スパンが bbox の 112%（初回基準では 86%）と過大になった。今回の変更は「基準を増やさず通常再生と同じ 1 点に揃える」方向なので、この不採用理由は当てはまらない。
+
+### NG パターン: Animal のスケールを bbox の「幅」でも制限する（2026-08-07 修正済み）
+
+**症状**: Animal のモデルが shot によって極端に小さく配置される。どのモデルを選ぶかで起きたり起きなかったりする。
+
+**原因**: `ResolveDesiredLocalScale` は Animal だけ `Mathf.Min(scaleW, scaleH)` を採り、幅も高さも bbox に収める設計だった。「bbox に入れる」という意図自体は達成されるが、`scaleW` が比べていた 2 つの値が**同じものを測っていない**。
+
+| | 何を測っているか |
+|---|---|
+| `bboxWorldW` | 映像内の被写体の投影幅。四足動物では yaw によって体長〜体幅の間を動く |
+| `baseBoundsSize.x` | prefab の bind pose での X 幅。固定値で、しかも prefab によって X 軸が体長だったり体幅だったりする |
+
+高さ軸（`bboxWorldH` ↔ AABB 高さ）は意味が対応しているので健全。壊れていたのは幅軸だけ。
+
+**実測（`bundle_animal.svb` 全 2120 フレーム）**:
+
+| | 値 |
+|---|---|
+| bbox の W/H（全フレーム、同一 track） | min 0.46 / p10 0.63 / median 1.10 / p90 2.20 / max 3.79 |
+| bbox の W/H（15 shot の先頭フレーム = スケール決定点） | 0.63 〜 2.16 |
+| モデル AABB の W/H（`animal_diagnostics.txt` の 12 モデル） | 0.33 〜 1.84（**モデル間で 5.5 倍の開き**） |
+
+`fx_norm = 1.428` / `fy_norm = 2.856 = 2 × fx_norm` で `eye_w / eye_h = 2` なので、ワールド換算後のアスペクト比は素の `bboxW / bboxH` と一致する（投影による歪みは入っていない）。
+
+縮小率 = `(bboxW/bboxH) / (モデルW/モデルH)`。`Min` は必ず小さい側を採るため、このミスマッチは**常に「縮む」方向にしか働かない**:
+
+| モデル | AABB の W/H | 縮んだ shot | 最悪値（表示高さ ÷ bbox 高さ） |
+|---|---|---|---|
+| 22_Elk1.0 / 17_Deer1.0 | 1.83 | **13/15** | **0.34** |
+| 42_Moose1.0 | 1.57 | 9/15 | 0.40 |
+| 30_Goose | 1.42 | 9/15 | 0.44 |
+| 14_BoarV2 | 1.25 | 8/15 | 0.50 |
+| 00_Dog / 04_Lion / 13_Bloodhund | 0.77〜0.80 | 1/15 | 0.79〜0.82 |
+| 47_Pronghorn1.0 / 16_Deer1 | 0.33〜0.50 | 0/15 | 1.00 |
+
+さらにスケールは shot 先頭フレームでロックされるため、先頭フレームがたまたま縦長 bbox（動物が正面を向いているカット）だと**その shot の間ずっと小さいまま**になる。
+
+**修正**: `isAnimal` 分岐を削除し、Human / Else と同じく `scaleH` のみにした。あわせて `ScaleRequest` から幅に関わる引数（`bboxWidthPixels` / `fx` / `eyeWidthPixels` / `isAnimal`）を落とし、`baseBoundsSize` は高さだけを渡す `baseHeightMeters` に置き換えた。幅を渡せない構造にすることで再発を防ぐ。
+
+**検討して不採用にした案**:
+
+- **向きを考慮した幅制限**（モデルの水平寸法を体長 `max(X,Z)` と体幅 `min(X,Z)` に分け、SMAL の globalOrient から求めた yaw で期待投影幅を計算して比べる）— 幅制限の意図を保ったまま正しくする案だが、prefab ごとの前方向の定義（X 前 / Z 前が混在）を先に確定させる必要があり、コストに見合わない
+- **下限クランプ**（`scaleW` が `scaleH` の 0.8 倍を下回ったら切り捨てる）— 最悪ケースは防げるが原因である幅軸のミスマッチは残り、閾値の根拠が実測でしか決まらない対症療法になる
+
+**なぜ高さ基準だけで足りるか**: 動物が正面を向いているカット（縦長 bbox）ではそもそも高さ基準が正しく、横を向いているカット（横長 bbox）では従来から `scaleH` 側が効いていた。つまり `Min` が効いていたのは「幅軸の測り方が間違っているとき」だけで、正しく効いていた場面がない。
 
 ### anchor_z（z01）は disparity 系（2026-08-05 確定）
 

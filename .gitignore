@@ -7,6 +7,8 @@
 /[Uu]ser[Ss]ettings/
 /[Mm]emory[Cc]aptures/
 /[Rr]ecordings/
+/.utmp/
+/TempAssembly.dll
 
 # Build outputs (keep sources, ignore artifacts)
 /[Bb]uild/

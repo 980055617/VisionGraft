@@ -17,6 +17,10 @@ public class ReplaceableModel : MonoBehaviour
     // 縮み、頭が本来より下がる（2026-08-07 実測。頭上のボールが浮く原因になっていた）。
     // 関節位置を映像に合わせるにはこちらを使う。Humanoid でない場合は 0。
     public float baseSkeletonHeightMeters;
+    // AABB の (幅, 高さ)。配置スケールに使うのは高さ（.y）だけで、幅（.x）は使わない。
+    // 幅は bind pose 固定の X 幅であり、prefab によって X 軸が体長だったり体幅だったりする
+    // うえ、映像の bbox 幅は被写体の yaw で体長〜体幅の間を動くので、両者を比べても
+    // 意味のある比率にならない（TrackModelPlacement.ResolveDesiredLocalScale のコメント参照）。
     public Vector2 baseBoundsSize;
     public float baseBottomOffsetLocal;
 

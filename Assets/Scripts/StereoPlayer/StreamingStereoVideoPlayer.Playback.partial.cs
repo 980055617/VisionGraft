@@ -173,7 +173,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float uEyeF = Mathf.Clamp(uEye, 0f, manifest.eye_w - 1f);
         float vEyeF = Mathf.Clamp(target.anchorV, 0f, manifest.eye_h - 1f);
 
-        float bboxWAdjusted = target.bboxW;
         float bboxHAdjusted = target.bboxH;
 
         // Else も Human/Animal と同じく meta.bin の anchor (u/v + anchorZ) だけで配置する。
@@ -205,7 +204,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         float targetHeight = ComputeTargetHeightMeters(bboxHAdjusted, target.anchorZ);
-        ApplyReplaceableModelTransform(instance, anchorWorld, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxWAdjusted, bboxHAdjusted, screen);
+        ApplyReplaceableModelTransform(instance, anchorWorld, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxHAdjusted, screen);
         bool preserveRootScreenHeightAfterSkeleton =
             IsCategoryPerson(target.categoryId) &&
             ShouldPreserveRootScreenHeightAfterHumanSkeletonPlacement();
@@ -367,7 +366,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private void ApplyReplaceableModelTransform(GameObject instance, Vector3 world, Quaternion rotation, float targetHeightMeters, MetaObj obj, float uEye, float vEye, float bboxWAdjusted, float bboxHAdjusted, Transform screen)
+    private void ApplyReplaceableModelTransform(GameObject instance, Vector3 world, Quaternion rotation, float targetHeightMeters, MetaObj obj, float uEye, float vEye, float bboxHAdjusted, Transform screen)
     {
         if (instance == null)
         {
@@ -378,10 +377,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float modelHeight = model != null ? model.GetModelHeightMeters() : 0f;
         float userScale = model != null ? model.userScale : 1f;
         Vector3 baseScale = model != null ? model.baseLocalScale : Vector3.one;
-        Vector2 baseBounds = model != null ? model.baseBoundsSize : Vector2.zero;
-        bool isAnimal = IsCategoryAnimal(obj.categoryId);
-        bool lockScale = IsCategoryPerson(obj.categoryId) || isAnimal;
-        bool hasFocalLengths = TryGetFocalLengths(out float fxScale, out float fyScale);
+        float baseHeight = model != null ? model.baseBoundsSize.y : 0f;
+        bool lockScale = IsCategoryPerson(obj.categoryId) || IsCategoryAnimal(obj.categoryId);
+        bool hasFocalLengths = TryGetFocalLengths(out _, out float fyScale);
 
         // スケールは shot 先頭フレームの bbox から決め、track ごとにロックする
         // （GetOrLockModelLocalScale）。ロックが外れる契機は shot 境界とモデル変更の 2 つで、
@@ -394,12 +392,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // あちらは shot 内から都合のよいフレームを探す話で、ここは通常再生と同じ 1 点に
         // 揃える話なので目的が違う。
         float scaleTargetHeightMeters = targetHeightMeters;
-        float scaleBBoxW = bboxWAdjusted;
         float scaleBBoxH = bboxHAdjusted;
         float scaleAnchorZ = obj.anchorZ;
         if (lockScale && TryResolveShotStartScaleReference(obj.trackId, out MetaObj shotStartObj))
         {
-            scaleBBoxW = shotStartObj.bboxW;
             scaleBBoxH = shotStartObj.bboxH;
             scaleAnchorZ = shotStartObj.anchorZ;
             scaleTargetHeightMeters = ComputeTargetHeightMeters(scaleBBoxH, scaleAnchorZ);
@@ -407,18 +403,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         Vector3 desiredScale = TrackModelPlacement.ResolveDesiredLocalScale(new TrackModelPlacement.ScaleRequest(
             baseScale,
-            baseBounds,
+            baseHeight,
             userScale,
             modelHeight,
             scaleTargetHeightMeters,
-            scaleBBoxW,
             scaleBBoxH,
             scaleAnchorZ,
-            fxScale,
             fyScale,
-            manifest != null ? manifest.eye_w : 0,
             manifest != null ? manifest.eye_h : 0,
-            isAnimal,
             hasFocalLengths));
 
         TrackPlacementWriter.ApplyAnchoredPose(

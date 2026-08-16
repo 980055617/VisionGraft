@@ -1058,6 +1058,7 @@ MonoBehaviour:
   boneApplyAlpha: 1
   enableJointSmoothing: 1
   jointSmoothingAlpha: 0.35
+  enableKeypointAimAt: 1
   showOtherProxyBoxes: 0
   otherProxyBoxColor: {r: 1, g: 0.78, b: 0.18, a: 0.32}
   enableAnchorDepthRangeNormalization: 0

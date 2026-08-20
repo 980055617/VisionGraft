@@ -56,6 +56,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // スケールを測り直したかどうかも shot ごと（GetOrLockModelLocalScale でも外れるが、
         // ロックを経由せず消えるケースに備えてここでもクリアする）。
         scaleRefinedByTrack.Clear();
+        // ⑧ の深度補正比率も前 shot の値を引きずらせない。
+        smoothedProjectedDepthRatioByTrack.Clear();
 
         // 位置・向きの平滑化。前 shot の値から補間すると新しいカットの先頭で滑り込む。
         smoothedJointsByTrack.Clear();

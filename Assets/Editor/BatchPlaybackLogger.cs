@@ -39,6 +39,7 @@ public static class BatchPlaybackLogger
         bool diagLogs = false;
         int diagEveryN = 10;
         float depthK = -1f;
+        float depthSmooth = -1f;
         string captureFrames = null;
         string captureDir = null;
         int captureWidth = 3840;
@@ -50,6 +51,7 @@ public static class BatchPlaybackLogger
             if (args[i] == "-diagLogs") bool.TryParse(args[i + 1], out diagLogs);
             if (args[i] == "-diagEveryN") int.TryParse(args[i + 1], out diagEveryN);
             if (args[i] == "-depthK") float.TryParse(args[i + 1], out depthK);
+            if (args[i] == "-depthSmooth") float.TryParse(args[i + 1], out depthSmooth);
             if (args[i] == "-captureFrames") captureFrames = args[i + 1];
             if (args[i] == "-captureDir") captureDir = args[i + 1];
             if (args[i] == "-captureWidth") int.TryParse(args[i + 1], out captureWidth);
@@ -103,6 +105,19 @@ public static class BatchPlaybackLogger
                 applied++;
             }
             Debug.Log("[BATCH] projectedDepthScaleK=" + depthK + " applied to " + applied);
+        }
+
+        if (depthSmooth >= 0f)
+        {
+            int applied = 0;
+            foreach (var p in UnityEngine.Object.FindObjectsByType<StreamingStereoVideoPlayer>(
+                         FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                p.projectedDepthSmoothingSeconds = depthSmooth;
+                EditorUtility.SetDirty(p);
+                applied++;
+            }
+            Debug.Log("[BATCH] projectedDepthSmoothingSeconds=" + depthSmooth + " applied to " + applied);
         }
 
         // 診断ログはシーンに保存せず、この実行の間だけ有効にする。

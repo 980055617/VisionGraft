@@ -483,6 +483,33 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     //
     // 呼ぶのは ⑦ FitDisplayedModelToBBox の後。スケールを変えると下端が動くので、
     // 補正後に下端合わせをやり直す。
+    // ⑧ の補正比率を時間平滑化する。bbox は検出ノイズと姿勢でフレームごとに揺れるので、
+    // 素通しで深度に反映するとモデルが前後に暴れる。深度ではなく比率を平滑化することで、
+    // 人の実際の移動（anchor_z 由来）は保ったままノイズだけを落とす。
+    // 平滑化係数は時定数から毎フレーム求めるのでフレームレートに依存しない。
+    private float SmoothProjectedDepthRatio(uint trackId, float ratio)
+    {
+        float tau = Mathf.Max(0f, projectedDepthSmoothingSeconds);
+        if (tau <= 0.0001f)
+        {
+            smoothedProjectedDepthRatioByTrack[trackId] = ratio;
+            return ratio;
+        }
+
+        if (!smoothedProjectedDepthRatioByTrack.TryGetValue(trackId, out float previous))
+        {
+            // shot 先頭・モデル変更直後は平滑化せず、その場の値から始める。
+            smoothedProjectedDepthRatioByTrack[trackId] = ratio;
+            return ratio;
+        }
+
+        float deltaTime = Mathf.Max(0f, Time.deltaTime);
+        float alpha = deltaTime <= 0f ? 1f : 1f - Mathf.Exp(-deltaTime / tau);
+        float smoothed = previous + Mathf.Clamp01(alpha) * (ratio - previous);
+        smoothedProjectedDepthRatioByTrack[trackId] = smoothed;
+        return smoothed;
+    }
+
     // ⑧ ロック済みスケールはそのままに、「投影された骨格の高さが bbox 高に一致する」深度へ動かす。
     // 投影高 = span(f) * scale * f_px / z(f) なので、z を ratio 倍すれば投影高が bbox に一致する。
     // 画面上の位置（u, v）を保ったまま深度だけ変えるため、カメラ空間で z 方向にスケールする。
@@ -517,6 +544,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             return false;
         }
+
+        ratio = SmoothProjectedDepthRatio(obj.trackId, ratio);
 
         if (!TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
         {

@@ -11,6 +11,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private readonly Dictionary<uint, Vector3> lockedModelLocalScaleByTrack = new Dictionary<uint, Vector3>();
     // RefineLockedScaleFromProjectedBones を通した track。ロックが新しく作られると外れる。
     private readonly HashSet<uint> scaleRefinedByTrack = new HashSet<uint>();
+    // RefineDepthFromProjectedBones の補正比率を時間平滑化した値。shot 境界でクリアする。
+    private readonly Dictionary<uint, float> smoothedProjectedDepthRatioByTrack = new Dictionary<uint, float>();
     // 実測した boneRatio がこの範囲を外れたらスケールを測り直さない。bbox が画面端で
     // 切れている・検出が破綻しているケースで誤った基準を焼き付けないための保護。
     private const float MinProjectedBoneRatioForScaleRefine = 0.4f;

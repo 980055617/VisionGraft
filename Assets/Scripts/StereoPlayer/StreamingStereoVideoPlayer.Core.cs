@@ -154,6 +154,21 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     //   k=1.10 … median 0.907 / 球が手前 94.4%  ただし 18% のフレームで bbox より 10% 以上小さくなる
     [Min(0.1f)] public float projectedDepthScaleK = 1.0f;
 
+    // ⑧ の補正比率（投影高 / bboxH）を時間平滑化する時定数（秒）。0 で平滑化なし。
+    // bbox は検出ノイズと姿勢でフレームごとに揺れ、それが素通しで深度に出ると
+    // モデルが前後に暴れる（平滑化なしでは 1 フレームで最大 433mm 動いた）。
+    // 深度そのものではなく比率を平滑化するので、人の実際の移動は保たれる。
+    //
+    // 全編実測（bundle_human.svb、深度の 1 フレーム間変化 / boneRatio / 球が人より手前）:
+    //   0（なし）  p90 20.0mm / max 420.0mm   median 0.998 / 1.3 超 2.0% / 87.7%
+    //   0.65s      p90  6.0mm / max  64.0mm   median 0.998 / 2.1% / 89.7%
+    //   1.2s       p90  5.0mm / max  22.0mm   median 0.997 / 2.1% / 91.8%  ← 既定
+    //   2.0s       p90  5.0mm / max  22.0mm   median 0.994 / 2.5% / 92.8%
+    // 参考: ⑧ OFF は p90 5.0mm / max 22.0mm、median 1.082 / 8.8% / 79.0%。
+    // 1.2s で揺れは ⑧ OFF と同等まで戻り、サイズ精度と前後関係は改善したままになる。
+    // 平滑化を強めても boneRatio がほとんど悪化しないのは、外れ値の ratio が均されるため。
+    [Min(0f)] public float projectedDepthSmoothingSeconds = 1.2f;
+
     // RefineLockedScaleFromProjectedBones が狙う boneRatio。1.0 は「基準フレームで骨格の
     // 投影高さを bbox 高さにぴったり合わせる」。ただし boneRatio は姿勢で 1.0〜2.2 と動くため、
     // 基準フレーム（shot 先頭＝多くの場合は立位）で 1.0 に合わせても全区間の中央値は 1.2 前後に

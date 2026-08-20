@@ -53,6 +53,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         // 主対象: 前 shot のカメラ距離で確定した表示スケール。
         lockedModelLocalScaleByTrack.Clear();
+        // スケールを測り直したかどうかも shot ごと（GetOrLockModelLocalScale でも外れるが、
+        // ロックを経由せず消えるケースに備えてここでもクリアする）。
+        scaleRefinedByTrack.Clear();
 
         // 位置・向きの平滑化。前 shot の値から補間すると新しいカットの先頭で滑り込む。
         smoothedJointsByTrack.Clear();

@@ -2,14 +2,15 @@ using UnityEngine;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
-    // 脚の骨長比を meta.bin の keypoints3d に合わせる補正。
+    // 四肢（脚・腕）の骨長比を meta.bin の keypoints3d に合わせる補正。
     //
     // 胴（Pelvis→Neck）で正規化した比で合わせるため、全体スケール（bbox 由来）とは独立。
     // モデルを切り替えると TrackInstanceLifecycle が古いインスタンスを破棄して
     // 作り直すので、新しいモデルにも生成時に自動で掛かる。
     //
-    // 補正しすぎると脚だけ不自然に伸びるため上限を設ける。実測の必要倍率は
-    // 大腿 1.035 / 下腿 1.151 なので、通常はこの範囲に収まる。
+    // 補正しすぎると四肢だけ不自然に伸びるため上限を設ける。既定 Human モデル
+    // （00_Female_A_01）+ bundle_human.svb での実測（2026-08-19、Pelvis(39) 基準）は
+    // 大腿 1.045 / 下腿 1.164 / 上腕 1.060 / 前腕 1.090 で、通常はこの範囲に収まる。
 
     private const float HumanBoneLengthFactorMin = 0.7f;
     private const float HumanBoneLengthFactorMax = 1.5f;
@@ -52,36 +53,49 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        if (!TryResolveLegBoneLengthFactors(
+        if (!TryResolveLimbBoneLengthFactors(
                 human,
                 animator,
                 out float thighFactor,
-                out float shinFactor))
+                out float shinFactor,
+                out float upperArmFactor,
+                out float foreArmFactor))
         {
             return;
         }
 
-        correction.Apply(animator, thighFactor, shinFactor);
+        correction.Apply(animator, thighFactor, shinFactor, upperArmFactor, foreArmFactor);
 
         if (logHumanBoneLengthCorrection)
         {
             Debug.Log(
                 $"[BONEFIX] track={human.trackId} thighFactor={thighFactor:F3} " +
-                $"shinFactor={shinFactor:F3} model={instance.name}");
+                $"shinFactor={shinFactor:F3} upperArmFactor={upperArmFactor:F3} " +
+                $"foreArmFactor={foreArmFactor:F3} model={instance.name}");
+            LogLimbFactorInputs(human, animator, instance);
         }
     }
 
 
-    // keypoints3d とモデル、それぞれの「胴で正規化した脚の骨長」を比べて倍率を出す。
+    // keypoints3d とモデル、それぞれの「胴で正規化した四肢の骨長」を比べて倍率を出す。
     // 胴で割ることでカメラ距離やモデルのスケールに依存しない比較になる。
-    private bool TryResolveLegBoneLengthFactors(
+    //
+    // 胴の基準は Pelvis(39)。keypoints は 44 点の hmr2_openpose25_extra19 で、先頭 25 点が
+    // OpenPose BODY_25、26 点目以降が SMPL 由来の extra19。BODY_25 側にも MidHip(8) があり
+    // 意味が近いが、両者は 1.048 倍違う（2026-08-19 実測）。取り違えるとすべての比が
+    // 5% ずれるので、必ず HumanSourceKeypointPelvis を使うこと。
+    private bool TryResolveLimbBoneLengthFactors(
         MetaObj human,
         Animator animator,
         out float thighFactor,
-        out float shinFactor)
+        out float shinFactor,
+        out float upperArmFactor,
+        out float foreArmFactor)
     {
         thighFactor = 1f;
         shinFactor = 1f;
+        upperArmFactor = 1f;
+        foreArmFactor = 1f;
 
         Vector3[] joints = human.jointsCam;
         byte[] vis = human.jointsVis;
@@ -106,6 +120,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 joints, vis, HumanSourceKeypointLeftKnee, HumanSourceKeypointLeftAnkle);
         }
 
+        float sourceUpperArm = ResolveVisibleSegmentLength(
+            joints, vis, HumanSourceKeypointRightShoulder, HumanSourceKeypointRightElbow);
+        if (sourceUpperArm <= 0f)
+        {
+            sourceUpperArm = ResolveVisibleSegmentLength(
+                joints, vis, HumanSourceKeypointLeftShoulder, HumanSourceKeypointLeftElbow);
+        }
+
+        float sourceForeArm = ResolveVisibleSegmentLength(
+            joints, vis, HumanSourceKeypointRightElbow, HumanSourceKeypointRightWrist);
+        if (sourceForeArm <= 0f)
+        {
+            sourceForeArm = ResolveVisibleSegmentLength(
+                joints, vis, HumanSourceKeypointLeftElbow, HumanSourceKeypointLeftWrist);
+        }
+
         float sourceTorso = ResolveVisibleSegmentLength(
             joints, vis, HumanSourceKeypointPelvis, HumanSourceKeypointNeck);
         if (sourceThigh <= 0f || sourceShin <= 0f || sourceTorso <= 0f)
@@ -123,6 +153,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             cache, HumanBodyBones.LeftUpperLeg, HumanBodyBones.LeftLowerLeg);
         float modelShin = ResolveBoneDistance(
             cache, HumanBodyBones.LeftLowerLeg, HumanBodyBones.LeftFoot);
+        float modelUpperArm = ResolveBoneDistance(
+            cache, HumanBodyBones.LeftUpperArm, HumanBodyBones.LeftLowerArm);
+        float modelForeArm = ResolveBoneDistance(
+            cache, HumanBodyBones.LeftLowerArm, HumanBodyBones.LeftHand);
         float modelTorso = ResolveBoneDistance(
             cache, HumanBodyBones.Hips, HumanBodyBones.Neck);
         if (modelThigh <= 0f || modelShin <= 0f || modelTorso <= 0f)
@@ -138,7 +172,72 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             (sourceShin / sourceTorso) / (modelShin / modelTorso),
             HumanBoneLengthFactorMin,
             HumanBoneLengthFactorMax);
+
+        // 腕は既定 OFF（enableHumanArmLengthCorrection のコメント参照）。
+        if (!enableHumanArmLengthCorrection)
+        {
+            return true;
+        }
+
+        // 腕は脚と違って手首より先（指）が keypoints に無い。上腕・前腕だけを合わせる。
+        // 片腕でも取れなければ倍率 1（無補正）のままにして、脚だけ補正した状態にする。
+        if (sourceUpperArm > 0f && modelUpperArm > 0f)
+        {
+            upperArmFactor = Mathf.Clamp(
+                (sourceUpperArm / sourceTorso) / (modelUpperArm / modelTorso),
+                HumanBoneLengthFactorMin,
+                HumanBoneLengthFactorMax);
+        }
+
+        if (sourceForeArm > 0f && modelForeArm > 0f)
+        {
+            foreArmFactor = Mathf.Clamp(
+                (sourceForeArm / sourceTorso) / (modelForeArm / modelTorso),
+                HumanBoneLengthFactorMin,
+                HumanBoneLengthFactorMax);
+        }
+
         return true;
+    }
+
+
+    // factor の根拠になっている生の測定値をそのまま出す。prefab を直接測った値と
+    // 食い違うケース（2026-08-19 の前腕 1.33 倍）を切り分けるための診断。
+    private void LogLimbFactorInputs(MetaObj human, Animator animator, GameObject instance)
+    {
+        HumanoidRigCache cache = GetOrBuildHumanoidCache(animator);
+        if (cache == null || !cache.ready)
+        {
+            return;
+        }
+
+        Vector3[] j = human.jointsCam;
+        byte[] v = human.jointsVis;
+        float sTorso = ResolveVisibleSegmentLength(j, v, HumanSourceKeypointPelvis, HumanSourceKeypointNeck);
+        float sUArm = ResolveVisibleSegmentLength(j, v, HumanSourceKeypointRightShoulder, HumanSourceKeypointRightElbow);
+        float sFArm = ResolveVisibleSegmentLength(j, v, HumanSourceKeypointRightElbow, HumanSourceKeypointRightWrist);
+        float sThigh = ResolveVisibleSegmentLength(j, v, HumanSourceKeypointRightHip, HumanSourceKeypointRightKnee);
+
+        float mTorso = ResolveBoneDistance(cache, HumanBodyBones.Hips, HumanBodyBones.Neck);
+        float mUArm = ResolveBoneDistance(cache, HumanBodyBones.LeftUpperArm, HumanBodyBones.LeftLowerArm);
+        float mFArm = ResolveBoneDistance(cache, HumanBodyBones.LeftLowerArm, HumanBodyBones.LeftHand);
+        float mThigh = ResolveBoneDistance(cache, HumanBodyBones.LeftUpperLeg, HumanBodyBones.LeftLowerLeg);
+
+        Vector3 lossy = instance.transform.lossyScale;
+        string names = string.Empty;
+        if (cache.bones.TryGetValue(HumanBodyBones.LeftLowerArm, out Transform la) && la != null &&
+            cache.bones.TryGetValue(HumanBodyBones.LeftHand, out Transform lh) && lh != null)
+        {
+            names = $" lowerArm={la.name} hand={lh.name} handParent={(lh.parent != null ? lh.parent.name : "-")}" +
+                    $" handLocalMag={lh.localPosition.magnitude:F4}";
+        }
+
+        Debug.Log(
+            $"[BONEIN] source(m) torso={sTorso:F4} uArm={sUArm:F4} fArm={sFArm:F4} thigh={sThigh:F4}" +
+            $" | model(world) torso={mTorso:F4} uArm={mUArm:F4} fArm={mFArm:F4} thigh={mThigh:F4}" +
+            $" | lossyScale={lossy.x:F4} localScale={instance.transform.localScale.x:F4}" +
+            $" | model/lossy torso={mTorso / Mathf.Max(1e-6f, lossy.x):F4} fArm={mFArm / Mathf.Max(1e-6f, lossy.x):F4}" +
+            names);
     }
 
 

@@ -543,10 +543,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float depthGap = Vector3.Dot(delta, forward);
         float lateralGap = (delta - forward * depthGap).magnitude;
 
+        // lateralGap は画面平面内の距離なので、縦・横のどちらがずれているか分からない。
+        // モデルが bbox より大きいと下端合わせのぶん上側へずれるため、縦成分が大きくなる
+        // はず（2026-08-19 の切り分け）。up / right に分解して確かめる。
+        Vector3 up = view != null ? view.up : Vector3.up;
+        Vector3 right = view != null ? view.right : Vector3.right;
+        float upGap = Vector3.Dot(delta, up);
+        float rightGap = Vector3.Dot(delta, right);
+
         Debug.Log(
             $"[GAP] f={frame} human={humanTrackId} other={otherTrackId} " +
             $"dist={delta.magnitude:F4} depthGap={depthGap:+0.0000;-0.0000} " +
-            $"lateralGap={lateralGap:F4} radius={otherRadius:F4} " +
+            $"lateralGap={lateralGap:F4} upGap={upGap:+0.0000;-0.0000} " +
+            $"rightGap={rightGap:+0.0000;-0.0000} radius={otherRadius:F4} " +
             $"overlap={(delta.magnitude < otherRadius ? 1 : 0)} nearest={boneName}");
     }
 

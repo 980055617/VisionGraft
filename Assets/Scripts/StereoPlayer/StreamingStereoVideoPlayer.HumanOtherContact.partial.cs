@@ -210,6 +210,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const int HumanSourceKeypointLeftHip = 12;
     private const int HumanSourceKeypointLeftKnee = 13;
     private const int HumanSourceKeypointLeftAnkle = 14;
+    private const int HumanSourceKeypointRightShoulder = 2;
+    private const int HumanSourceKeypointRightElbow = 3;
+    private const int HumanSourceKeypointRightWrist = 4;
+    private const int HumanSourceKeypointLeftShoulder = 5;
+    private const int HumanSourceKeypointLeftElbow = 6;
+    private const int HumanSourceKeypointLeftWrist = 7;
     private const int HumanSourceKeypointPelvis = 39;
     private const int HumanSourceKeypointMinimumCount = 40;
 

@@ -145,6 +145,33 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         ApplyStereoUvSettings(leftMat, 1);
         ApplyStereoUvSettings(rightMat, 2);
+
+        // スクリーンは背景として先に描き、深度を書かない。
+        // 既定のままだと、配置されたモデルの深度がスクリーンより奥になったフレームで
+        // モデルがスクリーンに隠れて消える（2026-08-20 実測で 8.1% のフレーム）。
+        // Custom/PerEyeStereoVideoURP は shader 側で Queue/ZWrite/ZTest を指定しているが、
+        // フォールバックシェーダー（URP/Unlit 等）が使われた場合の保険としてここでも設定する。
+        ForceBackgroundDrawOrder(leftMat);
+        ForceBackgroundDrawOrder(rightMat);
+    }
+
+    private static void ForceBackgroundDrawOrder(Material mat)
+    {
+        if (mat == null)
+        {
+            return;
+        }
+
+        mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Background;
+        if (mat.HasProperty("_ZWrite"))
+        {
+            mat.SetFloat("_ZWrite", 0f);
+        }
+
+        if (mat.HasProperty("_ZTest"))
+        {
+            mat.SetFloat("_ZTest", (float)UnityEngine.Rendering.CompareFunction.Always);
+        }
     }
 
     private Material CreateUniqueMaterial(Renderer renderer)

@@ -11,14 +11,23 @@ Shader "Custom/PerEyeStereoVideoURP"
 
     SubShader
     {
+        // スクリーンは「動画という背景」であって遮蔽物ではない。
+        // 既定の Geometry キューかつ ZWrite ON だと、配置されたモデルの深度がスクリーンより
+        // 奥になったフレームでモデルがスクリーンに隠れて消える（2026-08-20 実測で 8.1%）。
+        // Background キューで先に描き、深度を書かないことで、モデルは深度に関わらず常に
+        // スクリーンの手前に見える。動画は平面の背景なのでこれが正しい見え方になる。
         Tags
         {
-            "RenderType"="Opaque"
+            "RenderType"="Background"
+            "Queue"="Background"
             "RenderPipeline"="UniversalPipeline"
         }
 
         Pass
         {
+            ZWrite Off
+            ZTest Always
+
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag

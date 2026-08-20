@@ -229,6 +229,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             FitDisplayedModelToBBox(instance, target, screen, bboxHAdjusted);
         }
         LogBottomAlignmentDeltaIfEnabled(target, instance, screen, frame, preBottomFitPosition);
+        RefineLockedScaleFromProjectedBones(instance, target, screen, bboxHAdjusted);
+        // ⑧ 投影高が bbox に一致する深度へ動かす。スケールは変えない。
+        // 深度が動くと ⑦ の下端合わせが崩れるので、動かした場合だけ ⑦ を掛け直す。
+        if (RefineDepthFromProjectedBones(instance, target, screen, bboxHAdjusted) &&
+            !ShouldUseHumanSmplRootPlacement(target, frame))
+        {
+            FitDisplayedModelToBBox(instance, target, screen, bboxHAdjusted);
+        }
         ObserveInteractiveMotionDisplayedRoot(target.trackId, instance);
         ApplyInteractiveHandoffBlendIfActive(target.trackId, instance, frame);
         LogPlacementMeasurementIfEnabled(target, instance, screen, frame);
@@ -462,6 +470,150 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
+    // FK 適用後の骨格投影が bbox 高さに一致するよう、ロック済みスケールを一度だけ測り直す。
+    //
+    // ② ResolveDesiredLocalScale が使う bboxWorldH は「被写体が anchorZ という 1 枚の面に
+    // ある」前提の式で、前後に広がった姿勢では必ず過小評価になる（2026-08-18 実測: 立位 7% /
+    // 深い前傾 76% 過大。keypoints3d を同じスケールで投影しても同じ比なので式の前提の問題）。
+    // ここで FK 適用後の実測値から逆算し、基準フレームでの誤差を消す。
+    //
+    // 投影高さは scale に厳密には比例しない（scale を変えると各ボーンの深度も動く）が、
+    // root 深度 0.75 m に対して体の前後の広がりは 0.1 m 程度なので誤差は 2 次に留まる。
+    // 1 回の補正で十分収束するため反復はしない。
+    //
+    // 呼ぶのは ⑦ FitDisplayedModelToBBox の後。スケールを変えると下端が動くので、
+    // 補正後に下端合わせをやり直す。
+    // ⑧ ロック済みスケールはそのままに、「投影された骨格の高さが bbox 高に一致する」深度へ動かす。
+    // 投影高 = span(f) * scale * f_px / z(f) なので、z を ratio 倍すれば投影高が bbox に一致する。
+    // 画面上の位置（u, v）を保ったまま深度だけ変えるため、カメラ空間で z 方向にスケールする。
+    // 動かしたときだけ true を返す（呼び出し側が ⑦ の下端合わせを掛け直すため）。
+    private bool RefineDepthFromProjectedBones(
+        GameObject instance,
+        MetaObj obj,
+        Transform screen,
+        float bboxH)
+    {
+        if (!refineDepthFromProjectedBones || instance == null || bboxH <= 0f)
+        {
+            return false;
+        }
+
+        // 骨格を持つカテゴリだけ。Else は投影が既に bbox と一致している（実測 sizeRatio = 1.000）。
+        if (!IsCategoryPerson(obj.categoryId) && !IsCategoryAnimal(obj.categoryId))
+        {
+            return false;
+        }
+
+        if (!TryProjectBonesToEyeHeight(instance, screen, out _, out _, out float projectedH, out _, out _) ||
+            projectedH <= 0.0001f)
+        {
+            return false;
+        }
+
+        float ratio = projectedH / bboxH;
+
+        // 案 A と同じガード。bbox が画面端で切れている・検出が破綻しているフレームでは動かさない。
+        if (ratio < MinProjectedBoneRatioForScaleRefine || ratio > MaxProjectedBoneRatioForScaleRefine)
+        {
+            return false;
+        }
+
+        if (!TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
+        {
+            return false;
+        }
+
+        Vector3 camLocal = Quaternion.Inverse(camRotation) * (instance.transform.position - camOrigin);
+        if (camLocal.z <= 0.0001f)
+        {
+            return false;
+        }
+
+        float targetZ = camLocal.z * ratio * Mathf.Max(0.1f, projectedDepthScaleK);
+        float screenDist = Mathf.Max(0.001f, screenDistanceMeters);
+        targetZ = Mathf.Clamp(
+            targetZ,
+            Mathf.Max(0.001f, MinDistanceFromHeadMeters),
+            screenDist - 0.0001f);
+
+        if (Mathf.Abs(targetZ - camLocal.z) <= 0.0001f)
+        {
+            return false;
+        }
+
+        Vector3 moved = camLocal * (targetZ / camLocal.z);
+        TrackPlacementWriter.Apply(
+            instance.transform,
+            TrackPlacementCommand.PositionOnly(
+                camOrigin + camRotation * moved,
+                instance.transform.rotation,
+                instance.transform.localScale));
+        return true;
+    }
+
+    private void RefineLockedScaleFromProjectedBones(
+        GameObject instance,
+        MetaObj obj,
+        Transform screen,
+        float bboxH)
+    {
+        if (!refineScaleFromProjectedBones ||
+            instance == null ||
+            bboxH <= 0f ||
+            scaleRefinedByTrack.Contains(obj.trackId))
+        {
+            return;
+        }
+
+        // 姿勢を持つカテゴリだけ。Else は前後の広がりが無視できるので元の式で正確
+        // （実測で sizeRatio = 1.000）。
+        if (!IsCategoryPerson(obj.categoryId) && !IsCategoryAnimal(obj.categoryId))
+        {
+            return;
+        }
+
+        if (!lockedModelLocalScaleByTrack.TryGetValue(obj.trackId, out Vector3 locked))
+        {
+            return;
+        }
+
+        if (!TryProjectBonesToEyeHeight(instance, screen, out _, out _, out float projectedH, out _, out _) ||
+            projectedH <= 0.0001f)
+        {
+            return;
+        }
+
+        float ratio = projectedH / bboxH;
+
+        // bbox が画面端で切れている、検出が破綻している等でこの範囲を外れたら補正しない。
+        // 誤った基準を焼き付けると shot の間ずっと残るため、疑わしいときは何もしない方が安全。
+        if (ratio < MinProjectedBoneRatioForScaleRefine || ratio > MaxProjectedBoneRatioForScaleRefine)
+        {
+            return;
+        }
+
+        // ratio を projectedBoneRatioTarget に合わせる（既定 1.0 = bbox ぴったり）。
+        Vector3 refined = locked * (Mathf.Max(0.1f, projectedBoneRatioTarget) / ratio);
+        lockedModelLocalScaleByTrack[obj.trackId] = refined;
+        scaleRefinedByTrack.Add(obj.trackId);
+
+        TrackPlacementWriter.ApplyLocalScale(instance.transform, refined);
+
+        // スケールを変えた分だけ下端がずれるので合わせ直す。
+        if (!ShouldUseHumanSmplRootPlacement(obj, GetCurrentPlaybackFrame()))
+        {
+            FitDisplayedModelToBBox(instance, obj, screen, bboxH);
+        }
+
+        if (logPlacementMeasurement)
+        {
+            Debug.Log(
+                $"[SCALEFIX] track={obj.trackId} boneRatio={ratio:F3} target={projectedBoneRatioTarget:F3} " +
+                $"scale {locked.x:F4} → {refined.x:F4} (×{projectedBoneRatioTarget / ratio:F3}) bboxH={bboxH:F0}");
+        }
+    }
+
+
     private Vector3 GetOrLockModelLocalScale(uint trackId, Vector3 desiredLocalScale)
     {
         if (lockedModelLocalScaleByTrack.TryGetValue(trackId, out Vector3 lockedScale))
@@ -469,6 +621,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return lockedScale;
         }
 
+        // 新しくロックした = まだ FK 後の実測補正を通していない。shot 境界・モデル変更・
+        // インスタンス再生成のいずれでロックが消えても、ここで必ず補正がやり直される。
+        scaleRefinedByTrack.Remove(trackId);
         lockedModelLocalScaleByTrack[trackId] = desiredLocalScale;
         return desiredLocalScale;
     }

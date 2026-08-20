@@ -119,6 +119,61 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 実機で見ながら調整できるよう Inspector に出している。
     [Min(0f)] public float popoutRangeMeters = 0.35f;
 
+    // ② のスケール決定は bboxWorldH = (2*bboxH/eye_h) * (anchorZ/fy) を使うが、この式は
+    // 「被写体が anchorZ という 1 枚の面にある」前提である。人体は前後（視線方向）に広がって
+    // いるため手前の部位ほど大きく投影され、骨格の投影高さは常に bbox より大きくなる。
+    // 2026-08-18 のバッチ実測では立位で 7%、深い前傾で 76% 過大だった。meta.bin の
+    // keypoints3d を同じスケールで投影しても同じ比（1.205 対 1.238）になるので、FK や
+    // モデル固有の誤差ではなく式の前提そのものの問題である。
+    //
+    // ON にすると、shot 先頭で FK を適用したあとに骨格の投影高さを実測し、それが bbox
+    // 高さに一致するようロック済みスケールを逆算し直す（RefineLockedScaleFromProjectedBones）。
+    // 姿勢ごとに必要な補正量は 1.07〜1.76 と変動するため単一スケールで全姿勢は合わせられないが、
+    // 基準フレームでの誤差は消える。shot 先頭が立位でない bundle_animal では効果が大きい
+    // （実測で 8 shot 中 4 shot が先頭で 25% 以上外れ、最悪 2.62 倍）。
+    public bool refineScaleFromProjectedBones = true;
+
+    // ロック済みスケールを固定したまま、毎フレーム「投影された骨格の高さが bbox 高に一致する」
+    // 深度へモデルを動かす。投影高は span(f) * scale * f_px / z(f) なので、z を bbox から
+    // 逆算すれば boneRatio ≡ 1.0 になる。スケールは動かさないので、毎フレームのスケール補正で
+    // 起きた破綻（0.3 秒で身長 ×0.56）は生じない。
+    //
+    // 2026-08-20 の全編実測（bundle_human.svb, 2156f、boneRatio は 1.0 が理想）:
+    //   OFF（従来）    median 1.082 / p10-p90 0.985-1.279 / max 2.269 / 1.3 超 8.8% / 球が手前 79.0%
+    //   ON  k=1.0     median 0.998 / p10-p90 0.986-1.066 / max 1.698 / 1.3 超 2.0% / 球が手前 87.7%
+    //
+    // 注意: `other`（Else）には骨格が無いため適用されない。人と Else で深度の基準が分かれるので、
+    // `bundle_train.svb` のような Else のみの bundle には一切効果がない。
+    public bool refineDepthFromProjectedBones = true;
+
+    // 上記で逆算した深度に掛ける係数。1.0 で「投影高 = bbox 高」ちょうど。
+    // 大きくするとモデルが奥へ寄り Else との前後関係は改善するが、モデルが小さく写る。
+    // 全編実測での比較:
+    //   k=0.95 … median 1.052 / 球が手前 80.6%
+    //   k=1.00 … median 0.998 / 球が手前 87.7%  ← 既定。サイズずれが最小
+    //   k=1.10 … median 0.907 / 球が手前 94.4%  ただし 18% のフレームで bbox より 10% 以上小さくなる
+    [Min(0.1f)] public float projectedDepthScaleK = 1.0f;
+
+    // RefineLockedScaleFromProjectedBones が狙う boneRatio。1.0 は「基準フレームで骨格の
+    // 投影高さを bbox 高さにぴったり合わせる」。ただし boneRatio は姿勢で 1.0〜2.2 と動くため、
+    // 基準フレーム（shot 先頭＝多くの場合は立位）で 1.0 に合わせても全区間の中央値は 1.2 前後に
+    // 残る。1.0 未満にするとモデル全体が小さくなり、接触場面のめり込みは減るが立位で映像より
+    // 小さくなる。最適値は素材依存なので実測して決める。
+    [Min(0.5f)] public float projectedBoneRatioTarget = 1f;
+
+
+    // 腕（上腕・前腕）の骨長も keypoints3d に合わせる。**既定 OFF。**
+    //
+    // 2026-08-19 の実測では、比率そのものは正しく合う（補正後の前腕/胴 0.537 = 映像 0.537）
+    // 一方で boneRatio が 1.197 → 1.270 に悪化した。モデル全体が bboxWorldH の単一深度前提で
+    // 約 1.2 倍に膨らんでいるため、腕の「比率」を正すと絶対長が 1.2 倍になり、手が上端から
+    // 余計にはみ出す（boneTopDelta -47.9 → -60.7 px、手が topBone になるフレーム 9→13）。
+    // 補正前は「腕が 27% 短い」ことが膨張を偶然打ち消していた。
+    //
+    // 膨張（docs/bundle-placement.md「根本原因: bboxWorldH の式が単一深度前提」）が解消されれば
+    // 正しく効くようになるため、実装は残して既定 OFF にしてある。
+    public bool enableHumanArmLengthCorrection = false;
+
     [Header("Human Bone Length")]
     // 表示モデルと元映像の脚の骨長比を合わせる。既定 Human モデルは胴で正規化した脚が
     // 映像より 8.3% 短く、足首が bbox 高さの約 10% 上にずれていた（2026-08-06 実測）。

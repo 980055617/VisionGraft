@@ -49,6 +49,7 @@ bundle 内の検出オブジェクト（Human / Animal / Else）を、対応す�
 | ドキュメント | 内容 |
 |---|---|
 | [docs/bundle-placement.md](docs/bundle-placement.md) | bundle 構造・meta.bin・anchor 配置（発表用まとめ + 実装リファレンス） |
+| [docs/bundle-shared/](docs/bundle-shared/) | **bundle 生成側（Python）との共有一式**。このフォルダごとコピーして同期する。`README.md`（課題 D-xxx・合意済みのデータ契約）と `bundle_depth_check.py`（検証ツール）。**共有するファイルを増やすときは必ずこのフォルダに入れる** |
 | [docs/smpl-retargeting.md](docs/smpl-retargeting.md) | Human SMPL / Animal SMAL FK・座標変換・調査ログ（発表用まとめ付き） |
 | [docs/interactive-motion-events.md](docs/interactive-motion-events.md) | インタラクティブモーションイベント（発表用まとめ付き） |
 | [docs/experiment-flow.md](docs/experiment-flow.md) | 被験者実験フロー・シーン構成・ログ仕様（発表用まとめ付き） |
@@ -59,6 +60,7 @@ bundle 内の検出オブジェクト（Human / Animal / Else）を、対応す�
 ## 作業方針
 
 - **作業前に関連 docs を参照**する
+- **記録は聞かずに必ず行う**。調査・実測・判断の結果が出たら、**対処方針の議論に入る前に** docs へ書く。「記録しますか」と確認しない（記録 → その後に方針、の順を固定する）
 - **作業中・作業後にドキュメントを更新**する（新しい知見・NG パターン・調査結果）
 - **実装後に `Docs/presentations/` を更新**する（対応する機能ファイルの内容を現状に合わせ、`presentations/weekly/YYYY-MM-DD.md` に今週の差分を追記する）
   - 週次ファイルの命名規則: **金曜日（ゼミ当日）の日付**をファイル名にする。内容はその前の週（土〜金）の作業記録
@@ -66,6 +68,7 @@ bundle 内の検出オブジェクト（Human / Animal / Else）を、対応す�
 - **ログから実際の値を確認**してから修正方向を決める
 - **修正の根本原因が確認できてから変更に入る**
 - **変換式を変える前に数学的検証をする**
+- **数値検証は実装を移植してから行う**。配置・投影・スケールを Python 等で検証するときは、記憶や docs から式を再構成せず、**必ず先に該当する実装コードを読んで移植する**。既定値ではなく**シーンの serialize 値**を確認する。移植コードはファイルとして残し、次の検証の起点にする（過去に線形/逆数の取り違えとシーン値の見落としで結論が逆転した事例あり: [docs/bundle-placement.md](docs/bundle-placement.md) の「検証コードの誤りと再発防止」）
 
 ## 絶対に変えてはいけないこと
 

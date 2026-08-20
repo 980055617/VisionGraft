@@ -81,3 +81,6 @@ Assets/AssetStoreTools*
 .codex/
 .gemini/
 
+
+# 検証用の一時成果物（比較画像・キャプチャ動画）。手元には残すがリポジトリには入れない
+/[Dd]ocs/tmp/

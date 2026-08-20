@@ -91,16 +91,53 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     //   3. 結果を Clamp01（数値誤差で範囲外に出ても配置は壊れない）
     // 範囲が取れなかった bundle では逆数変換を諦めて素の disparity を返す。これは
     // 「線形が正しい」からではなく、較正できないときの退避である。
+    // z01 を disparity（nearness、大きいほど近い）へ直す。向きが bundle 世代で逆なので
+    // （IsAnchorDepthLargerMeansFarther）、この変換は 1 か所に閉じ込める。
+    // レンジ側も必ずこの関数を通してから nearness と比べること（TryResolveNearnessRange）。
+    private float Z01ToNearness(float z01)
+    {
+        return IsAnchorDepthLargerMeansFarther() ? (1f - z01) : z01;
+    }
+
+    // CalibrateAnchorDepthRange が求めた z01 のレンジを、nearness と同じ経路
+    // （NormalizeAnchorZ01 → Z01ToNearness）に通して disparity のレンジへ直す。
+    //
+    // 以前は ResolvePopoutFraction が `1 - anchorZ01Range*` を直接使っており、
+    // nearness 側だけが向き判定と正規化を通るという単位の不一致があった。実測（2026-08-17）:
+    //   - larger=nearer の旧 bundle（bundle.svb）では nearness = z01 なのにレンジだけ
+    //     反転していたため、全サンプルがレンジの外側に落ちて dMax に張り付き、
+    //     popout が 1.0 固定・配置深度の幅が 0.0000 m（全オブジェクトが同一深度）になっていた
+    //   - enableAnchorDepthRangeNormalization が ON のときは、0..1 に張り直したあとの
+    //     nearness を正規化前のスケールで Clamp していたため、bundle_human.svb で 77.3%、
+    //     bundle_train.svb で 87.2% のサンプルが飽和していた
+    // どちらも同じ経路に通すことで消える。larger=farther かつ正規化 OFF（現行のシーン）
+    // では従来と同じ値になるので、既存の見え方は変わらない。
+    private bool TryResolveNearnessRange(out float dMin, out float dMax)
+    {
+        dMin = 0f;
+        dMax = 1f;
+        if (!hasAnchorZ01Range)
+        {
+            return false;
+        }
+
+        float a = Z01ToNearness(NormalizeAnchorZ01(anchorZ01RangeMin));
+        float b = Z01ToNearness(NormalizeAnchorZ01(anchorZ01RangeMax));
+        dMin = Mathf.Min(a, b);
+        dMax = Mathf.Max(a, b);
+        return dMax - dMin >= 0.0001f;
+    }
+
     private float ResolvePopoutFraction(float nearness)
     {
-        if (!hasAnchorZ01Range)
+        if (!TryResolveNearnessRange(out float dMin, out float dMax))
         {
             return Mathf.Clamp01(nearness);
         }
 
-        float dMin = 1f - anchorZ01RangeMax;   // 最も遠い側の disparity
-        float dMax = 1f - anchorZ01RangeMin;   // 最も近い側の disparity
-        if (dMin <= AnchorDisparityMinimum || dMax - dMin < 0.0001f)
+        // 正規化を通すと disparity の絶対スケールが失われて dMin が 0 に落ちる。
+        // その場合は逆数変換を諦めて線形に退避する（発散させない）。
+        if (dMin <= AnchorDisparityMinimum)
         {
             return Mathf.Clamp01(nearness);
         }
@@ -135,7 +172,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // popout は「スクリーンからどれだけ手前に出すか」なので近さが要る。
         // larger=farther の bundle で z01 をそのまま使うと前後関係が反転し、
         // 例えば bundle_human.svb ではボールが人物の奥に回り込む。
-        float nearness = IsAnchorDepthLargerMeansFarther() ? (1f - z01) : z01;
+        float nearness = Z01ToNearness(z01);
         float screenDist = Mathf.Max(0.001f, screenDistanceMeters);
         float eps = Mathf.Max(0f, EpsilonMeters);
         float popout = Mathf.Max(0f, popoutRangeMeters) * ResolvePopoutFraction(nearness);

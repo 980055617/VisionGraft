@@ -112,12 +112,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 joints, vis, HumanSourceKeypointLeftHip, HumanSourceKeypointLeftKnee);
         }
 
+        // モデル側は ResolveBoneDistance(LowerLeg, Foot) を測るが、Unity Humanoid の Foot
+        // ボーンは Ankle ではなく Heel の位置にある（2026-08-21 実測）。keypoints 側も
+        // 膝→踵で測らないと別々の区間を比べることになり、倍率が系統的にずれる。
         float sourceShin = ResolveVisibleSegmentLength(
-            joints, vis, HumanSourceKeypointRightKnee, HumanSourceKeypointRightAnkle);
+            joints, vis, HumanSourceKeypointRightKnee, HumanSourceKeypointRightHeel);
         if (sourceShin <= 0f)
         {
             sourceShin = ResolveVisibleSegmentLength(
-                joints, vis, HumanSourceKeypointLeftKnee, HumanSourceKeypointLeftAnkle);
+                joints, vis, HumanSourceKeypointLeftKnee, HumanSourceKeypointLeftHeel);
+        }
+
+        // 踵が取れないフレームは従来どおり足首で代用する（無補正よりはまし）。
+        if (sourceShin <= 0f)
+        {
+            sourceShin = ResolveVisibleSegmentLength(
+                joints, vis, HumanSourceKeypointRightKnee, HumanSourceKeypointRightAnkle);
         }
 
         float sourceUpperArm = ResolveVisibleSegmentLength(

@@ -210,6 +210,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const int HumanSourceKeypointLeftHip = 12;
     private const int HumanSourceKeypointLeftKnee = 13;
     private const int HumanSourceKeypointLeftAnkle = 14;
+    // Unity Humanoid の Foot ボーンは Ankle ではなく Heel の位置にある（2026-08-21 実測、
+    // Foot vs Heel が −2.5/−3.5px に対し Foot vs Ankle は +13.6/+6.5px）。
+    // 骨長比を測るときはモデル側と定義を揃えるためこちらを使う。
+    private const int HumanSourceKeypointRightHeel = 24;
+    private const int HumanSourceKeypointLeftHeel = 21;
     private const int HumanSourceKeypointRightShoulder = 2;
     private const int HumanSourceKeypointRightElbow = 3;
     private const int HumanSourceKeypointRightWrist = 4;

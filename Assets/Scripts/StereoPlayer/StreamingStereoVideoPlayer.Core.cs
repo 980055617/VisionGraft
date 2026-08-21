@@ -169,6 +169,116 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 平滑化を強めても boneRatio がほとんど悪化しないのは、外れ値の ratio が均されるため。
     [Min(0f)] public float projectedDepthSmoothingSeconds = 1.2f;
 
+    // ⑧ の補正が、同じフレームの Else との前後関係（meta.bin の anchor_z が示す順序）を
+    // 壊さないよう ratio を丸めるときの最小の隙間（m）。0 で無効。
+    //
+    // ⑧ は人の深度だけを bbox から決めるので、Else の深度（anchor_z 由来）との相対関係が
+    // bundle の意図から外れる。実際、前傾でボールが背中に乗る f1250-1270 では、
+    // bundle が「球が奥」と言っているのに ⑧ が人を奥へ動かして球が手前に出ていた。
+    //
+    // 全編実測（bundle_human.svb 2156f、前後一致 / 前傾 f1250-70 / boneRatio median / 深度 1f max）:
+    //   A ⑧ OFF              91.3% / 47.6% / 1.082 /  22.0mm
+    //   B ⑧ ON 制限なし        86.0% / 71.4% / 0.997 /  22.0mm  ← 実機「だいぶ治った」
+    //   C 深度をクランプ 15mm  94.9% / 95.2% / 1.002 / 206.0mm  ← 実機「悪化」（跳ねる）
+    //   D ratio を制限 15mm   90.2% / 71.4% / 1.003 /  22.0mm
+    //   D ratio を制限 40mm   91.2% / 71.4% / 1.004 /  22.0mm  ← 既定
+    //
+    // 深度が決まった後にクランプすると前傾区間まで直るが、発動フレーム（17.8%）で一気に
+    // 135mm 動いて跳ねる。ratio 側を制限すれば跳ねずに全体の前後一致は ⑧ OFF 並みに戻るが、
+    // 後段の平滑化が制約を破るため前傾区間は改善しない。
+    // 前傾区間の根本解決には Else 側の深度精度（D-004）が要る。
+    [Min(0f)] public float projectedDepthOrderEpsilonMeters = 0.040f;
+
+    // ⑧ の各段階（補正前 → 比率補正 → 順序クランプ → screen クランプ）を [DEPTH8] に出す。
+    public bool logDepthRefineStages = false;
+
+    // ⑩ Else が骨格モデルの内部に食い込んでいるとき、最小限だけ表面へ押し出す。
+    //
+    // 接触補正（Else を最寄りの部位へ引き寄せる）とは別物。**内部にあるときだけ、体から
+    // 出る方向にのみ動かす**ので、空中にある Else は一切動かない（実測で影響 0 フレーム）。
+    // 押し出す向きは meta.bin の anchor_z が示す前後関係に従うので、背中に乗ったボールは
+    // 奥側の表面へ出る。手前に引き寄せることはない。
+    //
+    // 全編実測（bundle_human_shots_driftfix_test.svb, 2156f）:
+    //   見た目で埋もれるフレーム 26.7% → 0.0%
+    //   押し出し発動 26.7%、移動量 median 16.6mm / p90 39.5mm / max 72.0mm（球半径は約 21mm）
+    //   Else の投影サイズ比 median 1.011 / p10 0.975 / p90 1.052
+    //
+    // **既定 OFF。** 2026-08-21 に実装して実機確認したが、狙った症状（4-8 秒・37 秒の埋もれ）は
+    // 直らず、見た目もかえって悪くなったため無効化した。全編で 23324 回発動し Else が実際に
+    // 動いてはいるが、埋もれ指標は 7.5% → 7.6% とほぼ不変だった。
+    //
+    // 効かない理由は未解明。有力なのは「ボーン半径（骨の中心から体表面までの実測値）が
+    // 実際のメッシュ表面より内側にあり、押し出しても表面に届いていない」という線。
+    // 再挑戦するなら、太さの実測値ではなく SkinnedMeshRenderer の実形状を見る必要がある。
+    public bool resolveOtherPenetration = false;
+
+    // ⑩ で「画面上で重なっている」と判定する余裕（px）。Else の投影半径にこれを足した
+    // 距離より近ければ重なりとみなす。
+    [Min(0f)] public float penetrationOverlapMarginPixels = 8f;
+
+    // ⑨ で Else の深度を決めるとき、meta.bin の差をそのまま使うのではなく、
+    // disparity から実距離の比を復元して使う。
+    //
+    // DepthCrafter は affine-invariant なので `disparity = a(t)/Z + b(t)`。bundle 側の
+    // 背景ドリフト補正で b の 8 割は除去済み（2026-08-21、独立参照点で検証）なので、
+    // 残る b を定数として扱えば、同一フレームの 2 物体の実距離の比が次式で求まる。
+    //
+    //     Z_other / Z_skeleton = (disp_skeleton − b) / (disp_other − b)
+    //
+    // keypoints も実距離の逆算も要らない（比を取ると相殺される）。
+    //
+    // 全編実測（bundle_human_shots_driftfix_test.svb、埋もれ率）:
+    //   OFF（meta.bin の差をそのまま）  全編 28.0% / 4-8s 48.8% / 36-39s 1.2% / 41-42s 19.0%
+    //   ON （実距離の比を復元）        全編 23.5% / 4-8s 40.5% / 36-39s 1.2% / 41-42s 14.3%
+    // どの区間も悪化しない。
+    //
+    // 注意: 推定した実距離を「全編フィットの a」で disparity に戻す実装も試したが、
+    // a(t) ≠ a のフレームで Else が奥へ寄り、36-39s が 1.2% → 12.3% に悪化した。
+    // disparity へ戻さず実距離の比のまま使うこと。
+    //
+    // **既定 OFF。** 2026-08-21 に実装したが、主症状（5 秒付近の胸トラップでボールが
+    // 人体を貫通する）は目視でまったく変わらなかった。動作自体はしている
+    // （b 推定 0.3944、ratio 0.6950、ON/OFF でキャプチャが変わる）が、試算での改善幅が
+    // 4-8s で 48.8% → 40.5% と小さく、見た目に出るレベルに達していない。
+    public bool useMetricRatioForOtherDepth = false;
+
+    // 上式の b。0 以下なら shot 先頭で自動推定する。
+    // 自動推定は keypoints3d から実距離を逆算して `disparity = a/Z + b` を最小二乗で解く。
+    public float depthAffineB = 0f;
+
+    // ⑩ で「bundle が奥と言っていても手前へ押し出す」条件。Else の投影半径にこの係数を
+    // 掛けた距離より画面上で近ければ、体のシルエット内部に深く入っていると見なして手前へ出す。
+    // 0 で無効（常に bundle の前後関係に従う）。
+    //
+    // bundle が「奥」と言っているフレームで奥へ押し出すと、隠れたままで症状が直らない。
+    // 一方この値を上げすぎると、実際に背中側にあるボール（40 秒台の前傾シーン）まで
+    // 手前へ出してしまう。実機で見ながら決める値。
+    [Min(0f)] public float penetrationFrontBias = 0f;
+
+    // 診断: モデルの実ボーンと meta.bin の keypoints3d の投影位置の差を [BONEKP] に出す。
+    // 「keypoints ベースの試算は合うのに実ボーンでの実装が効かない」原因の切り分け用。
+    public bool logBoneVsKeypoint = false;
+    [Min(0)] public int logBoneVsKeypointEveryNFrames = 30;
+
+    // `disparity = a/Z + b` の推定結果を [AFFINE] に出す。
+    public bool logDepthAffineFit = false;
+
+    // ⑩ が押し出したフレームを [PENET] に出す。
+    public bool logPenetrationResolve = false;
+
+    // ⑨ ⑧ で骨格モデルを動かしたあと、Else を「bundle が意図する深度差」を保つ位置へ追従させる。
+    //
+    // ⑧ は骨格を持つ track だけを動かすので、Else との深度差が bundle の意図から外れる。
+    // 全編実測（bundle_human.svb、人 − 球の深度差）では、bundle の意図 81.8mm に対し
+    // 現状 123.0mm、足上げ区間では 71.4mm に対し 237.0mm（3.3 倍）まで開いていた。
+    // 胸トラップ区間では符号まで反転していた（意図 −59.5mm ＝ 球が奥 → 実際 +31.0mm）。
+    //
+    // ON にすると Else の深度を `骨格モデルの実配置深度 − meta.bin が示す差` に置き直す。
+    // 実測では深度差が bundle の意図と一致し、前後関係の一致率も 91.6% → 99.8% になる。
+    // 代償は Else の投影サイズで、median 4.7%・p10 で 13.7% 小さくなる。
+    public bool followOtherDepthToRefinedSkeleton = true;
+
     // RefineLockedScaleFromProjectedBones が狙う boneRatio。1.0 は「基準フレームで骨格の
     // 投影高さを bbox 高さにぴったり合わせる」。ただし boneRatio は姿勢で 1.0〜2.2 と動くため、
     // 基準フレーム（shot 先頭＝多くの場合は立位）で 1.0 に合わせても全区間の中央値は 1.2 前後に
@@ -193,7 +303,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 表示モデルと元映像の脚の骨長比を合わせる。既定 Human モデルは胴で正規化した脚が
     // 映像より 8.3% 短く、足首が bbox 高さの約 10% 上にずれていた（2026-08-06 実測）。
     // モデル切り替え時は新しいインスタンスの生成時に自動で掛かる。
-    public bool enableHumanBoneLengthCorrection = true;
+    //
+    // **既定 OFF（2026-08-21 変更）。** 姿勢を keypoints3d に一致させることを最優先目標に
+    // 据えて実測したところ、この補正が姿勢を崩していると判明した。
+    //
+    // 実ボーンと keypoints3d の投影位置の差（相対 dv、+ = モデルが下、docs/smpl-retargeting.md）:
+    //   部位     ON      OFF
+    //   右足   +17.5px   0.0px
+    //   左足   +11.2px  -1.9px
+    //   右手首  -5.7px  -0.6px
+    //   左手首  -8.3px  -0.9px
+    //   右膝    +3.7px +10.3px   ← 膝だけは ON の方が良い
+    // 全体の RMS も 6.35% → 5.85% と OFF が良い。**膝を 10px 合わせるために足を 17px・
+    // 手首を 8px ずらす**割の合わないトレードオフになっていた。
+    //
+    // 2026-08-06 当時の前提（足首が bbox 高さの 10% "上" にずれる）は既に成立していない。
+    // 現在は補正 OFF でも足は Heel 基準でほぼ一致する。⑧ の深度補正が入って遠近感が
+    // 正しくなったこと、bundle 側の depth 修正が進んだことで状況が変わった。
+    //
+    // 注意: この補正の本来の目的は「モデル固有のプロポーションを映像の人物に合わせる」ことで、
+    // 姿勢一致とは別軸。OFF にすると身長・シルエットが変わる。実機で確認済み（2026-08-21）。
+    public bool enableHumanBoneLengthCorrection = false;
     public bool logHumanBoneLengthCorrection = false;
 
     [Header("Human-Other Contact Correction")]

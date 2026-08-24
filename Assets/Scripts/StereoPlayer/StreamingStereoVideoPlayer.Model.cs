@@ -13,6 +13,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private readonly HashSet<uint> scaleRefinedByTrack = new HashSet<uint>();
     // RefineDepthFromProjectedBones の補正比率を時間平滑化した値。shot 境界でクリアする。
     private readonly Dictionary<uint, float> smoothedProjectedDepthRatioByTrack = new Dictionary<uint, float>();
+    // `disparity = a/Z + b` の b。bundle ごとに一度だけ推定する（shot 境界では変わらない）。
+    private bool depthAffineBResolved;
+    private float resolvedDepthAffineB;
+    private const int DepthAffineSampleCount = 120;
+    // 実距離の比がこの範囲を外れたら推定の破綻とみなす（実測では 0.5〜2.0 に収まる）。
+    private const float MinMetricDepthRatio = 0.3f;
+    private const float MaxMetricDepthRatio = 3.0f;
+    private int metricRatioDiagCount;
+    private int depthFollowDiagCount;
     // 実測した boneRatio がこの範囲を外れたらスケールを測り直さない。bbox が画面端で
     // 切れている・検出が破綻しているケースで誤った基準を焼き付けないための保護。
     private const float MinProjectedBoneRatioForScaleRefine = 0.4f;

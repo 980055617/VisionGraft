@@ -84,3 +84,7 @@ Assets/AssetStoreTools*
 
 # 検証用の一時成果物（比較画像・キャプチャ動画）。手元には残すがリポジトリには入れない
 /[Dd]ocs/tmp/
+
+# 検証用に受け取った bundle（正式配布物ではない）
+/Assets/StreamingAssets/*_test.svb
+/Assets/StreamingAssets/*_test.svb.meta

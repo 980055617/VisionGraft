@@ -40,6 +40,14 @@ public static class BatchPlaybackLogger
         int diagEveryN = 10;
         float depthK = -1f;
         float depthSmooth = -1f;
+        float depthEps = -1f;
+        bool depthOff = false;
+        bool penetOff = false;
+        float frontBias = -1f;
+        bool metricOff = false;
+        bool aimAt = true;
+        bool armLen = false;
+        bool boneLen = true;
         string captureFrames = null;
         string captureDir = null;
         int captureWidth = 3840;
@@ -52,6 +60,14 @@ public static class BatchPlaybackLogger
             if (args[i] == "-diagEveryN") int.TryParse(args[i + 1], out diagEveryN);
             if (args[i] == "-depthK") float.TryParse(args[i + 1], out depthK);
             if (args[i] == "-depthSmooth") float.TryParse(args[i + 1], out depthSmooth);
+            if (args[i] == "-depthEps") float.TryParse(args[i + 1], out depthEps);
+            if (args[i] == "-depthOff") bool.TryParse(args[i + 1], out depthOff);
+            if (args[i] == "-penetOff") bool.TryParse(args[i + 1], out penetOff);
+            if (args[i] == "-frontBias") float.TryParse(args[i + 1], out frontBias);
+            if (args[i] == "-metricOff") bool.TryParse(args[i + 1], out metricOff);
+            if (args[i] == "-aimAt") bool.TryParse(args[i + 1], out aimAt);
+            if (args[i] == "-armLen") bool.TryParse(args[i + 1], out armLen);
+            if (args[i] == "-boneLen") bool.TryParse(args[i + 1], out boneLen);
             if (args[i] == "-captureFrames") captureFrames = args[i + 1];
             if (args[i] == "-captureDir") captureDir = args[i + 1];
             if (args[i] == "-captureWidth") int.TryParse(args[i + 1], out captureWidth);
@@ -120,6 +136,26 @@ public static class BatchPlaybackLogger
             Debug.Log("[BATCH] projectedDepthSmoothingSeconds=" + depthSmooth + " applied to " + applied);
         }
 
+        if (depthEps >= 0f || depthOff || penetOff || frontBias >= 0f || metricOff || !aimAt || armLen || !boneLen)
+        {
+            int applied = 0;
+            foreach (var p in UnityEngine.Object.FindObjectsByType<StreamingStereoVideoPlayer>(
+                         FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                if (depthEps >= 0f) { p.projectedDepthOrderEpsilonMeters = depthEps; }
+                if (depthOff) { p.refineDepthFromProjectedBones = false; }
+                if (penetOff) { p.resolveOtherPenetration = false; }
+                if (frontBias >= 0f) { p.penetrationFrontBias = frontBias; }
+                if (metricOff) { p.useMetricRatioForOtherDepth = false; }
+                p.enableKeypointAimAt = aimAt;
+                p.enableHumanArmLengthCorrection = armLen;
+                p.enableHumanBoneLengthCorrection = boneLen;
+                EditorUtility.SetDirty(p);
+                applied++;
+            }
+            Debug.Log("[BATCH] depthEps=" + depthEps + " depthOff=" + depthOff + " applied to " + applied);
+        }
+
         // 診断ログはシーンに保存せず、この実行の間だけ有効にする。
         if (boneRatioTarget > 0f || diagLogs)
         {
@@ -135,6 +171,11 @@ public static class BatchPlaybackLogger
                     p.logPlacementMeasurementEveryNFrames = every;
                     p.logHumanOtherGap = true;
                     p.logHumanOtherGapEveryNFrames = every;
+                    p.logDepthRefineStages = true;
+                    p.logPenetrationResolve = true;
+                    p.logDepthAffineFit = true;
+                    p.logBoneVsKeypoint = true;
+                    p.logBoneVsKeypointEveryNFrames = every;
                 }
                 EditorUtility.SetDirty(p);
                 n++;

@@ -217,6 +217,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 距離より近ければ重なりとみなす。
     [Min(0f)] public float penetrationOverlapMarginPixels = 8f;
 
+    // ⑨ で決めた「骨格 track と Else の深度差」を時間平滑化する時定数（秒）。0 で無効。
+    //
+    // **個別の深度ではなく差に掛けること。** 人と Else の深度は互いに打ち消し合って動いており、
+    // 片方だけ平滑化すると相殺が壊れてばらつきが増える（2026-08-25 実測、クリアランスの
+    // p10-p90 幅が 79.5mm → 人だけ固定 126.5mm / 球だけ固定 101.0mm）。
+    //
+    // 評価は depth map に依存しない独立推定（person は keypoints3d、ball は既知直径 18.5cm
+    // から逆算）を正解として、配置の前後関係が正解と同じ向きになる割合で測った:
+    //   0（なし）  全編 83.1% / 4-8s 39.7% / 36-39s 48.1%
+    //   0.6s       全編 86.9% / 4-8s 46.3% / 36-39s 60.5%
+    //   1.2s       全編 88.9% / 4-8s 53.7% / 36-39s 96.3%  ← 既定
+    //
+    // 4-8s（胸トラップ）が半分程度に留まるのは、この区間の anchor_z 自体が球を人より奥と
+    // 誤推定しているため。平滑化はノイズを均すだけで系統誤差は消せない（D-004）。
+    [Min(0f)] public float otherDepthGapSmoothingSeconds = 1.2f;
+
     // ⑨ で Else の深度を決めるとき、meta.bin の差をそのまま使うのではなく、
     // disparity から実距離の比を復元して使う。
     //
@@ -261,6 +277,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool logBoneVsKeypoint = false;
     [Min(0)] public int logBoneVsKeypointEveryNFrames = 30;
 
+    // ⑨（Else を骨格 track の深度に追従させる補正）の適用結果を [DEPTH9] に出す。
+    //
+    // **⑨ 系を評価するときは必ずこれを使うこと。** [PLACE] は各 track の ApplyMetaTarget 内で
+    // 出力されるが ⑨ は全 track の処理が終わったあとに走るため、[PLACE] には ⑨ の効果が
+    // 含まれない。2026-08-25 に、この違いで試算と実測が大きく食い違った
+    // （4-8s の符号一致が試算 39.7%→53.7% に対し [PLACE] 実測 92.3%→87.6%）。
+    public bool logOtherDepthFollow = false;
+    [Min(0)] public int logOtherDepthFollowEveryNFrames = 1;
+
     // `disparity = a/Z + b` の推定結果を [AFFINE] に出す。
     public bool logDepthAffineFit = false;
 
@@ -277,6 +302,34 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // ON にすると Else の深度を `骨格モデルの実配置深度 − meta.bin が示す差` に置き直す。
     // 実測では深度差が bundle の意図と一致し、前後関係の一致率も 91.6% → 99.8% になる。
     // 代償は Else の投影サイズで、median 4.7%・p10 で 13.7% 小さくなる。
+    // ⑨ が「人がいる深度」として使う参照点。
+    //
+    // 既定だった Root は instance.transform.position だが、Renderpeople 等のスキャンモデルは
+    // FBX の bind pose に原点オフセットが焼き込まれており、root が体の外に出る。
+    // 16_Male_Eric では Hips がモデルローカルで z=+0.86m 固定（2026-08-25 実測、全 2156
+    // フレームで変動 0.0000）で、表示スケール 0.2502 を掛けると体は root より 184.5mm 奥。
+    // その結果 ⑨ が置く球は体より常に手前（100.0% のフレーム、中央値 164.3mm）になっていた。
+    //
+    // 4 種を実測して Hips を採用した（2026-08-26、球表面→最近傍ボーンの中央値）:
+    //   Root 155.2mm / Hips 22.1mm / MeshCenter 22.8mm / MeshFront 88.8mm
+    // 「anchor_z は可視表面の depth なので MeshFront が対応するはず」という読みは外れた。
+    // intended は popout 圧縮空間での depth 差であって実距離の表面間距離ではないため。
+    // Hips と MeshCenter はほぼ同点だが、Hips は姿勢で動かないぶん安定している
+    // （参照点の 1f 変化 median 1.00mm 対 1.60mm、球の 1f 変化 p90 3.00mm 対 4.70mm）。
+    //
+    // Humanoid でない track（Animal 等）は自動的に Root にフォールバックする。
+    public HumanDepthReferenceMode otherDepthSkeletonReference = HumanDepthReferenceMode.Hips;
+    // ⑨ が Else を深度方向に動かしたぶん、見かけの大きさが変わらないようスケールを合わせるか。
+    //
+    // ⑨ は従来スケールを据え置いたまま位置だけ動かしていた。参照点を Hips にして移動量が
+    // median 43.1mm → 163.7mm に増えた結果、球の見かけが 0.772 倍（23% 縮小）になった
+    // （2026-08-26 実測）。配置パイプラインは「投影が bbox に一致する」ことを前提に
+    // 組まれているので、深度を動かしたらスケールも追従させるのが筋。
+    //
+    // スケールは「掛ける」のではなく「代入」する。ApplyMetaTarget が毎 tick 位置を
+    // 貼り直すため（フレーム内の otherZ の幅は 0.000mm）、掛けると 1 フレームで
+    // 約 31 回累積してしまう。
+    public bool matchOtherScaleToFollowedDepth = true;
     public bool followOtherDepthToRefinedSkeleton = true;
 
     // RefineLockedScaleFromProjectedBones が狙う boneRatio。1.0 は「基準フレームで骨格の

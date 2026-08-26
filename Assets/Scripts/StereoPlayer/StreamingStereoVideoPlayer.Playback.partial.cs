@@ -878,7 +878,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
 
             Quaternion inv = Quaternion.Inverse(camRotation);
-            Vector3 skeletonCam = inv * (skeletonInstance.transform.position - camOrigin);
+            // 人の深度は root ではなく体基準の点で測る。root はモデルによっては体の外にある
+            // （FBX の bind pose に焼き込まれた原点オフセット。Core.cs の
+            // otherDepthSkeletonReference を参照）。
+            Vector3 skeletonRef = ResolveHumanDepthReferencePoint(skeletonInstance, camRotation);
+            Vector3 skeletonCam = inv * (skeletonRef - camOrigin);
             Vector3 otherCam = inv * (otherInstance.transform.position - camOrigin);
             if (skeletonCam.z <= 0.0001f || otherCam.z <= 0.0001f)
             {
@@ -899,20 +903,34 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 targetZ = skeletonCam.z - (skeleton.anchorZ - other.anchorZ);
             }
 
+            // 骨格 track と Else の深度「差」を時間平滑化する。
+            // 個別の深度に掛けてはいけない: 両者は互いに打ち消し合って動いており、
+            // 片方だけ平滑化すると相殺が壊れてばらつきが増える（2026-08-25 実測、
+            // 人だけ固定で p10-p90 幅 79.5 → 126.5mm、球だけ固定で 101.0mm に悪化）。
+            targetZ = skeletonCam.z - SmoothOtherDepthGap(other.trackId, skeletonCam.z - targetZ);
+
             targetZ = Mathf.Clamp(
                 targetZ,
                 Mathf.Max(0.001f, MinDistanceFromHeadMeters),
                 screenDist - 0.0001f);
 
-            if (logDepthAffineFit && depthFollowDiagCount < 8)
+            // ⑨ の適用結果は [PLACE] には出ない（[PLACE] は各 track の ApplyMetaTarget 内で
+            // 出力されるが、⑨ は全 track の処理が終わったあとに走るため）。
+            // ⑨ 系を評価するときは必ずこのログを使うこと。
+            if (logOtherDepthFollow &&
+                (logOtherDepthFollowEveryNFrames <= 0 ||
+                 (GetCurrentFrameIndex() % logOtherDepthFollowEveryNFrames) == 0))
             {
-                depthFollowDiagCount++;
                 Debug.Log(
-                    $"[DEPTH9] track={other.trackId} skelZ={skeletonCam.z:F4} otherZ={otherCam.z:F4} " +
-                    $"→ {targetZ:F4} moved={(targetZ - otherCam.z) * 1000f:F1}mm " +
+                    $"[DEPTH9] ref={otherDepthSkeletonReference} f={GetCurrentFrameIndex()} track={other.trackId} " +
+                    $"skelTrack={skeleton.trackId} skelZ={skeletonCam.z:F4} otherZ={otherCam.z:F4} " +
+                    $"final={targetZ:F4} moved={(targetZ - otherCam.z) * 1000f:F1}mm " +
                     $"gapBefore={(skeletonCam.z - otherCam.z) * 1000f:F1}mm " +
                     $"gapAfter={(skeletonCam.z - targetZ) * 1000f:F1}mm " +
-                    $"intended={(skeleton.anchorZ - other.anchorZ) * 1000f:F1}mm");
+                    $"intended={(skeleton.anchorZ - other.anchorZ) * 1000f:F1}mm " +
+                    $"bboxH={skeleton.bboxH:F0} otherBboxW={other.bboxW:F0} otherBboxH={other.bboxH:F0} " +
+                    $"factor={targetZ / otherCam.z:F4} scaleIn={otherInstance.transform.localScale.x:F5} " +
+                    $"matchScale={matchOtherScaleToFollowedDepth}");
             }
 
             if (Mathf.Abs(targetZ - otherCam.z) <= 0.0001f)
@@ -921,13 +939,25 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
 
             // 画面上の位置 (u, v) を保ったまま深度だけ変える。
-            Vector3 moved = otherCam * (targetZ / otherCam.z);
+            // 深度が変わったぶん見かけの大きさも変わるので、必要ならスケールを合わせる。
+            // 配置パイプラインは「投影が bbox に一致する」前提で組まれているため、
+            // 深度だけ動かすと球が bbox より小さく写る（Hips 参照で 0.772 倍、2026-08-26 実測）。
+            //
+            // 累積しないのは ApplyMetaTarget が毎 tick 位置とスケールの両方を貼り直すため
+            // （1 メタフレーム内の otherZ / scaleIn の幅は実測 0.000）。毎 tick の
+            // localScale は「anchor 深度で bbox を張る desiredScale」なので、
+            // そこに depthFactor を掛けるのは代入と同じ意味になる。
+            float depthFactor = targetZ / otherCam.z;
+            Vector3 moved = otherCam * depthFactor;
+            Vector3 scale = matchOtherScaleToFollowedDepth
+                ? otherInstance.transform.localScale * depthFactor
+                : otherInstance.transform.localScale;
             TrackPlacementWriter.Apply(
                 otherInstance.transform,
                 TrackPlacementCommand.PositionOnly(
                     camOrigin + camRotation * moved,
                     otherInstance.transform.rotation,
-                    otherInstance.transform.localScale));
+                    scale));
         }
     }
 
@@ -1113,6 +1143,77 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return span * focalPixels / obj.bboxH;
     }
 
+    // 骨格 track と Else の深度差を時間平滑化する。⑧ の比率平滑化と同じ形式で、
+    // 係数は時定数から毎フレーム求めるためフレームレートに依存しない。
+    // shot 境界では `otherDepthGapByTrack` をクリアして前 shot の値を引きずらせない。
+    // ⑨ が「人がいる深度」として使う点を返す。camRotation はビュー方向を取るためだけに使う。
+    private Vector3 ResolveHumanDepthReferencePoint(GameObject instance, Quaternion camRotation)
+    {
+        if (instance == null || otherDepthSkeletonReference == HumanDepthReferenceMode.Root)
+        {
+            return instance != null ? instance.transform.position : Vector3.zero;
+        }
+
+        if (otherDepthSkeletonReference == HumanDepthReferenceMode.Hips)
+        {
+            Animator animator = instance.GetComponentInChildren<Animator>();
+            if (animator != null && animator.isHuman)
+            {
+                Transform hips = animator.GetBoneTransform(HumanBodyBones.Hips);
+                if (hips != null) { return hips.position; }
+            }
+
+            return instance.transform.position;
+        }
+
+        SkinnedMeshRenderer[] renderers = instance.GetComponentsInChildren<SkinnedMeshRenderer>();
+        bool has = false;
+        Bounds bounds = new Bounds();
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            if (renderers[i] == null) { continue; }
+            if (has) { bounds.Encapsulate(renderers[i].bounds); }
+            else { bounds = renderers[i].bounds; has = true; }
+        }
+
+        if (!has) { return instance.transform.position; }
+        if (otherDepthSkeletonReference == HumanDepthReferenceMode.MeshCenter) { return bounds.center; }
+
+        // MeshFront: bounds のカメラ側の面。bundle の anchor_z が可視表面の depth を
+        // サンプルした値なので、対応する点はここになる。
+        Vector3 forward = camRotation * Vector3.forward;
+        float half =
+            Mathf.Abs(forward.x) * bounds.extents.x +
+            Mathf.Abs(forward.y) * bounds.extents.y +
+            Mathf.Abs(forward.z) * bounds.extents.z;
+        return bounds.center - forward * half;
+    }
+
+    private float SmoothOtherDepthGap(uint trackId, float gap)
+    {
+        float tau = Mathf.Max(0f, otherDepthGapSmoothingSeconds);
+        if (tau <= 0.0001f)
+        {
+            otherDepthGapByTrack[trackId] = gap;
+            return gap;
+        }
+
+        if (!otherDepthGapByTrack.TryGetValue(trackId, out float previous))
+        {
+            otherDepthGapByTrack[trackId] = gap;
+            return gap;
+        }
+
+        // 1 メタフレームにつき約 31 回走るが、Time.deltaTime の合計が 1 メタフレーム
+        // ぶんになるので総進行量は tau どおり（2026-08-25 検証、tick ごとに +0.1mm ずつ
+        // 進み 1 フレームで約 3.3mm = α 0.027 相当）。
+        float deltaTime = Mathf.Max(0f, Time.deltaTime);
+        float alpha = deltaTime <= 0f ? 1f : 1f - Mathf.Exp(-deltaTime / tau);
+        float smoothed = previous + Mathf.Clamp01(alpha) * (gap - previous);
+        otherDepthGapByTrack[trackId] = smoothed;
+        return smoothed;
+    }
+
     private bool TryFindNearestSkeletonTrack(MetaObj other, out MetaObj skeleton, out GameObject instance)
     {
         skeleton = default;
@@ -1224,6 +1325,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return ratio;
         }
 
+        // DisplayModelTick は毎 Update 呼ばれるので、この関数は 1 メタフレームにつき
+        // 約 31 回走る。ただし Time.deltaTime の合計が 1 メタフレームぶんになるため、
+        // 平滑化の総進行量は tau どおりになる（2026-08-25 検証）。
+        // なお ratio は毎 tick 現在の姿勢から再計算されるので、この反復は
+        // 「投影骨高 == bbox 高」への不動点反復も兼ねている。フレーム単位に
+        // 間引くと収束が失われるので間引かないこと。
         float deltaTime = Mathf.Max(0f, Time.deltaTime);
         float alpha = deltaTime <= 0f ? 1f : 1f - Mathf.Exp(-deltaTime / tau);
         float smoothed = previous + Mathf.Clamp01(alpha) * (ratio - previous);

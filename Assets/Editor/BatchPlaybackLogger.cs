@@ -45,9 +45,16 @@ public static class BatchPlaybackLogger
         bool penetOff = false;
         float frontBias = -1f;
         bool metricOff = false;
-        bool aimAt = true;
-        bool armLen = false;
-        bool boneLen = true;
+        // bool 3 つは「指定されなかったらシーンの値をそのまま使う」。
+        // 既定値を代入してしまうと、シーン側の設定を黙って上書きしてしまう
+        // （2026-08-25: boneLen の既定 true がシーンの OFF を踏み潰していた）。
+        bool? aimAt = null;
+        bool? armLen = null;
+        bool? boneLen = null;
+        float gapSmooth = -1f;
+        string depthRef = null;
+        bool? otherScale = null;
+        string bundleName = null;
         string captureFrames = null;
         string captureDir = null;
         int captureWidth = 3840;
@@ -65,9 +72,13 @@ public static class BatchPlaybackLogger
             if (args[i] == "-penetOff") bool.TryParse(args[i + 1], out penetOff);
             if (args[i] == "-frontBias") float.TryParse(args[i + 1], out frontBias);
             if (args[i] == "-metricOff") bool.TryParse(args[i + 1], out metricOff);
-            if (args[i] == "-aimAt") bool.TryParse(args[i + 1], out aimAt);
-            if (args[i] == "-armLen") bool.TryParse(args[i + 1], out armLen);
-            if (args[i] == "-boneLen") bool.TryParse(args[i + 1], out boneLen);
+            if (args[i] == "-aimAt" && bool.TryParse(args[i + 1], out bool vAim)) aimAt = vAim;
+            if (args[i] == "-armLen" && bool.TryParse(args[i + 1], out bool vArm)) armLen = vArm;
+            if (args[i] == "-boneLen" && bool.TryParse(args[i + 1], out bool vBone)) boneLen = vBone;
+            if (args[i] == "-gapSmooth") float.TryParse(args[i + 1], out gapSmooth);
+            if (args[i] == "-depthRef") depthRef = args[i + 1];
+            if (args[i] == "-otherScale" && bool.TryParse(args[i + 1], out bool vOs)) otherScale = vOs;
+            if (args[i] == "-bundle") bundleName = args[i + 1];
             if (args[i] == "-captureFrames") captureFrames = args[i + 1];
             if (args[i] == "-captureDir") captureDir = args[i + 1];
             if (args[i] == "-captureWidth") int.TryParse(args[i + 1], out captureWidth);
@@ -136,7 +147,12 @@ public static class BatchPlaybackLogger
             Debug.Log("[BATCH] projectedDepthSmoothingSeconds=" + depthSmooth + " applied to " + applied);
         }
 
-        if (depthEps >= 0f || depthOff || penetOff || frontBias >= 0f || metricOff || !aimAt || armLen || !boneLen)
+        // 以前はここに「どれか 1 つでも指定されたら」という条件式があったが、
+        // 新しいフラグを足すたびに条件へ追加する必要があり、追加し忘れると
+        // そのフラグは**黙って無視される**。2026-08-25 に -gapSmooth がこれで
+        // 効かず、tau=0 と tau=1.2 の A/B が実際には同一設定の 2 回実行になり、
+        // 「平滑化が効いていない」という誤った結論を出しかけた。
+        // 条件は付けず常に走らせ、各フラグが自分で「指定されたか」を判定する。
         {
             int applied = 0;
             foreach (var p in UnityEngine.Object.FindObjectsByType<StreamingStereoVideoPlayer>(
@@ -147,13 +163,41 @@ public static class BatchPlaybackLogger
                 if (penetOff) { p.resolveOtherPenetration = false; }
                 if (frontBias >= 0f) { p.penetrationFrontBias = frontBias; }
                 if (metricOff) { p.useMetricRatioForOtherDepth = false; }
-                p.enableKeypointAimAt = aimAt;
-                p.enableHumanArmLengthCorrection = armLen;
-                p.enableHumanBoneLengthCorrection = boneLen;
+                if (aimAt.HasValue) { p.enableKeypointAimAt = aimAt.Value; }
+                if (armLen.HasValue) { p.enableHumanArmLengthCorrection = armLen.Value; }
+                if (boneLen.HasValue) { p.enableHumanBoneLengthCorrection = boneLen.Value; }
+                if (gapSmooth >= 0f) { p.otherDepthGapSmoothingSeconds = gapSmooth; }
+                if (!string.IsNullOrEmpty(depthRef) &&
+                    Enum.TryParse(depthRef, true, out StreamingStereoVideoPlayer.HumanDepthReferenceMode refMode))
+                {
+                    p.otherDepthSkeletonReference = refMode;
+                }
+                if (otherScale.HasValue) { p.matchOtherScaleToFollowedDepth = otherScale.Value; }
                 EditorUtility.SetDirty(p);
                 applied++;
             }
-            Debug.Log("[BATCH] depthEps=" + depthEps + " depthOff=" + depthOff + " applied to " + applied);
+            Debug.Log("[BATCH] tweaks applied to " + applied
+                + " | depthEps=" + depthEps + " depthOff=" + depthOff + " penetOff=" + penetOff
+                + " frontBias=" + frontBias + " metricOff=" + metricOff
+                + " aimAt=" + (aimAt.HasValue ? aimAt.Value.ToString() : "scene")
+                + " armLen=" + (armLen.HasValue ? armLen.Value.ToString() : "scene")
+                + " boneLen=" + (boneLen.HasValue ? boneLen.Value.ToString() : "scene")
+                + " gapSmooth=" + gapSmooth + " depthRef=" + (depthRef ?? "scene")
+                + " otherScale=" + (otherScale.HasValue ? otherScale.Value.ToString() : "scene"));
+        }
+
+        // 検証用 bundle を差し替える（シーンには保存しない）。
+        if (!string.IsNullOrEmpty(bundleName))
+        {
+            int applied = 0;
+            foreach (var p in UnityEngine.Object.FindObjectsByType<StreamingStereoVideoPlayer>(
+                         FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                p.bundleFileName = bundleName;
+                EditorUtility.SetDirty(p);
+                applied++;
+            }
+            Debug.Log("[BATCH] bundleFileName=" + bundleName + " applied to " + applied);
         }
 
         // 診断ログはシーンに保存せず、この実行の間だけ有効にする。
@@ -174,6 +218,8 @@ public static class BatchPlaybackLogger
                     p.logDepthRefineStages = true;
                     p.logPenetrationResolve = true;
                     p.logDepthAffineFit = true;
+                    p.logOtherDepthFollow = true;
+                    p.logOtherDepthFollowEveryNFrames = every;
                     p.logBoneVsKeypoint = true;
                     p.logBoneVsKeypointEveryNFrames = every;
                 }

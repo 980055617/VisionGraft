@@ -58,6 +58,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         scaleRefinedByTrack.Clear();
         // ⑧ の深度補正比率も前 shot の値を引きずらせない。
         smoothedProjectedDepthRatioByTrack.Clear();
+        // ⑨ の深度差の平滑化も shot をまたがせない。
+        otherDepthGapByTrack.Clear();
 
         // 位置・向きの平滑化。前 shot の値から補間すると新しいカットの先頭で滑り込む。
         smoothedJointsByTrack.Clear();

@@ -551,6 +551,51 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float upGap = Vector3.Dot(delta, up);
         float rightGap = Vector3.Dot(delta, right);
 
+        // ルートとボーン群の位置関係。⑨ は「人ルートの深度」から bundle の深度差を引いて
+        // 球を置くが、bundle の anchor_z は depth map を可視表面でサンプルした値なので、
+        // ルートが体のどこにあるかで基準点がずれる。2026-08-25 に「最近傍ボーンがルートより
+        // 93.8mm 奥」と出たので、その内訳を確定させるための診断。
+        {
+            float rootDepth = Vector3.Dot(humanInstance.transform.position - (view != null ? view.position : Vector3.zero), forward);
+            float minD = float.MaxValue, maxD = float.MinValue, sumD = 0f;
+            int nb = 0;
+            string minName = "", maxName = "";
+            SkinnedMeshRenderer[] rs = humanInstance.GetComponentsInChildren<SkinnedMeshRenderer>();
+            Bounds? mb = null;
+            for (int r = 0; r < rs.Length; r++)
+            {
+                if (mb.HasValue) { Bounds tmp = mb.Value; tmp.Encapsulate(rs[r].bounds); mb = tmp; }
+                else { mb = rs[r].bounds; }
+                Transform[] bs = rs[r].bones;
+                if (bs == null) { continue; }
+                for (int b = 0; b < bs.Length; b++)
+                {
+                    if (bs[b] == null) { continue; }
+                    float dd = Vector3.Dot(bs[b].position - (view != null ? view.position : Vector3.zero), forward);
+                    if (dd < minD) { minD = dd; minName = bs[b].name; }
+                    if (dd > maxD) { maxD = dd; maxName = bs[b].name; }
+                    sumD += dd; nb++;
+                }
+            }
+            if (nb > 0)
+            {
+                float meshC = mb.HasValue ? Vector3.Dot(mb.Value.center - (view != null ? view.position : Vector3.zero), forward) : 0f;
+                float meshE = mb.HasValue ? Vector3.Dot(mb.Value.extents, new Vector3(Mathf.Abs(forward.x), Mathf.Abs(forward.y), Mathf.Abs(forward.z))) : 0f;
+                Debug.Log(
+                    $"[ROOTDIAG] f={frame} rootZ={rootDepth:F4} boneMin={minD:F4} boneMax={maxD:F4} " +
+                    $"boneMean={(sumD / nb):F4} nBones={nb} " +
+                    $"meanMinusRoot={((sumD / nb) - rootDepth) * 1000f:+0.0;-0.0}mm " +
+                    $"minMinusRoot={(minD - rootDepth) * 1000f:+0.0;-0.0}mm " +
+                    $"meshCenterZ={meshC:F4} meshHalfDepth={meshE * 1000f:F1}mm " +
+                    $"ballZ={Vector3.Dot(otherCenter - (view != null ? view.position : Vector3.zero), forward):F4} " +
+                    $"frontBone={minName} backBone={maxName} scale={humanInstance.transform.lossyScale.y:F4} " +
+                    // ローカル空間での位置。プレハブ由来の固定オフセットならフレーム間で
+                    // ほぼ一定、FK / transl 由来なら姿勢に応じて動く。ここで切り分ける。
+                    $"localMeshC={(mb.HasValue ? humanInstance.transform.InverseTransformPoint(mb.Value.center) : Vector3.zero)} " +
+                    $"localHips={ResolveHipsLocalForDiag(humanInstance)}");
+            }
+        }
+
         Debug.Log(
             $"[GAP] f={frame} human={humanTrackId} other={otherTrackId} " +
             $"dist={delta.magnitude:F4} depthGap={depthGap:+0.0000;-0.0000} " +
@@ -603,6 +648,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // SkinnedMeshRenderer の bones を総当たりして最近接ボーンを返す。
     // Humanoid / Generic どちらのリグでも同じように測れるようにするため、
     // HumanBodyBones ではなくボーン配列そのものを見る。
+    // [ROOTDIAG] 用。Hips ボーンのモデルローカル位置。root と体の関係を切り分けるためだけに使う。
+    private static Vector3 ResolveHipsLocalForDiag(GameObject instance)
+    {
+        Animator animator = instance.GetComponentInChildren<Animator>();
+        if (animator == null || !animator.isHuman) { return Vector3.negativeInfinity; }
+        Transform hips = animator.GetBoneTransform(HumanBodyBones.Hips);
+        if (hips == null) { return Vector3.negativeInfinity; }
+        return instance.transform.InverseTransformPoint(hips.position);
+    }
+
     private bool TryResolveNearestHumanBone(
         GameObject instance,
         Vector3 point,

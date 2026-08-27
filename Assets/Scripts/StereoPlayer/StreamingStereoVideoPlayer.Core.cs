@@ -144,6 +144,48 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     //
     // 注意: `other`（Else）には骨格が無いため適用されない。人と Else で深度の基準が分かれるので、
     // `bundle_train.svb` のような Else のみの bundle には一切効果がない。
+    // Generic リグ（Animal）でも投影ボーンを解決するか。false にすると従来どおり
+    // Humanoid 以外では ⑧・スケール再ロック・投影下端合わせが動かない。
+    // 2026-08-26 に、これらが Animal で一度も動いていなかったことが判明したため追加。
+    public bool projectGenericRigBones = true;
+
+    // ⑧ が合わせる相手を「bbox 高」から「見切れを補った推定全高」に変えるか。
+    // bbox は可視部分だけなので、見切れフレームで bbox 高に合わせるとモデルが縮む。
+    // 詳細は ResolveUnclippedTargetHeight のコメント。
+    public bool extendTargetHeightForClippedBBox = true;
+
+    // 外挿の上限（bbox 高の何倍まで許すか）。1 フレームの推定ミスで暴れないための保護。
+    // 1.6 は実測で決めた（2026-08-27、bundle_animal）。1.6 / 2.0 / 3.0 を振ったところ
+    // 全体の誤差 median が 11.1% / 12.5% / 12.5%、欠損率 45% 超の帯では期待 2.00 に対し
+    // 1.81 / 2.43 / 2.59 で、1.6 が最も近い。上限なしだと外挿が効きすぎて逆に大きくなる。
+    public float maxClippedHeightExtrapolation = 1.6f;
+
+    // ⑧ が発動する ratio（投影高 ÷ 目標高）の下限。スケール再ロック側の
+    // MinProjectedBoneRatioForScaleRefine とは独立に振れるようにした。
+    // 0.2 は実測で決めた（2026-08-27）。0.4 のままだと shot 内で被写体の見かけが 3 倍に
+    // なる場面（bundle_animal 29.9〜32.7s）でガードに張り付き、**最も補正が要るフレームで
+    // ⑧ が何もしなくなる**（32 秒台の sizeRatio が 0.416）。0.2 にすると 0.692 まで戻る。
+    // animal の全体誤差・揺れ、human の boneRatio/球との距離/姿勢一致はすべて不変。
+    public float depthRefineMinRatio = 0.2f;
+
+    // ⑧ の平滑化を速める相対誤差のしきい値。lo 以下は従来どおりの平滑化、hi 以上で
+    // ほぼ即座に追従する。1.0 に設定すると実質無効（従来の挙動）。
+    // 0.15 は実測（2026-08-27、animal）。0.30 / 0.15 / 0.08 を振り、0.15 が
+    // 全体誤差 median 10.1%（従来 11.2%）で最良、揺れも 9mm（従来 8mm）と僅差。
+    // human でも回帰なし（boneRatio 0.978→0.971、姿勢一致 5.30% で同値、揺れ 6.0mm 同値）。
+    public float depthRefineFastTrackLow = 0.15f;
+    public float depthRefineFastTrackHigh = 0.60f;
+
+    // 下端が画面外に切れているフレームで、⑦ の基準を bbox 下端から bbox 上端に切り替えるか。
+    // 切れた下端に合わせると下半身を画面内へ持ち上げてしまうため。上下とも切れている
+    // フレームは従来どおり下端合わせにフォールバックする。
+    public bool alignTopWhenBottomClipped = true;
+
+    // 横方向のずれを測る診断ログ [HPOS]。配置には影響しない。
+    public bool logHorizontalPlacement = false;
+
+    // Animal 版の姿勢一致診断 [ANIMALKP]。human の logBoneVsKeypoint に対応する。
+    public bool logAnimalBoneVsKeypoint = false;
     public bool refineDepthFromProjectedBones = true;
 
     // 上記で逆算した深度に掛ける係数。1.0 で「投影高 = bbox 高」ちょうど。
@@ -330,6 +372,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 貼り直すため（フレーム内の otherZ の幅は 0.000mm）、掛けると 1 フレームで
     // 約 31 回累積してしまう。
     public bool matchOtherScaleToFollowedDepth = true;
+    // 姿勢適用後に、Hips が「ルートを置いた位置」に来るようモデル全体をずらすか。
+    //
+    // ② ComputeTargetHeightMeters(bboxH, anchorZ) は「深度 anchorZ でモデルが bbox 高を
+    // 張る」ようにスケールを決めるが、③ が置くのは root であって体ではない。
+    // 原点オフセットを持つモデル（Renderpeople 等）では体が root より奥に出るため、
+    // その前提が崩れる。16_Male_Eric では体が root より 171mm 奥で、実際に見える体は
+    // 937mm（画面 1000mm・popout レンジ 650〜1000mm）に張り付いていた（2026-08-26 実測）。
+    //
+    // 2026-08-26 に実測して**棄却**した。ratio は 1 に近づくどころか 1.2968 → 1.4972 と
+    // 悪化し、球と体の隙間も 16.2 → 52.9mm に広がった。体を手前に動かすと投影が大きく
+    // なるので ratio は 1 から遠ざかり、⑧ が更に奥へ押し返す（移動量 172.9 → 258.0mm）。
+    // スケールは ② ではなく RefineLockedScaleFromProjectedBones が投影実測で決め直して
+    // いるため、「② の前提を成立させる」という読み自体が成り立っていなかった。
+    //
+    // 投影が bbox に一致するという条件は、モデルの世界サイズと bbox の見込み角で深度を
+    // 一意に決めてしまう。root をどこに置いても ⑧ が同じ深度へ引き戻す。
+    //
+    // 球のクランプ率だけは 20.4% → 5.8% と改善するので、popout レンジを触るときに
+    // 再評価する価値はある。それまで既定 false。
+    public bool alignModelBodyToAnchorDepth = false;
+    public bool logBodyAnchorAlign = false;
     public bool followOtherDepthToRefinedSkeleton = true;
 
     // RefineLockedScaleFromProjectedBones が狙う boneRatio。1.0 は「基準フレームで骨格の

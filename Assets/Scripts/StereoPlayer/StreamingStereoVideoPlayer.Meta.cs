@@ -69,6 +69,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const float AnchorDepthRangeMinimumSpan = 0.02f;
     // disparity の逆数を取るときの下限。これ未満だと 1/d が発散するので逆数変換をやめる。
     private const float AnchorDisparityMinimum = 0.01f;
+    // 見切れ補正の較正係数。見切れなしフレーム 416 枚での高さ係数 ÷ 幅係数（317.6 / 307.2）。
+    private const float UnclippedHeightCalibration = 1.034f;
     private float anchorZ01RangeMin;
     private float anchorZ01RangeMax = 1f;
     private bool hasAnchorZ01Range;

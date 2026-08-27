@@ -54,6 +54,14 @@ public static class BatchPlaybackLogger
         float gapSmooth = -1f;
         string depthRef = null;
         bool? otherScale = null;
+        bool? bodyAlign = null;
+        bool? genericBones = null;
+        bool? extendH = null;
+        float maxExtrap = -1f;
+        float minRatio = -1f;
+        float fastLo = -1f;
+        float fastHi = -1f;
+        bool? alignTop = null;
         string bundleName = null;
         string captureFrames = null;
         string captureDir = null;
@@ -78,6 +86,14 @@ public static class BatchPlaybackLogger
             if (args[i] == "-gapSmooth") float.TryParse(args[i + 1], out gapSmooth);
             if (args[i] == "-depthRef") depthRef = args[i + 1];
             if (args[i] == "-otherScale" && bool.TryParse(args[i + 1], out bool vOs)) otherScale = vOs;
+            if (args[i] == "-bodyAlign" && bool.TryParse(args[i + 1], out bool vBa)) bodyAlign = vBa;
+            if (args[i] == "-genericBones" && bool.TryParse(args[i + 1], out bool vGb)) genericBones = vGb;
+            if (args[i] == "-extendH" && bool.TryParse(args[i + 1], out bool vEh)) extendH = vEh;
+            if (args[i] == "-maxExtrap") float.TryParse(args[i + 1], out maxExtrap);
+            if (args[i] == "-minRatio") float.TryParse(args[i + 1], out minRatio);
+            if (args[i] == "-fastLo") float.TryParse(args[i + 1], out fastLo);
+            if (args[i] == "-fastHi") float.TryParse(args[i + 1], out fastHi);
+            if (args[i] == "-alignTop" && bool.TryParse(args[i + 1], out bool vAt)) alignTop = vAt;
             if (args[i] == "-bundle") bundleName = args[i + 1];
             if (args[i] == "-captureFrames") captureFrames = args[i + 1];
             if (args[i] == "-captureDir") captureDir = args[i + 1];
@@ -173,6 +189,14 @@ public static class BatchPlaybackLogger
                     p.otherDepthSkeletonReference = refMode;
                 }
                 if (otherScale.HasValue) { p.matchOtherScaleToFollowedDepth = otherScale.Value; }
+                if (bodyAlign.HasValue) { p.alignModelBodyToAnchorDepth = bodyAlign.Value; }
+                if (genericBones.HasValue) { p.projectGenericRigBones = genericBones.Value; }
+                if (extendH.HasValue) { p.extendTargetHeightForClippedBBox = extendH.Value; }
+                if (maxExtrap > 0f) { p.maxClippedHeightExtrapolation = maxExtrap; }
+                if (minRatio > 0f) { p.depthRefineMinRatio = minRatio; }
+                if (fastLo >= 0f) { p.depthRefineFastTrackLow = fastLo; }
+                if (fastHi >= 0f) { p.depthRefineFastTrackHigh = fastHi; }
+                if (alignTop.HasValue) { p.alignTopWhenBottomClipped = alignTop.Value; }
                 EditorUtility.SetDirty(p);
                 applied++;
             }
@@ -183,7 +207,10 @@ public static class BatchPlaybackLogger
                 + " armLen=" + (armLen.HasValue ? armLen.Value.ToString() : "scene")
                 + " boneLen=" + (boneLen.HasValue ? boneLen.Value.ToString() : "scene")
                 + " gapSmooth=" + gapSmooth + " depthRef=" + (depthRef ?? "scene")
-                + " otherScale=" + (otherScale.HasValue ? otherScale.Value.ToString() : "scene"));
+                + " otherScale=" + (otherScale.HasValue ? otherScale.Value.ToString() : "scene")
+                + " bodyAlign=" + (bodyAlign.HasValue ? bodyAlign.Value.ToString() : "scene")
+                + " genericBones=" + (genericBones.HasValue ? genericBones.Value.ToString() : "scene")
+                + " extendH=" + (extendH.HasValue ? extendH.Value.ToString() : "scene") + " maxExtrap=" + maxExtrap + " minRatio=" + minRatio + " fastLo=" + fastLo + " fastHi=" + fastHi + " alignTop=" + (alignTop.HasValue ? alignTop.Value.ToString() : "scene"));
         }
 
         // 検証用 bundle を差し替える（シーンには保存しない）。
@@ -219,6 +246,9 @@ public static class BatchPlaybackLogger
                     p.logPenetrationResolve = true;
                     p.logDepthAffineFit = true;
                     p.logOtherDepthFollow = true;
+                    p.logBodyAnchorAlign = true;
+                    p.logHorizontalPlacement = true;
+                    p.logAnimalBoneVsKeypoint = true;
                     p.logOtherDepthFollowEveryNFrames = every;
                     p.logBoneVsKeypoint = true;
                     p.logBoneVsKeypointEveryNFrames = every;

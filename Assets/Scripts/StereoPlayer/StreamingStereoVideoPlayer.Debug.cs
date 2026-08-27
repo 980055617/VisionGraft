@@ -821,6 +821,82 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     // Humanoid のボーン world 位置を eye pixel に投影して縦の広がりを測る。
     // renderer.bounds（world 軸平行 AABB）と違い、姿勢が傾いても過大評価しない。
+    // ⑧・スケール再ロック・下端合わせが投影に使うボーン一覧。
+    // Humanoid は HumanBodyBones の対応表、Generic（Animal）は SkinnedMeshRenderer の
+    // ボーン配列。詳細は Core.cs の projectGenericRigBones を参照。
+    private readonly System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, Transform>>
+        projectionBoneBuffer = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, Transform>>(128);
+
+    private System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, Transform>>
+        ResolveProjectionBones(GameObject instance, Animator animator)
+    {
+        projectionBoneBuffer.Clear();
+        if (animator != null && animator.isHuman)
+        {
+            HumanoidRigCache cache = GetOrBuildHumanoidCache(animator);
+            if (cache != null && cache.ready)
+            {
+                foreach (var pair in cache.bones)
+                {
+                    if (pair.Value != null)
+                    {
+                        projectionBoneBuffer.Add(
+                            new System.Collections.Generic.KeyValuePair<string, Transform>(
+                                pair.Key.ToString(), pair.Value));
+                    }
+                }
+            }
+
+            return projectionBoneBuffer;
+        }
+
+        if (!projectGenericRigBones || instance == null)
+        {
+            return projectionBoneBuffer;
+        }
+
+        SkinnedMeshRenderer[] skinned = instance.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+        for (int r = 0; r < skinned.Length; r++)
+        {
+            Transform[] bones = skinned[r] != null ? skinned[r].bones : null;
+            if (bones == null)
+            {
+                continue;
+            }
+
+            for (int b = 0; b < bones.Length; b++)
+            {
+                if (bones[b] != null)
+                {
+                    projectionBoneBuffer.Add(
+                        new System.Collections.Generic.KeyValuePair<string, Transform>(bones[b].name, bones[b]));
+                }
+            }
+        }
+
+        if (projectionBoneBuffer.Count > 0)
+        {
+            return projectionBoneBuffer;
+        }
+
+        // SkinnedMeshRenderer を持たない剛体パーツ構成のモデル（例: 00_Dog は Animator と
+        // 54 個の Transform 階層を持つが、メッシュは MeshRenderer 22 個に分かれている）。
+        // skinning は投影高を測るのに必要ではないので、メッシュを持つ Transform の位置を
+        // ボーンの代わりに使う。姿勢適用（⑤）はボーン階層で動くのでモデル自体は動いている。
+        Renderer[] all = instance.GetComponentsInChildren<Renderer>(true);
+        for (int r = 0; r < all.Length; r++)
+        {
+            if (all[r] != null && all[r].transform != null)
+            {
+                projectionBoneBuffer.Add(
+                    new System.Collections.Generic.KeyValuePair<string, Transform>(
+                        all[r].transform.name, all[r].transform));
+            }
+        }
+
+        return projectionBoneBuffer;
+    }
+
     private bool TryProjectBonesToEyeHeight(
         GameObject instance,
         Transform screen,
@@ -840,14 +916,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
+        // Humanoid なら HumanBodyBones の対応表を、そうでなければ SkinnedMeshRenderer の
+        // ボーン配列を総当たりする。
+        //
+        // 以前は `!animator.isHuman` で即 false を返しており、**Animal は Generic リグなので
+        // ⑧ もスケール再ロックも一度も動いていなかった**（2026-08-26 実測、animal で
+        // [DEPTH8] が 0 件。human では 2000 件超）。⑧ のカテゴリ条件は Animal を通していた
+        // ので、宣言と実態が食い違っていた。症状は「モデルが映像より小さく配置される」。
+        //
+        // 総当たりは TryResolveNearestHumanBone が既に採っている方式。
         Animator animator = instance.GetComponentInChildren<Animator>(true);
-        if (animator == null || !animator.isHuman)
-        {
-            return false;
-        }
-
-        HumanoidRigCache cache = GetOrBuildHumanoidCache(animator);
-        if (cache == null || !cache.ready)
+        System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, Transform>> boneList =
+            ResolveProjectionBones(instance, animator);
+        if (boneList.Count == 0)
         {
             return false;
         }
@@ -862,7 +943,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float minV = float.MaxValue;
         float maxV = float.MinValue;
         bool hasAny = false;
-        foreach (var pair in cache.bones)
+        foreach (var pair in boneList)
         {
             Transform bone = pair.Value;
             if (bone == null)
@@ -884,13 +965,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (pixel.y < minV)
             {
                 minV = pixel.y;
-                topBoneName = pair.Key.ToString();
+                topBoneName = pair.Key;
             }
 
             if (pixel.y > maxV)
             {
                 maxV = pixel.y;
-                bottomBoneName = pair.Key.ToString();
+                bottomBoneName = pair.Key;
             }
 
             hasAny = true;

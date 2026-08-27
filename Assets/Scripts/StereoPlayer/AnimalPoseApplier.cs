@@ -923,6 +923,20 @@ public sealed partial class AnimalPoseApplier
         return false;
     }
 
+    // 診断用。既に構築済みのキャッシュを読むだけで、新規構築はしない。
+    // [ANIMALKP]（実ボーンと keypoints3d の投影差）が使う。
+    internal AnimalRigCache PeekAnimalRigCache(GameObject instance)
+    {
+        if (instance == null)
+        {
+            return null;
+        }
+
+        Animator animator = instance.GetComponentInChildren<Animator>(true);
+        Transform rigRoot = animator != null ? animator.transform : instance.transform;
+        return rigRoot != null && animalRigCaches.TryGetValue(rigRoot, out AnimalRigCache cache) ? cache : null;
+    }
+
     private AnimalRigCache GetOrBuildAnimalRigCache(Transform root, Transform skinSearchRoot, AnimalPoseSettings settings)
     {
         if (root == null)

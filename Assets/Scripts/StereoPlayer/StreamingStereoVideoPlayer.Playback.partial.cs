@@ -226,6 +226,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     instance.transform.rotation,
                     instance.transform.localScale));
         }
+        // モデルの原点オフセットを打ち消す。Hips を「ルートを置いた位置」へ持ってくることで、
+        // ② がスケールを決めるときの前提「体が anchorZ にいる」を成立させる。
+        // ⑦ の下端合わせより前に入れる（縦方向はこのあと ⑦ が合わせ直す）。
+        AlignModelBodyToAnchorDepthIfEnabled(instance, target);
+
         // ⑦ の投影ベース下端合わせが ④ の結果をどれだけ動かすかを測るため、直前の位置を控える。
         Vector3 preBottomFitPosition = instance.transform.position;
         if (!ShouldUseHumanSmplRootPlacement(target, frame))
@@ -244,6 +249,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         ObserveInteractiveMotionDisplayedRoot(target.trackId, instance);
         ApplyInteractiveHandoffBlendIfActive(target.trackId, instance, frame);
         LogPlacementMeasurementIfEnabled(target, instance, screen, frame);
+        LogHorizontalPlacementIfEnabled(target, instance, screen, frame);
+        LogAnimalBoneVsKeypointIfEnabled(target, instance, screen, frame);
         LogBoneVsKeypointIfEnabled(target, instance, screen, frame);
     }
 
@@ -378,6 +385,48 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return TrackModelPlacement.ResolveTargetHeightMeters(bboxH, manifest.eye_h, zMeters, fy);
     }
 
+
+    // Hips が現在の root 位置に来るようモデル全体を平行移動する。
+    // 回転もスケールも変えない。詳細は Core.cs の alignModelBodyToAnchorDepth を参照。
+    private void AlignModelBodyToAnchorDepthIfEnabled(GameObject instance, MetaObj obj)
+    {
+        if (!alignModelBodyToAnchorDepth || instance == null || !IsCategoryPerson(obj.categoryId))
+        {
+            return;
+        }
+
+        Animator animator = instance.GetComponentInChildren<Animator>();
+        if (animator == null || !animator.isHuman)
+        {
+            return;
+        }
+
+        Transform hips = animator.GetBoneTransform(HumanBodyBones.Hips);
+        if (hips == null)
+        {
+            return;
+        }
+
+        Vector3 shift = instance.transform.position - hips.position;
+        if (shift.sqrMagnitude < 0.0000001f)
+        {
+            return;
+        }
+
+        TrackPlacementWriter.Apply(
+            instance.transform,
+            TrackPlacementCommand.PositionOnly(
+                instance.transform.position + shift,
+                instance.transform.rotation,
+                instance.transform.localScale));
+
+        if (logBodyAnchorAlign)
+        {
+            Debug.Log(
+                $"[BODYALIGN] f={GetCurrentFrameIndex()} track={obj.trackId} " +
+                $"shift={shift.magnitude * 1000f:F1}mm");
+        }
+    }
 
     private void ApplyReplaceableModelTransform(GameObject instance, Vector3 world, Quaternion rotation, float targetHeightMeters, MetaObj obj, float uEye, float vEye, float bboxHAdjusted, Transform screen)
     {
@@ -1333,7 +1382,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 間引くと収束が失われるので間引かないこと。
         float deltaTime = Mathf.Max(0f, Time.deltaTime);
         float alpha = deltaTime <= 0f ? 1f : 1f - Mathf.Exp(-deltaTime / tau);
-        float smoothed = previous + Mathf.Clamp01(alpha) * (ratio - previous);
+
+        // 誤差が大きいときは追従を速める。
+        //
+        // 一次遅れフィルタはノイズには強いがランプ状の変化に遅れる。shot 内で被写体の
+        // 見かけが 1 秒で 3 倍になる場面（bundle_animal 29.9〜32.7s）や 0.7 秒しかない
+        // shot では、tau=1.2s では追いつかない（実測 sizeRatio 0.64、期待 1.04）。
+        // かといって tau を一律に short にすると正常フレームが行き過ぎ（1.041→1.171）、
+        // 深度の揺れも 8→18mm に増える（2026-08-27 実測）。
+        //
+        // そこで「小さいズレ = ノイズなので鈍く、大きいズレ = 実際の変化なので速く」に
+        // する。相対誤差が fastLo を超えたぶんだけ alpha を 1 に寄せる。
+        float relativeError = Mathf.Abs(ratio - previous) / Mathf.Max(0.05f, Mathf.Abs(previous));
+        float lo = Mathf.Max(0f, depthRefineFastTrackLow);
+        float hi = Mathf.Max(lo + 0.001f, depthRefineFastTrackHigh);
+        float boost = Mathf.Clamp01((relativeError - lo) / (hi - lo));
+        alpha = Mathf.Clamp01(alpha + (1f - alpha) * boost);
+
+        float smoothed = previous + alpha * (ratio - previous);
         smoothedProjectedDepthRatioByTrack[trackId] = smoothed;
         return smoothed;
     }
@@ -1342,6 +1408,102 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 投影高 = span(f) * scale * f_px / z(f) なので、z を ratio 倍すれば投影高が bbox に一致する。
     // 画面上の位置（u, v）を保ったまま深度だけ変えるため、カメラ空間で z 方向にスケールする。
     // 動かしたときだけ true を返す（呼び出し側が ⑦ の下端合わせを掛け直すため）。
+    // 見切れを補った「本来の被写体の高さ」を px で返す。推定できなければ bboxH をそのまま返す。
+    //
+    // 手法: 切れていない辺（横）で px/m を較正し、keypoints の縦スパンに掛ける。
+    //   推定全高 = 縦スパン × (bbox幅 ÷ 横スパン) × UnclippedHeightCalibration
+    // 較正係数は見切れなしフレーム 416 枚で測った高さ係数 ÷ 幅係数（317.6 / 307.2）。
+    // 検証: 見切れなしフレームでの誤差は median 1.6%、p90 14.5%（2026-08-26）。
+    //
+    // 左右のどちらかが切れていると横で較正できないので、その場合は諦めて bboxH を返す。
+    private float ResolveUnclippedTargetHeight(MetaObj obj, float bboxH)
+    {
+        if (!extendTargetHeightForClippedBBox || manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
+        {
+            return bboxH;
+        }
+
+        // 下端も上端も切れていないなら bbox 高がそのまま被写体の高さ。
+        bool clippedTop = obj.bboxY <= 0;
+        bool clippedBottom = obj.bboxY + obj.bboxH >= manifest.eye_h;
+        if (!clippedTop && !clippedBottom)
+        {
+            return bboxH;
+        }
+
+        // 横が切れていると px/m を較正できない。
+        if (obj.bboxX <= 0 || obj.bboxX + obj.bboxW >= manifest.eye_w || obj.bboxW <= 0)
+        {
+            return bboxH;
+        }
+
+        if (!TryGetJointSpan(obj, out float spanX, out float spanY) || spanX <= 0.0001f || spanY <= 0.0001f)
+        {
+            return bboxH;
+        }
+
+        float pixelsPerMeter = obj.bboxW / spanX;
+        float estimated = spanY * pixelsPerMeter * UnclippedHeightCalibration;
+
+        // 推定が bbox より小さくなるのは較正誤差。切れている以上は bbox 以上のはず。
+        if (estimated <= bboxH)
+        {
+            return bboxH;
+        }
+
+        // 外挿を無制限に許すと 1 フレームの推定ミスで極端な値になる。
+        float maxH = bboxH * Mathf.Max(1f, maxClippedHeightExtrapolation);
+        return Mathf.Min(estimated, maxH);
+    }
+
+    // keypoints の x / y スパン（メートル）。root 相対座標なのでそのまま幅・高さになる。
+    //
+    // **可視フラグで絞ってはいけない。** 見切れたぶんのジョイントにはまさに不可視フラグが
+    // 立つので、可視だけで測ると「見えている範囲」しか出ず外挿にならない。実測でも
+    // shot 20（38.2〜44.9s、欠損率 43.6%）で倍率が 1.14 にしかならず、期待の 1.77 に
+    // 届かなかった（2026-08-27）。bundle は不可視ジョイントにも SMAL/SMPL フィット由来の
+    // 座標を格納しているので、全ジョイントを使う。
+    //
+    // 較正係数 1.034 もこの「全ジョイント」前提で求めたもの（見切れなしフレーム 416 枚で
+    // 誤差 median 1.6%）。片方だけ変えると前提がずれる。
+    private bool TryGetJointSpan(MetaObj obj, out float spanX, out float spanY)
+    {
+        spanX = 0f;
+        spanY = 0f;
+        if (!obj.hasSkeleton || obj.jointsCam == null)
+        {
+            return false;
+        }
+
+        float minX = float.MaxValue, maxX = float.MinValue;
+        float minY = float.MaxValue, maxY = float.MinValue;
+        int n = obj.jointsCam.Length;
+        int used = 0;
+        for (int i = 0; i < n; i++)
+        {
+            Vector3 j = obj.jointsCam[i];
+            if (float.IsNaN(j.x) || float.IsNaN(j.y))
+            {
+                continue;
+            }
+
+            if (j.x < minX) { minX = j.x; }
+            if (j.x > maxX) { maxX = j.x; }
+            if (j.y < minY) { minY = j.y; }
+            if (j.y > maxY) { maxY = j.y; }
+            used++;
+        }
+
+        if (used < 6)
+        {
+            return false;
+        }
+
+        spanX = maxX - minX;
+        spanY = maxY - minY;
+        return true;
+    }
+
     private bool RefineDepthFromProjectedBones(
         GameObject instance,
         MetaObj obj,
@@ -1365,10 +1527,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        float ratio = projectedH / bboxH;
+        // 合わせる相手は bbox 高ではなく「見切れを補った推定全高」。
+        //
+        // bbox は可視部分だけの外接矩形（bundle 側が 2026-08-26 に確定）。被写体が画面から
+        // はみ出しているフレームで bbox 高に合わせると、動物全体を切れた bbox に押し込む
+        // ことになりモデルが不当に小さくなる。実測では欠損率 49.9% の shot で本来 2.00 倍に
+        // 写るべきところが 0.995 倍（＝半分）だった（2026-08-27、bundle_animal 1.6〜5.0s）。
+        //
+        // 見切れていないフレームでは推定全高 ≒ bbox 高になるので、正常なフレームの挙動は
+        // 変わらない。推定できないフレーム（左右も切れている等）は bbox 高のまま。
+        float targetH = ResolveUnclippedTargetHeight(obj, bboxH);
 
-        // 案 A と同じガード。bbox が画面端で切れている・検出が破綻しているフレームでは動かさない。
-        if (ratio < MinProjectedBoneRatioForScaleRefine || ratio > MaxProjectedBoneRatioForScaleRefine)
+        float ratio = projectedH / targetH;
+
+        // 検出が破綻しているフレームでは動かさないためのガード。
+        //
+        // ただし下限 0.4 は「モデルが bbox の 4 割以下にしか写っていない」ケースを全部
+        // 弾いてしまう。shot 内で被写体の見かけが 3 倍以上変わる場面（bundle_animal の
+        // 29.9〜32.7s、bboxH が 110→336px）では、スケールが shot 先頭でロックされている
+        // ぶん ratio が 0.4 を割り、**最も補正が要るフレームで ⑧ が何もしなくなる**。
+        // 実測でも 32 秒台の sizeRatio が 0.416 とガードに張り付いていた（2026-08-27）。
+        if (ratio < depthRefineMinRatio || ratio > MaxProjectedBoneRatioForScaleRefine)
         {
             return false;
         }
@@ -1640,6 +1819,35 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             bottomV = boneBottomV;
         }
 
+        // 下端が画面外に切れているフレームでは、bbox の下端は「被写体の下端」ではなく
+        // 「画面の端」でしかない。そこに合わせると、本来画面外にあるはずの下半身を
+        // 画面の中へ持ち上げてしまう（bundle_animal の 5.0〜8.6s / 26.7〜29.9s で顕著。
+        // 実測で animal の 64.6% のフレームが「下端切れ・上端有効」に該当）。
+        //
+        // 上端が切れていなければ、そちらは被写体の実際の上端なので基準にできる。
+        // 上端で合わせれば下半身は自然に画面外へ出る。はみ出した部分は passthrough の
+        // 現実映像に重なるが、それは許容する方針（2026-08-27 ユーザー確認）。
+        //
+        // 上下とも切れているフレーム（animal で 8.9%）はどちらも基準にできないので
+        // 従来どおり下端合わせにフォールバックする。
+        bool clippedBottom = obj.bboxY + obj.bboxH >= manifest.eye_h;
+        bool clippedTop = obj.bboxY <= 0;
+        if (alignTopWhenBottomClipped && clippedBottom && !clippedTop)
+        {
+            // 上端は**メッシュの投影上端**（projectedTopV）で合わせる。ボーンの最上点を
+            // 使ってはいけない。`SkinnedMeshRenderer.bones` には armature の根など
+            // メッシュから離れたノードが含まれ、実測では 39_Lynx で最上ボーンが V=-721
+            // （画面のはるか上）に出て、bbox 上端 2 に合わせた結果モデルが 723px 下へ
+            // 飛んだ（2026-08-27、41〜43 秒の猫が完全にフレームアウト）。
+            //
+            // 下端合わせがボーン最下点を使えているのは、armature の根がたまたま足元に
+            // あるため。上端には同じ前提が成り立たない。
+            // そもそも bbox の上端は被写体の見た目の上端（毛・耳）なので、対応するのは
+            // 骨ではなくメッシュ。
+            AlignProjectedModelBottomToBBox(instance.transform, screen, projectedTopV, depthMeters, obj.bboxY);
+            return;
+        }
+
         // depthMeters はモデル AABB 中心の深度で、anchorZ とは 3〜4% ずれる。
         // ここは「投影した下端を bbox 下端に一致させる」処理なので、投影に使ったのと同じ
         // 深度（depthMeters）で逆算するのが正しい。anchorZ を混ぜてはいけない。
@@ -1655,6 +1863,163 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         return IsCategoryPerson(obj.categoryId) &&
                ShouldUseHumanSmplRootPlacementPolicy(true, false);
+    }
+
+    // Animal 版の [BONEKP]。実ボーンと meta.bin の keypoints3d の投影位置の差を測る。
+    //
+    // human の LogBoneVsKeypointIfEnabled と同じ狙い: 「姿勢が正しく適用されているか」を
+    // 数値で見る。human は Humanoid リグなので Unity が対応を保証するが、**Animal は
+    // Generic リグでモデルごとにボーン名が違い、AnimalRigCache が名前で解決している**。
+    // 対応が外れていても静かに動き続けるので、измерение が無いと気付けない。
+    //
+    // ボーンと keypoint の対応は AnimalPoseJointChains と ApplyAnimalHeadPose の実装に
+    // 合わせている。ここを実装と食い違わせると、また「試算と実装の前提ずれ」を起こす。
+    private void LogAnimalBoneVsKeypointIfEnabled(MetaObj obj, GameObject instance, Transform screen, int frame)
+    {
+        if (!logAnimalBoneVsKeypoint || instance == null || manifest == null || manifest.eye_h <= 0)
+        {
+            return;
+        }
+
+        if (!IsCategoryAnimal(obj.categoryId) ||
+            frame % Mathf.Max(1, logBoneVsKeypointEveryNFrames) != 0)
+        {
+            return;
+        }
+
+        if (!obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
+        {
+            return;
+        }
+
+        if (!TryGetProjectionIntrinsics(out float fx, out float fy, out _, out _) ||
+            !TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
+        {
+            return;
+        }
+
+        AnimalRigCache cache = animalPoseApplier.PeekAnimalRigCache(instance);
+        if (cache == null || !cache.ready)
+        {
+            return;
+        }
+
+        (Transform bone, int kp, string label)[] pairs =
+        {
+            (cache.neck,            24, "Neck"),
+            (cache.head,             2, "Head"),
+            (cache.leftFrontUpper,  13, "LFUp"),
+            (cache.leftFrontLower,   9, "LFLo"),
+            (cache.leftFrontPaw,    15, "LFPaw"),
+            (cache.rightFrontUpper, 12, "RFUp"),
+            (cache.rightFrontLower,  8, "RFLo"),
+            (cache.rightFrontPaw,   14, "RFPaw"),
+            (cache.leftRearUpper,   11, "LRUp"),
+            (cache.leftRearLower,   17, "LRLo"),
+            (cache.leftRearPaw,      6, "LRPaw"),
+            (cache.rightRearUpper,  10, "RRUp"),
+            (cache.rightRearLower,  16, "RRLo"),
+            (cache.rightRearPaw,     5, "RRPaw"),
+            (cache.tailBase,         7, "TailBase"),
+        };
+
+        // jointsCam は **anchor 基準の相対座標**（PosePipeline の
+        //   jointsWorld[i] = anchorWorld + camRotation * jointsCam[i]
+        // と同じ）。カメラ空間の絶対座標ではないので、そのまま投影してはいけない。
+        // 最初これを絶対座標として投影し、17016px という無意味な値が出た（2026-08-27）。
+        Vector3 anchorWorld = AnchorUvZToWorldPinhole(screen, obj.anchorU, obj.anchorV, obj.anchorZ);
+
+        Quaternion worldToCam = Quaternion.Inverse(camRotation);
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
+        sb.Append($"[ANIMALKP] f={frame} track={obj.trackId} bboxH={obj.bboxH:F0}");
+        int resolved = 0;
+        for (int i = 0; i < pairs.Length; i++)
+        {
+            (Transform bone, int kp, string label) = pairs[i];
+            if (bone == null)
+            {
+                sb.Append($" {label}=null");
+                continue;
+            }
+
+            resolved++;
+            if (kp >= obj.jointsCam.Length || kp >= obj.jointsVis.Length || obj.jointsVis[kp] == 0)
+            {
+                sb.Append($" {label}=novis");
+                continue;
+            }
+
+            Vector3 kpWorld = anchorWorld + (camRotation * obj.jointsCam[kp]);
+            Vector3 kpCam = worldToCam * (kpWorld - camOrigin);
+            Vector3 boneCam = worldToCam * (bone.position - camOrigin);
+            if (!PinholePlacementSpace.TryProjectCamLocalToEyePixel(manifest, kpCam, fx, fy, out Vector2 kpPx) ||
+                !PinholePlacementSpace.TryProjectCamLocalToEyePixel(manifest, boneCam, fx, fy, out Vector2 bonePx))
+            {
+                sb.Append($" {label}=proj");
+                continue;
+            }
+
+            sb.Append($" {label}=({bonePx.x - kpPx.x:F0},{bonePx.y - kpPx.y:F0})");
+        }
+
+        sb.Append($" resolvedBones={resolved}/{pairs.Length}");
+        Debug.Log(sb.ToString());
+    }
+
+    // 横方向の実測用。メッシュの投影 U 範囲と bbox の U 範囲を出す。
+    // ⑦ は縦しか動かしていない（AlignProjectedModelBottomToBBox は camY のみ）ので、
+    // 横位置は ① の anchorU で決まる。ずれているかどうかを測るためだけの診断。
+    private void LogHorizontalPlacementIfEnabled(MetaObj obj, GameObject instance, Transform screen, int frame)
+    {
+        if (!logHorizontalPlacement || instance == null || manifest == null || manifest.eye_w <= 0)
+        {
+            return;
+        }
+
+        if (frame % Mathf.Max(1, logPlacementMeasurementEveryNFrames) != 0)
+        {
+            return;
+        }
+
+        if (!TryGetProjectionIntrinsics(out float fx, out float fy, out _, out _) ||
+            !TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation) ||
+            !TryGetRendererWorldBounds(instance, out Bounds bounds))
+        {
+            return;
+        }
+
+        Quaternion worldToCam = Quaternion.Inverse(camRotation);
+        float minU = float.MaxValue;
+        float maxU = float.MinValue;
+        Vector3 e = bounds.extents;
+        for (int i = 0; i < 8; i++)
+        {
+            Vector3 corner = bounds.center + new Vector3(
+                ((i & 1) == 0 ? -e.x : e.x),
+                ((i & 2) == 0 ? -e.y : e.y),
+                ((i & 4) == 0 ? -e.z : e.z));
+            Vector3 cam = worldToCam * (corner - camOrigin);
+            if (!PinholePlacementSpace.TryProjectCamLocalToEyePixel(manifest, cam, fx, fy, out Vector2 px))
+            {
+                continue;
+            }
+
+            if (px.x < minU) { minU = px.x; }
+            if (px.x > maxU) { maxU = px.x; }
+        }
+
+        if (minU > maxU)
+        {
+            return;
+        }
+
+        float bl = obj.bboxX;
+        float br = obj.bboxX + obj.bboxW;
+        Debug.Log(
+            $"[HPOS] f={frame} track={obj.trackId} projL={minU:F1} projR={maxU:F1} projC={(minU + maxU) * 0.5f:F1} " +
+            $"bboxL={bl:F0} bboxR={br:F0} bboxC={(bl + br) * 0.5f:F1} anchorU={obj.anchorU} " +
+            $"dL={(minU - bl):F1} dR={(maxU - br):F1} dC={((minU + maxU) * 0.5f - (bl + br) * 0.5f):F1} " +
+            $"clipL={(obj.bboxX <= 0 ? 1 : 0)} clipR={(obj.bboxX + obj.bboxW >= manifest.eye_w ? 1 : 0)}");
     }
 
     private bool TryProjectRendererBoundsToEyeHeight(GameObject instance, Transform screen, out float topV, out float bottomV, out float heightPixels, out float depthMeters)

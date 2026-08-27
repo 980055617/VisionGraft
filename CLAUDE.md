@@ -13,9 +13,13 @@ bundle 内の検出オブジェクト（Human / Animal / Else）を、対応す�
 | 種別 | Rig | 姿勢データ | 現状 |
 |---|---|---|---|
 | **Human** | Unity Humanoid Rig | `meta.bin` 内 SMPL block（4D-Human 由来）| 実装中・メイン課題 |
-| **Animal** | カスタム Animal Rig | `meta.bin` 内ジョイント（AniMer + SMAL 予定） | 未実装 |
+| **Animal** | カスタム Animal Rig | `meta.bin` 内 SMAL block + AniMer 26 関節 | SMAL FK 経路が有効。ただし paw×4 / toe×2 / head / tailTip は body_pose 未適用（親追従のみ）、AimAt 相当も無し |
 | **Else** | なし（剛体） | `meta.bin` 内 anchor / bbox | 配置のみ実装 |
 
+- **Animal の姿勢適用は 2 経路ある。現行 bundle で実際に走るのは SMAL FK のほう**
+  - `AnimalSmalFkApplier.TryApplyAnimalSmalFk` … `meta.bin` の SMAL block（globalOrient + body_pose）で駆動。`hasSmalPose && IsAnimalRigReadyForSmalFk` が真なら**こちらだけ**が走る
+  - `AnimalPoseApplier` の keypoint 経路（`ApplyAnimalHeadPose` / `ApplyAnimalTailPose` / `ApplyAnimalLimbPose`）… SMAL block が無い bundle 用のフォールバック。**現行 bundle では実行されない**
+  - Animal の姿勢を直すときは**まず `[SMAL-PIPE] hasSmalPose=` をログで確認**し、どちらの経路を触るか決める
 - **姿勢追従**（Pose Following）= bundle の推定データをフレームごとに 3D モデルに適用すること（アニメーションとは別概念）
 - **アニメーション** = 将来実装。ユーザー言動やランダムタイミングで姿勢追従を一時中断し再生するモーション
 - モデル選択: 現状は Inspector で固定。将来的には UI ウィンドウから選択予定

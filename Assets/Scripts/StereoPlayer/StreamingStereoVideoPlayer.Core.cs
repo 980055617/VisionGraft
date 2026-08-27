@@ -181,6 +181,21 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // フレームは従来どおり下端合わせにフォールバックする。
     public bool alignTopWhenBottomClipped = true;
 
+    // 測定 B（2026-08-28、診断専用）: SMAL の曲げ（body_pose の寄与）を当てず、
+    // bind pose を globalOrient で回しただけの姿勢にする。[ANIMALKP] を有無で比べて
+    // 「形状・bind pose の不一致」と「jointFrameMap のロール未拘束」を切り分ける。
+    // **シリアライズされる公開フィールドにしてあるのは、非シリアライズの実行時
+    // フィールドに書くと play mode に持ち越されないため**（過去に同じ罠を踏んだ）。
+    public bool disableSmalBendForDiag;
+
+    // jointFrameMap のロールを「同じ肢のもう 1 本」で拘束する 2 軸版を使う（2026-08-28）。
+    // 既定 false（従来の FromToRotation）。A/B で効果を確認してから既定を決める。
+    public bool useTwoAxisJointFrameMap;
+
+    // SMAL FK のあとに四肢を keypoint の位置へ向ける（Human の AimAt に相当）。
+    // 既定 false。A/B で確認してから既定を決める。docs/smpl-retargeting.md 参照。
+    public bool enableAnimalKeypointAimAt;
+
     // 横方向のずれを測る診断ログ [HPOS]。配置には影響しない。
     public bool logHorizontalPlacement = false;
 

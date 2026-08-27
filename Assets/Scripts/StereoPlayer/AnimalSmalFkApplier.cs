@@ -45,6 +45,35 @@ public sealed partial class AnimalPoseApplier
     // previous parentTW*localPose*bindLoc path - this covers the joints that also have a
     // registered Unity aim-child (RegisterAnimalAimPairs), which is what we need for an
     // independent, geometry-grounded Unity-side rest direction to compare against.
+    // 測定 B 用。true にすると body_pose の曲げを当てず、bind pose を globalOrient で
+    // 回しただけの姿勢になる。診断専用（詳細は下の bendUnity のところ）。
+    public bool disableSmalBendForDiag;
+
+    // jointFrameMap をロールまで拘束した 2 軸版で作る（2026-08-28）。
+    // 詳細は jointFrameMap を組んでいるところのコメント。
+    public bool useTwoAxisJointFrameMap;
+
+    // jointFrameMap のロールを拘束するための「第 2 基準方向」に使う joint。
+    //
+    // FromToRotation は rest 方向しか拘束しないので、ボーン軸まわりのロールが未定になる。
+    // 左右のペアは SmalRestDirByJoint では Y 成分の符号だけが違う鏡像だが、
+    // FromToRotation は左右それぞれ独立にロールを決めるので**鏡像の写像にならない**。
+    // 実測でも右後膝だけが両モデルで逆向きに曲がっていた（[ANIMALANG]、2026-08-28）。
+    //
+    // そこで各 joint に「同じ肢のもう 1 本のボーン」を対にして、SMAL 側と Unity 側で
+    // 同じ 2 軸から基底を組む。同じ肢の 2 本が張る平面はどちらの系でも同じ意味を持ち、
+    // 左右のペアは自動的に鏡像の写像になる。
+    private static readonly Dictionary<int, int> SmalRollRefJoint = new Dictionary<int, int>
+    {
+        { 7, 8 }, { 8, 7 },      // 前肢 左: 肩 <-> 肘
+        { 11, 12 }, { 12, 11 },  // 前肢 右
+        { 17, 18 }, { 18, 17 },  // 後肢 左: 股 <-> 膝
+        { 21, 22 }, { 22, 21 },  // 後肢 右
+        { 25, 26 }, { 26, 25 },  // 尾
+        // joint 15（neck）は対になる rest 方向を持つ joint が無いので従来どおり
+        // FromToRotation にフォールバックする。
+    };
+
     private static readonly Dictionary<int, Vector3> SmalRestDirByJoint = new Dictionary<int, Vector3>
     {
         { 7,  new Vector3(0.044701f, -0.095438f, -0.994431f) },  // LLeg1 -> LLeg2
@@ -371,8 +400,40 @@ public sealed partial class AnimalPoseApplier
                 // wrong frame.
                 Quaternion restWorldRot = worldFk0 * boneBindWorld;
                 Vector3 unityRestDirWorld = (restWorldRot * boneBindDirLocal).normalized;
-                Quaternion jointFrameMap = Quaternion.FromToRotation(smalRestDir, unityRestDirWorld);
+                // 2 軸版（既定 OFF）。ロールを同じ肢のもう 1 本で拘束する。
+                // 従来の FromToRotation は smalRestDir -> unityRestDirWorld しか拘束せず、
+                // jointFrameMap * R(smalRestDir, θ) はどの θ でも同じ条件を満たす。
+                // bendUnity は曲げの回転軸 n を jointFrameMap * n に写すので、ロールが
+                // ずれると**屈曲が伸展に化ける**。SmalRollRefJoint のコメント参照。
+                Quaternion jointFrameMap;
+                if (!useTwoAxisJointFrameMap
+                    || !SmalRollRefJoint.TryGetValue(joint, out int rollRefJoint)
+                    || !SmalRestDirByJoint.TryGetValue(rollRefJoint, out Vector3 smalRollRefDir)
+                    || !TryGetUnityRestDirWorld(cache, worldFk0, rollRefJoint, out Vector3 unityRollRefDir)
+                    || !TryBuildDirectionBasis(smalRestDir, smalRollRefDir, out Quaternion smalBasis)
+                    || !TryBuildDirectionBasis(unityRestDirWorld, unityRollRefDir, out Quaternion unityBasis))
+                {
+                    jointFrameMap = Quaternion.FromToRotation(smalRestDir, unityRestDirWorld);
+                }
+                else
+                {
+                    // どちらの基底も「主軸 = このボーンの rest 方向、副軸 = 同じ肢のもう 1 本」。
+                    // 主軸の対応は FromToRotation と同じ（smalRestDir -> unityRestDirWorld）で、
+                    // 加えてロールも決まる。
+                    jointFrameMap = unityBasis * Quaternion.Inverse(smalBasis);
+                }
                 Quaternion bendUnity = jointFrameMap * bendSmal * Quaternion.Inverse(jointFrameMap);
+
+                // 診断専用（測定 B、2026-08-28）。曲げを恒等に固定すると tw = restWorldRot に
+                // なり、ボーンは「bind pose を globalOrient で回しただけ」の姿勢に留まる。
+                // これで body_pose の寄与と jointFrameMap の経路が**両方**消えるので、
+                // 残る誤差は「リグの bind pose・比率が SMAL の betas 適用後の形状と違う」
+                // ぶんだけになる。[ANIMALKP] を有無で比べて切り分ける。
+                // 既定 false。本番で true にしない。
+                if (disableSmalBendForDiag)
+                {
+                    bendUnity = Quaternion.identity;
+                }
 
                 // 2026-07-17 diagnostic: FromToRotation's axis becomes ill-defined as the two
                 // vectors approach anti-parallel (~180deg), which would make jointFrameMap (and
@@ -380,10 +441,21 @@ public sealed partial class AnimalPoseApplier
                 // points nearly opposite SMAL's canonical tail rest direction. Logging this
                 // angle per model to check whether that's actually happening for any of the
                 // 52 animal prefabs before considering a bind-pose realignment pass.
-                if (debugLog && (joint == 25 || joint == 26))
+                //
+                // 2026-08-28: 尻尾（25/26）にしか配線していなかったので **rest dir を持つ全
+                // joint** に広げた（タグも TAIL-REST-CHECK → REST-CHECK に変更）。理由:
+                //  - body_pose はフレーム間 median 0.1〜0.7° しか動かず（meta.bin 実測）、
+                //    bendSmal ≈ 恒等 ⇒ tw ≈ restWorldRot。つまりボーンは「bind pose を胴体の
+                //    向きで回しただけ」に留まり、**誤差の主成分が静的な rest のずれ**になる。
+                //  - その尻尾での実測が 62〜83°、[ANIMALKP] の Upper / Neck の誤差が 72〜83° と
+                //    同じ桁。四肢では一度も測っていない。
+                // 「150 度以上か」だけを見て「軸不定域ではないので問題なし」と結論した過去が
+                // あるが（Docs/smpl-retargeting.md、Lion で 95〜122°）、**70〜80° のずれ自体**が
+                // 疑いの対象。Docs/smpl-retargeting.md「Animal の姿勢誤差は静止姿勢の問題」参照。
+                if (debugLog)
                 {
                     float restDirAngleDeg = Vector3.Angle(smalRestDir, unityRestDirWorld);
-                    Debug.Log($"[SMAL-FK-DBG] TAIL-REST-CHECK model={cache.root?.name} joint={joint} smalRestDir={smalRestDir:F3} unityRestDirWorld={unityRestDirWorld:F3} restDirAngleDeg={restDirAngleDeg:F1} (150+=FromToRotation軸不定の疑いあり)");
+                    Debug.Log($"[SMAL-FK-DBG] REST-CHECK model={cache.root?.name} joint={joint} smalRestDir={smalRestDir:F3} unityRestDirWorld={unityRestDirWorld:F3} restDirAngleDeg={restDirAngleDeg:F1} (150+=FromToRotation軸不定の疑いあり)");
                 }
 
                 tw[joint] = bendUnity * restWorldRot;
@@ -506,6 +578,50 @@ public sealed partial class AnimalPoseApplier
             if (cache.head != null)
                 Debug.Log($"[SMAL-FK-DBG] head.fwd={cache.head.forward:F3} head.up={cache.head.up:F3}");
         }
+    }
+
+    // 主軸と副軸から基底を作る。副軸は主軸に直交化してから使う。
+    // 2 つが平行に近いときは基底が定まらないので false を返し、呼び出し側が
+    // 従来の FromToRotation にフォールバックする。
+    private static bool TryBuildDirectionBasis(Vector3 primary, Vector3 secondary, out Quaternion basis)
+    {
+        basis = Quaternion.identity;
+        if (primary.sqrMagnitude < 0.000001f || secondary.sqrMagnitude < 0.000001f)
+        {
+            return false;
+        }
+
+        Vector3 forward = primary.normalized;
+        Vector3 up = Vector3.ProjectOnPlane(secondary, forward);
+        if (up.sqrMagnitude < 0.01f)
+        {
+            return false;
+        }
+
+        basis = Quaternion.LookRotation(forward, up.normalized);
+        return true;
+    }
+
+    // ある joint の Unity ボーンの rest 方向を、unityRestDirWorld と同じ系で返す。
+    private static bool TryGetUnityRestDirWorld(AnimalRigCache cache, Quaternion worldFk0, int joint, out Vector3 dirWorld)
+    {
+        dirWorld = Vector3.zero;
+        Transform bone = GetSmalBoneForJoint(cache, joint);
+        if (bone == null ||
+            !cache.bindRotWorld.TryGetValue(bone, out Quaternion boneBindWorld) ||
+            !cache.bindDirLocal.TryGetValue(bone, out Vector3 boneBindDirLocal))
+        {
+            return false;
+        }
+
+        Vector3 d = worldFk0 * boneBindWorld * boneBindDirLocal;
+        if (d.sqrMagnitude < 0.000001f)
+        {
+            return false;
+        }
+
+        dirWorld = d.normalized;
+        return true;
     }
 
     private static Transform GetSmalBoneForJoint(AnimalRigCache cache, int joint)

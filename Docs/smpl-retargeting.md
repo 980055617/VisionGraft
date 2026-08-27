@@ -1744,3 +1744,1268 @@ human の `[BONEKP]` に相当する診断を animal 向けに新設した。`An
 3. `ApplyAnimalHeadPose` が `alpha * 0.35f` と弱い係数で適用しており、そもそも合わせきっていない
 
 **まず 1 を確認する**（解決されたボーン名をログに出す）のが最も安く、切り分けになる。
+
+### 訂正: 位置ではなく角度で測る（2026-08-27）
+
+前項の `[ANIMALKP]`（位置の差）は**測る対象を間違えていた**。適用側 `ApplyAnimalBoneFromPoints` は
+
+```csharp
+TransformWriter.ApplyWorldRotation(bone, Quaternion.Slerp(bone.rotation, targetWorld, alpha));
+```
+
+と **回転だけを書いており、位置は一切動かさない**。したがって「ボーンの位置と keypoint の位置の差」を測っても、適用の良し悪しを表さない。Neck 378% という数字はこの誤りによるもので、**撤回する**。
+
+さらにペアの取り方も間違っていた。チェーン `[18, 13, 9, 15]` で upper は `18→13` の向きを使うので、upper に対応するのは 18 と 13 の**組**であって 13 単体ではない。
+
+**正しい指標は「ボーンが向いている方向」と「keypoint のペアが示す方向」の角度差。** ボーンの向きは適用側と同じ `TryGetBoneCenterDirectionWorld` を使う（`TryGetBoneDirectionForDiag` として公開）。
+
+### 結果（角度差、度）
+
+| 部位 | 件数 | median | p10 | p90 | 30度未満 | 90度超 |
+|---|---|---|---|---|---|---|
+| **Neck** | 2120 | **146°** | 104° | 171° | **0%** | **97%** |
+| Head | 0 | 測れず（後述） | | | | |
+| LFUp | 2120 | 77° | 37° | 102° | 0% | 32% |
+| RFUp | 2120 | 83° | 56° | 108° | 0% | 26% |
+| LRUp | 2037 | 73° | 60° | 88° | 0% | 8% |
+| RRUp | 2016 | 81° | 63° | 94° | 0% | 13% |
+| LFLo | 2120 | 37° | 24° | 55° | 28% | 2% |
+| RFLo | 2120 | 43° | 27° | 64° | 19% | 3% |
+| LRLo | 1736 | 49° | 30° | 70° | 10% | 0% |
+| **RRLo** | 1733 | **24°** | 8° | 42° | **68%** | 0% |
+| LFPaw | 1557 | 53° | 22° | 88° | 18% | 7% |
+| RFPaw | 1604 | 59° | 22° | 91° | 17% | 10% |
+| **LRPaw** | 1197 | **20°** | 10° | 36° | **71%** | 0% |
+| **RRPaw** | 1420 | **24°** | 12° | 45° | **64%** | 0% |
+| **全体** | 23900 | **57°** | 21° | 107° | 19% | 17% |
+
+**ランダムな向き同士なら期待値は 90 度。** human は FK 基底変換の修正後で平均 8.5 度（AimAt 適用前）。
+
+### 読み取れること
+
+**1. Neck が 146 度 ── ほぼ逆を向いている。** 97% のフレームで 90 度を超える。**偶然（90 度）より悪い**ので、単なる誤差ではなく**向きの定義が反転しているか、対応そのものが誤っている**。
+
+**2. Head は一度も測れなかった**（`nodir` が 60509 件 = 全フレーム）。`TryGetBoneCenterDirectionWorld` が `head` ボーンの向きを返せていない。**head は末端ボーンで子が無いため方向が定義できない**と推測される。つまり **`ApplyAnimalBoneFromPoints(cache.head, ...)` も同じ理由で何もしていない可能性が高い。**
+
+**3. Upper が悪く（73〜83 度）、Lower / Paw が良い（20〜59 度）。** FK の累積誤差なら遠位ほど悪くなるはずで、**逆の傾向**。上腕・大腿の向きの取り方に問題がある。
+
+**4. 後脚の遠位が最も良い**（LRPaw 20°、RRLo 24°、RRPaw 24°）。ここは正しく効いている。
+
+### 注意: 体型差では説明できない
+
+human と違い animal はモデルと実際の動物の体型が違うが、**角度差は体型の縦横比に影響されにくい**。四つ足の脚が前を向いているか後ろを向いているかは体型に依らない。**146 度や 77〜83 度は体型差の範囲を超えている。**
+
+### 次に調べる順序
+
+1. **Head が `nodir` になる理由**（末端ボーンで向きが定義できていないなら、頭の姿勢適用は最初から効いていない）
+2. **Neck の 146 度**（向きの反転か、24→2 という対応が誤りか）
+3. Upper の 73〜83 度（`ShouldUseAnimalAimChildPivotDirection` の分岐が Upper で不利に働いていないか）
+
+### 確定 2026-08-28: `head` ボーンの姿勢適用は一度も効いていない
+
+`[ANIMALKP]` で `Head` が全 60509 フレーム `nodir` だった件を追った。**コード上の欠陥として確定した。**
+
+#### 経路
+
+`ApplyAnimalBoneFromPoints` は、まず `TryGetBoneCenterDirectionWorld` で「ボーンが今向いている方向」を取り、そこから目標方向への回転を作る。取れなければ何もしない。
+
+```csharp
+bool hasRegisteredAimChild = cache.aimChildByBone.TryGetValue(bone, out ...);
+if (centerTarget != null && ShouldUseAnimalAimChildPivotDirection(hasRegisteredAimChild, IsAnimalLimbBone(cache, bone)))
+{
+    // 子ボーンへの向きを使う
+}
+// 落ちたら↓
+if (!TryGetTransformCenterWorld(centerTarget, out Vector3 centerWorld)) { return false; }
+```
+
+`ShouldUseChildPivotDirection = hasRegisteredAimChild || isLimbBone`。
+
+| ボーン | isLimbBone | aim child 登録 | 結果 |
+|---|---|---|---|
+| 四肢 12 本 | **true** | あり | 子への向きが取れる |
+| `neck` | false | **あり**（`neck → head`） | 取れる |
+| **`head`** | **false** | **無い** | **取れない** |
+| `spine` | false | あり（`spine → neck`） | 取れる |
+
+登録リストは `leftFrontUpper→leftFrontLower`、…、**`neck→head`**、`spine→neck`、`tailBase→tailMid`、`tailMid→tailTip`。**`head → ?` が存在しない。** `head` は末端ボーンなので当然だが、その場合のフォールバックが機能しない。
+
+#### フォールバックが必ず失敗する理由
+
+```csharp
+private static bool TryGetTransformCenterWorld(Transform target, out Vector3 centerWorld)
+{
+    SkinnedMeshRenderer smr = target.GetComponent<SkinnedMeshRenderer>();   // ← GetComponent
+    MeshFilter mf = target.GetComponent<MeshFilter>();
+    Renderer renderer = target.GetComponent<Renderer>();
+    return false;   // どれも無ければ false
+}
+```
+
+`GetComponent`（`GetComponentInChildren` ではない）なので、**Transform に直接 Renderer が付いている必要がある**。リグのボーンは純粋な Transform なので、**このフォールバックは構造上必ず失敗する。**
+
+したがって `head` は方向を取れず、`ApplyAnimalBoneFromPoints` が早期 return する。**頭の姿勢は bind pose のまま固定されている。**
+
+#### 影響範囲
+
+- `ApplyAnimalHeadPose` が `cache.head` に対して行う適用（`24→2` の向き、control 経路の `headRoot→headTip`）が**すべて無効**
+- 同じ理由で `leftRearToe` / `rightRearToe` / `tailTip` など**末端ボーンはすべて同じ状態**の可能性が高い（未確認）
+
+#### 対処案
+
+| 案 | 内容 | 懸念 |
+|---|---|---|
+| **A** | `head` の aim child を**子 Transform から自動で拾う**（`ResolveAnimalAimChild` が既にやっているはず。なぜ null なのか要確認） | `head` に子が本当に無いモデルでは効かない |
+| **B** | 末端ボーンは**親からの向き**（`bone.position - parent.position`）を現在方向とする | 末端ボーンの向きとしては妥当。実装が単純 |
+| C | `TryGetTransformCenterWorld` を `GetComponentInChildren` にする | ボーン配下にメッシュがある構造でしか効かず、汎用性が低い |
+
+**まず `ResolveAnimalAimChild(cache, head)` が何を返しているかを確認する**（`head` に子 Transform があるのに拾えていないなら A、本当に末端なら B）。
+
+### 実測で確定（2026-08-28）: `head` は末端ではない。子を拾っているのに捨てている
+
+前項で「`head` は末端ボーンだから方向が取れない」と推測したが、**外れ**。実測した。
+
+| ボーン | 子の数 | 最初の子 | 方向取得 |
+|---|---|---|---|
+| `neck` | 1 | `head` | **1** |
+| **`head`** | **36** | `head_attach` | **0** |
+| 四肢 12 本 | 1 | 次のボーン | **1** |
+| `spine` | 4 | — | 1 |
+| `tailBase` / `tailMid` | 1 | — | 1 |
+| `tailTip` | 0 | — | 0（真の末端） |
+| **`rear_l_toe`** | **4** | — | **0** |
+| **`rear_r_toe`** | **4** | — | **0** |
+
+**`head` は子を 36 個持っている。** `rear_l_toe` / `rear_r_toe` も 4 個ずつ。それでも方向が取れていない。
+
+#### 原因: 子を拾っているのに使わずに捨てている
+
+```csharp
+private Transform ResolveAnimalAimChild(AnimalRigCache cache, Transform bone)
+{
+    Transform registeredAimChild = ...;                                   // head では null
+    Transform fallbackFirstChild = bone.childCount > 0 ? bone.GetChild(0) : null;  // head_attach を得る
+    return AnimalAimChildSelector.Select(registeredAimChild, fallbackFirstChild);  // head_attach を返す
+}
+```
+
+`ResolveAnimalAimChild` は正しく `head_attach` を返している。問題はその先:
+
+```csharp
+Transform centerTarget = ResolveAnimalAimChild(cache, bone);              // head_attach
+if (centerTarget != null && ShouldUseAnimalAimChildPivotDirection(hasRegisteredAimChild, IsAnimalLimbBone(cache, bone)))
+{
+    // ここに入れば centerTarget への向きが使える
+}
+// ↓ head は入れないので、必ず失敗するフォールバックへ落ちる
+if (!TryGetTransformCenterWorld(centerTarget, out Vector3 centerWorld)) { return false; }
+```
+
+`ShouldUseChildPivotDirection = hasRegisteredAimChild || isLimbBone`。**`head` は登録なし・四肢でないので false。** せっかく取得した `head_attach` を使わず、Transform に直接 Renderer が必要な `TryGetTransformCenterWorld` に落ちて失敗する。
+
+**`rear_l_toe` / `rear_r_toe` も同じ**（`IsAnimalLimbBone` は upper / lower / paw のみを四肢と判定し、toe を含まない）。
+
+#### 影響を受けるボーン
+
+| ボーン | 状態 |
+|---|---|
+| `head` | **姿勢適用が一度も効いていない**（子 36 個あるのに） |
+| `leftRearToe` / `rightRearToe` | 同上（子 4 個あるのに） |
+| `tailTip` | 子が無いので原理的に取れない（別問題） |
+
+#### 対処案
+
+| 案 | 内容 | 懸念 |
+|---|---|---|
+| **A** | `ShouldUseChildPivotDirection` に「子がある非四肢ボーン」も通す | **なぜ登録済みか四肢に限っていたのか**が不明。`AnimalAimDirectionPolicy` として切り出されているので意図がある可能性が高い |
+| B | `head` / `toe` を `RegisterAnimalAimPairs` に足す | 明示的で安全。ただしモデルごとに子の名前が違うと機能しない |
+| C | フォールバックで「子があれば子への向き」を使う | A とほぼ同義だが、分岐の意図を壊さずに済む |
+
+**`AnimalAimDirectionPolicy` が独立クラスとして切り出されている**のは、過去に何か踏んだ痕跡に見える。**変更する前に、なぜ「登録済み or 四肢」に限っているのかを調べる必要がある。**
+
+### 訂正 2026-08-28: `head` が動かないのはバグではなく意図的な未実装
+
+`AnimalAimDirectionPolicy` が独立クラスになっている理由を調べたところ、**ADR-0002 に明記されていた。**
+
+> **Joints without a registered aim-child** to derive a real per-joint correction from yet (**paws, head, tail**) fall back to carrying the rest pose through (`tw[j] = parentTW * bindLoc`, no body_pose contribution) rather than reusing any constant — **an honest "not yet implemented" rather than a guess.**
+> （`docs/adr/0002-animal-rig-generalization.md` 202 行目）
+
+**「登録済み aim-child が無い関節（paws / head / tail）は rest pose のまま通す」は設計判断。** 当てずっぽうの補正を入れるより、動かさない方が正直だという理由。
+
+さらに同 ADR は `TryGetBoneCenterDirectionWorld` について:
+
+> it has its own heuristics (centering on a child's pivot, preferring non-renderer objects, etc.) that can disagree with the raw geometry for some rigs
+> （161 行目）
+
+とし、**素の幾何（`child.position - bone.position`）に置き換えたら別のモデルで退行した**経緯も残っている（149〜172 行目、3 通りの bind-time 幾何がすべて失敗）。
+
+#### したがって「`ShouldUseChildPivotDirection` を緩める」は危険
+
+`hasRegisteredAimChild || isLimbBone` を「子があれば通す」に広げると、**ADR-0002 が意図的に避けた「当てずっぽうの向き」を head / toe に入れることになる。** `head` の子は `head_attach`（36 個の子の先頭）で、これがアタッチ用の空ノードなら向きは無意味になる。
+
+#### 正しい対処は「登録する」方
+
+ADR の書きぶりは「**登録済み aim-child が無いから**未実装」であって「原理的にできない」ではない。**`RegisterAnimalAimPairs` に head の正しい aim child を足せば、設計どおりの経路で動くようになる。**
+
+必要なのは「`head` に対して解剖学的に妥当な子ボーン」の特定。`head_attach` が何なのかを確認する必要がある（アタッチ用の空ノードか、実際に顔の前方にあるボーンか）。
+
+#### 現状の位置づけ
+
+| 部位 | 状態 | 種別 |
+|---|---|---|
+| 四肢 upper/lower/paw | 動く（角度差 20〜83°） | 実装済み |
+| `neck` | 動く（146°、要調査） | 実装済み |
+| **`head`** | **rest pose のまま** | **意図的な未実装（ADR-0002）** |
+| `leftRearToe` / `rightRearToe` | rest pose のまま | 同上（paws に含まれる） |
+| `tailTip` | rest pose のまま | 同上（tail） |
+
+**`[ANIMALKP]` の `Head=nodir` は、この未実装を正しく検出していた。** 指標としては機能している。
+
+### 確定 2026-08-28: `neck` の 146 度は keypoint 対応の誤り
+
+`ApplyAnimalHeadPose` は `neck` と `head` の両方に **`24→2` の向き**を適用している。
+
+```csharp
+ApplyAnimalBonesFromSegment(cache, cache.neck, cache.head, jointsWorld, vis, 24, 2, alpha * 0.35f, alpha * 0.35f);
+```
+
+この `24→2` が何を指すのかを、keypoints3d の空間配置から測った（track 0 = 犬、382 サンプル、root 相対の median）。
+
+| keypoint | x | y | z（− が前方） |
+|---|---|---|---|
+| kp7（後 root） | −0.218 | −0.080 | +0.298 |
+| kp18（前 root） | +0.218 | +0.080 | −0.298 |
+| **kp24** | +0.314 | +0.030 | **−0.510** |
+| **kp2** | +0.314 | −0.038 | **−0.479** |
+| kp20 | +0.268 | +0.200 | −0.302 |
+| kp21 | +0.130 | +0.204 | −0.378 |
+
+**kp24 と kp2 はどちらも最前方（z ≈ −0.5）で、8.5cm しか離れていない。**
+
+| セグメント | ベクトル | 長さ |
+|---|---|---|
+| **`24→2`（実装が使用）** | (−0.008, **−0.078**, +0.032) | **0.085m** |
+| `7→18`（体の前後軸） | (+0.436, +0.160, −0.596) | 0.756m |
+| `18→24`（前 root → 顔） | (+0.104, −0.028, −0.242) | 0.265m |
+
+**`24→2` は体長 0.756m に対し 11% の長さしかなく、向きはほぼ真下（y −0.078 が支配的）。** 顔の中の 2 点（鼻先と顎など）の差分で、「首がどちらを向いているか」とは無関係。
+
+角度で見ても:
+
+| 比較 | 角度 |
+|---|---|
+| `24→2` と `7→18`（体軸） | **123 度** |
+| `24→2` と `18→24` | **107 度** |
+
+**首として使うべき前方向きと、ほぼ直交〜逆向き。** `[ANIMALKP]` が出した 146 度はこれを正しく検出していた。
+
+#### 対処
+
+**首の向きは `18→24`（前 root → 顔）であるべき。** kp18 は肩／き甲にあたる位置（体の前端）、kp24 は顔の最前方なので、その差分が首の向きになる。
+
+ただし変更前に確認が要る:
+
+1. **`head` にも同じ `24→2` が渡されている。** head は現状 rest pose のまま（ADR-0002 の未実装）なので実害は無いが、head を実装するときは別の対応が要る
+2. **`alpha * 0.35f` と弱い係数**で適用されている。誤った向きを弱く当てていたので、正しい向きにすると効き方が変わる
+3. bundle 側は「関節番号の解剖学的意味は断定できない」としている。**上記は空間配置からの推定**であり、bundle 側に確認する価値がある
+
+#### 副産物: 他の keypoint の推定
+
+| kp | 位置の特徴 | 推定 |
+|---|---|---|
+| 20 / 21 | y +0.20 で最も高い、z −0.30〜−0.38 | **耳（左右）** |
+| 0 / 1 | y +0.116、z −0.47〜−0.51 | 目または耳の付け根 |
+| 22 / 23 | y ≈ 0、z −0.48〜−0.51 | 目 |
+| 24 | 最前方 z −0.510 | **鼻先** |
+| 2 | z −0.479、y −0.038 | **顎／口** |
+| 19 | z +0.804 で最後方 | **尻尾の先** |
+| 25 | z +0.590 | 尻尾の中間 |
+
+### A/B の結果 2026-08-28: 首の対応変更は測定上は無変化。しかも 146 度が再現しない
+
+`24→2` を `18→24` に変える実装を入れて A/B した。**同一ビルドでフラグだけを切り替えた比較。**
+
+| 部位 | OFF median | ON median | OFF 90超 | ON 90超 |
+|---|---|---|---|---|
+| **Neck** | **76°** | **76°** | 35% | 35% |
+| LFUp / RFUp | 78° / 83° | 77° / 83° | 32% / 27% | 32% / 26% |
+| LRUp / RRUp | 73° / 81° | 73° / 81° | 9% / 13% | 8% / 13% |
+| その他 | 20〜59° | 20〜59° | 変化なし | 変化なし |
+| **全体** | **57°** | **57°** | 12% | 11% |
+
+**首も含めて何も変わらなかった。**
+
+#### さらに問題: 以前の 146 度が再現しない
+
+| 実行 | Neck median | p90 | 90度超 | Head |
+|---|---|---|---|---|
+| **以前（`animalang.log`）** | **146°** | 171° | **97%** | nodir 全件 |
+| 今回 OFF | **76°** | 115° | 35% | nodir 全件 |
+| 今回 ON | 76° | 118° | 35% | nodir 全件 |
+
+**四肢の値は以前と完全に一致している**（LFUp 77/78°、LFLo 37°、LRPaw 20° など）。**Neck だけが 146 → 76 に変わった。**
+
+間に入れた変更は (1) `ApplyAnimalBonesFromSegment` の呼び出しを 2 回の `ApplyAnimalBoneFromJoints` に分割、(2) `[ANIMALRIG]` に子ボーン数の出力を追加、(3) `AnimalHeadKeypoints` の定数化。**(1) は展開すると同一の呼び出しになるはずで、挙動が変わる理由が説明できていない。**
+
+#### したがって「首が逆を向いている」は撤回する
+
+146 度という値を根拠に「偶然より悪い＝向きの定義が誤り」と結論したが、**再現しない値を根拠にはできない。** 現在の 76 度は四肢の Upper（73〜83°）と同程度で、**Neck は外れ値ではない。**
+
+`24→2` が幾何的に首の向きでないこと（8.5cm、ほぼ真下、体軸と 123 度）は keypoints3d の実測なので有効。ただし**それが実際の描画に影響しているという証拠は今のところ無い。**
+
+#### 現在の設定
+
+`animalNeckUsesBodyToHeadSegment` を **既定 true** にした。理由は測定上の改善ではなく、**control 経路が既に使っている `withersWorld → headRootWorld` と意味が揃う**こと。測定上は無害（全指標で同値）。
+
+**測定上の利益が無いことを明記しておく。** 「直った」と誤解しないこと。
+
+#### 未解明として残す
+
+- なぜ Neck だけ 146 → 76 に変わったのか
+- 首の適用が実際の見た目にどう効いているのか（角度差 76 度は「合っていない」が、体型差の寄与が分離できていない）
+
+### 原因判明 2026-08-28: Animal は SMAL FK 経路で動いており、現行 bundle では keypoint 経路が走らない
+
+Neck の A/B が「完全に無変化」だった理由と、146 度が再現しなかった理由が同じところにあった。
+
+#### `ApplyAnimalHeadPose` は一度も実行されていない
+
+`AnimalPoseApplier.ApplyAnimalPose` の冒頭:
+
+```csharp
+if (request.hasSmalPose && IsAnimalRigReadyForSmalFk(cache))
+{
+    AlignAnimalRootToSkeleton(...);
+    TryApplyAnimalSmalFk(...);   // AnimalSmalFkApplier.cs
+    ApplyGestureOverlay(cache, request);
+    return;                       // ← ここで返る
+}
+
+// 以下は SMAL が無いときだけ走る keypoint 経路
+TryApplyAnimalRootOrientation(...);
+ApplyAnimalHeadPose(...);
+ApplyAnimalTailPose(...);
+ApplyAnimalLimbPose(...);
+```
+
+ログの実測:
+
+```
+[SMAL-PIPE] hasSmalPose=true camRot=(0.0, 0.0, 0.0)   × 1817 行
+[SMAL-PIPE] hasSmalPose=false                          × 0 行
+```
+
+`IsAnimalRigReadyForSmalFk` の条件（spine + 四肢 Upper 4 本が非 null）も `[ANIMALRIG]` の実測で全部そろっている（`spine` / `front_l_upper` / `front_r_upper` / `rear_l_upper` / `rear_r_upper`）。
+
+**つまり `bundle_animal_shots_depthdriftfix_shotsfix.svb` では SMAL FK 経路が走り、`ApplyAnimalHeadPose` / `ApplyAnimalTailPose` / `ApplyAnimalLimbPose` は一度も呼ばれない。**
+
+（`[SMAL-PIPE]` は `frame % 30 == 0` のときだけ出るので、これは 1/30 サンプルでの全件一致。SMAL block を持たない古い bundle や、極端に短い shot は未確認。）
+
+CLAUDE.md の表に「Animal の姿勢データ = AniMer + SMAL 予定」と書いてあるが、**実際にはもう SMAL block が bundle に入っていて、そちらが使われている。** 表の「未実装」は現状と合っていない。
+
+#### したがって
+
+- **`animalNeckUsesBodyToHeadSegment` はデッドコードを書き換えただけ。** A/B が全指標で同値だったのは当然で、「効果がない」のではなく「実行されていない」。
+- **`24→2` が首の向きとして無関係、という指摘自体は正しいが、描画には影響していない。**
+- 146 度 → 76 度の食い違いも、**どちらも「SMAL FK が出した姿勢」を測っていて、変わったのは診断側のペアだけ**（角度版 `[ANIMALKP]` は丸ごと未コミット差分で、2 回の実行の間に書き換えている）。実装は一切変わっていない。
+
+#### `[ANIMALKP]` が実際に測っているもの
+
+診断は「SMAL FK が出したボーン方向」対「AniMer keypoints3d が示す方向」。**別ソース同士の比較**であって、「適用がターゲットに収束しているか」ではない。ただし最優先目標が「モデル体勢を keypoints3d に一致させること」なので、**指標としては有効**。読み替えると:
+
+| 部位 | 比較した keypoint ペア | median | 意味 |
+|---|---|---|---|
+| Neck | 24→2（この実行時）※現在は 18→24 に固定 | 76° | SMAL FK の首と AniMer の首方向が 76 度ずれている |
+| 四肢 Upper | chain[0]→chain[1]（18 または 7 起点） | 72〜83° | 同上。**最も大きい** |
+| 四肢 Lower | chain[1]→chain[2] | 37〜59° | |
+| 四肢 Paw | chain[2]→chain[3] | 18〜20° | **最も小さい** |
+
+**数値は必ず「どのペアで測ったか」とセットで扱う。** ペア定義を変えたら過去の値と混ぜない。
+
+近位ほど悪く遠位ほど良い。当初これを「AimAt が遠位を引き戻している」と書いたが**誤り**で、`AnimalSmalFkApplier` に AimAt は無い（`enableKeypointAimAt` は `HumanSmpl.partial.cs` だけが読む Human 専用）。実際の理由は下の駆動範囲の表にある。
+
+#### SMAL FK が実際に回しているボーン（`AnimalSmalFkApplier.cs`）
+
+`GetSmalBoneForJoint` + `SmalRestDirByJoint` + `AnimalSmalFkPolicy.ShouldKeepBindPoseForJoint` の 3 つで決まる。
+
+| SMAL joint | ボーン | body_pose | 備考 |
+|---|---|---|---|
+| 0 | `spine` | globalOrient | `tw[0] = worldFk0 * bindRotWorld[spine]` |
+| 7 / 8 | LF upper / lower | **駆動** | |
+| 9 | LF paw | **なし** | rest dir 未登録 → `parentTW * bindLoc` |
+| 11 / 12 | RF upper / lower | **駆動** | |
+| 13 | RF paw | **なし** | |
+| 15 | `neck` | **駆動** | |
+| 16 | `head` | **なし** | rest dir 未登録。ADR-0002 の「未実装」の実体 |
+| 17 / 18 | LR upper / lower | **駆動** | |
+| 19 / 20 | LR paw / toe | **なし** | |
+| 21 / 22 | RR upper / lower | **駆動** | |
+| 23 / 24 | RR paw / toe | **なし** | |
+| 25 / 26 | `tailBase` / `tailMid` | **駆動（0.5 倍に減衰）** | `TailBodyPoseScale = 0.5f` |
+| 27 | `tailTip` | **なし** | `ShouldKeepBindPoseForJoint(27..31)` |
+
+**paw 4 本・toe 2 本・head・tailTip は body_pose をまったく受け取らず、親に追従するだけ。** これは「まだ検証済みの幾何補正が無いから、当て推量するより rest pose を通す」という意図的な設計（`else` 節のコメント）。
+
+したがって `[ANIMALKP]` の「Paw が一番良い（18〜20°）」は**姿勢が合っているからではなく、駆動されていないボーンがたまたま親の向きで keypoint に近い**という話。逆に Upper / Neck の 72〜83° は**実際に body_pose を当てた結果ずれている**。
+
+ただし **Upper の数値には指標由来の下駄が前肢で約 25° 乗っている**（次節「`[ANIMALKP]` の Upper には指標由来の下駄が乗っている」）。額面どおり扱わないこと。
+
+なお `jointsWorld` / `jointVis` は `TryApplyAnimalSmalFk` の中で**初回の 180 度ヨー反転判定（`rootYawFixDecided`）にしか使われない**。それ以外に keypoint は姿勢へ influence しない。
+
+#### 副次的に判明したこと
+
+- `LoadAnimalControlTargetsSidecar` は**意図的な空実装**（`source/animal_control_targets.json` は runtime 使用禁止のため）。ログでも `animalControlFrames=0`。
+  → **`hasControl` は常に false。** `ApplyAnimalTailPose` は `!hasControl` で即 return するので、**keypoint 経路に落ちたときは尻尾がまったく動かない。**（現行 bundle は SMAL 経路なので尻尾は joint 25/26 で駆動されている。動かないのは SMAL block の無い bundle のとき。）
+- keypoint 経路には spine を回す処理が無い（`cache.spine` は basis 参照のみ）。SMAL 経路では joint 0 が spine を回す。
+
+#### 次にやるべきこと
+
+首・四肢の対応を直したいなら **`AnimalSmalFkApplier.cs` を見る**。`AnimalPoseApplier` の keypoint 経路をいじっても何も起きない。
+
+### `[ANIMALKP]` の Upper には指標由来の下駄が乗っている（2026-08-28 実測）
+
+「Upper が 72〜83° で一番悪い」を課題として報告する前に、指標の定義を疑って実測した。
+
+`AnimalPoseJointChains` の chain[0] は **左右で同じ点**:
+
+```
+LeftFront  = { 18, 13, 9, 15 }     RightFront = { 18, 12, 8, 14 }
+LeftRear   = {  7, 11, 17,  6 }    RightRear  = {  7, 10, 16,  5 }
+```
+
+つまり Upper の目標は左右とも `18→肘` / `7→膝` で、**同じ起点から出ている**。Lower / Paw は左右で別の点しか使わない。
+
+#### 左右の目標がなす角（splay）— `scratchpad/splay.py`、全 2120 フレーム
+
+| 部位 | 左右 splay median | p10 | p90 |
+|---|---|---|---|
+| **Upper 前（18→13 vs 18→12）** | **64.8°** | 62.4° | 66.0° |
+| Lower 前（13→9 vs 12→8） | 15.8° | 11.0° | 23.4° |
+| Paw 前（9→15 vs 8→14） | 18.6° | 9.4° | 35.0° |
+| **Upper 後（7→11 vs 7→10）** | **52.7°** | 50.0° | 59.3° |
+| Lower 後（11→17 vs 10→16） | 35.7° | 27.5° | 43.4° |
+| Paw 後（17→6 vs 16→5） | 21.2° | 12.4° | 28.0° |
+
+**Upper の目標だけ左右に 4 倍広がっている。** しかも front は p10 62.4 / p90 66.0 とほぼ一定で、姿勢に依らない**構造的な**広がり。
+
+kp18 は kp13/kp12 の中点から 0.19m（体長 0.898m の 21%）、kp7 は kp11/kp10 の中点から 0.30m（33%）離れており、**正中のハブ**（き甲・腰）と考えるのが自然。
+
+#### したがって Upper には避けられない下駄がある
+
+実際の四肢の upper ボーンは左右でほぼ平行に動く（Lower の splay 16° がその目安）。**平行なボーン 2 本が、65° 開いた目標 2 つに同時に合うことはできない。** 最良でも半分ずつ外れる。
+
+| | 目標 splay | 実際の四肢の splay 目安 | 下駄の見積もり |
+|---|---|---|---|
+| 前肢 | 64.8° | ~16° | **約 25°** |
+| 後肢 | 52.7° | ~36° | **約 9°** |
+
+**Upper 前 78〜83° のうち約 25° は指標の定義が作っている。** 残り 50〜58° が実際のずれ。
+
+#### 結論の修正
+
+- Upper はやはり**一番悪い**が、数値は前肢で約 25° 過大。「78°」を額面どおり扱わない。
+- Neck 76° にはこの下駄は無い（`18→24` = き甲→鼻先で、SMAL joint 15 の rest dir が Neck→Head なのと同じ意味づけ）。
+- **Paw / toe / head の値が小さいのは、そもそも body_pose を受け取っていないから**であって、姿勢が合っているからではない。
+
+#### 指標を直すなら
+
+Upper の目標を「肩→肘」にしたいが、**AniMer 26 関節に肩に相当する点があるか未確認**。無ければ「左右の目標の平均方向」と比べるか、Upper だけ左右の合成（例: `18 → (13+12)/2` に対する左右ボーンの平均方向）で見るしかない。指標を変えたら**過去の数値と混ぜて比較しない**こと。
+
+### Human と Animal の実装差（「人みたいにやりたい」への回答、2026-08-28）
+
+ユーザーの「animal の rig についてちゃんと対応しているのか人みたいにやりたい」に対する、コードで確認した差分。**2 点だけ。**
+
+#### 差 1: Animal には AimAt が無い
+
+| | FK | keypoint による上書き |
+|---|---|---|
+| **Human** | SMPL FK | **`enableKeypointAimAt = true`。FK のあと keypoint で四肢の向きを上書きする** |
+| **Animal** | SMAL FK | **無し。** `jointsWorld` / `jointVis` は初回の 180° ヨー反転判定にしか使われない |
+
+`enableKeypointAimAt` を読むのは `StreamingStereoVideoPlayer.HumanSmpl.partial.cs` だけで、`AnimalSmalFkApplier` は AimAt に相当する処理を持たない。
+
+Human 側のコメントに残っている実測: **「修正する前は素の FK が keypoint と平均 78.2° ずれており、AimAt は補助ではなく」**。Animal の Upper が 72〜83°（うち約 25° は指標の下駄）というのは、**Human の AimAt 導入前とほぼ同じ水準**。
+
+AimAt は Human で 2 回、実機で「削除するとダメ」と確認されている（[[aimat-is-not-removable]]）。Animal にはその機構が無い。
+
+#### 差 2: paw / toe / head / tailTip が body_pose を受け取っていない
+
+`SmalRestDirByJoint` に rest dir が登録されていない joint は `parentTW * bindLoc`（rest pose を親に追従させるだけ）になる。該当は **paw ×4・toe ×2・`head`・`tailTip`**。
+
+これは「検証済みの幾何補正が無いのに当て推量しない」という意図的な判断（`else` 節のコメント、ADR-0001/0002）。Human 側は手・足まで FK が通っている。
+
+#### 注意
+
+上のどちらも「直せば良くなる」と確認したわけではない。**AimAt を Animal に入れる案は、入れる前に Human で何が効いたのかを読み直すこと。** Animal の keypoint（AniMer 26 関節）は Human の SMPL 関節とは意味づけも精度も違う。特に Upper の目標は正中ハブ起点で左右 65° 開いており、そのまま AimAt の目標には使えない。
+
+### Animal の姿勢誤差は「動きの問題」ではなく「静止姿勢の問題」（2026-08-28 実測）
+
+`[ANIMALKP]` の Upper が「ほぼ一定の 77°」（sd 8〜14°）だったので、動的な追従の問題か静的なオフセットかを切り分けた。
+
+#### 1. SMAL FK 後のボーンはほとんど動いていない
+
+既存ログ `[SMAL-FK-DBG] trueDeltaDegSincePrevSample`（約 1 メタフレームぶんの実回転量）を集計（`scratchpad/smal_motion.py`）。
+
+| track | joint | median | p90 |
+|---|---|---|---|
+| Track_0（Dog） | 7 LFUp / 8 LFLo / 15 Neck / 17 LRUp | 0.6 / 1.0 / 0.8 / 0.8° | 6〜8° |
+| Track_1（Lynx） | 同上 | 0.4° | 2〜4° |
+
+`BEND childDirAngleAccumSincePrevSample`（ボーン→子の向きの振れ）も median 0.33〜0.77°。**歩いている犬の脚が 1 フレームで 0.5 度しか動いていない。**
+
+#### 2. 原因は Unity の平滑化ではなく、入力データがほぼ静止している
+
+`meta.bin` の SMAL 回転行列 35 個をフレーム間で直接比較した（`scratchpad/smal_data_motion.py`、隣接フレームのみ）。
+
+| データ | 連続フレーム間の回転量 median | p90 |
+|---|---|---|
+| **Animal SMAL**（新 bundle track0） | **0.10〜0.71°** | 1〜9° |
+| **Animal SMAL**（旧 `bundle_animal.svb`） | **完全に同値** | — |
+| **Human SMPL**（対照、`bundle_human_shots_driftfix_test.svb`） | **0.54〜1.31°** | 2〜10° |
+
+- **Unity 側の実測（0.4〜1.0°）は入力（0.3〜0.7°）とほぼ一致**し、FK の親累積ぶんだけ大きい。**平滑化で潰れているのではない。**
+  `SmalSmoothHalfLifeSec = 0.12f` の遅れは入力が 0.5°/frame なら 2° 程度で、77° の誤差とは桁が違う。
+- **「データが完全に静止している」は言い過ぎ。** human SMPL の半分程度で、走っている犬としては少ないが異常値ではない。
+- **旧 bundle と新 bundle で SMAL データは 1 桁まで同値。** `depthdriftfix_shotsfix` の再ビルドは姿勢データを変えていない。
+
+#### 3. したがって 77° は静的なオフセット
+
+`bendSmal` が恒等に近いとき `tw = restWorldRot = worldFk0 * bindRotWorld[bone]` になる。つまり**ボーンは「モデルの bind pose を胴体の向きで回しただけ」の位置にほぼ留まる**。`[ANIMALKP]` はそれと AniMer keypoint の向きを比べているので、誤差の主成分は
+
+> **Unity リグの bind pose の四肢方向 と、実際の動物の四肢方向 とのずれ**
+
+になる。body_pose は最大でも 51°（`bodyPose_maxAngle`）で、しかもフレーム間でほとんど変化しない。
+
+#### 4. 傍証: 既存の TAIL-REST-CHECK が同じ桁を示している
+
+`AnimalSmalFkApplier` は joint 25/26 についてだけ `restDirAngleDeg = Vector3.Angle(smalRestDir, unityRestDirWorld)` を出している。
+
+| track | joint | median | min | max |
+|---|---|---|---|---|
+| Track_0 | 25 / 26 | **72.1° / 62.5°** | 11.9 / 4.5 | 141.4 / 147.5 |
+| Track_1 | 25 / 26 | **83.1° / 76.9°** | 35.7 / 1.6 | 130.5 / 133.1 |
+
+**SMAL の rest 方向と Unity ボーンの rest 方向が 62〜83° 食い違っている。** これは `[ANIMALKP]` の Upper / Neck の誤差（72〜83°）と**同じ桁**。
+
+コード中のコメントは「150 度以上なら `FromToRotation` の軸が不定」という閾値しか見ていないが、**70〜80° のずれ自体が問題**である可能性が高い。そして**この検査は尻尾（25/26）にしか配線されていない。四肢では一度も測られていない。**
+
+#### 次の一手（確定した推奨）
+
+**既存の TAIL-REST-CHECK を四肢と首（joint 7/8/11/12/15/17/18/21/22）に広げて `restDirAngleDeg` を測る。** ログ追加のみで挙動は変えない。
+
+- 四肢の `restDirAngleDeg` が `[ANIMALKP]` の誤差と一致するなら、**主因は FK の式ではなくリグの bind pose と SMAL rest skeleton の対応**。per-model の話になる（`cache.bindDirLocal` / ボーン命名 / T-pose）。
+- 一致しないなら、`jointFrameMap` の共役（ロール不定）を疑う番になる。
+
+### REST-CHECK の結果と、真因の特定（2026-08-28）
+
+#### 1. REST-CHECK を四肢へ広げた結果
+
+| model | joint | 部位 | restDirAngleDeg median | p10 | p90 |
+|---|---|---|---|---|---|
+| Dog | 7 / 11 | 前 Upper | 90.2 / 97.9 | 66 / 74 | 121 / 131 |
+| Dog | 8 / 12 | 前 Lower | 71.8 / 88.6 | 42 / 60 | 113 / 125 |
+| Dog | 15 | Neck | 78.0 | 50 | 110 |
+| Dog | **17 / 21** | **後 Upper** | **124.5 / 114.7** | 107 / 98 | **149.7** / 141 |
+| Dog | 18 / 22 | 後 Lower | 86.0 / 93.9 | 66 / 71 | 126 / 127 |
+| Lynx | **17 / 21** | **後 Upper** | **130.2 / 123.3** | 117 / 110 | 139 / 131 |
+
+**後肢 Upper だけが 115〜130° と突出**し、Dog では p90 が 149.7° と**コード自身が「軸不定の疑いあり」とする 150° に達している**。両モデルで同じ傾向なのでリグ個別の問題ではない。
+
+#### 2. ただしこの角度の「大きさ」は欠陥の証拠にならない
+
+`smalRestDir` は **SMAL native 軸**（+X 尻尾→頭、+Y 左、+Z 上）、`unityRestDirWorld` は **Unity world**。両者のなす角には**座標系の違いそのもの**が含まれるので、大きくて当然。**当初「62〜83° のずれ自体が問題」と書いたが、この理由で撤回する。**
+
+joint 間の**ばらつき**（59.6〜124.5°）も、固定の変換を別々の方向ベクトルに当てれば角度が変わるので、単独では欠陥の証拠にならない。
+
+#### 3. 定数は一次資料と完全一致
+
+`SmalRestDirByJoint` の 11 個すべてを `Docs/smal-rest-skeleton.json`（一次資料）と照合（`scratchpad/smal_rest2.py`）。**全部 0.0° 差**。joint 名も `LLeg1/LLegBack1/Neck/Tail1` と対応どおり。**定数は誤りではない。**
+
+#### 4. 真因: body_pose の回転量が足りない
+
+`meta.bin` の body_pose の**絶対量**（恒等回転からの角度）を測った（`scratchpad/bodypose_mag.py`）。
+
+| データ | 四肢 Upper の median | 全 joint median（joint0 除く） |
+|---|---|---|
+| **Animal SMAL**（Dog） | LFUp 9.5° / RFUp 12.4° / LRUp 18.9° / RRUp 13.0° | **13.0°** |
+| **Animal SMAL**（Lynx） | 8.0 / 8.1 / 9.7 / 9.8° | **9.8°** |
+| **Human SMPL**（対照） | 16.4 / 20.0°、膝 39.6 / 32.8° | **18.8°**（p90 66.6°） |
+
+**四肢の付け根が 8〜19° しか回っていない。** 一方 `[ANIMALKP]` の誤差は 72〜84°。**body_pose の最大値（24〜47°）を全部使っても届かない。** つまり誤差は FK が姿勢を失っているのではなく、**そもそも入力にその姿勢が入っていない**。
+
+#### 5. 決定的: SMAL block と keypoints3d が同じ bundle の中で食い違う
+
+**関節の内角**（座標系に依らない量）で直接比較した（`scratchpad/smal_vs_kp.py`）。SMAL 側は rest skeleton + kintree + body_pose を FK して算出。
+
+**ハブを使わない遠位の角度**（左右で別の点しか使わないので [ANIMALKP] の Upper のような汚染が無い）:
+
+| track | 部位 | SMAL FK | keypoints3d | 差 | SMAL rest |
+|---|---|---|---|---|---|
+| Dog | LF wrist | 22.2° | 22.3° | 15.3° | 20.9° |
+| Dog | RF wrist | 24.8° | 16.0° | 15.1° | 20.9° |
+| Dog | **LR ankle** | **30.7°** | **69.1°** | **41.5°** | 22.9° |
+| Dog | **RR ankle** | **25.3°** | **66.8°** | **37.2°** | 22.9° |
+| Lynx | LF wrist | 30.1° | 16.2° | 16.3° | 20.9° |
+| Lynx | RF wrist | 32.5° | 16.8° | 16.6° | 20.9° |
+| Lynx | **LR ankle** | **26.7°** | **65.0°** | **39.0°** | 22.9° |
+| Lynx | **RR ankle** | **27.9°** | **57.2°** | **28.8°** | 22.9° |
+
+- **前肢の手首は一致する**（22.2 vs 22.3 等）。→ こちらの FK・対応づけ・パースが正しいことの内部対照になっている。
+- **後肢の飛節（ankle）は SMAL 25〜31° に対し keypoints 57〜69°。両動物とも同じ向きに 29〜42° 食い違う。**
+- SMAL 側は rest（22.9°）からほとんど動いていない（+2〜+8°）。
+
+**同じ bundle の中の 2 つの表現が、後肢について別の姿勢を述べている。** 座標系に依らない量での比較なので、Unity 側の変換の問題ではない。
+
+#### 結論
+
+| 寄与 | 大きさ | 所在 |
+|---|---|---|
+| **body_pose が後肢の曲がりを持っていない** | 29〜42° | **bundle 生成側** |
+| `[ANIMALKP]` Upper の指標由来の下駄 | 前肢 約 25° / 後肢 約 9° | Unity 側（指標） |
+| `jointFrameMap` のロール不定 | 未定量 | Unity 側（構造的） |
+
+Unity 側で `AnimalPoseApplier` / `AnimalSmalFkApplier` を触っても、**後肢の姿勢は入力に無いので出ない。**
+
+#### 残る Unity 側の構造的欠陥（副次）
+
+`jointFrameMap = Quaternion.FromToRotation(smalRestDir, unityRestDirWorld)` は **rest 方向しか拘束していない**。`jointFrameMap * R(smalRestDir, θ)` はどれも同じ写像条件を満たすので、**ボーン軸まわりのロールが未定**。`bendUnity = jointFrameMap * bendSmal * Inv(jointFrameMap)` は回転軸 n を `jointFrameMap * n` に写すため、ロールがずれると**「前に曲がる」が「横に開く」に化ける**。
+
+正しい frame map には第 2 の基準方向（`LookRotation(forward, up)` の up に相当）が要る。現状は 1 本しか無い。ただし body_pose 自体が 8〜19° しかないので、**これを直しても効果は上の 29〜42° より小さい。順番としては後**。
+
+### 撤回 2026-08-28: AniMer keypoint と SMAL joint の対応づけが検証に落ちた
+
+D-007（「SMAL block と keypoints3d が食い違う」）を送る前に、対応づけを**独立な不変量**で検証したところ**通らなかった**。
+
+内角の比較は「AniMer のチェーンと SMAL の kintree が対応している」前提でしか意味を持たない。その対応は `AnimalPoseJointChains`（**現行 bundle では実行されない keypoint 経路のために書かれた定義**）由来で、生成側は「関節番号の解剖学的意味は断定できない」としている（D-006 回答）。
+
+#### セグメント長比（スケール不変・ハブ非依存）による照合 — `scratchpad/chain_ratio.py`
+
+| chain | SMAL の joint | SMAL 2:3 | KP 2:3（犬） | KP 2:3（猫） | |
+|---|---|---|---|---|---|
+| LF | LLeg1>LLeg2>LLeg3>LFoot | **1.63** | 0.79 | 0.76 | **不一致** |
+| RF | RLeg1>RLeg2>RLeg3>RFoot | **1.63** | 0.78 | 0.76 | **不一致** |
+| LR | LLegBack1>2>3>LFootBack | **1.32** | 0.81 | 0.91 | **不一致** |
+| RR | RLegBack1>2>3>RFootBack | **1.32** | 0.88 | 0.95 | **不一致** |
+
+**約 2 倍ずれている。** SMAL は第 2 セグメントが第 3 の 1.3〜1.6 倍だが、keypoints では第 3 のほうが長い。
+
+さらに悪いことに、**後肢は「1 つずらした」対応のほうがよく合う**:
+
+| chain | ずらした SMAL 比（1:2） | KP 2:3（犬 / 猫） |
+|---|---|---|
+| LR | 0.94 | 0.81 / 0.91 |
+| RR | 0.94 | 0.88 / 0.95 |
+
+つまり「前肢は一致・後肢だけ大きくずれる」という観測は、**後肢チェーンが 1 つずれている**（飛節の角度と膝の角度を比べている）でも同じように説明できる。犬・猫の両方で同じ向きに出ることも説明できてしまう。
+
+#### 撤回するもの
+
+- **D-007 の「SMAL block と keypoints3d が後肢について食い違う」は根拠不十分。** 送る前に止めた
+- **`[ANIMALKP]` の角度差（Neck 76°、Upper 72〜84° など）も同じ対応づけに乗っている。** 数値の解釈をこれ以上進めない
+- 「splay 65° が Upper の指標に下駄を乗せている」も、チェーンが解剖学的に正しい前提だった
+
+#### 撤回しないもの（対応づけに依存しない）
+
+| 事実 | 根拠 |
+|---|---|
+| 現行 animal bundle では SMAL FK 経路だけが走り、keypoint 経路は実行されない | `[SMAL-PIPE] hasSmalPose=true` 全件 |
+| SMAL FK 後のボーンは 0.4〜1.0°/frame しか動かない | `trueDeltaDegSincePrevSample` |
+| 入力の body_pose も 0.3〜0.7°/frame（Unity は入力を忠実に再現、平滑化のせいではない） | meta.bin 直読み |
+| body_pose の絶対量は四肢付け根で 8〜19° | meta.bin 直読み |
+| `SmalRestDirByJoint` の定数 11 個は一次資料と 0.0° 差で一致 | `smal-rest-skeleton.json` 照合 |
+| 旧 `bundle_animal.svb` と新 bundle で SMAL データは同値 | meta.bin 直読み |
+| `jointFrameMap` はロールが未拘束（構造的） | コード |
+| paw×4 / toe×2 / head / tailTip は body_pose 未適用 | コード |
+
+#### 教訓
+
+**指標を作るときは、その対応づけ自体を独立な量で検証してから数値を読む。** `[ANIMALKP]` は対応づけを検証せずに 3 セッション使った。内角も長さ比も同じデータから只で計算できたのに、先に角度だけ見ていた。
+
+#### 次にやること
+
+**AniMer 26 関節の骨格構造をデータから復元する。** フレーム間で距離がほぼ一定な keypoint ペアは剛体リンクで結ばれているので、全ペアの距離分散を測れば**仮定なしにトポロジーが出る**。それを SMAL rest skeleton の比率と突き合わせれば対応づけが決まる。
+
+### AniMer 26 関節のトポロジーをデータから復元した（2026-08-28）
+
+剛体リンクで結ばれた 2 点は姿勢が変わっても距離が変わらない。全 325 ペアの距離の変動係数 `cv = sd/mean` を測り、cv を重みに最小全域木を取った（`scratchpad/kp_topology.py`、track0 = 犬、1146 フレーム）。**仮定を一切置かずに骨格が出る。**
+
+#### 復元された構造（track0）
+
+```
+kp7  (次数4) ── kp10 ── kp16*        kp18 (次数3) ── kp19*
+      ├─────── kp11 ── kp17*               └─ kp25 ── kp21 (次数4)
+      ├─────── kp12 (次数3) ── kp9 (次数3) ── kp15*
+      │                 │            └─ kp3*
+      │                 └─ kp13 (次数3) ── kp8 ── kp14*
+      │                            └─ kp4*
+      └─────── kp18                  kp21 ── kp0 ── kp20 (次数5)
+                                       ├─ kp5*      ├─ kp1*  ├─ kp2*
+                                       └─ kp6*      ├─ kp24* └─ kp23 ── kp22*
+(* = 末端)
+```
+
+最も剛体的なペアは **kp12–kp13（cv 0.0296、0.232m）**。
+
+#### `AnimalPoseJointChains` との照合
+
+| チェーン定義 | リンク | 復元された木にあるか |
+|---|---|---|
+| LeftFront {18,13,9,15} | 18→13 | **無い** |
+| | 13→9 | **無い**（13 の隣接は 4, 8, 12） |
+| | 9→15 | **ある**（cv 0.0477） |
+| RightFront {18,12,8,14} | 18→12 | **無い** |
+| | 12→8 | **無い**（12 の隣接は 7, 9, 13） |
+| | 8→14 | **ある**（cv 0.0444） |
+| LeftRear {7,11,17,6} | 7→11 | **ある**（cv 0.0641） |
+| | 11→17 | **ある**（cv 0.0436） |
+| | 17→6 | **無い**（6 は 21 につながる） |
+| RightRear {7,10,16,5} | 7→10 | **ある**（cv 0.0538） |
+| | 10→16 | **ある**（cv 0.0453） |
+| | 16→5 | **無い**（5 は 21 につながる） |
+
+- **後肢の近位 2 リンクは裏が取れた**（7→11→17、7→10→16）
+- **前肢の近位リンクは全部外れ**。kp13 と kp12 は互いに最も剛体的（0.232m）で、**左右の肘が互いに剛体になることはない**。この 2 点は四肢ではなく胴体側の点である可能性が高い
+- **四肢の末端リンク（17→6、16→5）はどちらも外れ**。kp5 / kp6 は kp21 につながっている
+
+#### したがって
+
+`AnimalPoseJointChains` は **前肢について誤っており、四肢の末端についても誤っている**可能性が高い。この定義は現行 bundle では実行されない keypoint 経路のために書かれたもので、**一度も検証されていなかった**。
+
+`[ANIMALKP]` の数値も、D-007 の内角比較も、この定義に乗っている。**どちらも解釈を進めない。**
+
+#### 注意（結論にしないこと）
+
+- cv は最良でも 0.030 で、真の剛体（cv < 0.01）ほど小さくない。推定器のノイズが 3〜5% あるということで、木の細部（特に cv > 0.06 の枝）は信頼できない
+- 最小全域木は必ず全点をつなぐので、**弱い枝も強制的に採用される**。次数や末端の判定はその影響を受ける
+- **これは対応づけの候補であって確定ではない。** 生成側に確認する
+
+### 対応表を受領して検証した（2026-08-28、D-007 回答）
+
+生成側が AniMer の SMAL pkl（`my_smpl_00781_4_all.pkl`）を直接ロードし、`keypoint_vertices_idx` の 26 点と 35 関節を rest pose で最近傍マッチングした対応表を出してきた。こちらの判定基準で検証した（`scratchpad/verify_new_map.py`）。
+
+#### 正しい鎖
+
+```
+前肢 左 = kp12(肩) → kp8(肘)  → kp14(手根) → kp3(前足)
+前肢 右 = kp13(肩) → kp9(肘)  → kp15(手根) → kp4(前足)
+後肢 左 = kp7(骨盤)→ kp10(膝) → kp16(飛節) → kp5(後足)
+後肢 右 = kp7(骨盤)→ kp11(膝) → kp17(飛節) → kp6(後足)
+```
+
+`AnimalPoseJointChains` は **前肢の起点が誤り（kp18 は「き甲」ではなく頭）**、かつ **前肢・後肢とも左右が入れ替わっていた。**
+
+#### 検証 2（通った）: 主張するリンクは対立候補より短い — 10/10
+
+最小全域木が cv だけで枝を選んだため、剛体な肩同士をまたぐ長い枝（8–13 = 0.345m）を拾っていた。**本物のボーンは短いほう**（8–12 = 0.229m）。左右を入れ替えた候補と長さを比べると:
+
+| リンク | 主張 | 対立候補（左右逆） |
+|---|---|---|
+| 左 / 右 肩→肘 | **0.229 / 0.231m** | 0.345 / 0.346m |
+| 左 / 右 肘→手根 | **0.294 / 0.292m** | 0.388 / 0.385m |
+| 左 / 右 膝→飛節 | **0.161 / 0.157m** | 0.282 / 0.295m |
+| 左 / 右 飛節→後足 | **0.187 / 0.196m** | 0.311 / 0.286m |
+| 左 / 右 手根→前足 | **0.110 / 0.108m** | 0.273 / 0.262m |
+
+**10 件すべて主張のほうが短く、左右がきれいに対称**（0.229 vs 0.231 など）。左右の割り当てもこれで裏が取れた。**私の最小全域木の読み（前肢の交差リンク）が誤っていた。**
+
+#### 検証 1b（通った）: 前肢の 1:2 長さ比
+
+新対応では kp12/kp13 が左右別の肩なのでハブ非依存になる。
+
+| | SMAL | KP 犬 | KP 猫 |
+|---|---|---|---|
+| 前肢 左 / 右 | 0.85 | 0.78 / 0.79 | 0.76 / 0.76 |
+
+**1.5 倍以内。一致。**
+
+#### 検証 1（通らなかったが、判定基準のほうが誤り）: 2:3 長さ比
+
+| | SMAL | KP 犬 | KP 猫 |
+|---|---|---|---|
+| 前肢 | 1.63 | 2.73 / 2.80 | 2.90 / 3.02 |
+| 後肢 | 1.32 | 0.88 / 0.81 | 0.95 / 0.91 |
+
+**通らない（1.5 倍を超える）。ただしこの判定基準は「26 点 ≒ 35 関節」を前提にしていた。**
+
+生成側の回答が明示しているとおり、**26 点はメッシュ表面の頂点群の平均であって骨格関節そのものではない**。回答の最近傍距離も kp3↔LFoot = 0.102m、kp14↔LLeg3 = 0.074m と表面ぶんずれている。第 3 セグメント（手根→前足 0.110m、飛節→後足 0.187m）はこのオフセットと同じ桁なので、比が合わないのは当然。
+
+裏付けとして、**遠位の keypoint は距離の変動係数そのものが大きい**:
+
+| セグメント | cv |
+|---|---|
+| 肩→肘 / 肘→手根 / 膝→飛節 | 0.042〜0.048 |
+| **飛節→後足 / 手根→前足** | **0.124〜0.176** |
+
+比が合わない第 3 セグメントは、**表面オフセットと推定ノイズの両方が最大の場所**。したがってこの不一致を対応表への反証とは扱わない。**判定基準の設定ミスとして記録する。**
+
+#### 顔まわりは確度が下がる（回答に明記あり）
+
+kp18 = **Head**（頭）。**「き甲」ではない。** `AnimalHeadKeypoints.FrontRoot = 18` のコメント（体の前端・き甲）は誤り。
+kp24 = 鼻先端、kp2 = 鼻筋・マズル中央、kp20/21 = 左右の耳、kp0/1 = 左右の目（推定）、kp22/23 = 口角（推定）、kp19 = 尾の先端、kp25 = 尾の中間（`Tail4` と完全一致）。
+
+私の従来の推定（kp20/21=耳、22/23=目、24=鼻先、2=顎、19=尻尾先、25=尻尾中間）は、**耳・鼻先・尾は当たり、目と口角は取り違えていた**（22/23 が口角、0/1 が目）。
+
+#### 結論
+
+**対応表を受け入れる。** 検証 2（10/10）と検証 1b が通り、通らなかった検証 1 は基準側の誤りと説明がつく。
+
+### 対応表に合わせたコード修正（2026-08-28）
+
+| ファイル | 修正 |
+|---|---|
+| `AnimalPoseJointChains.cs` | 4 チェーンすべて訂正。前肢の起点を kp18（頭）から kp12/kp13（左右の肩）へ。前肢・後肢とも左右を入れ替え |
+| `AnimalHeadKeypoints.cs` | `FrontRoot=18`（き甲）→ `Head=18`。`Chin=2` → `Muzzle=2`。`LeftShoulder=12` / `RightShoulder=13` を追加 |
+| `AnimalPoseApplier.ApplyAnimalHeadPose` | 首を **両肩の中点 → 頭** に。head は 18→24（頭→鼻先端）。`animalNeckUsesBodyToHeadSegment` フラグを削除 |
+| `StreamingStereoVideoPlayer.Playback.partial.cs` | `[ANIMALKP]` のペアを訂正。**Neck は診断から外した**（26 関節に首の点が無い） |
+| `AnimalBodyBasisResolver.cs` | **挙動は正しかった。変数名だけ訂正**（`withersHub`→`headHub`、`headRoot`→`noseTip`、`leftHip`/`rightHip`→`leftKnee`/`rightKnee`） |
+| `BatchPlaybackLogger.cs` / `Model.cs` | `-neckSeg` と `SetAnimalNeckSegmentForDiag` を撤去 |
+
+**`AnimalBodyBasisResolver` と `AnimalPoseJointChains` は左右の割り当てが食い違っていた**（前者が正しく後者が誤り）。**同じ番号体系を 2 箇所で別々に解釈していたこと自体が、少なくとも一方が推測だった証拠**だった。気付く機会はあった。
+
+#### 過去の数値の扱い
+
+`[ANIMALKP]` の値（Neck 76°、Upper 72〜84°、Lower 18〜59°、Paw 15〜42° など）は**すべて誤った対応で測ったもの。破棄する。** 訂正後の測定と混ぜて比較しないこと。
+
+### 訂正後の測定（2026-08-28）— 後肢 Upper だけが外れる
+
+コンパイル・実行とも通過（`[PLACE]` 58406、`[ANIMALKP]` 出力あり、エラーなし）。
+
+#### `[ANIMALKP]` 訂正後（過去の数値とは比較しない）
+
+| 部位 | Dog median | Lynx median | body_pose |
+|---|---|---|---|
+| LFUp / RFUp | **17 / 15°** | 25 / 37° | 駆動 |
+| LFLo / RFLo | 32 / 28° | 35 / 50° | 駆動 |
+| LFPaw / RFPaw | 36 / 28° | 35 / 41° | なし（親追従） |
+| **LRUp / RRUp** | **76 / 75°** | **78 / 73°** | 駆動 |
+| LRLo / RRLo | 30 / 41° | 40 / 47° | 駆動 |
+| LRPaw / RRPaw | 24 / 15° | 21 / 17° | なし（親追従） |
+| **駆動ボーン全体** | **32°** | **47°** | |
+
+**前肢は 15〜50° に収まり、後肢 Upper だけが 73〜78° で突出**。90° 超の割合も後肢 Upper だけが 16〜22%（他は 0〜3%）。**両モデルで同じ。**
+
+誤った対応で測っていたときは「Upper 全部が 72〜84° で近位ほど悪い」に見えていたが、**実際は後肢 Upper 単独の問題**だった。
+
+#### REST-CHECK との対応
+
+| joint | 部位 | REST-CHECK（Dog / Lynx） | ANIMALKP（Dog） |
+|---|---|---|---|
+| 7 / 11 | 前肢 Upper | 91.0 / 98.6, 71.1 / 76.5 | 17 / 15 |
+| 8 / 12 | 前肢 Lower | 73.0 / 89.8, 60.5 / 69.8 | 32 / 28 |
+| **17 / 21** | **後肢 Upper** | **124.5 / 114.8, 130.4 / 123.6** | **76 / 75** |
+| 18 / 22 | 後肢 Lower | 86.5 / 94.8, 69.2 / 75.1 | 30 / 41 |
+
+**REST-CHECK が 110° を超えるのは joint 17 / 21 だけ**（他は 60〜99°）で、**姿勢誤差が突出するのも同じ 2 つ**。両モデルで一致。
+
+REST-CHECK の**絶対値**は座標系の差を含むので意味を持たないが、**同一モデル内で 2 つの joint だけが 30〜40° 上に外れている**のは、SMAL の rest 大腿方向と Unity リグの bind pose 大腿方向が、他の関節より大きく食い違っていることを示す。
+
+SMAL の rest 方向: 後肢 Upper `(+0.338, ±0.087, −0.937)` は **下かつ前（+X = 尻尾→頭）** を向く。前肢 Upper `(+0.045, ∓0.095, −0.994)` はほぼ真下。四足動物のリグは大腿が**後ろ下がり**なのが普通なので、ここが食い違う。
+
+そして後肢 Upper の body_pose は 9.7〜18.9° しかないので、**この差を埋められない。**
+
+#### 内角の再検証（対応表を適用）
+
+| track | 部位 | SMAL FK | keypoints3d | 差 |
+|---|---|---|---|---|
+| Dog | LF elbow / RF elbow | 24.3 / 18.1° | 16.0 / 22.3° | **11.1 / 6.3°** |
+| Dog | LF wrist / RF wrist | 22.2 / 24.8° | 19.5 / 23.7° | **4.9 / 4.0°** |
+| Lynx | LF elbow / RF elbow | 23.3 / 20.5° | 16.8 / 16.2° | **13.0 / 6.5°** |
+| Lynx | LF wrist / RF wrist | 30.1 / 32.5° | 54.7 / 53.4° | 17.9 / 21.4° |
+| **Dog** | **LR / RR ankle** | **30.7 / 25.3°** | **66.8 / 69.1°** | **37.2 / 43.1°** |
+| **Lynx** | **LR / RR ankle** | **26.7 / 27.9°** | **57.2 / 65.0°** | **30.7 / 37.1°** |
+
+**前肢は一致**（犬で 4〜11°）。**後肢の飛節は 29〜43° 食い違う**（両動物）。SMAL 側は rest 値 22.9° からほとんど動いていない（+2〜+8°）。
+
+対応の左右を直しても後肢の数値は入れ替わっただけで、**食い違いそのものは残った**（後肢は接続の形が元から正しく、ラベルだけ左右逆だったため）。
+
+#### ただし後肢の内角比較には交絡がある
+
+生成側の回答どおり 26 点は**メッシュ表面の頂点平均**で、骨格関節ではない。最近傍距離は kp16↔LLegBack3 = **0.009m**（ほぼ一致）だが **kp10↔LLegBack2 = 0.107m**、kp5↔LFootBack = 0.103m。
+
+後肢のセグメントは短い（膝→飛節 0.161m、飛節→後足 0.187m）ので、**0.10m のオフセットはセグメント長の 66%**。角度を 30° 動かすには十分。**後肢はこの比較が最も効かない場所**で、そこに食い違いが出ている。
+
+前肢は肘→手根 0.294m とセグメントが長く、オフセット（0.050〜0.074m）の影響が小さい。犬で 4〜5° に収まったのはそのため。
+
+**したがって「SMAL block が後肢で誤っている」とはまだ言えない。** 交絡を外すには、生成側に**同じ内角を SMAL の posed mesh から（keypoint 頂点群で）計算してもらう**必要がある。相手は v_template を持っているので実行できる。
+
+### 後肢 Upper の 73〜78° にも指標の下駄がある（2026-08-28）
+
+D-007 は「解決」で確定した。生成側が AniMer 本体のモデルコードと配布 bundle の `pose.smal` をそのまま forward し、**posed mesh 由来の内角が配布物の `keypoints3d` と 12 フレーム全部で小数 2 桁まで一致**、骨格関節だけの FK は 27〜41°（犬）でこちらの 25〜31° 帯と同じと報告。**`body_pose` と `keypoints3d` に矛盾は無く、こちらの実装も正しかった。** 差 30〜43° は kp10 の表面オフセット（0.107m = セグメント長の 66%）が作っていた。
+
+**同じ交絡が `[ANIMALKP]` の後肢 Upper にも効いている。**
+
+#### 測定した下駄 — `scratchpad/rear_upper_floor.py`
+
+`[ANIMALKP]` の後肢 Upper が比べているもの:
+
+- ボーン方向 = `rear_*_upper` → 子 = **股関節 → 膝**
+- 目標方向 = kp7 → kp10 = **尾の付け根 → 膝**（kp7 は `Tail1`、股関節ではない）
+
+実際の `body_pose` で FK した姿勢について、この 2 方向のなす角を全フレーム測った。
+
+| track | 部位 | 起点の食い違い | median | p10 | p90 |
+|---|---|---|---|---|---|
+| Dog | 後肢 左 / 右 | `Tail1` vs `LLegBack1` / `RLegBack1` | **21.5 / 22.1°** | 19.8 / 20.1 | 24.0 / 25.2 |
+| Lynx | 後肢 左 / 右 | 同上 | **22.4 / 23.0°** | 21.7 / 21.9 | 23.4 / 23.9 |
+| Dog / Lynx | **前肢 左 / 右** | `LLeg1` vs `LLeg1`（同一） | **0.0°** | 0.0 | 0.0 |
+
+**前肢がちょうど 0.0°** なのは、対応表で kp12/kp13 が `LLeg1`/`RLeg1`（肩）そのものだから。**手法の内部対照として完璧**で、後肢の 22° が本物の下駄であることを裏づける。
+
+#### したがって後肢 Upper の 73〜78° は額面ではない
+
+| 寄与 | 大きさ | 根拠 |
+|---|---|---|
+| 起点が尾の付け根であることの下駄 | **22°**（実測、ばらつき小） | 上の表 |
+| kp10 の表面オフセット | **最大 19°**（`asin(0.107 / 0.322)`、向きは不明なので上限） | D-007 の対応表 |
+| 残差 | **少なくとも 34°** | 75 − 22 − 19 |
+
+前肢 Upper は 15〜37°（Lynx 右が 37°）なので、**残差 34° 以上が「後肢だけが特別に悪い」と言えるかは、この見積もりでは決まらない。**
+
+**「後肢 Upper が真の欠陥」という結論は保留する。** 前回 Upper 全体を欠陥と報告しかけて対応づけの誤りだったので、同じ轍を踏まない。
+
+#### 指標を直す（次の一手）
+
+後肢には股関節に相当する keypoint が無いので、起点を揃えられない。代わりに**両辺を同じ量にする**:
+
+- 目標 = kp7 → kp10（尾の付け根 → 膝）
+- ボーン側 = **`cache.tailBase.position` → `rear_*_lower.position`**（Unity の尾の付け根 → 膝）
+
+Unity リグには `tail_base` があるので同じ意味の方向が作れる。これで 22° の下駄は消える。
+
+**注意**: これは「そのボーンの回転が合っているか」ではなく「2 点間の向きが合っているか」の測定に変わる。最優先目標が「モデルの体勢を keypoints3d に一致させること」なので指標としてはむしろ適切だが、**前肢（回転ベース）と後肢（点間ベース）で意味が変わるので、混ぜて平均しない。**
+
+### 下駄を除いた測定（2026-08-28）— 後肢 Upper は外れ値ではなかった
+
+`[ANIMALKP]` に点間ベースの後肢 Upper（`LRUpTB` / `RRUpTB` = Unity の `tail_base` → `rear_*_lower` 対 kp7 → kp10/11）を追加して測り直した。コンパイル・実行とも通過（`[PLACE]` 59425、エラーなし）。
+
+| | 回転ベース（下駄あり） | **点間ベース（下駄なし）** | 90°超 |
+|---|---|---|---|
+| Dog LRUp / RRUp | 77 / 75° | **40 / 36°** | 22〜25% → **0%** |
+| Lynx LRUp / RRUp | 79 / 73° | **30 / 28°** | 0〜15% → **0%** |
+
+**後肢 Upper の実際の誤差は 28〜40°。** 73〜79° は起点の食い違い（尾の付け根 vs 股関節）が作っていた。
+
+#### 全部位が同じ帯に収まる
+
+| 部位 | Dog | Lynx |
+|---|---|---|
+| 前肢 Upper | 17 / 15° | 26 / 37° |
+| 前肢 Lower | 33 / 29° | 31 / 50° |
+| **後肢 Upper（下駄なし）** | **40 / 36°** | **30 / 28°** |
+| 後肢 Lower | 32 / 41° | 41 / 47° |
+| 駆動ボーン全体（回転ベースのみ） | 33° | 46° |
+
+**特定の部位が突出していない。** 「後肢 Upper が真の欠陥」という結論を保留したのは正しかった。
+
+なお下がり幅（35〜49°）は「22° の下駄 + kp10 オフセット上限 19°」とおおむね整合するが、点間ベースは Unity の `tail_base` 位置とリグの比率も反映するので、**純粋な下駄の除去ではない**。分解として厳密に扱わないこと。
+
+#### 現状の到達点
+
+姿勢の一致度は**全四肢セグメントで一様に 28〜50°**。単一の犯人はいない。残る誤差の候補は 3 つで、いずれも未定量:
+
+| 候補 | 性質 | 備考 |
+|---|---|---|
+| `body_pose` の回転量が小さい（四肢付け根 8〜19°） | 入力 | human SMPL の対照は前肢 16〜20°・膝 33〜40°。ただしモデルも骨格定義も違う |
+| `jointFrameMap` のロール未拘束 | Unity 側・構造的 | `FromToRotation` は rest 方向しか拘束しない。第 2 基準方向が要る |
+| リグの bind pose と SMAL rest skeleton の差 | Unity 側・モデルごと | REST-CHECK で後肢 Upper だけ 110° 超。ただし絶対値は座標系差を含む |
+
+**次に手を付けるならこの 3 つのどれかだが、まず「どれがどれだけ効いているか」を分離する測定を設計すること。** 部位ごとの角度だけでは分離できない（この 3 セッションで 2 回、分離せずに犯人を決めて外している）。
+
+### 分離測定（2026-08-28）— 測定 A は無効、候補 1 は論理的に消える
+
+#### 測定 A（「データの下限」）は成立しなかった
+
+SMAL rest skeleton + `body_pose` を FK して keypoints3d と Kabsch 位置合わせし、「最良の位置合わせでも残る方向差 = データが許す下限」を求めようとした（`scratchpad/data_floor.py`）。
+
+**無効。** `meta.bin` の SMAL block は **`betas` を 41 個持ち、全部非ゼロ（最大 1.07）**（`scratchpad/beta_probe.py`）。こちらは `Docs/smal-rest-skeleton.json`（**平均形状**）で FK していたので、関節位置そのものが違う。
+
+証拠: Kabsch の残差 RMS が **0.210〜0.252m**。体長 0.9m に対し 23〜28% で、位置合わせとして成立していない。出た数値（下限 24〜28°、LRUpTB 47〜57° など）は**すべて形状不一致の産物。破棄する。**
+
+`shapedirs` / `J_regressor` はこちらに無いので、**この測定は Unity 側では実行できない。**
+
+#### 候補 1「body_pose の回転量が足りない」は論理的に消える
+
+D-007 の回答で、生成側が **posed mesh 由来の keypoint が配布物の `keypoints3d` と 12 フレーム全部で小数 2 桁まで一致**することを確認している。
+
+つまり **`globalOrient` + `body_pose` + `betas` が `keypoints3d` を完全に決めている。** 入力は自己完結していて、姿勢の情報が欠けているわけではない。
+
+**「body_pose が human SMPL より小さい（8〜19° 対 16〜40°）」は誤差の説明にならない。** SMAL は betas で形状を、body_pose で姿勢を表すので、同じ見た目の動きに必要な回転量が SMPL と同じである理由がない。**human との比較自体が無効だった。撤回する。**
+
+#### したがって残る候補は Unity 側の 2 つだけ
+
+| 候補 | 内容 |
+|---|---|
+| **(i) 形状・bind pose の不一致** | Unity リグの bind pose と比率が、SMAL の**betas 適用後の**形状と違う。同じ相対回転を当てても world 方向が変わる |
+| **(ii) `jointFrameMap` のロール未拘束** | `FromToRotation` は rest 方向しか拘束しないので、曲げの回転軸が任意のロールぶんずれる |
+
+#### 測定 B: 曲げを切って (i) と (ii) を分ける
+
+`AnimalSmalFkApplier` で `bendUnity` を恒等に固定する（= `globalOrient` と bind pose だけで姿勢を作る）診断フラグを入れ、`[ANIMALKP]` を比較する。
+
+| 結果 | 読み方 |
+|---|---|
+| 誤差(曲げ無) ≈ 誤差(曲げ有) | 曲げが何も寄与していない。誤差はすべて (i) |
+| 誤差(曲げ無) **<** 誤差(曲げ有) | **曲げが悪化させている** → (ii) が実害を出している |
+| 誤差(曲げ無) > 誤差(曲げ有) | 曲げは効いている。残差は (i) |
+
+`bendUnity` は `body_pose` の寄与そのものなので、これを切れば **(ii) の経路が完全に消える**。1 回のバッチで決まる。
+
+### 測定 B の結果（2026-08-28）— body_pose を切っても誤差が変わらない
+
+`-noBend true/false` の A/B（同一ビルド、フラグのみ）。適用ログ `disableSmalBendForDiag=true` を確認済み（true 側 1 行、false 側 0 行）。
+
+| track | 部位 | 曲げ有 | 曲げ無 | 差 |
+|---|---|---|---|---|
+| Dog | LFUp / RFUp | 17 / 15° | 10 / 16° | **−7 / +1** |
+| Dog | LFLo / RFLo | 32 / 29° | 28 / 30° | −4 / +1 |
+| Dog | LRUpTB / RRUpTB | 39 / 36° | 39 / 36° | **0 / 0** |
+| Dog | LRLo / RRLo | 31 / 41° | 33 / 40° | +2 / −1 |
+| **Dog 駆動計** | | **30°** | **29°** | **−1** |
+| Lynx | LFUp / RFUp | 27 / 37° | 25 / 35° | −2 / −2 |
+| Lynx | LFLo / RFLo | 36 / 49° | 28 / 46° | −8 / −3 |
+| Lynx | LRUpTB / RRUpTB | 30 / 28° | 30 / 29° | 0 / +1 |
+| Lynx | LRLo / RRLo | 41 / 47° | 36 / 49° | −5 / +2 |
+| **Lynx 駆動計** | | **34°** | **33°** | **−1** |
+
+#### 読み方
+
+**body_pose を完全に切っても誤差が 1° しか変わらない。** しかも変わる部位は**ほぼすべて「切ったほうが良くなる」側**（−10 〜 −2）で、改善した部位は 1 つだけ（Lynx RRPaw +4）。
+
+| 候補 | 判定 |
+|---|---|
+| **(i) 形状・bind pose の不一致** | **誤差 30〜34° のほぼ全部を占める。** 曲げを切っても残る |
+| **(ii) `jointFrameMap` のロール未拘束** | **実害は出ている**（部位ごとに最大 10° 悪化させている）が、`body_pose` が 8〜19° しかないので**上限がその程度** |
+
+つまり現状は **「リグの T-pose を `globalOrient` で回しただけ」で 30° の一致度**が出ており、**`body_pose` の適用は差し引きゼロ〜わずかに有害**。
+
+#### 効きうる幅の見積もり
+
+- (ii) を直しても、`body_pose` の総量が 8〜19° なので**取り返せるのはせいぜい 10〜20°**（30° → 20° 程度が上限）
+- (i) は per-model の作業（bind pose・比率を SMAL の betas 適用後の形状へ寄せる）。**こちらのほうが大きい**が、52 体のリグに対する作業になる
+
+#### まだ分けきれていないこと
+
+「(ii) の transport が曲げを無駄にしている」のか「SMAL の姿勢がそもそも rest に近く、正しく transport しても改善しない」のかは、**この測定では分けられない**。
+
+分けるには **Unity リグの関節内角（upper と lower のなす角）を曲げ有無で比べる**。SMAL 側の内角は rest から +1.2〜+21.5° 動いている（実測済み）ので、
+
+- Unity の内角も同程度動く → transport の大きさは合っている。残差は向き（ロール）
+- Unity の内角がほとんど動かない → transport が曲げを失っている
+
+**この測定はまだやっていない。** 次に (ii) へ手を付けるなら先にこれを取ること。
+
+### 測定 C の結果（2026-08-28）— 曲げは届いているが、半分になり、右後膝だけ逆を向く
+
+`[ANIMALANG]`（リグの関節内角。keypoint とは無関係）を曲げ有無で比較。適用ログ確認済み。
+
+| track | 関節 | Unity 曲げ無 | Unity 曲げ有 | **Unity の変化** | SMAL の変化 | 到達率 |
+|---|---|---|---|---|---|---|
+| Dog | LFel（左肘） | 22.0° | 30.0° | **+8.0** | +18.9 | 42% |
+| Dog | RFel（右肘） | 19.0° | 26.0° | **+7.0** | +12.7 | 55% |
+| Dog | LRkn（左膝） | 48.0° | 53.0° | **+5.0** | +21.5 | 23% |
+| **Dog** | **RRkn（右膝）** | 49.0° | 47.0° | **−2.0** | +14.3 | **−14%** |
+| Lynx | LFel | 9.0° | 23.0° | **+14.0** | +17.9 | 78% |
+| Lynx | RFel | 16.0° | 24.0° | **+8.0** | +15.1 | 53% |
+| Lynx | LRkn | 73.0° | 79.0° | **+6.0** | +6.3 | 95% |
+| **Lynx** | **RRkn** | 74.0° | 66.0° | **−8.0** | +9.9 | **−81%** |
+
+#### 分かったこと
+
+1. **曲げは届いている。** transport が丸ごと失っているわけではない（+5〜+14°）
+2. **ただし到達率が 23〜95%、平均でおよそ半分。** 平滑化のせいではない（`body_pose` はフレーム間 0.3〜0.7°しか動かないので、`SmalSmoothHalfLifeSec = 0.12f` の定常減衰はほぼゼロ）
+3. **右後膝（RRkn）だけ、両モデルとも逆向きに曲がる**（Dog −2.0 / Lynx −8.0 に対し SMAL は +14.3 / +9.9）
+
+#### 3 が具体的な欠陥
+
+**左右で振る舞いが違う。** `SmalRestDirByJoint` の左右は Y 成分の符号だけが違う鏡像（joint 17/21、18/22）だが、`Quaternion.FromToRotation` は**左右それぞれ独立に**ロールを決めるので、鏡像のペアが鏡像の写像にならない。片側だけ曲げ軸が反転しうる。
+
+これは「`jointFrameMap` のロールが未拘束」という構造的欠陥（候補 ii）が、**実際に符号の反転として現れている**ということ。
+
+`FromToRotation(a, b)` は `a → b` しか拘束せず、`jointFrameMap * R(a, θ)` はどの θ でも同じ条件を満たす。`bendUnity = jointFrameMap * bendSmal * Inv(jointFrameMap)` は曲げの回転軸 n を `jointFrameMap * n` に写すので、**ロールがずれると屈曲が伸展に化ける。** REST-CHECK が 110° を超える後肢（joint 17/21）で特に効く。
+
+#### 直すなら
+
+正しい frame map には**第 2 の基準方向**が要る（`LookRotation(forward, up)` の up に相当）。候補:
+
+- SMAL rest skeleton の**兄弟ボーン方向**（例: 大腿の rest 方向に加えて、骨盤→尾の方向）を第 2 軸にして、両系で `LookRotation` を組んで `map = unityBasis * Inverse(smalBasis)` とする
+- これなら鏡像のペアが自動的に鏡像の写像になる
+
+#### 効きうる幅（変わらず）
+
+`body_pose` の総量が 8〜19° なので、**完全に直しても取り返せるのは 10〜20°**。誤差 30〜34° のうち残り 20° 前後は候補 (i)（リグの bind pose・比率が SMAL の betas 適用後の形状と違う）で、そちらのほうが大きい。
+
+**ただし (ii) は 1 箇所の数式修正、(i) は 52 体のリグ作業。** 費用対効果では (ii) が先。
+
+### 2 軸版 jointFrameMap の A/B（2026-08-28）— 機構は確認できたが、この直し方は採用しない
+
+`useTwoAxisJointFrameMap` を追加（`SmalRollRefJoint` で「同じ肢のもう 1 本」を第 2 軸にする）。適用ログ確認済み。
+
+#### 判定 1: リグの内角 — **設計どおり効いた**
+
+| track | 関節 | 曲げ無 | 従来 | 2 軸 | SMAL の変化 | 従来の変化 | 2 軸の変化 |
+|---|---|---|---|---|---|---|---|
+| Dog | LFel / RFel | 22 / 19° | 30 / 26° | 30 / 26° | +18.9 / +12.7 | +8.0 / +7.0 | **同値** |
+| Dog | LRkn | 48° | 54° | **85°** | +21.5 | +6.0 | **+37.0** |
+| **Dog** | **RRkn** | 49° | **47°** | **73°** | +14.3 | **−2.0** | **+24.0 = 符号が直った** |
+| Lynx | LFel / RFel | 9 / 16° | 23 / 24° | 23 / 24° | +17.9 / +15.1 | +14.0 / +8.0 | **同値** |
+| Lynx | LRkn | 73° | 79° | 83° | +6.3 | +6.0 | +10.0 |
+| **Lynx** | **RRkn** | 74° | **66°** | **80°** | +9.9 | **−8.0** | **+6.0 = 符号が直った** |
+
+**右後膝の符号反転は両モデルとも直った。** 機構（ロールが屈曲／伸展を決めている）は確認できた。
+
+ただし **Dog の膝は行き過ぎ**（LRkn +37 対 SMAL +21.5、RRkn +24 対 +14.3）。conjugation は回転角を保つので**量**は変わらない。軸が変わったぶん、それまで捻りに逃げていた回転が曲げに入った、ということ。
+
+#### 前肢は 2 軸版が走っていない（重要）
+
+前肢の値が完全に同値なのは、**`TryBuildDirectionBasis` がフォールバックしているから**。前肢の rest 方向 joint 7 と 8 のなす角は **5.4°** しかなく、直交化した副軸の長さが `sin(5.4°)² = 0.0088 < 0.01`（閾値）で false を返す。
+
+後肢は joint 17 と 18 が 32.6° 離れているので 2 軸版が走る。
+
+**つまり前肢についてはこの A/B は何も測っていない。** 「前肢は変化なし」を効果の証拠にしない。なお前肢は副軸がほぼ縮退しているので、そもそもこの副軸では数値的にロールを決められない。
+
+#### 判定 2: keypoints3d との角度差 — **改善しない。むしろ悪化**
+
+| track | 部位 | 従来 | 2 軸 | 差 |
+|---|---|---|---|---|
+| Dog | **LRLo / RRLo** | 32 / 41° | **59 / 56°** | **+27 / +15** |
+| Dog | LRPaw / RRPaw | 24 / 15° | 30 / 20° | +6 / +5 |
+| Dog | その他 | | | 0〜+2 |
+| **Dog 駆動計** | | **31°** | **32°** | **+1** |
+| Lynx | RRLo | 47° | 58° | +11 |
+| Lynx | LRPaw | 22° | 15° | **−7** |
+| **Lynx 駆動計** | | **34°** | **35°** | **+1** |
+
+**全体では改善なし（+1）。後肢 Lower が大きく悪化。**
+
+#### 結論: 採用しない。既定 OFF のまま
+
+`useTwoAxisJointFrameMap` は false のまま残す。
+
+**なぜ効かないか。** ロールを直しても、**正しいロールが rest 幾何から復元できない**。副軸（同じ肢のもう 1 本）は SMAL の rest skeleton でも Unity の bind pose でも定義できるが、**両者の rest 姿勢そのものが違う**（候補 i）ので、揃えた「つもり」の平面が実は別の平面になる。符号は直るが正しい向きにはならない。
+
+つまり **候補 (ii) は実在するが、単独では利益が出ない。** (i) を直さない限り、どんなロールの決め方をしても正解に届かない。
+
+#### 費用対効果の再評価
+
+前回「(ii) は 1 箇所の数式修正なので先」と書いたが、**撤回する。**
+
+| 候補 | 実測の結果 |
+|---|---|
+| (ii) `jointFrameMap` のロール | 符号は直せるが keypoints 一致度は改善しない（+1）。**(i) に依存している** |
+| (i) リグの bind pose・比率 | 誤差 30〜34° のほぼ全部。**唯一の実効的なレバー** |
+
+また測定 B で分かったとおり、**`body_pose` を切っても誤差は 1° しか変わらない**。(ii) をどう直しても動かせる幅はその範囲に収まる。
+
+### 動物は rest からどれだけ離れているか（2026-08-28）— 姿勢の「予算」は 13〜15°
+
+「52 体のリグ作業」と書いたのは**推論であって測定していなかった**ので、内訳を決める数値を取った（`scratchpad/pose_vs_rest.py`）。
+
+body frame（`globalOrient` を外した動物自身の座標系）で、各ボーンの posed 方向と rest 方向のなす角。
+
+| track | ボーン | median | p10 | p90 |
+|---|---|---|---|---|
+| Dog | LFUp / RFUp | 11.4 / 11.2° | 2.0 / 7.0 | 19.9 / 32.2 |
+| Dog | LFLo / RFLo | 26.1 / 28.1° | 7.3 / 9.1 | 51.3 / 52.3 |
+| Dog | LRUp / RRUp | 17.5 / 12.6° | 7.9 / 5.5 | 31.4 / 26.9 |
+| Dog | LRLo / RRLo | 12.7 / 13.9° | 5.0 / 2.8 | 32.0 / 30.5 |
+| **Dog 四肢計** | | **15.3°** | 5.0 | 38.9 |
+| **Lynx 四肢計** | | **12.7°** | 4.3 | 29.2 |
+| Dog / Lynx Neck | | 32.3 / 22.8° | | |
+| Dog / Lynx TailBase | | 28.5 / 21.5° | | |
+
+#### 内訳が決まった
+
+**動物の四肢は自分の rest 姿勢から median 13〜15° しか離れていない。** これが「姿勢を正しく適用したときに得られる利益の全額」。
+
+| 内訳 | 大きさ |
+|---|---|
+| **姿勢（rest からのずれ）を適用できていない分** | **13〜15°**（p90 で 29〜39°） |
+| **リグの rest 姿勢が動物の rest 姿勢と違う分 + `globalOrient`・軸補正の誤差** | **残り。実測 30〜34° との差** |
+| 実測（現状） | 30〜34° |
+
+角度は線形に足せないので厳密な分解ではないが、**姿勢適用をどれだけ完璧にしても 15° 以上は残る**ことは言える。測定 B（`body_pose` を切っても 1° しか変わらない）とも整合する。
+
+#### 「52 体のリグ作業」は撤回する
+
+残差は「リグの bind pose が SMAL の rest と違う」ことに由来するが、**それをリグ側で直す必要があるとは限らない。** 現状のコードは
+
+```
+tw[joint] = bendUnity * restWorldRot          // restWorldRot = worldFk0 * bindRotWorld[bone]
+```
+
+で、**リグの bind pose を姿勢のベースラインとして焼き込んでいる**（`bendSmal` が恒等なら、ボーンはリグの T-pose を `globalOrient` で回した位置に留まる）。
+
+ベースラインを「リグの bind pose」ではなく「SMAL の posed 方向」に置き換えれば、rest 姿勢の不一致は**コード側で消せる可能性がある**。これはリグ 52 体の作業ではなく 1 箇所の数式の話。
+
+**未検証。** 実装前に「SMAL の posed 方向を Unity 側で作れるか」を確かめること（`SmalRestDirByJoint` は平均形状の値で、betas 適用後の rest 方向とは違う。方向は位置より betas に鈍感だが、それも未測定）。
+
+### Animal AimAt 第 1 版は失敗（2026-08-28）— keypoint の絶対位置に向けてはいけない
+
+SMAL FK のあとに四肢を keypoint へ向ける段（Human の `enableKeypointAimAt` 相当）を入れて A/B した。
+
+**目視で悪化。** 7 秒（f00210）の犬は、OFF では自然に立っているのに、**ON では脚が開き前脚が縮んで破綻**した。
+
+#### 原因: スケールが 2 倍違う
+
+`[PLACE]` の実測:
+
+```
+scale=0.4086  modelH=1.5206  target=0.4202  depth=0.706
+```
+
+**表示モデルは高さ 0.42m**（ミニチュアスケール、[[placement-scale-judgment]]）。一方 `jointsWorld[i] = anchorWorld + camRotation * jointsCam[i]` の keypoint 骨格は**実寸**で、体長 kp7→kp18 が **0.87m**。
+
+**約 2 倍。** 各ボーンを「自分の位置から keypoint の絶対位置へ」向けると、目標がモデルの外側の遠くにあるので、遠位ほど向きが大きく狂う。実際に破綻したのは遠位。
+
+#### 直し方: セグメントの向きを使う
+
+絶対位置ではなく **2 つの keypoint の差**（= セグメントの向き）を渡す。差はスケール不変なので 2 倍の食い違いが消える。`ApplyAnimalBoneFromPoints` は `(pointB - pointA).normalized` しか使わないので、引数を変えるだけ。
+
+| ボーン | セグメント | 対応の正確さ |
+|---|---|---|
+| 前肢 Upper | kp12→kp8 / kp13→kp9 | **正確**（肩→肘） |
+| 前肢 Lower | kp8→kp14 / kp9→kp15 | **正確** |
+| 前肢 Paw | kp14→kp3 / kp15→kp4 | 正確（ただし kp3/4 は表面点でオフセット大） |
+| **後肢 Upper** | kp7→kp10 / kp7→kp11 | **不正確。kp7 は尾の付け根で股関節ではなく 22° の下駄**（実測済み） |
+| 後肢 Lower | kp10→kp16 / kp11→kp17 | **正確** |
+| 後肢 Paw | kp16→kp5 / kp17→kp6 | 正確（同上） |
+
+**後肢 Upper は AimAt から外す**（SMAL FK のまま）。既知の 22° の系統誤差を入れるより、現状の 28〜40° を残すほうがよい。ここは keypoint に情報が無い。
+
+#### 教訓
+
+**keypoint とモデルは別のスケールにある。** 位置を直接使う処理を書くときは必ずスケールを確認する。向き（差）だけを使えば影響を受けない。
+
+### Animal AimAt 第 2 版（セグメント向き）の結果（2026-08-28）
+
+引数を「ボーン位置 → keypoint 絶対位置」から「keypoint 2 点の差」に変えた。適用ログ確認済み、コンパイル・実行とも通過。
+
+#### 目視
+
+| フレーム | OFF | ON（第 2 版） |
+|---|---|---|
+| 7s 犬（f00210） | 自然に立っている | **自然。破綻なし。**前脚が 1 本わずかに上がる（歩行中なら妥当） |
+| 32s 犬（f00960） | 脚がやや開いて硬い | **整った** |
+| 42s 猫（f01260） | 破綻なし | **破綻なし。**前脚の位置がわずかに変わる |
+
+**第 1 版の破綻（脚が開き前脚が縮む）は解消。**
+
+#### 数値
+
+| 指標 | 結果 |
+|---|---|
+| AimAt を当てた部位の `[ANIMALKP]` | **全部 0°**（当然。keypoint で駆動しているので指標として意味を持たない） |
+| **AimAt を当てていない部位**（後肢 Upper・Head） | **±1° = 副作用なし** |
+| リグの内角（肘 / 膝） | 肘 20〜29°、膝 28〜52°。**棒（0 近く）にも逆折れ（150 超）にもなっていない** |
+
+膝は −14〜−30° 変化（55→41、66→36 など）。SMAL FK が作っていた曲げが keypoint の値に置き換わった。
+
+#### 検証の限界（重要）
+
+**この画像で正しさは確認できない。** `video.mp4` は inpaint 済みで**本物の動物が消されている**ので、比較対象が画面内に無い。判定できたのは「破綻していないか」「不自然でないか」まで。
+
+**正しさの確認には実機（または `source/pre_removal_stereo_video.mp4` を使う通常モード）で、元映像の動物と重ねて見る必要がある。**
+
+#### 既定値
+
+`enableAnimalKeypointAimAt` は **false のまま**。実機確認まで既定を変えない。Human の AimAt も実機で 2 回確認されている（[[aimat-is-not-removable]]）。

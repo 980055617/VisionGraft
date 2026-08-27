@@ -228,6 +228,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         CacheLiveAnimalPoseForInteractiveMotion(obj.trackId, pose, instance.transform.position, instance.transform.rotation, hasSmalPose, smalPose);
 
+        // 測定 B の診断フラグは実行時オブジェクト（animalPoseApplier）側にあるので、
+        // シリアライズされている値を毎フレーム渡す。play mode に持ち越されない罠を避ける。
+        animalPoseApplier.disableSmalBendForDiag = disableSmalBendForDiag;
+        animalPoseApplier.useTwoAxisJointFrameMap = useTwoAxisJointFrameMap;
+        animalPoseApplier.enableAnimalKeypointAimAt = enableAnimalKeypointAimAt;
+        if (enableAnimalKeypointAimAt && !loggedAnimalAimAt)
+        {
+            loggedAnimalAimAt = true;
+            Debug.Log("[SMAL-FK-DBG] enableAnimalKeypointAimAt=true (SMAL FK 後に四肢を keypoint へ向ける)");
+        }
+        if (useTwoAxisJointFrameMap && !loggedTwoAxisFrameMap)
+        {
+            loggedTwoAxisFrameMap = true;
+            Debug.Log("[SMAL-FK-DBG] useTwoAxisJointFrameMap=true (jointFrameMap のロールを第 2 軸で拘束)");
+        }
+        if (disableSmalBendForDiag && !loggedSmalBendDisabled)
+        {
+            loggedSmalBendDisabled = true;
+            Debug.Log("[SMAL-FK-DBG] disableSmalBendForDiag=true (測定 B: 曲げを切って bind pose + globalOrient のみ)");
+        }
+
         animalPoseApplier.Apply(new AnimalPoseRequest
         {
             instanceRoot = instance.transform,

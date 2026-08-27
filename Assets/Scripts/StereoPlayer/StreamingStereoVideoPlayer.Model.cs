@@ -46,4 +46,34 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private readonly Dictionary<string, Vector3> humanoidLimbBendDirectionByKey = new Dictionary<string, Vector3>();
     private readonly Dictionary<Animator, HumanoidRigCache> humanoidCaches = new Dictionary<Animator, HumanoidRigCache>();
     private readonly AnimalPoseApplier animalPoseApplier = new AnimalPoseApplier(AnimalFilterConfig.Default);
+    // [ANIMALRIG] を 1 度だけ出すためのフラグ（診断用）。
+    private bool loggedAnimalRigBoneNames;
+
+    // 測定 B のフラグが実際に効いたことを 1 度だけログに出すためのフラグ。
+    private bool loggedSmalBendDisabled;
+
+    // 2 軸版 jointFrameMap が実際に効いたことを 1 度だけログに出すためのフラグ。
+    private bool loggedTwoAxisFrameMap;
+
+    // Animal AimAt が実際に効いたことを 1 度だけログに出すためのフラグ。
+    private bool loggedAnimalAimAt;
+
+    // 測定 B（2026-08-28）: SMAL の曲げを切って bind pose + globalOrient だけにする。
+    // 診断専用。docs/smpl-retargeting.md「測定 B」参照。
+    public void SetSmalBendDisabledForDiag(bool disabled)
+    {
+        disableSmalBendForDiag = disabled;
+    }
+
+    // jointFrameMap の 2 軸版を切り替える入口（A/B 用）。
+    public void SetTwoAxisJointFrameMap(bool enabled)
+    {
+        useTwoAxisJointFrameMap = enabled;
+    }
+
+    // Animal の keypoint AimAt を切り替える入口（A/B 用）。
+    public void SetAnimalKeypointAimAt(bool enabled)
+    {
+        enableAnimalKeypointAimAt = enabled;
+    }
 }

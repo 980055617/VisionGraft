@@ -135,6 +135,11 @@ public sealed partial class AnimalPoseApplier
         {
             AlignAnimalRootToSkeleton(instanceRoot, cache, pose.rootWorld, true, tick);
             TryApplyAnimalSmalFk(cache, request.smalPose, request.settings, pose.jointsWorld, pose.jointVis, instanceRoot);
+            if (enableAnimalKeypointAimAt)
+            {
+                ApplyAnimalLimbAimAt(cache, pose.jointsWorld, pose.jointVis, Mathf.Clamp01(request.settings.boneApplyAlpha));
+            }
+
             ApplyGestureOverlay(cache, request);
             return;
         }
@@ -426,6 +431,89 @@ public sealed partial class AnimalPoseApplier
         return AnimalPlacementBoneSelector.Select(cache.spine, cache.neck, cache.tailBase, cache.root);
     }
 
+    // SMAL FK のあとに、四肢のボーンを keypoint の位置へ向ける（Human の AimAt に相当）。
+    //
+    // なぜ要るか（2026-08-28 の実測、docs/smpl-retargeting.md）:
+    //   SMAL FK は「リグの bind pose を globalOrient で回したもの」に body_pose の曲げを
+    //   足す形なので、**リグの T-pose が姿勢のベースラインとして焼き込まれている**。
+    //   実測では body_pose を切っても誤差が 1 度しか変わらず（測定 B）、動物が自分の
+    //   rest から離れている量も median 13〜15 度しかない。つまり誤差 30〜34 度の大半は
+    //   「リグの T-pose が動物の T-pose と違う」ぶんで、曲げの transport をどう直しても
+    //   届かない（2 軸版 jointFrameMap の A/B で確認済み）。
+    //
+    //   向きを直接与えれば rest 姿勢の対応そのものが要らなくなる。Human が
+    //   enableKeypointAimAt で同じことをしており、実機で 2 回「外すと破綻する」と
+    //   確認されている。
+    //
+    // **セグメントの向き（2 点の差）を使う。keypoint の絶対位置に向けてはいけない。**
+    // 表示モデルは高さ 0.42m のミニチュアスケール、jointsWorld の keypoint 骨格は実寸で
+    // 体長 0.87m と**約 2 倍違う**。絶対位置へ向けた第 1 版は遠位が破綻した（2026-08-28、
+    // 目視で確認）。差はスケール不変なのでこの食い違いを受けない。
+    //
+    // 後肢 Upper（股関節→膝）は入れない。26 関節に股関節に相当する点が無く、
+    // 代わりの kp7 は**尾の付け根**なので 22 度の系統誤差が乗る（実測済み）。
+    // 現状の SMAL FK の 28〜40 度を残すほうがまし。
+    //
+    // 親から順に当てる。親を回すと子の位置が動くので順序が要る。
+    // (a, b) = そのボーンが向くべきセグメント。null は AimAt しない。
+    private static readonly (int a, int b)?[][] AnimalAimSegments =
+    {
+        // 前肢 左: 肩→肘 / 肘→手根 / 手根→前足
+        new (int, int)?[] { (12, 8), (8, 14), (14, 3) },
+        // 前肢 右
+        new (int, int)?[] { (13, 9), (9, 15), (15, 4) },
+        // 後肢 左: Upper は無し / 膝→飛節 / 飛節→後足
+        new (int, int)?[] { null, (10, 16), (16, 5) },
+        // 後肢 右
+        new (int, int)?[] { null, (11, 17), (17, 6) },
+    };
+
+    public bool enableAnimalKeypointAimAt;
+
+    private void ApplyAnimalLimbAimAt(AnimalRigCache cache, Vector3[] jointsWorld, byte[] vis, float alpha)
+    {
+        if (cache == null || jointsWorld == null || vis == null)
+        {
+            return;
+        }
+
+        (Transform upper, Transform lower, Transform paw)[] bones =
+        {
+            (cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw),
+            (cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw),
+            (cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw),
+            (cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw),
+        };
+
+        for (int i = 0; i < bones.Length; i++)
+        {
+            (Transform upper, Transform lower, Transform paw) = bones[i];
+            (int, int)?[] segments = AnimalAimSegments[i];
+            AimAnimalBoneAlongSegment(cache, upper, jointsWorld, vis, segments[0], alpha);
+            AimAnimalBoneAlongSegment(cache, lower, jointsWorld, vis, segments[1], alpha);
+            AimAnimalBoneAlongSegment(cache, paw, jointsWorld, vis, segments[2], alpha);
+        }
+    }
+
+    private void AimAnimalBoneAlongSegment(AnimalRigCache cache, Transform bone, Vector3[] jointsWorld, byte[] vis, (int a, int b)? segment, float alpha)
+    {
+        if (bone == null || !segment.HasValue)
+        {
+            return;
+        }
+
+        (int a, int b) = segment.Value;
+        if (!TrackedJointPoints.TryGet(jointsWorld, vis, a, out Vector3 from) ||
+            !TrackedJointPoints.TryGet(jointsWorld, vis, b, out Vector3 to))
+        {
+            return;
+        }
+
+        // ApplyAnimalBoneFromPoints は (to - from) の**向き**しか使わないので、
+        // keypoint 骨格と表示モデルのスケールが違っても影響を受けない。
+        ApplyAnimalBoneFromPoints(cache, bone, from, to, alpha);
+    }
+
     private void ApplyAnimalHeadPose(AnimalRigCache cache, Vector3[] jointsWorld, byte[] vis, float alpha, bool hasControl, AnimalControlWorldData control, RuntimeClock.TickContext tick)
     {
         if (hasControl)
@@ -445,7 +533,31 @@ public sealed partial class AnimalPoseApplier
             }
         }
 
-        ApplyAnimalBonesFromSegment(cache, cache.neck, cache.head, jointsWorld, vis, 24, 2, alpha * 0.35f, alpha * 0.35f);
+        // ここから下は **bundle が SMAL block を持たないときだけ** 走る。現行の animal
+        // bundle は全フレームで SMAL block を持つので、ApplyAnimalPose 冒頭の
+        // 「hasSmalPose && IsAnimalRigReadyForSmalFk」分岐が return し、この関数の以降は
+        // 一度も実行されない。首の向きを直したいなら AnimalSmalFkApplier.cs を見ること
+        // （2026-08-28、Docs/smpl-retargeting.md に経緯）。
+        //
+        // neck と head で別のセグメントを使う（2026-08-28、D-007 の対応表で訂正）。
+        //
+        // 以前は両方に 24→2 を渡していたが、**24 と 2 はどちらも顔の中の点**（鼻先端と
+        // マズル中央）で、体長 0.756m に対し 8.5cm しか離れていない。首の向きにならない。
+        //
+        // 首は **両肩の中点 → 頭**。26 関節に首そのものの点は無いので、左右の肩
+        // （kp12 / kp13）の中点を起点にする。SMAL 側の joint 15（Neck）の rest dir が
+        // Neck→Head を向いているのと同じ意味づけ。
+        //
+        // head は rest pose のまま（登録済み aim-child が無く ADR-0002 の未実装）なので
+        // 何を渡しても効かないが、意味としては顔の向き 18→24（頭→鼻先端）にしておく。
+        if (TrackedJointPoints.TryGet(jointsWorld, vis, AnimalHeadKeypoints.LeftShoulder, out Vector3 leftShoulder) &&
+            TrackedJointPoints.TryGet(jointsWorld, vis, AnimalHeadKeypoints.RightShoulder, out Vector3 rightShoulder) &&
+            TrackedJointPoints.TryGet(jointsWorld, vis, AnimalHeadKeypoints.Head, out Vector3 headWorld))
+        {
+            ApplyAnimalBoneFromPoints(cache, cache.neck, (leftShoulder + rightShoulder) * 0.5f, headWorld, alpha * 0.35f);
+        }
+
+        ApplyAnimalBoneFromJoints(cache, cache.head, jointsWorld, vis, AnimalHeadKeypoints.Head, AnimalHeadKeypoints.Nose, alpha * 0.35f);
     }
 
     private void ApplyAnimalTailPose(AnimalRigCache cache, float alpha, bool hasControl, AnimalControlWorldData control, RuntimeClock.TickContext tick)
@@ -925,6 +1037,14 @@ public sealed partial class AnimalPoseApplier
 
     // 診断用。既に構築済みのキャッシュを読むだけで、新規構築はしない。
     // [ANIMALKP]（実ボーンと keypoints3d の投影差）が使う。
+    // 診断用。ボーンが現在向いている方向（適用側が使うのと同じ定義）を返す。
+    // [ANIMALKP] が「keypoint が示す方向」との角度差を測るのに使う。
+    internal bool TryGetBoneDirectionForDiag(AnimalRigCache cache, Transform bone, out Vector3 dirWorld)
+    {
+        dirWorld = Vector3.zero;
+        return cache != null && bone != null && TryGetBoneCenterDirectionWorld(cache, bone, out dirWorld);
+    }
+
     internal AnimalRigCache PeekAnimalRigCache(GameObject instance)
     {
         if (instance == null)

@@ -129,6 +129,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         CreateBundlePickerButton(panelObj.transform, "RefreshButton", "Refresh", new Vector2(-130f, 230f), new Vector2(220f, 56f), RefreshBundlePickerEntries);
         CreateBundlePickerButton(panelObj.transform, "DefaultButton", "Use Default", new Vector2(275f, 230f), new Vector2(260f, 56f), UseDefaultBundleAndClosePicker);
 
+        // bundle を選ぶ前に入口へ戻る道。実験中は出さない（CanReturnToHomeScene）。
+        if (CanReturnToHomeScene())
+        {
+            CreateBundlePickerButton(panelObj.transform, "HomeButton", "Home", new Vector2(-360f, -390f), new Vector2(200f, 56f), ReturnToHomeScene);
+        }
+
         bundlePickerEntryButtons.Clear();
         for (int i = 0; i < BundlePickerEntriesPerPage; i++)
         {

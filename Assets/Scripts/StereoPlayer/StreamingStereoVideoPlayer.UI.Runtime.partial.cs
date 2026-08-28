@@ -631,17 +631,48 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         if (vp == null)
         {
+            Debug.LogWarning("[Playback] toggle ignored: VideoPlayer が無い");
             return;
         }
+
+        // 「色々押したら止まって再開しなくなった」の再現待ち（2026-08-28）。
+        // どの状態で押されたかが分からないと原因を絞れないので、押すたびに出す。
+        Debug.Log(
+            $"[Playback] toggle: playing={vp.isPlaying} prepared={vp.isPrepared} " +
+            $"frame={vp.frame} len={vp.frameCount} url={(string.IsNullOrEmpty(vp.url) ? "(empty)" : "set")} " +
+            $"picker={runtimeModelPickerOpen} settings={runtimeSettingsOpen} normalMode={isNormalMode}");
 
         RuntimePlaybackController.Apply(
             vp,
             RuntimePlaybackController.ResolveToggleCommand(vp.isPlaying));
 
         ExperimentLog.Operation(vp.isPlaying ? "resume" : "pause");
+
+        // 再生に戻したら編集用のパネルは畳む。モデル変更も向き調整も
+        // 一時停止して行う操作なので、再生中に開いたままだと視界を塞ぐだけ
+        // （2026-08-28 の指摘）。
+        if (vp.isPlaying)
+        {
+            CloseEditPanelsForResume();
+        }
+
         UpdatePauseButtonLabel();
     }
 
+
+
+    private void CloseEditPanelsForResume()
+    {
+        if (runtimeModelPickerOpen)
+        {
+            CloseRuntimeModelPickerPanel();
+        }
+
+        if (runtimeSettingsOpen)
+        {
+            ToggleRuntimeSettingsPanel();
+        }
+    }
 
 
     private void UpdatePauseButtonLabel()

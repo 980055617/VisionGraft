@@ -142,6 +142,55 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 実験モードでは ExperimentController が試行ごとにこのシーンをロードし直し、
     // 「どの bundle をどの条件で再生するか」を ExperimentTrialHandoff に置いてくる。
     // 通常シーン（TestScene 等）では Pending が null なので Inspector の設定で動く。
+    // 実験の試行として起動したか。Home へ戻るボタンの生成可否に使う。
+    private bool startedAsExperimentTrial;
+
+    // 入口シーンへ戻れるか。実験中は戻らせない。
+    private bool CanReturnToHomeScene()
+    {
+        return !startedAsExperimentTrial && enableRuntimeControls;
+    }
+
+
+    private void ReturnToHomeScene()
+    {
+        if (startedAsExperimentTrial)
+        {
+            return;
+        }
+
+        // 保存待ちがあれば取りこぼさない。シーンを抜けると OnDestroy でも書くが、
+        // 明示しておく（Docs/model-selection-persistence.md）。
+        FlushTrackCustomizationSaveNow();
+
+        // 次に開いたときへ持ち越さない。
+        ExperimentTrialHandoff.Clear();
+        HomeLaunchHandoff.Clear();
+
+        Debug.Log("[Home] return to HomeScene");
+        UnityEngine.SceneManagement.SceneManager.LoadScene("HomeScene", UnityEngine.SceneManagement.LoadSceneMode.Single);
+    }
+
+
+    // bundle を選び直す。シーンを読み直してピッカーから始める。
+    private void ReopenBundlePicker()
+    {
+        if (startedAsExperimentTrial)
+        {
+            return;
+        }
+
+        FlushTrackCustomizationSaveNow();
+        ExperimentTrialHandoff.Clear();
+        HomeLaunchHandoff.RequestBundlePicker();
+
+        Debug.Log("[Home] reopen bundle picker");
+        UnityEngine.SceneManagement.SceneManager.LoadScene(
+            UnityEngine.SceneManagement.SceneManager.GetActiveScene().name,
+            UnityEngine.SceneManagement.LoadSceneMode.Single);
+    }
+
+
     private void ApplyPendingExperimentTrialRequest()
     {
         ExperimentTrialRequest request = ExperimentTrialHandoff.Consume();
@@ -164,6 +213,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 残っていると次に手動で開いたときに誤爆する。
         HomeLaunchHandoff.Clear();
 
+        startedAsExperimentTrial = true;
         bundleFileName = request.bundleFileName;
         showBundlePickerOnStart = false;
         startInNormalMode = request.StartInNormalMode;

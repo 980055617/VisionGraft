@@ -18,6 +18,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             EnsureSettingsButtonExists(prefabRoot);
             EnsureModeButtonExists(prefabRoot);
             EnsureModelPickerButtonExists(prefabRoot);
+            EnsureNavigationButtonsExist(prefabRoot);
             EnsureProgressControlsExists(prefabRoot);
             BindRuntimeControlsUi(prefabRoot);
             return prefabRoot;
@@ -68,6 +69,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Button settingsButton = CreateBarButton(panelObj.transform, "SettingsButton", new Vector2(210f, -100f));
         runtimeSettingsButtonText = GetButtonText(settingsButton);
         BindRuntimeButton(settingsButton, ToggleRuntimeSettingsPanel);
+
+        // 入口へ戻る。動画を開いたら戻れなかったので追加（2026-08-28 の要望）。
+        //
+        // **実験中は作らない。** Display ボタンと同じ理由で、被験者に押されると
+        // 試行が飛ぶ（Docs/experiment-flow.md「操作の統制」）。
+        if (CanReturnToHomeScene())
+        {
+            Button homeButton = CreateBarButton(panelObj.transform, "HomeButton", new Vector2(-210f, -175f));
+            UiComponentWriter.ApplyTextContent(GetButtonText(homeButton), "Home");
+            BindRuntimeButton(homeButton, ReturnToHomeScene);
+
+            // bundle を選び直す。再生中に差し替える経路は無い（モデルインスタンスや
+            // interactive motion の状態を安全に捨てる手段が無い。Docs/experiment-flow.md）
+            // ので、**シーンごと読み直してピッカーから始める。**
+            Button bundleButton = CreateBarButton(panelObj.transform, "BundleButton", new Vector2(210f, -175f));
+            UiComponentWriter.ApplyTextContent(GetButtonText(bundleButton), "Bundle");
+            BindRuntimeButton(bundleButton, ReopenBundlePicker);
+        }
 
         CreateProgressControls(panelObj.transform);
         runtimeProgressSlider = FindSlider(root, "progressslider");
@@ -164,6 +183,41 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         Button mode = CreateBarButton(parent, "ModeToggleButton", new Vector2(-210f, -12f));
         BindRuntimeButton(mode, ToggleNormalMode);
+    }
+
+
+    // Home / Bundle を prefab 経路にも作る。
+    //
+    // 2026-08-28: 最初フォールバック経路にだけ足したせいで、実機で**まったく生成されて
+    // いなかった**（runtimeControlsPrefab がある構成では BuildRuntimeControlsUi が
+    // prefab 経路で早期 return する）。ボタンを足すときは**両方の経路**に入れること。
+    private void EnsureNavigationButtonsExist(GameObject root)
+    {
+        if (root == null || !CanReturnToHomeScene())
+        {
+            return;
+        }
+
+        Transform parent = EnsureRuntimeControlsCanvasTransform(root);
+        Button settings = FindButton(root, "setting");
+        if (settings != null && settings.transform.parent != null)
+        {
+            parent = settings.transform.parent;
+        }
+
+        if (FindButton(root, "homebutton") == null)
+        {
+            Button homeButton = CreateBarButton(parent, "HomeButton", new Vector2(-210f, -175f));
+            UiComponentWriter.ApplyTextContent(GetButtonText(homeButton), "Home");
+            BindRuntimeButton(homeButton, ReturnToHomeScene);
+        }
+
+        if (FindButton(root, "bundlebutton") == null)
+        {
+            Button bundleButton = CreateBarButton(parent, "BundleButton", new Vector2(210f, -175f));
+            UiComponentWriter.ApplyTextContent(GetButtonText(bundleButton), "Bundle");
+            BindRuntimeButton(bundleButton, ReopenBundlePicker);
+        }
     }
 
 

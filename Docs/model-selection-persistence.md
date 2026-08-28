@@ -677,3 +677,53 @@ Vector3 pos = head.position + flatForward * distance + ...;
 
 Home パネルは実機で正常に見えたので今回は触っていない。**同じ「見上げていた角度ぶん
 持ち上がる」問題を抱えている**ので、症状が出たら同じ直し方をする。
+
+## 視聴の基準をヨーだけにした（2026-08-28）
+
+### ピッカーと動画スクリーンが同じ原因で上に出ていた
+
+3 箇所が同じ式を持っていた。
+
+```csharp
+pos = head.position + (head.rotation * Vector3.forward) * distance + ...;
+```
+
+**ピッチを含んだ前方**を使うので、置いた瞬間に上を向いていた角度ぶん持ち上がる
+（1.5m 先で 30 度なら 0.87m）。
+
+| 対象 | 状態 |
+|---|---|
+| bundle ピッカー | **修正済み**（`ProjectOnPlane`） |
+| 動画スクリーン（`StereoScreenPlacement.ResolvePlacement`） | **修正済み**（`ResolveYawOnlyViewRotation`） |
+| `ExperimentPanel`（Home パネル） | **未修正**。実機で正常に見えたので触っていないが同じ問題を持つ |
+
+### スクリーンと pinhole 基準は必ず揃える
+
+`LockPinholeBasis` は**モデル配置の投影基準**で、スクリーンと同じ `head.rotation` を
+使っていた。**片方だけ水平化すると「スクリーンは水平なのにモデルは傾いた基準で置かれる」**
+ことになり、映像とモデルがずれる。両方に同じ `viewRotation` を渡すよう `PlaceScreens` を
+書き換えた。
+
+エディタ・バッチではカメラがほぼ無回転なので、EditMode テスト 508 件の結果は変わらなかった
+（483 passed / 25 failed、ベースラインと同一）。**この修正が効くのは実機で見上げていたときだけ。**
+
+## Home / Bundle へ戻る導線（2026-08-28）
+
+操作パネルの下段に 2 つ足した。**どちらも実験中は生成しない**（`CanReturnToHomeScene`）。
+`Display` ボタンと同じ理由で、被験者に押されると試行が飛ぶ。
+
+| ボタン | 動作 |
+|---|---|
+| `Home` | `HomeScene` へ戻る |
+| `Bundle` | **シーンごと読み直してピッカーから始める** |
+
+bundle ピッカーにも `Home` を足した（選ぶ前に戻れるように）。
+
+### なぜ再生中に差し替えないか
+
+`experiment-flow.md` に「2 本目の bundle に差し替える経路がない。モデルインスタンス・
+プロキシ・interactive motion の状態を安全に捨てる手段がない」と記録がある。
+**シーンを読み直すのが唯一安全な方法。** `HomeLaunchHandoff` でピッカー表示を要求してから
+`LoadScene` する。
+
+戻る前に `FlushTrackCustomizationSaveNow()` を呼び、保存待ちのモデル・向きを取りこぼさない。

@@ -258,14 +258,41 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
     }
 
+    // 視聴の基準はヨーだけにする。ピッチを含めると、置き直した瞬間に上（下）を向いていた
+    // 角度ぶんスクリーンが持ち上がる（1.5m 先で 30 度なら 0.87m）。実機で「動画が少し高い」
+    // と言われたのがこれ（2026-08-28。ピッカーが上に出ていたのと同じ原因）。
+    //
+    // **スクリーンと pinhole 基準は必ず同じ回転を使う。** LockPinholeBasis はモデル配置の
+    // 投影基準で、片方だけ水平化すると「スクリーンは水平なのにモデルは傾いた基準で置かれる」
+    // ことになり、映像とモデルがずれる。
+    private static Quaternion ResolveYawOnlyViewRotation(Quaternion headRotation)
+    {
+        Vector3 forward = headRotation * Vector3.forward;
+        Vector3 flat = Vector3.ProjectOnPlane(forward, Vector3.up);
+        if (flat.sqrMagnitude < 0.000001f)
+        {
+            // 真上か真下を向いている。頭の up から前方を作る。
+            flat = Vector3.ProjectOnPlane(headRotation * Vector3.up, Vector3.up);
+        }
+
+        if (flat.sqrMagnitude < 0.000001f)
+        {
+            return headRotation;
+        }
+
+        return Quaternion.LookRotation(flat.normalized, Vector3.up);
+    }
+
+
     private void PlaceScreens()
     {
         Camera viewCam = GetViewCamera();
         Transform head = viewCam != null ? viewCam.transform : GetHeadTransform();
-        LockPinholeBasis(head);
+        Quaternion viewRotation = ResolveYawOnlyViewRotation(head.rotation);
+        LockPinholeBasis(head.position, viewRotation);
         StereoScreenPlacement.Placement placement = StereoScreenPlacement.ResolvePlacement(
             head.position,
-            head.rotation,
+            viewRotation,
             screenDistanceMeters,
             screenOffsetMeters,
             StereoScreenEyeSeparationMeters);
@@ -538,9 +565,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        LockPinholeBasis(head.position, head.rotation);
+    }
+
+
+    private void LockPinholeBasis(Vector3 headPosition, Quaternion viewRotation)
+    {
         hasLockedPinholeBasis = true;
-        lockedPinholeOrigin = head.position + head.TransformVector(screenOffsetMeters);
-        lockedPinholeRotation = head.rotation;
+        lockedPinholeOrigin = headPosition + viewRotation * screenOffsetMeters;
+        lockedPinholeRotation = viewRotation;
     }
 
     private bool TryGetHeadVirtualOrigin(out Vector3 origin, out Quaternion rotation)

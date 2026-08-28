@@ -6,7 +6,10 @@ using UnityEngine.XR;
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
     private const float RuntimeControlsDefaultCanvasWidth = 1000f;
-    private const float RuntimeControlsDefaultCanvasHeight = 300f;
+    // 2026-08-28: Home / Bundle の 3 行目を足したので広げた（範囲 -220..+220）。
+    // 以前は 300 で、スライダー +94・ボタン -12 / -100 で埋まっていた。
+    // 物理サイズ（ControlsBarSizeMeters）も同じ比率で広げないとボタンが縮む。
+    private const float RuntimeControlsDefaultCanvasHeight = 440f;
     private const float RuntimeSettingsDefaultCanvasWidth = 900f;
     private const float RuntimeSettingsDefaultCanvasHeight = 520f;
     private const float RuntimeModelPickerDefaultCanvasWidth = 980f;

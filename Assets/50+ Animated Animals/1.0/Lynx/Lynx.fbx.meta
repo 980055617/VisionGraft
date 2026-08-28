@@ -3,7 +3,12 @@ guid: 7ca1d7e042e223348944eea81d357e7b
 ModelImporter:
   serializedVersion: 22200
   internalIDToNameTable: []
-  externalObjects: {}
+  externalObjects:
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: M_lynx_cards
+    second: {fileID: 2100000, guid: f22a8b2baaeb1f94984e31324df299ae, type: 2}
   materials:
     materialImportMode: 2
     materialName: 0

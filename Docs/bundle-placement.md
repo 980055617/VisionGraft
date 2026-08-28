@@ -4753,3 +4753,99 @@ Human/Animal をロックできるのは「人体のサイズは不変」とい�
 
 深度の変換（`DecodeAnchorDepthMetersFromBundle` と popout レンジ）は**実装を移植してから**
 測ること（[[depth-range-fixes-ineffective]]、記憶や docs から式を再構成しない）。
+
+## 猫（39_Lynx）のひげが透けて見える（2026-08-28 実測）
+
+### 原因
+
+`Assets/Editor/MaterialDiagnostics.cs` で実際の設定を出力した結果。
+
+```
+39_Lynx / renderer=eurasian_lynx_male.001 materials=2
+  [0] M_lynx        surface=0(Opaque)      queue=2000  baseMap=T_lynx        alpha=1.000
+  [1] M_lynx_cards  surface=1(Transparent) queue=3000  baseMap=T_lynx_alpha  **alpha=0.207**
+      zwrite=0  keywords=_ALPHAPREMULTIPLY_ON,_SURFACE_TYPE_TRANSPARENT
+```
+
+ひげ・耳毛の板ポリゴン（cards）のマテリアルに **3 つ問題がある**。
+
+| | |
+|---|---|
+| **`baseColor` のアルファが 0.207** | マテリアル全体が 21% の不透明度。**これだけで薄く透けて見える** |
+| **Transparent + ZWrite off** | 板同士の描画順が破綻する。毛やひげの定石は**アルファクリップ（cutout）** |
+| テクスチャの `alphaIsTransparency=False` | アルファを透過として扱う前提になっていない |
+
+### テクスチャは使える
+
+| ファイル | | |
+|---|---|---|
+| `T_lynx.png` | 2048x2048 | colorType=2（**アルファ無し**） |
+| `T_lynx_alpha.png` | 512x512 | colorType=6（**RGBA、アルファ有り**） |
+
+cards 用のアルファは実在するので、**合成せずにそのまま cutout に使える。**
+
+### 犬（36_LabradorDog）も同種の問題を持つ
+
+```
+renderer=Labrador_Retriever_Whiskers.090
+  [0] Coat  surface=0(Opaque)  alphaClip=0  baseMap=T_labrador
+```
+
+**ひげ用のレンダラがあるのに、体と同じ不透明マテリアルを使っている。** アルファクリップが
+無いので板が板のまま見える。猫ほど目立たないのは、色が体と同じで背景に紛れるため。
+
+**猫だけの問題ではなくパッケージ共通の可能性が高い。** 50 体以上あるので、直すなら一括で
+かけられる形にする。
+
+### 直し方
+
+マテリアルは **FBX 埋め込み**（`materialLocation: 1`、`.mat` ファイルが存在しない）なので、
+`.mat` を作って `ModelImporter.AddRemap` で差し替える。cards 側の設定は:
+
+| 項目 | 値 |
+|---|---|
+| `_Surface` | 0（Opaque） |
+| `_AlphaClip` | 1、`_Cutoff` 0.3〜0.5 |
+| `_ZWrite` | 1 |
+| render queue | 2450（AlphaTest） |
+| `_BaseColor` のアルファ | **1.0**（0.207 から戻す） |
+| keywords | `_ALPHATEST_ON` を付け、`_SURFACE_TYPE_TRANSPARENT` と `_ALPHAPREMULTIPLY_ON` を外す |
+
+テクスチャ側は `alphaIsTransparency = true`。
+
+### 修正結果（2026-08-28、実機で確認済み）
+
+`Assets/Editor/LynxWhiskerMaterialFix.cs` を batchmode で実行。
+
+```
+[1] M_lynx_cards  queue=2450  surface=0  alphaClip=1  cutoff=0.35  zwrite=1
+    baseColor=RGBA(1,1,1,1.000)   <- 0.207 から復帰
+    keywords=_ALPHATEST_ON
+```
+
+**実機で直ったことを確認。**
+
+#### 途中で一度壊した
+
+remap 直後、プレハブのマテリアルスロットが **null** になり、ひげが描画されなくなった。
+
+`39_Lynx.prefab` は FBX とは別のプレハブで、**埋め込みマテリアルを fileID で直接参照**
+していた。remap で埋め込みが消えると参照が切れる。
+
+**`ModelImporter.AddRemap` するときは、そのマテリアルを参照しているプレハブ側も
+差し替えること。** スクリプトに `RepointPrefabMaterial` を足した。
+
+適用後に診断を必ず流す運用にしていたので気づけた。**診断を先に用意していなければ
+「透けなくなった代わりに消えた」に気づけなかった。**
+
+#### 犬（36_LabradorDog）は問題なし
+
+当初「ひげ用レンダラなのに体と同じ不透明マテリアル」を問題として挙げたが、**実機で
+違和感なしと確認された。撤回する。**
+
+猫のひげは **cards**（板ポリゴン）でアルファが要るが、犬は**ひげ自体が形状として
+モデリングされている**と考えられる（マテリアル名も `_cards` ではなく `Coat`、専用の
+アルファテクスチャも無い）。形状ならば不透明で正しい。
+
+**マテリアルの設定だけを見て「問題がある」と判断したのが早計だった。**
+見た目を確認してから判断すること。

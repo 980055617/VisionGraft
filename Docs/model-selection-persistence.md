@@ -399,3 +399,281 @@ powershell -File scratchpad/run_tests.ps1 -Platform EditMode
 ```
 
 `-runTests -testPlatform EditMode -testResults <xml>` を batchmode で叩くだけ。**Unity を閉じてから**。
+
+---
+
+## 起動導線を Home シーンに集約した（2026-08-28）
+
+`Build And Run` はビルド設定の**先頭シーン**から起動するので、入口を 1 枚作って分岐させる。
+
+```
+0: HomeScene       ← 起動。「自由に見る」「被験者実験」の 2 ボタン
+1: TestScene       ← ピッカー経路
+2: ExperimentScene ← 被験者実験
+3: TrialScene      ← ExperimentScene が additive で読む
+```
+
+### 作り方
+
+**シーンの YAML は手書きしない。** XR リグの参照が壊れる。`Assets/Editor/HomeSceneBuilder.cs` が
+`ExperimentScene` を開いて `ExperimentController` を `HomeMenu` に差し替え、`HomeScene` として
+保存する。動いているリグ設定をそのまま引き継げる。
+
+```
+Unity.exe -batchmode -projectPath . -executeMethod HomeSceneBuilder.Build -quit
+```
+
+`ExperimentScene` は Save As なので**無傷**（git 差分ゼロで確認）。UI は `ExperimentPanel` を
+流用し、パネル prefab の参照も `ExperimentController` から引き継ぐので Inspector 設定は不要。
+
+ビルド設定に未知のシーンがあれば**無効化して末尾に残し警告を出す**（黙って消さない）。
+
+### HomeMenu に入れた配慮
+
+| | |
+|---|---|
+| 二重ロード防止 | VR のレイは 1 フレームに複数回クリックを飛ばすことがある |
+| `ExperimentTrialHandoff.Clear()` | 前の実験の指示が残っていると、ピッカー経路なのに実験の bundle を読む |
+
+### 未実装: 戻る導線
+
+**実験に入ると Home に戻れない。** 試行を中断したときに詰む。ただし被験者が誤って押すと
+実験が飛ぶので、置き場所（全試行完了後だけ／確認ダイアログを挟む）を決めてから入れる。
+
+## 実験も共有ストレージから読む（2026-08-28）
+
+`bundleFileName` の解決を 2 段にした（`Bundle.cs` の `TryResolveBundleInSharedStorage`）。
+
+1. 共有ストレージ（`/storage/emulated/0/VisionGraft` など。探索順はピッカーと同じ配列）
+2. 無ければ StreamingAssets（APK 内）
+
+| | |
+|---|---|
+| 実機の実験 | **adb push した `.svb` を読む。** APK に 340MB 焼かなくて済む |
+| 事前設定 | 同じ動画なので `model_selection.json` がそのまま効く |
+| エディタ・バッチ | 共有ストレージが無いので必ず StreamingAssets 側。挙動不変 |
+
+## `rememberTrackCustomization` を既定 ON にした
+
+当初 false にした理由（「バッチ測定が汚染される」）は**弱かった**ので撤回した。
+
+汚染は `model_selection.json` が存在するときだけ起き、それは既定値と無関係。既定 OFF では
+汚染は防げず、**「Inspector で ON にし忘れると黙って機能しない」**という害だけが残る。
+
+対策を既定値ではなく `BatchPlaybackLogger` に移した。**バッチは `-remember true` を明示
+しない限り強制 OFF**（測定環境なので決め打ちが正しい）。
+
+## テストのベースライン（変更後）
+
+**508 件中 483 passed / 25 failed。** 失敗は上記「既知の失敗」と**完全に同一の 25 件**で、
+今回の一連の変更（永続化・Else・HomeScene・共有ストレージ・既定 ON）で**新しい失敗はゼロ**。
+
+## 実機 1 回目: Home は出たがピッカーが出なかった（2026-08-28）
+
+### 原因
+
+`TestScene` に **`showBundlePickerOnStart: 0`** が焼き込まれていた。ピッカーを出さずに
+`bundleFileName` を直接読む設定。
+
+### シーンの値を 1 にしなかった理由
+
+**バッチ実行と EditMode テストが `TestScene` を開く。** 1 にするとピッカーが選択待ちで
+止まり、測定と統合テストが全部ハングする。
+
+### 対応: `HomeLaunchHandoff`
+
+`ExperimentTrialHandoff` と同じ「static に置いて `Start()` で Consume」方式。
+
+- **Home の「自由に見る」から来たときだけ**実行時に `showBundlePickerOnStart = true`
+- **シーンの値は 0 のまま** → バッチ・テストは従来どおり
+- 実験の指示が来たらピッカー要求は捨てる（両方立つことはないが、残ると次に手動で
+  開いたときに誤爆する）
+
+### 実機のログが取れない問題
+
+`adb logcat -s Unity` に **1 行も出なかった**。アプリは動いている（プロセス確認済み）が、
+**リリースビルドでは `Debug.Log` が logcat に出ない。**
+
+今回はシーンファイルを読んで特定できたが、**保存・復元の確認（`[Customization]`）は
+ログでしか追えない。実機で確認するときは `Development Build` にすること。**
+
+### 期待するログ
+
+| 場面 | ログ |
+|---|---|
+| 「自由に見る」を押す | `[Home] load scene: TestScene` |
+| TestScene 起動 | `[Home] bundle picker requested` |
+| bundle 選択 | `[Bundle] Opening: /storage/emulated/0/VisionGraft/...` |
+| 復元 | `[Customization] loaded ... / applied track=...` |
+| 保存 | `[Customization] saved: ...` |
+| 実験経路 | `[Bundle] shared storage hit: ...` |
+
+`[Home] bundle picker requested` が出ているのにピッカーが見えないなら、UI 生成側
+（`bundlePickerCanvasWithInteractionRayPrefab` の割り当て）を疑う。
+
+## 実機 2 回目: ピッカーが出てすぐ消えた（2026-08-28）
+
+### 原因は tracking origin の切り替え。境界線の件と同根
+
+`StreamingStereoVideoPlayer.Core.cs`:
+
+```csharp
+private static readonly bool ForceStationaryTrackingOrigin = true;
+```
+
+このアプリは `TryApplyPreferredTrackingOriginMode` で tracking origin を
+**`TrackingOriginModeFlags.Device`（着座／静止モード）** に強制する。Quest の床基準
+ガーディアンではなく**起動時のヘッドセット位置が原点**になる。
+
+これが 2 つの症状の共通原因。
+
+| 症状 | 説明 |
+|---|---|
+| **設定した境界線と合わない** | 床基準を使っていないので当然。**意図的な設定**（スクリーンを頭の高さに出すため） |
+| **ピッカーが出てすぐ消える** | モード切り替えでワールドが丸ごとずれる。ピッカーは最初の 1 フレームで置いて固定するので視界の外へ飛ぶ |
+
+`RecenterScreensToCurrentFacing()` は `PlaceScreens()` を呼ぶだけで、**UI パネルを置き直さない。**
+スクリーンだけ追従して UI が取り残される非対称があった。
+
+### 対応
+
+`UpdateBundlePickerPlacement` の「最初の 1 回で固定」をやめ、**ユーザーが最初に触るまで頭に
+追従**させる。触ったら固定する（閲覧中に追いかけてくるのは煩わしい）。
+
+操作の検知は `OnBundlePickerEntryClicked` / `NavigateBundlePickerUp` /
+`PrevBundlePickerPage` / `NextBundlePickerPage` の 4 箇所。
+
+`ExperimentPanel` も同じロック方式だが、Home パネルは実機で正常に出たので今回は触らない。
+**同じ問題を抱えているので、症状が出たら同じ直し方をする。**
+
+### 未決: 境界線をどうするか
+
+`ForceStationaryTrackingOrigin` を false にすれば実際のガーディアンに合うが、
+**スクリーンの配置が変わる**（頭の高さ基準 → 床基準）。要判断。
+
+## ビルドが 5 分かかる件
+
+`Assets/StreamingAssets/` の `.svb` 4 本（**約 370MB**）が毎回 APK に焼かれている。
+**共有ストレージから読めるようになったので、もう APK に入れる必要はない。**
+
+| 案 | 効果 | 手間 |
+|---|---|---|
+| **A. `Patch And Run`** | 2 回目以降が大幅に速い | Development Build にするだけ |
+| **B. `.svb` を StreamingAssets から出す** | **APK が 370MB 減る** | エディタ・バッチの参照先の手当てが要る |
+
+まず A。足りなければ B。
+
+## 実機 3 回目: 「found 0 entries」— scoped storage（2026-08-28）
+
+### 権限は付いていた。原因は別
+
+`adb shell dumpsys package <pkg>` で確認したところ、**両方 granted**。
+
+```
+android.permission.READ_EXTERNAL_STORAGE:  granted=true
+android.permission.WRITE_EXTERNAL_STORAGE: granted=true
+minSdk=32 targetSdk=32
+```
+
+**targetSdk 32 では scoped storage が効き、`READ_EXTERNAL_STORAGE` を持っていても
+`/sdcard` 直下の「メディア以外のファイル」は File API から見えない。**
+`.svb` は画像・動画・音声のどれでもないので `Directory.GetFiles` が空を返す。
+
+`Directory.Exists` は true を返すので、**ディレクトリはあるのに中身が見えない**という
+紛らわしい状態になる。「起点の解決は成功したのに 0 件」がこれ。
+
+### 対応
+
+| | |
+|---|---|
+| **探索先の先頭に `Application.persistentDataPath`** | `/sdcard/Android/data/<pkg>/files` は**権限不要で必ず読める**。adb push は通るが MTP からは見えない |
+| **「中身が見えるか」で選ぶ** | `Directory.Exists` ではなく `.svb` が 1 本以上見えることを条件にする |
+| **`MANAGE_EXTERNAL_STORAGE` を宣言** | 付与すれば `/sdcard/VisionGraft` も読める。MTP から見えるので PC からの差し替えが楽 |
+| **診断ログ** | `isExternalStorageManager` の値と、各ディレクトリで何本見えたか |
+
+探索先は静的配列から `BuildBundleSearchDirectories()` に変えた（`persistentDataPath` は
+実行時にしか分からないため）。`Bundle.cs` の `TryResolveBundleInSharedStorage` も同じものを使う。
+
+### 権限の付与
+
+**マニフェストに宣言が無いと `appops` でも付けられない。** 宣言前に試したら
+`default; rejectTime=...` で弾かれた。宣言入りのビルド後なら:
+
+```
+adb shell "appops set --uid <package> MANAGE_EXTERNAL_STORAGE allow"
+```
+
+### 置き場所の使い分け
+
+| 置き場所 | 権限 | MTP | 用途 |
+|---|---|---|---|
+| `/sdcard/Android/data/<pkg>/files` | **不要** | 見えない（adb のみ） | 確実に動く。既定 |
+| `/storage/emulated/0/VisionGraft` | 全ファイルアクセスが要る | **見える** | PC から差し替えたいとき |
+
+## 実機 4 回目: tracking origin の無限ループ（2026-08-28）— **既存の重大バグ**
+
+### 症状
+
+`adb logcat -s Unity` が **`[MetaXRFeature] OnAppSpaceChange: 103 / 101` で 4532 行**
+埋まっていた。約 14ms ごと、つまり毎フレーム tracking origin が振動している。
+
+### 原因
+
+```
+OnTrackingOriginUpdated → TryApplyPreferredTrackingOriginMode → TrySetTrackingOriginMode(Device)
+            ↑                                                              ↓
+            └──────────────── trackingOriginUpdated が発火 ─────────────────┘
+```
+
+**`trackingOriginUpdated` のハンドラが、その中で tracking origin を設定していた。**
+設定するとイベントが再発火して無限ループになる。
+
+### これで説明がつくもの
+
+| 症状 | |
+|---|---|
+| **ガーディアンの境界が毎回合わない** | ワールドが毎フレームずれる |
+| **ピッカーが消える／視界の外へ飛ぶ** | 同上。1 回置いて固定する UI は特に影響を受ける |
+| **自前の `Debug.Log` が 1 行も見えない** | 4532 行の洪水でバッファから押し出される |
+
+**私が今日入れたものではなく前からあった。** 「境界線が毎回設定したものと違う」という
+長く続いていた違和感の正体でもある。
+
+### 対応
+
+1. **モード一致チェック** — すでに `Device` なら何もしない（これだけでループは止まる）
+2. **再入防止フラグ** — ハンドラの中から再入させない
+3. **失敗の記憶** — `TrySetTrackingOriginMode` が通らない環境で毎回試し続けない
+4. `[XR] tracking origin -> Device` を 1 回だけ出す
+
+## 実機 5 回目: ピッカーが目線より上に出る（2026-08-28）
+
+### 原因
+
+```csharp
+Vector3 pos = head.position + head.forward * distance + ...;
+```
+
+**`head.forward` をそのまま使っていた。** 開いた瞬間に上を向いていると、1.1m 先では
+その角度ぶん持ち上がる（30 度で 0.55m）。
+
+### 対応
+
+**水平面に射影して常に目の高さに置く。**
+
+```csharp
+Vector3 flatForward = Vector3.ProjectOnPlane(head.forward, Vector3.up);
+Vector3 pos = head.position + flatForward * distance + ...;
+```
+
+`head.position` は目の位置なので、パネルの中心が必ず目線の高さに来る。どこを向いて
+開いても同じ。
+
+あわせて**追従はやめた**（要望）。ただし開いた直後 0.5 秒だけ置き直す。tracking origin が
+確定する前に固定すると変な場所に張り付くため。上のループ修正で振動自体は止まるので、
+この保険が要る場面は少ないはず。
+
+### 未対応: `ExperimentPanel` も同じ式
+
+Home パネルは実機で正常に見えたので今回は触っていない。**同じ「見上げていた角度ぶん
+持ち上がる」問題を抱えている**ので、症状が出たら同じ直し方をする。

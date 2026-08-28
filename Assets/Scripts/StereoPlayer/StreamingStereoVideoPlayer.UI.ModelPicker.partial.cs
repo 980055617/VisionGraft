@@ -71,12 +71,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         runtimeModelPickerStatusText = CreateModelPickerText(
             panelObj.transform,
             "Status",
-            "Point at a displayed person or animal, then press Change Model.",
+            "Point at an object, or use Next target.",
             new Vector2(0f, 236f),
             new Vector2(870f, 44f),
             24,
             TextAnchor.MiddleCenter,
             new Color(0.9f, 0.95f, 1f, 1f));
+
+        // 対象送り。displayTrackIds の先頭（human 動画なら人）が常に選ばれるので、
+        // ボール（Else）へ切り替える手段が「指す」しか無かった。小さい対象は指しにくいので
+        // ボタンで回せるようにする（2026-08-28 の要望）。回転パネルの Prev/Next と同じ考え方。
+        CreateModelPickerButton(
+            panelObj.transform,
+            "ModelPickerTargetButton",
+            "Next target >",
+            new Vector2(330f, 236f),
+            new Vector2(220f, 46f),
+            StepRuntimeModelPickerTarget,
+            TextAnchor.MiddleCenter);
 
         runtimeModelPickerEntryButtons.Clear();
         for (int i = 0; i < RuntimeModelPickerEntriesPerPage; i++)
@@ -133,6 +145,31 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
+    // いま画面に出ている track を順に回して、モデル変更の対象を切り替える。
+    private void StepRuntimeModelPickerTarget()
+    {
+        PauseForManualRotationEdit();
+
+        List<uint> ids = GetAvailableTrackIdsForManualRotation();
+        if (ids == null || ids.Count == 0)
+        {
+            Debug.LogWarning("[ModelPicker] 切り替えられる track がありません。");
+            return;
+        }
+
+        int current = ids.IndexOf((uint)Mathf.Max(0, runtimeModelPickerTrackId));
+        int next = ids.Count > 0 ? (current + 1) % ids.Count : 0;
+        runtimeModelPickerTrackId = (int)ids[next];
+        runtimeModelPickerPageIndex = 0;
+
+        // 回転の対象も合わせておく。別々だと「どれを触っているか」が分からなくなる。
+        selectedManualRotationTrackId = runtimeModelPickerTrackId;
+
+        Debug.Log($"[ModelPicker] target -> track={runtimeModelPickerTrackId} ({next + 1}/{ids.Count})");
+        UpdateRuntimeModelPickerUiState();
+    }
+
+
     private void ToggleRuntimeModelPickerPanel()
     {
         if (runtimeModelPickerOpen)
@@ -144,9 +181,25 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         runtimeModelPickerOpen = true;
         runtimeSettingsOpen = false;
         runtimeModelPickerPageIndex = 0;
-        if (TryGetRuntimeModelPickerTarget(out uint trackId, out _, out _))
+
+        // 開いている間は再生を止める。動いている対象を見ながら選ぶのは難しく、
+        // 選んだ瞬間にインスタンスを作り直すので画が飛ぶ（2026-08-28 の要望）。
+        // 回転編集と同じ扱い（PauseForManualRotationEdit）。
+        PauseForManualRotationEdit();
+
+        if (TryGetRuntimeModelPickerTarget(out uint trackId, out byte targetCategoryId, out _))
         {
             runtimeModelPickerTrackId = (int)trackId;
+            Debug.Log($"[ModelPicker] target track={trackId} category={ResolveRuntimeModelPickerCategoryLabel(targetCategoryId)}");
+        }
+        else
+        {
+            // どれも対象にできなかった。何が見えているかを出さないと原因が分からない。
+            Debug.LogWarning(
+                $"[ModelPicker] 対象が決まりません: metaLoaded={metaLoaded} normalMode={isNormalMode} " +
+                $"frameObjects={(metaFrameObjects != null ? metaFrameObjects.Count : -1)} " +
+                $"pickerTrack={runtimeModelPickerTrackId} " +
+                $"displayTracks={(displayTrackIds != null ? displayTrackIds.Length : 0)}");
         }
 
         if (runtimeSettingsRoot != null)
@@ -244,7 +297,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (!TryGetRuntimeModelPickerTarget(out uint trackId, out byte categoryId, out _))
         {
-            ApplyRuntimeModelPickerUnavailable("Select a displayed person or animal first.");
+            ApplyRuntimeModelPickerUnavailable("Point at a displayed object first.");
             return;
         }
 
@@ -270,7 +323,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (runtimeModelPickerStatusText != null)
         {
             string selectedName = prefabs[selectedIndex] != null ? CleanModelDisplayName(prefabs[selectedIndex].name) : "missing";
-            UiComponentWriter.ApplyTextContent(runtimeModelPickerStatusText, $"Track {trackId}  |  Selected: {selectedName}");
+            List<uint> targets = GetAvailableTrackIdsForManualRotation();
+            int pos = targets != null ? targets.IndexOf(trackId) + 1 : 0;
+            string targetInfo = targets != null && targets.Count > 1
+                ? $"Track {trackId} ({pos}/{targets.Count})"
+                : $"Track {trackId}";
+            UiComponentWriter.ApplyTextContent(
+                runtimeModelPickerStatusText, $"{targetInfo}  |  {category}  |  Selected: {selectedName}");
         }
 
         UpdateRuntimeModelPickerEntryButtons(prefabs, selectedIndex, categoryId);

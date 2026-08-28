@@ -1,9 +1,14 @@
 using System;
 
-// ExperimentVideo → StreamingAssets 内の bundle ファイル名の対応。
+// ExperimentVideo → bundle ファイル名の対応。
 //
-// StreamingStereoVideoPlayer.bundleFileName は StreamingAssets 直下からの相対名として
-// 解決される（StreamingStereoVideoPlayer.Bundle.cs の EnsureBundleAndPrepareVideo 参照）。
+// 2026-08-28: 解決先が変わった。StreamingStereoVideoPlayer.bundleFileName は
+//   1. 共有ストレージ（/storage/emulated/0/VisionGraft など）に同名ファイルがあればそれ
+//   2. 無ければ StreamingAssets 直下
+// の順で解決される（Bundle.cs の TryResolveBundleInSharedStorage）。
+// 実機は adb push した .svb を読むので、APK に 340MB 焼かなくて済む。
+// エディタ・バッチには共有ストレージが無いので必ず StreamingAssets 側になる。
+//
 // 実験では bundle picker を使わずここで決めた名前を注入する。
 [Serializable]
 public sealed class ExperimentBundleCatalog

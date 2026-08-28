@@ -12,6 +12,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // track のカテゴリが確定するのは ResolveTrackPrefab の時点なので、そこで解決する。
     private readonly Dictionary<uint, string> pendingModelNameByTrack = new Dictionary<uint, string>();
 
+    // yaw スライダーは 1 回のドラッグで何十回も値変更を飛ばす。そのたびに
+    // File.WriteAllText するとムダな書き込みが積み上がるので、**メモリだけ即時更新し、
+    // ファイルへの書き出しは操作が止まってから 1 回**にする。
+    private bool trackCustomizationSaveRequested;
+    private float trackCustomizationSaveDueTime;
+    private const float TrackCustomizationSaveDelaySeconds = 0.75f;
+
     private string ResolveTrackCustomizationVideoKey()
     {
         // **bundleFileName ではない。** 再生成で .svb の名前が変わっても
@@ -164,10 +171,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         target.GetOrCreate(trackId).modelPrefabName = prefabName;
-        if (!ExperimentSessionOverrides.Active)
-        {
-            TrackCustomizationStore.Save();
-        }
+        RequestTrackCustomizationSave();
     }
 
 
@@ -190,9 +194,46 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             entry.yawKeyframes = null;
         }
 
-        if (!ExperimentSessionOverrides.Active)
+        RequestTrackCustomizationSave();
+    }
+
+
+    // 実験中は基準ファイルを書き換えないので、要求そのものを立てない。
+    private void RequestTrackCustomizationSave()
+    {
+        if (ExperimentSessionOverrides.Active)
         {
-            TrackCustomizationStore.Save();
+            return;
         }
+
+        trackCustomizationSaveRequested = true;
+        trackCustomizationSaveDueTime = Time.unscaledTime + TrackCustomizationSaveDelaySeconds;
+    }
+
+
+    // Update から毎フレーム呼ぶ。操作が止まってから 1 回だけ書く。
+    private void FlushTrackCustomizationSaveIfDue()
+    {
+        if (!trackCustomizationSaveRequested || Time.unscaledTime < trackCustomizationSaveDueTime)
+        {
+            return;
+        }
+
+        trackCustomizationSaveRequested = false;
+        TrackCustomizationStore.Save();
+    }
+
+
+    // アプリが閉じられる・バックグラウンドに回るときは待たずに書く。
+    // VR アプリはヘッドセットを外した時点で止まることがあるので、取りこぼさないようにする。
+    private void FlushTrackCustomizationSaveNow()
+    {
+        if (!trackCustomizationSaveRequested)
+        {
+            return;
+        }
+
+        trackCustomizationSaveRequested = false;
+        TrackCustomizationStore.Save();
     }
 }

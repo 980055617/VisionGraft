@@ -208,7 +208,9 @@ public static class BatchPlaybackLogger
                 if (noBend.HasValue) { p.SetSmalBendDisabledForDiag(noBend.Value); }
                 if (twoAxis.HasValue) { p.SetTwoAxisJointFrameMap(twoAxis.Value); }
                 if (animAim.HasValue) { p.SetAnimalKeypointAimAt(animAim.Value); }
-                if (remember.HasValue) { p.rememberTrackCustomization = remember.Value; }
+                // バッチは測定環境なので、明示的に -remember true と言われない限り OFF。
+                // persistentDataPath に保存済みの選択が残っていると A/B が静かに汚れる。
+                p.rememberTrackCustomization = remember.HasValue && remember.Value;
                 EditorUtility.SetDirty(p);
                 applied++;
             }
@@ -222,7 +224,7 @@ public static class BatchPlaybackLogger
                 + " otherScale=" + (otherScale.HasValue ? otherScale.Value.ToString() : "scene")
                 + " bodyAlign=" + (bodyAlign.HasValue ? bodyAlign.Value.ToString() : "scene")
                 + " genericBones=" + (genericBones.HasValue ? genericBones.Value.ToString() : "scene")
-                + " extendH=" + (extendH.HasValue ? extendH.Value.ToString() : "scene") + " maxExtrap=" + maxExtrap + " minRatio=" + minRatio + " fastLo=" + fastLo + " fastHi=" + fastHi + " alignTop=" + (alignTop.HasValue ? alignTop.Value.ToString() : "scene") + " noBend=" + (noBend.HasValue ? noBend.Value.ToString() : "scene") + " twoAxis=" + (twoAxis.HasValue ? twoAxis.Value.ToString() : "scene") + " animAim=" + (animAim.HasValue ? animAim.Value.ToString() : "scene") + " remember=" + (remember.HasValue ? remember.Value.ToString() : "scene"));
+                + " extendH=" + (extendH.HasValue ? extendH.Value.ToString() : "scene") + " maxExtrap=" + maxExtrap + " minRatio=" + minRatio + " fastLo=" + fastLo + " fastHi=" + fastHi + " alignTop=" + (alignTop.HasValue ? alignTop.Value.ToString() : "scene") + " noBend=" + (noBend.HasValue ? noBend.Value.ToString() : "scene") + " twoAxis=" + (twoAxis.HasValue ? twoAxis.Value.ToString() : "scene") + " animAim=" + (animAim.HasValue ? animAim.Value.ToString() : "scene") + " remember=" + (remember.HasValue ? remember.Value.ToString() : "False(batch既定)"));
         }
 
         // 検証用 bundle を差し替える（シーンには保存しない）。

@@ -193,8 +193,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool useTwoAxisJointFrameMap;
 
     // VR で選んだモデルと手動 yaw を動画ごと・track ごとに覚える。
-    // 既定 false。docs/model-selection-persistence.md 参照。
-    public bool rememberTrackCustomization;
+    //
+    // **既定 ON。** これが製品として期待される挙動で、OFF を既定にすると
+    // 「Inspector で ON にし忘れると黙って機能しない」という、まさにこのプロジェクトで
+    // 何度も踏んだ罠になる。
+    //
+    // 計測を汚さないための対策は既定値ではなく BatchPlaybackLogger 側に置いた。
+    // バッチは -remember true を明示しない限りこれを OFF にする（測定の再現性のため）。
+    public bool rememberTrackCustomization = true;
 
     // SMAL FK のあとに四肢を keypoint の位置へ向ける（Human の AimAt に相当）。
     // 既定 false。A/B で確認してから既定を決める。docs/smpl-retargeting.md 参照。

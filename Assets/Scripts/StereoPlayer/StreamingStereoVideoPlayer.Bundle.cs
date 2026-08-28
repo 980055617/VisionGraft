@@ -6,6 +6,37 @@ using UnityEngine.Networking;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
+    // bundleFileName と同名のファイルを共有ストレージから探す。
+    // 探索順は bundle picker と同じ（BundlePickerSearchDirectories）。
+    private static bool TryResolveBundleInSharedStorage(string fileName, out string path)
+    {
+        path = null;
+        if (string.IsNullOrEmpty(fileName))
+        {
+            return false;
+        }
+
+        string[] dirs = BuildBundleSearchDirectories();
+        for (int i = 0; i < dirs.Length; i++)
+        {
+            string dir = dirs[i];
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+            {
+                continue;
+            }
+
+            string candidate = Path.Combine(dir, fileName).Replace("\\", "/");
+            if (File.Exists(candidate))
+            {
+                path = candidate;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+
     private IEnumerator EnsureBundleAndPrepareVideo(string selectedBundlePath = null)
     {
         if (vp == null)
@@ -35,6 +66,21 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         string extractedNormalModeVideoPath = Path.Combine(cacheDir, ExtractedNormalModeVideoFileName);
 
         bool useStreamingAssets = string.IsNullOrEmpty(selectedBundlePath);
+
+        // bundleFileName で指定されたものは、まず共有ストレージ
+        // （/storage/emulated/0/VisionGraft など）から探す。見つからなければ
+        // 従来どおり StreamingAssets（APK 内）にフォールバックする。
+        //
+        // これで**被験者実験も adb push した .svb を読む**ようになり、340MB の bundle を
+        // APK に焼かなくて済む。事前に仕込んだ model_selection.json も同じ動画に効く。
+        // エディタ・バッチでは共有ストレージが無いので必ず StreamingAssets 側に落ちる。
+        if (useStreamingAssets && TryResolveBundleInSharedStorage(bundleFileName, out string sharedPath))
+        {
+            Debug.Log($"[Bundle] shared storage hit: {sharedPath}");
+            selectedBundlePath = sharedPath;
+            useStreamingAssets = false;
+        }
+
         byte[] streamingBytes = null;
 
         if (useStreamingAssets)

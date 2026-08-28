@@ -21,8 +21,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
+    private void OnApplicationPause(bool paused)
+    {
+        if (paused)
+        {
+            FlushTrackCustomizationSaveNow();
+        }
+    }
+
+
+    private void OnApplicationQuit()
+    {
+        FlushTrackCustomizationSaveNow();
+    }
+
+
     private void OnDestroy()
     {
+        FlushTrackCustomizationSaveNow();
         UnsubscribeRecenterEvents();
         UnsubscribeVideoPlayerEvents();
         UnbindRuntimeControls();
@@ -131,8 +147,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         ExperimentTrialRequest request = ExperimentTrialHandoff.Consume();
         if (request == null)
         {
+            // Home の「自由に見る」から来たときだけピッカーを出す。
+            // TestScene に焼き込まれた showBundlePickerOnStart は 0 のまま触らない
+            // （バッチ実行と EditMode テストが TestScene を開くので、1 にすると
+            // ピッカーが選択待ちで止まる）。
+            if (HomeLaunchHandoff.ConsumeShowBundlePicker())
+            {
+                showBundlePickerOnStart = true;
+                Debug.Log("[Home] bundle picker requested");
+            }
+
             return;
         }
+
+        // 実験の指示が来たらピッカーの要求は捨てる。両方立つことはないはずだが、
+        // 残っていると次に手動で開いたときに誤爆する。
+        HomeLaunchHandoff.Clear();
 
         bundleFileName = request.bundleFileName;
         showBundlePickerOnStart = false;
@@ -205,6 +235,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void Update()
     {
+        FlushTrackCustomizationSaveIfDue();
+
         // 再生中の切り替えにも追従させたいので毎フレーム適用する。
         // audioTrackCount は Prepare 後に確定するため、ここで見るのが確実。
         if (mute != appliedMute || (mute && vp != null && vp.isPrepared))
@@ -300,27 +332,55 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
+    // ハンドラの中で TrySetTrackingOriginMode を呼ぶと、それがまたこのハンドラを呼ぶ。
+    // 2026-08-28 の実機ログはこの往復で `[MetaXRFeature] OnAppSpaceChange: 103 / 101` が
+    // **4532 行**（毎フレーム振動）。ワールドが毎フレームずれるので、ガーディアンの境界が
+    // 合わず、UI パネルも視界から飛ぶ。再入防止とモード一致チェックの二重で止める。
+    private bool handlingTrackingOriginUpdate;
+
+    // TrySetTrackingOriginMode が通らない環境で毎回試し続けないための記憶。
+    private bool trackingOriginApplyFailed;
+
     private void OnTrackingOriginUpdated(XRInputSubsystem _)
     {
-        if (ForceStationaryTrackingOrigin)
+        if (handlingTrackingOriginUpdate)
         {
-            for (int i = 0; i < xrInputSubsystems.Count; i++)
-            {
-                XRInputSubsystem xr = xrInputSubsystems[i];
-                if (xr != null)
-                {
-                    TryApplyPreferredTrackingOriginMode(xr);
-                }
-            }
+            return;
         }
 
-        RecenterScreensToCurrentFacing();
+        handlingTrackingOriginUpdate = true;
+        try
+        {
+            if (ForceStationaryTrackingOrigin && !trackingOriginApplyFailed)
+            {
+                for (int i = 0; i < xrInputSubsystems.Count; i++)
+                {
+                    XRInputSubsystem xr = xrInputSubsystems[i];
+                    if (xr != null)
+                    {
+                        TryApplyPreferredTrackingOriginMode(xr);
+                    }
+                }
+            }
+
+            RecenterScreensToCurrentFacing();
+        }
+        finally
+        {
+            handlingTrackingOriginUpdate = false;
+        }
     }
 
 
     private void TryApplyPreferredTrackingOriginMode(XRInputSubsystem xr)
     {
-        if (!ForceStationaryTrackingOrigin || xr == null)
+        if (!ForceStationaryTrackingOrigin || xr == null || trackingOriginApplyFailed)
+        {
+            return;
+        }
+
+        // **すでに目的のモードなら何もしない。** これが無いと上のループになる。
+        if (xr.GetTrackingOriginMode() == TrackingOriginModeFlags.Device)
         {
             return;
         }
@@ -331,7 +391,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        xr.TrySetTrackingOriginMode(TrackingOriginModeFlags.Device);
+        if (xr.TrySetTrackingOriginMode(TrackingOriginModeFlags.Device))
+        {
+            Debug.Log("[XR] tracking origin -> Device");
+            return;
+        }
+
+        trackingOriginApplyFailed = true;
+        Debug.LogWarning("[XR] TrySetTrackingOriginMode(Device) が失敗しました。以降は試みません。");
     }
 
 

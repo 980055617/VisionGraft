@@ -19,5 +19,10 @@
        ここで明示する（2026-08-28 に READ の宣言が無いことに気付いて追加）。 -->
   <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
   <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+  <!-- targetSdk 32 では READ_EXTERNAL_STORAGE だけでは /sdcard 直下の .svb が
+       File API から見えない（scoped storage、.svb はメディア扱いされない）。
+       sideload の研究用アプリなので全ファイルアクセスを宣言する。
+       付与方法は docs/model-selection-persistence.md（appops で allow にする）。 -->
+  <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
   <uses-feature android:name="android.hardware.vr.headtracking" android:version="1" android:required="true" />
 </manifest>

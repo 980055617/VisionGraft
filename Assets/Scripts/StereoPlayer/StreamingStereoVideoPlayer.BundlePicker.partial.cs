@@ -31,6 +31,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private bool bundlePickerActive;
     private bool bundlePickerPlacementLocked;
 
+    // ユーザーがピッカーを 1 度でも操作したか。置き直しをやめる判定に使う。
+    private bool bundlePickerInteracted;
+
+    // 開いた時刻。ここから数フレームだけ置き直す。
+    private float bundlePickerOpenedAt;
+    private const float BundlePickerPlacementSettleSeconds = 0.5f;
+
     private struct BundlePickerEntry
     {
         public string path;
@@ -81,6 +88,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         bundlePickerPageIndex = 0;
         bundlePickerActive = true;
         bundlePickerPlacementLocked = false;
+        bundlePickerInteracted = false;
+        bundlePickerOpenedAt = Time.unscaledTime;
 
         const float canvasW = 1200f;
         const float canvasH = 900f;
@@ -177,11 +186,28 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float distance = BundlePickerDistanceMeters > 0f
             ? BundlePickerDistanceMeters
             : screenDistanceMeters;
+
+        // **head.forward をそのまま使わない。** 開いた瞬間に少し上を向いていると、
+        // 1.1m 先ではその角度ぶん持ち上がる（30 度で 0.55m）。実機で「目線を上に
+        // やらないと見えない」位置に出ていたのがこれ（2026-08-28）。
+        // 水平面に射影して、**常に目の高さ**に置く。
+        Vector3 flatForward = Vector3.ProjectOnPlane(head.forward, Vector3.up);
+        if (flatForward.sqrMagnitude < 0.000001f)
+        {
+            // 真上か真下を向いている。頭の up を使って前方を作る。
+            flatForward = Vector3.ProjectOnPlane(head.up, Vector3.up);
+        }
+        if (flatForward.sqrMagnitude < 0.000001f)
+        {
+            flatForward = Vector3.forward;
+        }
+        flatForward.Normalize();
+
         Vector3 pos =
             head.position +
-            head.forward * Mathf.Max(0.2f, distance) +
-            head.right * BundlePickerOffsetMeters.x +
-            head.up * BundlePickerOffsetMeters.y;
+            flatForward * Mathf.Max(0.2f, distance) +
+            Vector3.Cross(Vector3.up, flatForward) * -BundlePickerOffsetMeters.x +
+            Vector3.up * BundlePickerOffsetMeters.y;
         Vector3 toHead = (head.position - pos).normalized;
         if (Mathf.Abs(Vector3.Dot(toHead, Vector3.up)) > 0.98f)
         {
@@ -198,7 +224,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             rot *= Quaternion.Euler(0f, 180f, 0f);
         }
         TransformWriter.ApplyPose(bundlePickerRoot.transform, pos, rot);
-        bundlePickerPlacementLocked = true;
+
+        // **追従はしない。** ただし開いた直後の一瞬だけは置き直す。
+        // tracking origin が Device に切り替わるまでの数フレームで固定すると、
+        // 切り替えでワールドがずれてパネルが視界の外へ飛ぶ（2026-08-28 実機）。
+        // 落ち着いたら固定して、閲覧中は動かさない。
+        if (Time.unscaledTime - bundlePickerOpenedAt >= BundlePickerPlacementSettleSeconds || bundlePickerInteracted)
+        {
+            bundlePickerPlacementLocked = true;
+        }
     }
 
     private GameObject CreateBundlePickerRootObject()
@@ -351,6 +385,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void OnBundlePickerEntryClicked(int localIndex)
     {
+        bundlePickerInteracted = true;
         int perPage = BundlePickerEntriesPerPage;
         int entryIndex = bundlePickerPageIndex * perPage + localIndex;
         if (entryIndex < 0 || entryIndex >= bundlePickerEntries.Count)
@@ -373,6 +408,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void NavigateBundlePickerUp()
     {
+        bundlePickerInteracted = true;
         if (string.IsNullOrEmpty(bundlePickerCurrentDirectory))
         {
             return;
@@ -391,12 +427,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void PrevBundlePickerPage()
     {
+        bundlePickerInteracted = true;
         bundlePickerPageIndex = Mathf.Max(0, bundlePickerPageIndex - 1);
         UpdateBundlePickerEntryButtons();
     }
 
     private void NextBundlePickerPage()
     {
+        bundlePickerInteracted = true;
         int pageCount = GetBundlePickerPageCount();
         bundlePickerPageIndex = Mathf.Min(Mathf.Max(0, pageCount - 1), bundlePickerPageIndex + 1);
         UpdateBundlePickerEntryButtons();
@@ -436,15 +474,30 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         "/sdcard",
     };
 
-    private static readonly string[] BundlePickerSearchDirectories =
+    // 探索先。上から順に、実在する最初のものを使う。
+    //
+    // **persistentDataPath を先頭に置いている理由**（2026-08-28）:
+    // targetSdk 32 では scoped storage が効き、READ_EXTERNAL_STORAGE を granted されていても
+    // /sdcard 直下の**メディア以外のファイルは File API から見えない**（.svb はメディア扱いされない）。
+    // 実機で /sdcard/VisionGraft に 3 本置いたのに "found 0 entries" になったのがこれ。
+    // アプリ自身の外部ディレクトリ（/sdcard/Android/data/<pkg>/files）は権限不要で必ず読める。
+    //
+    // /storage/emulated/0/VisionGraft は MANAGE_EXTERNAL_STORAGE（全ファイルアクセス）が
+    // 付いていれば読める。MTP から見えるので PC からの置き換えが楽。付いていなければ
+    // 素通りするだけなので、両方を並べておく。
+    private static string[] BuildBundleSearchDirectories()
     {
-        // .svb を置く既定の場所。adb push でも MTP でも触れる。無ければ作る。
-        "/storage/emulated/0/" + BundlePickerFolderName,
-        "/sdcard/" + BundlePickerFolderName,
-        // 作れなかったときは共有ストレージの直下から手で辿ってもらう。
-        "/storage/emulated/0",
-        "/sdcard",
-    };
+        return new[]
+        {
+            // 権限不要。adb push は通るが MTP からは見えない。
+            Application.persistentDataPath,
+            // 全ファイルアクセスがあれば読める。MTP から見える。
+            "/storage/emulated/0/" + BundlePickerFolderName,
+            "/sdcard/" + BundlePickerFolderName,
+            "/storage/emulated/0",
+            "/sdcard",
+        };
+    }
 
     // 共有ストレージの直下に VisionGraft フォルダが無ければ作る。
     //
@@ -454,6 +507,63 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 失敗しても黙って続ける。作れなければ ResolveBundlePickerStartDirectory が
     // /storage/emulated/0 に落ちるだけで、機能は失われない。
     // targetSdk 32 の scoped storage で書けるかは実機で確認すること。
+    private static int CountVisibleBundles(string dir)
+    {
+        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+        {
+            return 0;
+        }
+
+        try
+        {
+            int n = Directory.GetFiles(dir, "*.svb").Length;
+            Debug.Log($"[BundlePicker] {dir}: {n} bundle(s) visible");
+            return n;
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogWarning($"[BundlePicker] cannot list {dir}: {ex.GetType().Name}");
+            return 0;
+        }
+    }
+
+
+    // 全ファイルアクセス（MANAGE_EXTERNAL_STORAGE）が付いているかを 1 度だけログに出す。
+    // これが false だと /sdcard 直下の .svb は見えない（scoped storage）。
+    private static bool loggedExternalStorageAccessState;
+
+    private static void LogExternalStorageAccessState()
+    {
+        if (loggedExternalStorageAccessState)
+        {
+            return;
+        }
+
+        loggedExternalStorageAccessState = true;
+#if UNITY_ANDROID && !UNITY_EDITOR
+        try
+        {
+            using (var env = new AndroidJavaClass("android.os.Environment"))
+            {
+                bool manager = env.CallStatic<bool>("isExternalStorageManager");
+                Debug.Log($"[BundlePicker] isExternalStorageManager={manager}");
+                if (!manager)
+                {
+                    Debug.LogWarning(
+                        "[BundlePicker] 全ファイルアクセスが無いので /sdcard 直下の .svb は見えません。" +
+                        "adb shell appops set --uid <package> MANAGE_EXTERNAL_STORAGE allow で付与するか、" +
+                        "persistentDataPath に置いてください。");
+                }
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogWarning($"[BundlePicker] isExternalStorageManager 判定に失敗: {ex.Message}");
+        }
+#endif
+    }
+
+
     private static void EnsureBundlePickerPreferredDirectoryExists()
     {
         for (int i = 0; i < BundlePickerSharedStorageRoots.Length; i++)
@@ -489,12 +599,25 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private string ResolveBundlePickerStartDirectory()
     {
         EnsureBundlePickerPreferredDirectoryExists();
+        LogExternalStorageAccessState();
 
-        for (int i = 0; i < BundlePickerSearchDirectories.Length; i++)
+        // .svb が実際に見えるディレクトリを優先する。存在しても scoped storage で
+        // 中身が見えないことがあるので、**ファイルが 1 つ以上見えるか**まで確かめる。
+        string[] candidates = BuildBundleSearchDirectories();
+        for (int i = 0; i < candidates.Length; i++)
         {
-            string candidate = BundlePickerSearchDirectories[i];
+            if (CountVisibleBundles(candidates[i]) > 0)
+            {
+                return candidates[i];
+            }
+        }
+
+        for (int i = 0; i < candidates.Length; i++)
+        {
+            string candidate = candidates[i];
             if (!string.IsNullOrEmpty(candidate) && Directory.Exists(candidate))
             {
+                Debug.LogWarning($"[BundlePicker] .svb が見えないディレクトリから開始します: {candidate}");
                 return candidate;
             }
         }

@@ -242,22 +242,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        if (!TryGetRuntimeModelPickerTarget(out uint trackId, out byte categoryId, out bool isAnimal))
+        if (!TryGetRuntimeModelPickerTarget(out uint trackId, out byte categoryId, out _))
         {
             ApplyRuntimeModelPickerUnavailable("Select a displayed person or animal first.");
             return;
         }
 
         runtimeModelPickerTrackId = (int)trackId;
-        GameObject[] prefabs = ResolveRuntimeModelPickerPrefabs(isAnimal);
+        GameObject[] prefabs = ResolveRuntimeModelPickerPrefabs(categoryId);
+        string category = ResolveRuntimeModelPickerCategoryLabel(categoryId);
         if (prefabs == null || prefabs.Length == 0)
         {
-            ApplyRuntimeModelPickerUnavailable(isAnimal ? "No animal models found." : "No human models found.");
+            ApplyRuntimeModelPickerUnavailable($"No {category.ToLowerInvariant()} models found.");
             return;
         }
 
-        string category = isAnimal ? "Animal" : "Human";
-        int selectedIndex = Mathf.Clamp(ResolveSelectedModelIndex(trackId, isAnimal ? selectedAnimalIndex : selectedHumanIndex), 0, prefabs.Length - 1);
+        int defaultIndex = IsCategoryAnimal(categoryId) ? selectedAnimalIndex
+            : IsCategoryOther(categoryId) ? selectedElseIndex : selectedHumanIndex;
+        int selectedIndex = Mathf.Clamp(ResolveSelectedModelIndex(trackId, defaultIndex), 0, prefabs.Length - 1);
         int pageCount = GetRuntimeModelPickerPageCount(prefabs.Length);
         runtimeModelPickerPageIndex = Mathf.Clamp(runtimeModelPickerPageIndex, 0, Mathf.Max(0, pageCount - 1));
 
@@ -341,7 +343,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 }
 
                 SceneObjectWriter.ApplyActive(button.gameObject, true);
-                UiComponentWriter.ApplyInteractable(button, IsCategoryPerson(categoryId) || IsCategoryAnimal(categoryId));
+                UiComponentWriter.ApplyInteractable(button, true);
                 if (prefab != null && previewParent != null)
                 {
                     float y = 166f - i * 74f;
@@ -370,12 +372,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void OnRuntimeModelPickerEntryClicked(int localIndex)
     {
-        if (!TryGetRuntimeModelPickerTarget(out uint trackId, out _, out bool isAnimal))
+        if (!TryGetRuntimeModelPickerTarget(out uint trackId, out byte categoryId, out _))
         {
             return;
         }
 
-        GameObject[] prefabs = ResolveRuntimeModelPickerPrefabs(isAnimal);
+        GameObject[] prefabs = ResolveRuntimeModelPickerPrefabs(categoryId);
         if (prefabs == null)
         {
             return;
@@ -389,13 +391,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         selectedModelIndexByTrack[trackId] = modelIndex;
         RecreateTrackInstanceForModelSelection(trackId);
+        PersistModelSelection(trackId, prefabs[modelIndex] != null ? prefabs[modelIndex].name : null);
 
         // どの試行でどのモデルを見ていたかは分析時の交絡要因になり得るので、
         // prefab 名まで残す（Docs/experiment-flow.md「操作の統制」参照）。
         GameObject selectedPrefab = prefabs[modelIndex];
         ExperimentLog.Operation(
             "change_model",
-            $"track={trackId} category={(isAnimal ? "animal" : "human")} " +
+            $"track={trackId} category={ResolveRuntimeModelPickerCategoryLabel(categoryId).ToLowerInvariant()} " +
             $"index={modelIndex} prefab={(selectedPrefab != null ? selectedPrefab.name : "null")}");
 
         UpdateRuntimeModelPickerUiState();
@@ -442,12 +445,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         for (int i = 0; i < metaFrameObjects.Count; i++)
         {
+            // Else も対象にする（2026-08-28）。以前はここで person / animal 以外を
+            // 弾いていたため、train の 8 個の Else がモデル変更できなかった。
             MetaObj obj = metaFrameObjects[i];
-            if (!IsCategoryPerson(obj.categoryId) && !IsCategoryAnimal(obj.categoryId))
-            {
-                continue;
-            }
-
             trackId = obj.trackId;
             categoryId = obj.categoryId;
             isAnimal = IsCategoryAnimal(categoryId);
@@ -476,11 +476,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             {
                 continue;
             }
-            if (!IsCategoryPerson(obj.categoryId) && !IsCategoryAnimal(obj.categoryId))
-            {
-                return false;
-            }
-
             trackId = obj.trackId;
             categoryId = obj.categoryId;
             isAnimal = IsCategoryAnimal(categoryId);
@@ -491,9 +486,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private GameObject[] ResolveRuntimeModelPickerPrefabs(bool isAnimal)
+    // 2026-08-28: Else を対象に加えた。Else は bundle に向きの推定値が無く
+    // （train は全 track が skel=0 smpl=0 smal=0）、モデルも向きも人が仕込むしかない。
+    private GameObject[] ResolveRuntimeModelPickerPrefabs(byte categoryId)
     {
-        return isAnimal ? animalPrefabs : humanPrefabs;
+        return ResolvePrefabsForCategory(categoryId);
+    }
+
+
+    private string ResolveRuntimeModelPickerCategoryLabel(byte categoryId)
+    {
+        if (IsCategoryAnimal(categoryId)) return "Animal";
+        if (IsCategoryOther(categoryId)) return "Else";
+        return "Human";
     }
 
 
@@ -534,12 +539,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void NextRuntimeModelPickerPage()
     {
-        if (!TryGetRuntimeModelPickerTarget(out _, out _, out bool isAnimal))
+        if (!TryGetRuntimeModelPickerTarget(out _, out byte categoryId, out _))
         {
             return;
         }
 
-        GameObject[] prefabs = ResolveRuntimeModelPickerPrefabs(isAnimal);
+        GameObject[] prefabs = ResolveRuntimeModelPickerPrefabs(categoryId);
         int pageCount = prefabs != null ? GetRuntimeModelPickerPageCount(prefabs.Length) : 1;
         runtimeModelPickerPageIndex = Mathf.Min(Mathf.Max(0, pageCount - 1), runtimeModelPickerPageIndex + 1);
         UpdateRuntimeModelPickerUiState();

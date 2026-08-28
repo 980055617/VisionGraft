@@ -236,6 +236,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         PauseForManualRotationEdit();
         SetManualYawOffsetDegForTrack(trackId, 0f);
         UpdateRuntimeTrackRotationUiState();
+        PersistManualYaw(trackId);
+        // Else は bundle に向きの推定値が無く、ここでの調整が唯一の向きの決め手になる。
+        // モデル変更と同じく交絡になり得るので prefab 名と同じ粒度で記録する
+        // （Docs/experiment-flow.md「操作の統制」）。
+        ExperimentLog.Operation("change_rotation", $"track={trackId} yaw=0 op=reset");
     }
 
 
@@ -255,6 +260,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         PauseForManualRotationEdit();
         SetManualYawOffsetDegForTrack(trackId, value);
         UpdateRuntimeTrackRotationUiState();
+        PersistManualYaw(trackId);
+        ExperimentLog.Operation(
+            "change_rotation",
+            $"track={trackId} yaw={ExperimentCsv.Format(value)} frame={GetCurrentPlaybackFrame()}");
     }
 
 

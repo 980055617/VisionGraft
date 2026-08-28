@@ -65,6 +65,7 @@ public static class BatchPlaybackLogger
         bool? noBend = null;
         bool? twoAxis = null;
         bool? animAim = null;
+        bool? remember = null;
         string bundleName = null;
         string captureFrames = null;
         string captureDir = null;
@@ -96,6 +97,7 @@ public static class BatchPlaybackLogger
             if (args[i] == "-minRatio") float.TryParse(args[i + 1], out minRatio);
             if (args[i] == "-fastLo") float.TryParse(args[i + 1], out fastLo);
             if (args[i] == "-fastHi") float.TryParse(args[i + 1], out fastHi);
+            if (args[i] == "-remember" && bool.TryParse(args[i + 1], out bool vRm)) remember = vRm;
             if (args[i] == "-animAim" && bool.TryParse(args[i + 1], out bool vAa)) animAim = vAa;
             if (args[i] == "-twoAxis" && bool.TryParse(args[i + 1], out bool vTa)) twoAxis = vTa;
             if (args[i] == "-noBend" && bool.TryParse(args[i + 1], out bool vNb)) noBend = vNb;
@@ -206,6 +208,7 @@ public static class BatchPlaybackLogger
                 if (noBend.HasValue) { p.SetSmalBendDisabledForDiag(noBend.Value); }
                 if (twoAxis.HasValue) { p.SetTwoAxisJointFrameMap(twoAxis.Value); }
                 if (animAim.HasValue) { p.SetAnimalKeypointAimAt(animAim.Value); }
+                if (remember.HasValue) { p.rememberTrackCustomization = remember.Value; }
                 EditorUtility.SetDirty(p);
                 applied++;
             }
@@ -219,7 +222,7 @@ public static class BatchPlaybackLogger
                 + " otherScale=" + (otherScale.HasValue ? otherScale.Value.ToString() : "scene")
                 + " bodyAlign=" + (bodyAlign.HasValue ? bodyAlign.Value.ToString() : "scene")
                 + " genericBones=" + (genericBones.HasValue ? genericBones.Value.ToString() : "scene")
-                + " extendH=" + (extendH.HasValue ? extendH.Value.ToString() : "scene") + " maxExtrap=" + maxExtrap + " minRatio=" + minRatio + " fastLo=" + fastLo + " fastHi=" + fastHi + " alignTop=" + (alignTop.HasValue ? alignTop.Value.ToString() : "scene") + " noBend=" + (noBend.HasValue ? noBend.Value.ToString() : "scene") + " twoAxis=" + (twoAxis.HasValue ? twoAxis.Value.ToString() : "scene") + " animAim=" + (animAim.HasValue ? animAim.Value.ToString() : "scene"));
+                + " extendH=" + (extendH.HasValue ? extendH.Value.ToString() : "scene") + " maxExtrap=" + maxExtrap + " minRatio=" + minRatio + " fastLo=" + fastLo + " fastHi=" + fastHi + " alignTop=" + (alignTop.HasValue ? alignTop.Value.ToString() : "scene") + " noBend=" + (noBend.HasValue ? noBend.Value.ToString() : "scene") + " twoAxis=" + (twoAxis.HasValue ? twoAxis.Value.ToString() : "scene") + " animAim=" + (animAim.HasValue ? animAim.Value.ToString() : "scene") + " remember=" + (remember.HasValue ? remember.Value.ToString() : "scene"));
         }
 
         // 検証用 bundle を差し替える（シーンには保存しない）。

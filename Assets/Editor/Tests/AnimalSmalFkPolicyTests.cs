@@ -2,10 +2,16 @@ using NUnit.Framework;
 
 public class AnimalSmalFkPolicyTests
 {
+    // Tail1 / Tail2（SMAL joint 25 / 26）は 2026-07-16 に SmalRestDirByJoint へ
+    // rest 方向を登録して body_pose を当てるようにした。bind pose のまま残すのは
+    // Tail3 以降（27〜31）だけ。テストの期待値が変更前のままだったので更新した（2026-08-28）。
     [Test]
-    public void KeepsSmalTailJointsInBindPose()
+    public void KeepsBindPoseOnlyForTailJointsBeyondTail2()
     {
-        for (int joint = 25; joint <= 31; joint++)
+        Assert.That(AnimalSmalFkPolicy.ShouldKeepBindPoseForJoint(25), Is.False, "Tail1 は body_pose 駆動");
+        Assert.That(AnimalSmalFkPolicy.ShouldKeepBindPoseForJoint(26), Is.False, "Tail2 は body_pose 駆動");
+
+        for (int joint = 27; joint <= 31; joint++)
         {
             Assert.That(AnimalSmalFkPolicy.ShouldKeepBindPoseForJoint(joint), Is.True);
         }

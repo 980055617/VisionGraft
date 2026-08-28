@@ -305,6 +305,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private GameObject ResolveTrackPrefab(uint trackId, byte categoryId)
     {
+        // 永続化から復元した prefab 名は、ここで初めてカテゴリが確定するので index に直す。
+        ResolvePendingModelSelection(trackId, ResolvePrefabsForCategory(categoryId));
+
         if (IsCategoryAnimal(categoryId))
         {
             if (animalPrefabs != null && animalPrefabs.Length > 0)
@@ -332,6 +335,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return humanPrefabs[idx];
         }
         return null;
+    }
+
+
+    private GameObject[] ResolvePrefabsForCategory(byte categoryId)
+    {
+        if (IsCategoryAnimal(categoryId))
+        {
+            return animalPrefabs;
+        }
+
+        if (IsCategoryOther(categoryId))
+        {
+            return elsePrefabs;
+        }
+
+        return humanPrefabs;
     }
 
 

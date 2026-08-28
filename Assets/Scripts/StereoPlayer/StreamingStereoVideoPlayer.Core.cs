@@ -192,6 +192,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 既定 false（従来の FromToRotation）。A/B で効果を確認してから既定を決める。
     public bool useTwoAxisJointFrameMap;
 
+    // VR で選んだモデルと手動 yaw を動画ごと・track ごとに覚える。
+    // 既定 false。docs/model-selection-persistence.md 参照。
+    public bool rememberTrackCustomization;
+
     // SMAL FK のあとに四肢を keypoint の位置へ向ける（Human の AimAt に相当）。
     // 既定 false。A/B で確認してから既定を決める。docs/smpl-retargeting.md 参照。
     public bool enableAnimalKeypointAimAt;

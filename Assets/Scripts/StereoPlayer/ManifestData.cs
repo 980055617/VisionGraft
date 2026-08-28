@@ -27,6 +27,18 @@ public sealed class ManifestData
     // 持たない旧 bundle は larger=nearer なので、有無で向きを判定する
     // （IsAnchorDepthLargerMeansFarther）。
     public DepthPolicyData depth_policy;
+
+    // 元動画のファイル名。**動画の同一性キーとして使う**（TrackCustomizationStore）。
+    // bundle のファイル名は再生成で変わる（bundle_animal.svb ->
+    // bundle_animal_shots_depthdriftfix_shotsfix.svb）が、inputs.video_mp4 は
+    // 再生成をまたいで同じことを実測で確認済み（2026-08-28、docs/model-selection-persistence.md）。
+    public ManifestInputsData inputs;
+}
+
+[Serializable]
+public sealed class ManifestInputsData
+{
+    public string video_mp4;
 }
 
 [System.Serializable]

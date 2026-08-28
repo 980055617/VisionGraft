@@ -114,6 +114,10 @@ public sealed class ExperimentController : MonoBehaviour
         ExperimentLog.Sink = null;
         session.Dispose();
         session = null;
+
+        // 実験を抜けたあと手動でシーンを開いたときに前の参加者の調整が残らないように。
+        // ExperimentTrialHandoff.Clear() と同じ配慮。**基準ファイルは消さない。**
+        ExperimentSessionOverrides.EndSession();
     }
 
     private void Update()
@@ -218,6 +222,10 @@ public sealed class ExperimentController : MonoBehaviour
             videoOrderPattern,
             writer,
             () => cachedPlayer != null ? cachedPlayer.CurrentVideoTimeSeconds : 0d);
+
+        // 参加者が変わるのでモデル・向きのセッション上書きを捨てる。
+        // 研究者が仕込んだ基準（model_selection.json）はそのまま読み込まれる。
+        ExperimentSessionOverrides.BeginSession();
 
         Debug.Log($"[Experiment] セッション開始: {ParticipantId} / 群 {group} / 動画順 {videoOrderPattern}");
         Debug.Log($"[Experiment] ログ出力先: {sessionDir}");

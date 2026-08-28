@@ -4635,3 +4635,61 @@ if (alignTopWhenBottomClipped && clippedBottom && !clippedTop)
 | Y | 横方向のスケールも bbox 幅で合わせる（非等方スケール） | モデルが伸縮して見える。**やるべきでない** |
 
 **現時点ではどちらも推奨しない。** 中心ずれの median は +28.9px（bbox 幅の数 %）で、実機で問題として報告されていない。まず animal の rig 対応（姿勢が正しく適用されているか）を確認する方が優先度が高い。
+
+## bundle_train.svb は再生成不要（2026-08-28 実測）
+
+animal を再生成したのと同じことが train にも必要か調べた（`scratchpad/train_probe.py` / `train_checks.py` / `train_checks2.py`）。**結論: 不要。**
+
+### 素性
+
+| | train | animal（再生成済） | human（再生成済） | human（旧） |
+|---|---|---|---|---|
+| `generated_at` | **2026-08-19T06:06:43** | 2026-08-27T00:00:53 | 2026-08-20T18:26:08 | 2026-08-19T06:04:47 |
+| frames | 1830（61 秒） | 2120 | 2167 | 2167 |
+| shots | **1** | 28 | 1 | 1 |
+| tracks | **8、全部 `other`** | 2（animal） | 2（person + other） | 同左 |
+| skeleton / SMPL / SMAL | **全部 0** | skel + SMAL | skel + SMPL | 同左 |
+
+**`bundle_train.svb` は旧 human と 2 分違いの同一ビルド回。** ただし下の実測のとおり、それが問題を意味しない。
+
+### D-002（video.mp4 が inpaint 前）→ **問題なし**
+
+`video.mp4` と `source/pre_removal_stereo_video.mp4` の CRC / サイズを比較。
+
+| | video.mp4 | pre_removal | 判定 |
+|---|---|---|---|
+| train | 58,856,611 B | 54,924,498 B | **別物 = inpaint 済み** |
+| animal / human（再生成済・旧とも） | — | — | すべて inpaint 済み |
+
+### D-001（shot 内の anchor_z ドリフト）→ **再生成済み human より小さい**
+
+各 track の前半/後半の z01 中央値の差:
+
+| bundle | ドリフト |
+|---|---|
+| **train** | **−0.004 〜 −0.080** |
+| human（再生成済） | −0.082 / −0.104 |
+| animal（再生成済） | −0.008 / −0.014 |
+
+**train は再生成済み human よりドリフトが小さい。** 再生成の理由にならない。
+
+### shots=1 は妥当 → **カット無しの単一テイク**
+
+連続フレーム間で anchor_u か bboxH が 64px 超飛んだ箇所を数えた。
+
+| bundle | 飛び | 内訳 |
+|---|---|---|
+| **train** | **5 件** | **すべて track 3 単独**（bboxH med=21 の小さい物体）。anchor_u の飛びは最大 67px |
+| animal（28 shot） | 24 件 | 多くが shot 境界と一致。anchor_u が 212〜631px 飛ぶ |
+
+**カットなら全 track が同時に飛ぶ。** train は単一 track のばらつきだけなので、**shots=1 で正しい**。animal で起きた「`shots.json` が stale」は train には該当しない。
+
+### `depth_scale_calibration`
+
+animal（再生成済）は**キーだけあって値は `null`**。train はキー自体が無い。**どちらも実体を持たないので差にならない。**
+
+### train に関係する課題は配置のみ
+
+**全 track が `other`（剛体）** なので、animal でやった姿勢追従（SMAL FK・AimAt・keypoint 対応）は**一切関係しない**。関係するのは配置パイプライン ①〜⑩ と、既知の **D-004**（`anchor_z` が実距離をほとんど再現しない。train の決定係数 0.001〜0.797）。
+
+D-004 は全 bundle 共通の未解決課題で、train を再生成しても直らない。

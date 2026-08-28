@@ -7,6 +7,7 @@ public class ExperimentBundleCatalogTests
     {
         ExperimentBundleCatalog catalog = new ExperimentBundleCatalog();
 
+        // 既定名は StreamingAssets に実在するファイルでなければならない。
         Assert.That(catalog.Resolve(ExperimentVideo.Human), Is.EqualTo("bundle_human.svb"));
         Assert.That(catalog.Resolve(ExperimentVideo.Animal), Is.EqualTo("bundle_animal.svb"));
         Assert.That(catalog.Resolve(ExperimentVideo.Train), Is.EqualTo("bundle_train.svb"));

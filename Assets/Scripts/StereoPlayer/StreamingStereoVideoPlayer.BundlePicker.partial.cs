@@ -14,7 +14,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     [Header("Bundle Picker")]
     public bool showBundlePickerOnStart = true;
-    public string bundlePickerInitialDirectory = "/storage/emulated/0";
     public GameObject bundlePickerCanvasWithInteractionRayPrefab;
 
     private GameObject bundlePickerRoot;
@@ -55,9 +54,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private IEnumerator RequestStoragePermissionIfNeeded()
     {
 #if UNITY_ANDROID && !UNITY_EDITOR
-        if (!UnityEngine.Android.Permission.HasUserAuthorizedPermission(UnityEngine.Android.Permission.ExternalStorageRead))
+        // 書き込みも要る（VisionGraft フォルダの作成）。読みだけ要求していたので追加した。
+        if (!UnityEngine.Android.Permission.HasUserAuthorizedPermission(UnityEngine.Android.Permission.ExternalStorageRead) ||
+            !UnityEngine.Android.Permission.HasUserAuthorizedPermission(UnityEngine.Android.Permission.ExternalStorageWrite))
         {
             UnityEngine.Android.Permission.RequestUserPermission(UnityEngine.Android.Permission.ExternalStorageRead);
+            UnityEngine.Android.Permission.RequestUserPermission(UnityEngine.Android.Permission.ExternalStorageWrite);
             float timeout = 0.75f;
             while (timeout > 0f)
             {
@@ -417,31 +419,93 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         bundlePickerDone = true;
     }
 
+    // 起点はコードで決める。Inspector の公開フィールドにしていたが、**シーンの serialize 値が
+    // コードの既定を黙って上書きする**ので事故になっていた（2026-08-28）。実際 TestScene /
+    // TrialScene には persistentDataPath
+    // （/storage/emulated/0/Android/data/<package>/files）が焼き込まれていて、
+    // コードに書いてある "/storage/emulated/0" は一度も効いていなかった。
+    // そこは Android 11 以降 MTP から見えないので、PC から .svb を置きづらい場所でもある。
+    //
+    // 上から順に、実在する最初のディレクトリを使う。
+    private const string BundlePickerFolderName = "VisionGraft";
+
+    // 共有ストレージの根。同じ場所への別名なので、実在した最初の 1 つだけ使う。
+    private static readonly string[] BundlePickerSharedStorageRoots =
+    {
+        "/storage/emulated/0",
+        "/sdcard",
+    };
+
+    private static readonly string[] BundlePickerSearchDirectories =
+    {
+        // .svb を置く既定の場所。adb push でも MTP でも触れる。無ければ作る。
+        "/storage/emulated/0/" + BundlePickerFolderName,
+        "/sdcard/" + BundlePickerFolderName,
+        // 作れなかったときは共有ストレージの直下から手で辿ってもらう。
+        "/storage/emulated/0",
+        "/sdcard",
+    };
+
+    // 共有ストレージの直下に VisionGraft フォルダが無ければ作る。
+    //
+    // 新しいヘッドセットには当然無い。**PC から .svb を置く先として先に見えていてほしい**
+    // ので、アプリ側で作る（2026-08-28 の要望）。
+    //
+    // 失敗しても黙って続ける。作れなければ ResolveBundlePickerStartDirectory が
+    // /storage/emulated/0 に落ちるだけで、機能は失われない。
+    // targetSdk 32 の scoped storage で書けるかは実機で確認すること。
+    private static void EnsureBundlePickerPreferredDirectoryExists()
+    {
+        for (int i = 0; i < BundlePickerSharedStorageRoots.Length; i++)
+        {
+            string root = BundlePickerSharedStorageRoots[i];
+            if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
+            {
+                // 共有ストレージが無い環境（エディタ・PC）では何もしない。
+                continue;
+            }
+
+            string dir = Path.Combine(root, BundlePickerFolderName).Replace("\\", "/");
+            if (Directory.Exists(dir))
+            {
+                return;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(dir);
+                Debug.Log($"[BundlePicker] created: {dir}");
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning($"[BundlePicker] could not create {dir}: {ex.GetType().Name} {ex.Message}");
+            }
+
+            return;
+        }
+    }
+
+
     private string ResolveBundlePickerStartDirectory()
     {
-        if (!string.IsNullOrEmpty(bundlePickerInitialDirectory) && Directory.Exists(bundlePickerInitialDirectory))
-        {
-            return bundlePickerInitialDirectory;
-        }
+        EnsureBundlePickerPreferredDirectoryExists();
 
-        string[] candidates =
+        for (int i = 0; i < BundlePickerSearchDirectories.Length; i++)
         {
-            "/storage/emulated/0",
-            "/sdcard",
-            Application.persistentDataPath,
-            Application.dataPath,
-        };
-
-        for (int i = 0; i < candidates.Length; i++)
-        {
-            string candidate = candidates[i];
+            string candidate = BundlePickerSearchDirectories[i];
             if (!string.IsNullOrEmpty(candidate) && Directory.Exists(candidate))
             {
                 return candidate;
             }
         }
 
-        return Application.persistentDataPath;
+        // エディタ・PC 実行のフォールバック。
+        if (Directory.Exists(Application.persistentDataPath))
+        {
+            return Application.persistentDataPath;
+        }
+
+        return Application.dataPath;
     }
 
     private Text CreateBundlePickerText(Transform parent, string name, string initialText, Vector2 anchoredPos, Vector2 size, int fontSize, TextAnchor alignment, Color color)

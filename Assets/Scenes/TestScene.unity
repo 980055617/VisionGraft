@@ -1035,9 +1035,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   showBundlePickerOnStart: 0
-  bundlePickerInitialDirectory: /storage/emulated/0/Android/data/com.UnityTechnologies.com.unity.template.urpblank/files
   bundlePickerCanvasWithInteractionRayPrefab: {fileID: 3675716834162371033, guid: 19be18d74f8608a4583c4c6c4e6e8723, type: 3}
-  bundleFileName: bundle_animal_shots_depthdriftfix_shotsfix.svb
+  bundleFileName: bundle_animal.svb
   leftScreenPrefab: {fileID: 6079509281990213153, guid: 582b2d98cd3eb1a44a5e56de8e2ee377, type: 3}
   rightScreenPrefab: {fileID: 9016292340697211618, guid: 365d37eaa3296bf4091b48eb6e78b62f, type: 3}
   headTransform: {fileID: 773190241}

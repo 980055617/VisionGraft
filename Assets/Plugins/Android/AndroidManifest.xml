@@ -14,5 +14,10 @@
     <meta-data android:name="com.oculus.telemetry.project_guid" android:value="ee7b24e5-8bd5-4662-9515-69da9fff1c3a" />
     <meta-data android:name="com.oculus.supportedDevices" android:value="quest|quest2|questpro|quest3|quest3s" />
   </application>
+  <!-- .svb を /storage/emulated/0/VisionGraft から読み、そのフォルダが無ければ作るため。
+       Permission.RequestUserPermission はマニフェストに宣言が無いと no-op になるので、
+       ここで明示する（2026-08-28 に READ の宣言が無いことに気付いて追加）。 -->
+  <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
   <uses-feature android:name="android.hardware.vr.headtracking" android:version="1" android:required="true" />
 </manifest>

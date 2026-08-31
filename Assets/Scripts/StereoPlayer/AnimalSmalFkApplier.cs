@@ -93,9 +93,18 @@ public sealed partial class AnimalPoseApplier
         { 26, new Vector3(-0.999506f, 0.000000f, 0.031008f) },
     };
 
-    // Provisional damping for tailBase/tailMid body_pose (see comment at the joint==25/26
-    // check below) - starting conservative at half strength until visually verified.
-    private const float TailBodyPoseScale = 0.5f;
+    // tailBase / tailMid の body_pose をどれだけ効かせるか。
+    //
+    // 2026-07-16 に「実機で見て確認したら調整・撤去せよ」として 0.5（半分）で入れた暫定値。
+    // **2026-08-28 に実機で確認した。** 犬・猫とも「動画の中よりしっぽが動かない」と
+    // 指摘され、原因がこの減衰だった。等倍に戻す。
+    //
+    // 入力側にはしっぽの回転がちゃんとある（meta.bin 実測で犬の joint 25 は恒等回転から
+    // median 28.6 度・p90 42.5 度。首に次いで大きい）。それを半分にしていた。
+    //
+    // 戻すと「一部のモデルでしっぽが体にめり込む」という当初の懸念が再発しうる。
+    // 実機で見て問題があればここを下げる（0.75 など）。
+    private const float TailBodyPoseScale = 1f;
 
     // SMAL global_orient/pose rotation matrices are read from the bin in SMAL's own native
     // axis convention. This fixed correction re-expresses that raw decode into a usable Unity
@@ -330,12 +339,12 @@ public sealed partial class AnimalPoseApplier
 
             if (joint == 25 || joint == 26)
             {
-                // Tail body_pose is being driven for the first time this session (2026-07-16)
-                // and hasn't been validated the way legs/neck were - reported as clipping
-                // into the body on some models. Damp it the same way Human SMPL's over-large
-                // spine estimate needed SpineBodyPoseScale=0.25 (Docs/smpl-retargeting.md).
-                // Tune/remove once tail motion has been visually verified per-model.
-                rawLocal = Quaternion.Slerp(Quaternion.identity, rawLocal, TailBodyPoseScale);
+                // TailBodyPoseScale の経緯はその宣言のところに書いた。
+                // 1 のときは Slerp が恒等になるので、無駄な計算を避けて素通しする。
+                if (TailBodyPoseScale < 0.999f)
+                {
+                    rawLocal = Quaternion.Slerp(Quaternion.identity, rawLocal, TailBodyPoseScale);
+                }
             }
 
             Quaternion smalLocal = state.smoothingInitialized

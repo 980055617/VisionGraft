@@ -165,6 +165,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         LoadBundleSidecars(extractedAnimalControlTargetsPath, extractedOtherObjectProxiesPath);
         LoadHumanSmplSidecar(extractedHumanSmplPath);
         RestoreTrackCustomization();
+        // 復元の**あと**に流す。バッチ検証の指定を保存値に勝たせるため。
+        ApplyBatchManualOverrideSpecs();
 
         modelModePlaybackVideoPath = extractedVideoPath.Replace("\\", "/");
         hasNormalModeVideo = File.Exists(extractedNormalModeVideoPath);

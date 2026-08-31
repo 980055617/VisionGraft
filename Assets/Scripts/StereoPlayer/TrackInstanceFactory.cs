@@ -9,7 +9,13 @@ public static class TrackInstanceFactory
             return null;
         }
 
-        GameObject instance = Object.Instantiate(prefab, Vector3.zero, Quaternion.identity);
+        // **prefab の root 回転を潰さないこと。** ここで Quaternion.identity を渡すと、
+        // 直後に走る ReplaceableModel.Awake が「補正前の姿勢」で world AABB を測ってしまう。
+        // 06_DieselLocomotive は root に X 軸 -90 度が入っており、これを潰すと
+        // baseHeightMeters が屋根高 5.26m ではなく車体長 18.51m になる。
+        // 縦向きになるだけでなく、その車体長を bbox 高さに合わせるせいで大きさも狂う。
+        // 位置は配置側が毎フレーム上書きするので原点のままでよい。
+        GameObject instance = Object.Instantiate(prefab, Vector3.zero, prefab.transform.localRotation);
         instance.name = $"Track_{trackId}";
         if (instance.GetComponent<ReplaceableModel>() == null)
         {

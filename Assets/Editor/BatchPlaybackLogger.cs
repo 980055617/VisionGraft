@@ -67,6 +67,10 @@ public static class BatchPlaybackLogger
         bool? animAim = null;
         bool? remember = null;
         string bundleName = null;
+        string manualYaw = null;
+        string manualScale = null;
+        bool openSettings = false;
+        string displayTracks = null;
         string captureFrames = null;
         string captureDir = null;
         int captureWidth = 3840;
@@ -103,6 +107,11 @@ public static class BatchPlaybackLogger
             if (args[i] == "-noBend" && bool.TryParse(args[i + 1], out bool vNb)) noBend = vNb;
             if (args[i] == "-alignTop" && bool.TryParse(args[i + 1], out bool vAt)) alignTop = vAt;
             if (args[i] == "-bundle") bundleName = args[i + 1];
+            if (args[i] == "-manualYaw") manualYaw = args[i + 1];
+            if (args[i] == "-manualScale") manualScale = args[i + 1];
+            if (args[i] == "-openSettings") bool.TryParse(args[i + 1], out openSettings);
+            // "all" で全 track 表示（displayTrackIds を空にする）。"0,1" のように ID 列も可。
+            if (args[i] == "-displayTracks") displayTracks = args[i + 1];
             if (args[i] == "-captureFrames") captureFrames = args[i + 1];
             if (args[i] == "-captureDir") captureDir = args[i + 1];
             if (args[i] == "-captureWidth") int.TryParse(args[i + 1], out captureWidth);
@@ -239,6 +248,52 @@ public static class BatchPlaybackLogger
                 applied++;
             }
             Debug.Log("[BATCH] bundleFileName=" + bundleName + " applied to " + applied);
+        }
+
+        // 表示 track の絞り込みをこの実行の間だけ差し替える（シーンには保存しない）。
+        if (!string.IsNullOrEmpty(displayTracks))
+        {
+            int[] ids;
+            if (displayTracks.Trim().ToLowerInvariant() == "all")
+            {
+                ids = new int[0];
+            }
+            else
+            {
+                var list = new List<int>();
+                foreach (string part in displayTracks.Split(','))
+                {
+                    if (int.TryParse(part.Trim(), out int id)) { list.Add(id); }
+                }
+                ids = list.ToArray();
+            }
+
+            int applied = 0;
+            foreach (var p in UnityEngine.Object.FindObjectsByType<StreamingStereoVideoPlayer>(
+                         FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                p.displayTrackIds = ids;
+                EditorUtility.SetDirty(p);
+                applied++;
+            }
+            Debug.Log("[BATCH] displayTracks=" + displayTracks + " count=" + ids.Length + " applied to " + applied);
+        }
+
+        // 手動 yaw / 手動スケールの注入（実機の VR UI 操作を Editor で代替する）。
+        if (!string.IsNullOrEmpty(manualYaw) || !string.IsNullOrEmpty(manualScale) || openSettings)
+        {
+            int applied = 0;
+            foreach (var p in UnityEngine.Object.FindObjectsByType<StreamingStereoVideoPlayer>(
+                         FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                if (!string.IsNullOrEmpty(manualYaw)) { p.batchManualYawSpec = manualYaw; }
+                if (!string.IsNullOrEmpty(manualScale)) { p.batchManualScaleSpec = manualScale; }
+                if (openSettings) { p.batchOpenSettingsOnStart = true; }
+                EditorUtility.SetDirty(p);
+                applied++;
+            }
+            Debug.Log("[BATCH] manualYaw=" + manualYaw + " manualScale=" + manualScale +
+                      " openSettings=" + openSettings + " applied to " + applied);
         }
 
         // 診断ログはシーンに保存せず、この実行の間だけ有効にする。

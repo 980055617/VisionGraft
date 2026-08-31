@@ -11,15 +11,22 @@ using UnityEngine;
 //  - キーは **manifest.inputs.video_mp4**。.svb のファイル名ではない（再生成で変わるため）
 //  - モデルは **prefab 名**で持つ。index は Resources のソート順と
 //    AnimalModelPriorityOrder に依存し、モデルを 1 つ足すとずれる
-//  - yaw キーフレームはフレーム番号に紐づくので numFrames を添えて整合を見る
+//  - yaw / scale キーフレームはフレーム番号に紐づくので numFrames を添えて整合を見る
 public sealed class TrackCustomization
 {
     public string modelPrefabName;
     public SortedDictionary<int, float> yawKeyframes;
+    // 自動フィットに対する倍率。既定 1.0（キーが無い＝等倍）。
+    public SortedDictionary<int, float> scaleKeyframes;
 
     public bool IsEmpty
     {
-        get { return string.IsNullOrEmpty(modelPrefabName) && (yawKeyframes == null || yawKeyframes.Count == 0); }
+        get
+        {
+            return string.IsNullOrEmpty(modelPrefabName) &&
+                   (yawKeyframes == null || yawKeyframes.Count == 0) &&
+                   (scaleKeyframes == null || scaleKeyframes.Count == 0);
+        }
     }
 
     public TrackCustomization Clone()
@@ -28,6 +35,10 @@ public sealed class TrackCustomization
         if (yawKeyframes != null && yawKeyframes.Count > 0)
         {
             copy.yawKeyframes = new SortedDictionary<int, float>(yawKeyframes);
+        }
+        if (scaleKeyframes != null && scaleKeyframes.Count > 0)
+        {
+            copy.scaleKeyframes = new SortedDictionary<int, float>(scaleKeyframes);
         }
 
         return copy;
@@ -74,6 +85,10 @@ public sealed class VideoCustomization
             if (kv.Value.yawKeyframes != null && kv.Value.yawKeyframes.Count > 0)
             {
                 dst.yawKeyframes = new SortedDictionary<int, float>(kv.Value.yawKeyframes);
+            }
+            if (kv.Value.scaleKeyframes != null && kv.Value.scaleKeyframes.Count > 0)
+            {
+                dst.scaleKeyframes = new SortedDictionary<int, float>(kv.Value.scaleKeyframes);
             }
         }
     }
@@ -122,7 +137,7 @@ public static class TrackCustomizationStore
         EnsureLoaded();
         try
         {
-            File.WriteAllText(FilePath, Serialize(cache), Encoding.UTF8);
+            File.WriteAllText(FilePath, ToJson(cache), Encoding.UTF8);
             Debug.Log($"[Customization] saved: {FilePath}");
         }
         catch (System.Exception ex)
@@ -155,17 +170,7 @@ public static class TrackCustomizationStore
 
         try
         {
-            if (MiniJson.Parse(File.ReadAllText(path)) is Dictionary<string, object> root)
-            {
-                foreach (KeyValuePair<string, object> kv in root)
-                {
-                    if (TryParseVideo(kv.Value, out VideoCustomization v))
-                    {
-                        cache[kv.Key] = v;
-                    }
-                }
-            }
-
+            cache = FromJson(File.ReadAllText(path));
             Debug.Log($"[Customization] loaded {cache.Count} video(s) from {path}");
         }
         catch (System.Exception ex)
@@ -175,6 +180,27 @@ public static class TrackCustomizationStore
             Debug.LogError($"[Customization] load failed ({ex.Message}). 既定値で続行します: {path}");
         }
     }
+
+    // ファイル IO と切り離した読み書き。往復をテストするためにここを公開している。
+    public static Dictionary<string, VideoCustomization> FromJson(string text)
+    {
+        var result = new Dictionary<string, VideoCustomization>();
+        if (string.IsNullOrEmpty(text) || !(MiniJson.Parse(text) is Dictionary<string, object> root))
+        {
+            return result;
+        }
+
+        foreach (KeyValuePair<string, object> kv in root)
+        {
+            if (TryParseVideo(kv.Value, out VideoCustomization v))
+            {
+                result[kv.Key] = v;
+            }
+        }
+
+        return result;
+    }
+
 
     private static bool TryParseVideo(object node, out VideoCustomization video)
     {
@@ -204,26 +230,33 @@ public static class TrackCustomizationStore
                 entry.modelPrefabName = modelName;
             }
 
-            if (t.TryGetValue("yaw", out object yawNode) && yawNode is Dictionary<string, object> yaw)
-            {
-                var keys = new SortedDictionary<int, float>();
-                foreach (KeyValuePair<string, object> y in yaw)
-                {
-                    if (int.TryParse(y.Key, NumberStyles.Integer, CultureInfo.InvariantCulture, out int frame))
-                    {
-                        keys[frame] = ToFloat(y.Value, 0f);
-                    }
-                }
-
-                if (keys.Count > 0)
-                {
-                    entry.yawKeyframes = keys;
-                }
-            }
+            entry.yawKeyframes = ParseKeyframes(t, "yaw", 0f);
+            entry.scaleKeyframes = ParseKeyframes(t, "scale", 1f);
         }
 
         return true;
     }
+
+    private static SortedDictionary<int, float> ParseKeyframes(
+        Dictionary<string, object> track, string key, float fallback)
+    {
+        if (!(track.TryGetValue(key, out object node) && node is Dictionary<string, object> map))
+        {
+            return null;
+        }
+
+        var keys = new SortedDictionary<int, float>();
+        foreach (KeyValuePair<string, object> kv in map)
+        {
+            if (int.TryParse(kv.Key, NumberStyles.Integer, CultureInfo.InvariantCulture, out int frame))
+            {
+                keys[frame] = ToFloat(kv.Value, fallback);
+            }
+        }
+
+        return keys.Count > 0 ? keys : null;
+    }
+
 
     private static int ToInt(Dictionary<string, object> obj, string key, int fallback)
     {
@@ -241,7 +274,7 @@ public static class TrackCustomizationStore
     }
 
     // MiniJson は Parse しか持たないので書き出しは手書き。構造が固定なので十分。
-    private static string Serialize(Dictionary<string, VideoCustomization> data)
+    public static string ToJson(Dictionary<string, VideoCustomization> data)
     {
         var sb = new StringBuilder();
         sb.Append("{\n");
@@ -284,27 +317,8 @@ public static class TrackCustomizationStore
                     needComma = true;
                 }
 
-                if (track.Value.yawKeyframes != null && track.Value.yawKeyframes.Count > 0)
-                {
-                    if (needComma)
-                    {
-                        sb.Append(", ");
-                    }
-                    sb.Append("\"yaw\": {");
-                    bool firstKey = true;
-                    foreach (KeyValuePair<int, float> k in track.Value.yawKeyframes)
-                    {
-                        if (!firstKey)
-                        {
-                            sb.Append(", ");
-                        }
-                        firstKey = false;
-                        sb.Append(Quote(k.Key.ToString(CultureInfo.InvariantCulture)))
-                          .Append(": ")
-                          .Append(k.Value.ToString("0.###", CultureInfo.InvariantCulture));
-                    }
-                    sb.Append("}");
-                }
+                needComma = AppendKeyframes(sb, "yaw", track.Value.yawKeyframes, needComma);
+                AppendKeyframes(sb, "scale", track.Value.scaleKeyframes, needComma);
 
                 sb.Append("}");
             }
@@ -315,6 +329,38 @@ public static class TrackCustomizationStore
         sb.Append("\n}\n");
         return sb.ToString();
     }
+
+    // 1 track ぶんのキーフレームを書き出す。書いたら true を返す（次の要素のカンマ判定用）。
+    private static bool AppendKeyframes(
+        StringBuilder sb, string name, SortedDictionary<int, float> keys, bool needComma)
+    {
+        if (keys == null || keys.Count == 0)
+        {
+            return needComma;
+        }
+
+        if (needComma)
+        {
+            sb.Append(", ");
+        }
+
+        sb.Append(Quote(name)).Append(": {");
+        bool firstKey = true;
+        foreach (KeyValuePair<int, float> k in keys)
+        {
+            if (!firstKey)
+            {
+                sb.Append(", ");
+            }
+            firstKey = false;
+            sb.Append(Quote(k.Key.ToString(CultureInfo.InvariantCulture)))
+              .Append(": ")
+              .Append(k.Value.ToString("0.###", CultureInfo.InvariantCulture));
+        }
+        sb.Append("}");
+        return true;
+    }
+
 
     private static string Quote(string s)
     {

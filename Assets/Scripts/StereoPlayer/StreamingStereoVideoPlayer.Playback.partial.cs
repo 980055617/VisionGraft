@@ -198,6 +198,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Quaternion rotationPinhole = GetPinholeBasisRotation(screen);
         rotationPinhole = ApplyManualTrackYawOffset(target.trackId, frame, rotationPinhole, screen != null ? screen.up : Vector3.up);
 
+        // prefab が持っている向きの補正を右から掛ける。**配置は root の world 回転を
+        // 上書きするので、これをしないと作者の補正が消える。**
+        //
+        // 2026-08-28: 06_DieselLocomotive が縦に立っていたのがこれ。prefab root の
+        // X 軸 -90 度（長軸のローカル Y を -Z へ倒す）が SetPositionAndRotation で
+        // 消え、長軸が world 上向きのままになっていた。
+        // root に回転を持つ prefab は 75 個中 2 つだけ（06_DieselLocomotive と
+        // 21_Donkey1.0）。残りは恒等なので合成しても何も変わらない。
+        //
+        // **21_Donkey1.0 は実機で見て確認すること。** 補正が復活するぶん向きが変わる。
+        rotationPinhole = ApplyModelBaseRotation(instance, rotationPinhole);
+
         ObserveInteractiveMotionLiveTrackedSample(target.trackId, target, screen);
         UpdateInteractiveMotionSchedule(target.trackId, target, frame);
         TryStopSystemTriggerOnVisibleFrame(target.trackId);
@@ -208,7 +220,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         float targetHeight = ComputeTargetHeightMeters(bboxHAdjusted, target.anchorZ);
-        ApplyReplaceableModelTransform(instance, anchorWorld, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxHAdjusted, screen);
+        // 手動倍率は yaw と対で動く値なので、**同じ frame** で評価する。
+        float manualScale = EvaluateManualScaleForFrame(target.trackId, frame);
+        ApplyReplaceableModelTransform(instance, anchorWorld, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxHAdjusted, screen, manualScale);
         bool preserveRootScreenHeightAfterSkeleton =
             IsCategoryPerson(target.categoryId) &&
             ShouldPreserveRootScreenHeightAfterHumanSkeletonPlacement();
@@ -447,7 +461,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
     }
 
-    private void ApplyReplaceableModelTransform(GameObject instance, Vector3 world, Quaternion rotation, float targetHeightMeters, MetaObj obj, float uEye, float vEye, float bboxHAdjusted, Transform screen)
+    private static Quaternion ApplyModelBaseRotation(GameObject instance, Quaternion placementRotation)
+    {
+        ReplaceableModel model = instance != null ? instance.GetComponent<ReplaceableModel>() : null;
+        if (model == null)
+        {
+            return placementRotation;
+        }
+
+        return placementRotation * model.baseLocalRotation;
+    }
+
+
+    private void ApplyReplaceableModelTransform(GameObject instance, Vector3 world, Quaternion rotation, float targetHeightMeters, MetaObj obj, float uEye, float vEye, float bboxHAdjusted, Transform screen, float manualScale)
     {
         if (instance == null)
         {
@@ -456,7 +482,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         ReplaceableModel model = instance.GetComponent<ReplaceableModel>();
         float modelHeight = model != null ? model.GetModelHeightMeters() : 0f;
-        float userScale = model != null ? model.userScale : 1f;
+        // **真値は player 側の manualScaleKeyframesByTrack。** ReplaceableModel.userScale は
+        // モデルを変えるとインスタンスごと作り直されて既定へ戻るので、そこに貯めてはいけない。
+        // コンポーネント側へは毎フレーム書き戻すだけ（[PLACE] ログが読むため）。
+        float userScale = manualScale;
+        if (model != null)
+        {
+            model.userScale = userScale;
+        }
         Vector3 baseScale = model != null ? model.baseLocalScale : Vector3.one;
         float baseHeight = model != null ? model.baseBoundsSize.y : 0f;
         bool lockScale = IsCategoryPerson(obj.categoryId) || IsCategoryAnimal(obj.categoryId);
@@ -503,9 +536,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (hasFocalLengths)
         {
+            // 手動倍率は **ロックの外側**で掛ける。GetOrLockModelLocalScale は Human / Animal の
+            // スケールを shot 先頭で凍らせるので、内側で掛けるとロックした時点の倍率が焼き付き、
+            // 以後スライダーを動かしても shot 境界まで反映されない。
+            //
+            // ResolveDesiredLocalScale はこの分岐では userScale を掛けていない
+            // （掛けているのは焦点距離が取れないフォールバック分岐だけ）ので、二重にならない。
             TrackPlacementWriter.ApplyLocalScaleWithGroundAlignment(
                 instance.transform,
-                lockScale ? GetOrLockModelLocalScale(obj.trackId, desiredScale) : desiredScale,
+                (lockScale ? GetOrLockModelLocalScale(obj.trackId, desiredScale) : desiredScale) * userScale,
                 model != null && model.anchor == null && model.alignToGround,
                 model != null ? model.baseBottomOffsetLocal : 0f);
             Vector3 lossy = instance.transform.lossyScale;
@@ -1557,7 +1596,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 変わらない。推定できないフレーム（左右も切れている等）は bbox 高のまま。
         float targetH = ResolveUnclippedTargetHeight(obj, bboxH);
 
-        float ratio = projectedH / targetH;
+        // 手動倍率は「自動フィットからわざとずらした量」なので、補正の対象から外す。
+        // 割り戻さないと、ユーザーが 2 倍にしたぶんだけモデルを奥へ押しやって打ち消す
+        // （投影高は距離に反比例するため、見かけは戻るが深度が壊れる）。
+        float manualScale = Mathf.Max(0.01f, EvaluateManualScaleForFrame(obj.trackId, GetCurrentPlaybackFrame()));
+        float ratio = projectedH / (targetH * manualScale);
 
         // 検出が破綻しているフレームでは動かさないためのガード。
         //
@@ -1647,6 +1690,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (!TryProjectBonesToEyeHeight(instance, screen, out _, out _, out float projectedH, out _, out _) ||
             projectedH <= 0.0001f)
+        {
+            return;
+        }
+
+        // 手動倍率が掛かっている track ではこの 1 回きりの測り直しをしない。
+        //
+        // 割り戻して measure すれば理屈は合うが、**投影高はスケールに厳密には比例しない**
+        // （モデルは眼から 0.44〜0.77m と近く、2 倍にすると各ボーンの深度も動く）。
+        // 実測では ×2 のとき boneRatio が 0.977 ではなく 1.071 に出て、補正が ×0.934 と
+        // 逆向きに効き、スライダーの 2.00 が実際には 1.55 倍にしかならなかった（2026-08-28）。
+        //
+        // そもそもこの補正の目的は「自動フィットを bbox にぴったり合わせる」ことで、
+        // 手動倍率はユーザーが**わざとそこからずらす**指定なので、両立させる意味がない。
+        // 倍率 1.0 の track は従来どおり補正する。
+        float manualScale = Mathf.Max(0.01f, EvaluateManualScaleForFrame(obj.trackId, GetCurrentPlaybackFrame()));
+        if (Mathf.Abs(manualScale - ManualScaleDefault) > 0.001f)
         {
             return;
         }

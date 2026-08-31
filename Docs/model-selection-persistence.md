@@ -251,7 +251,7 @@ animal の犬をいじっても train の貨車には影響しない。
 | `Bundle.cs` | `LoadHumanSmplSidecar` の直後に `RestoreTrackCustomization()` |
 | `Playback.partial.cs` | `ResolvePrefabsForCategory` を追加。`ResolveTrackPrefab` の冒頭で `ResolvePendingModelSelection` |
 | `UI.ModelPicker.partial.cs` | Else 対応（3 カテゴリ）+ 選択時に `PersistModelSelection` |
-| `UI.Runtime.partial.cs` | 回転操作で `PersistManualYaw` + **`change_rotation` を `operations.csv` に記録** |
+| `UI.Runtime.partial.cs` | 回転操作で `PersistManualYaw` + **`change_rotation` を `operations.csv` に記録**。スケール操作で `PersistManualScale` + `change_scale` |
 | `ExperimentController.cs` | `StartSession()` で `BeginSession()`、セッション終了で `EndSession()` |
 
 ### prefab 名 → index は遅延解決
@@ -727,3 +727,38 @@ bundle ピッカーにも `Home` を足した（選ぶ前に戻れるように�
 `LoadScene` する。
 
 戻る前に `FlushTrackCustomizationSaveNow()` を呼び、保存待ちのモデル・向きを取りこぼさない。
+
+
+## 手動スケール（`"scale"`）を足したときの注意（2026-08-28）
+
+`model_selection.json` の track に `"scale"` を足した。書式は `"yaw"` と同じ
+`{"フレーム番号": 値}` で、値は**自動フィットに対する倍率**（既定 1.0）。
+
+```json
+{
+  "demo_video.mp4": {
+    "numFrames": 1830,
+    "tracks": {
+      "1": {"model": "06_DieselLocomotive", "yaw": {"0": 15.5}, "scale": {"0": 1, "900": 2.75}}
+    }
+  }
+}
+```
+
+**MiniJson に writer が無く書き出しは手書き**なので、フィールドを 1 つ足すのに触る場所が 5 か所ある。
+どれか 1 つ落とすと「保存したのに読めない」「読めるのに保存されない」が静かに起きる。
+
+1. `TrackCustomization` のフィールド
+2. `IsEmpty` — ここを落とすと、**scale だけの track が「空」と判定されて丸ごと書き出されない**
+3. `Clone`
+4. `VideoCustomization.OverlayWith` — ここを落とすと、**実験中のセッション上書きだけが消える**
+5. `ToJson` / `ParseKeyframes`
+
+`TrackCustomizationJsonTests` が 1〜5 をすべて踏む往復テストになっている。次にフィールドを
+足すときも、まずこのテストを増やしてから実装する。
+
+シリアライズはファイル IO から切り離して `ToJson` / `FromJson` を公開してある
+（テストが `persistentDataPath` を汚さないため）。
+
+`numFrames` 不一致のときは yaw と scale を**まとめて**破棄する。片方だけ残すと、
+向きだけ合っていて大きさが合わない、という分かりにくい状態になる。

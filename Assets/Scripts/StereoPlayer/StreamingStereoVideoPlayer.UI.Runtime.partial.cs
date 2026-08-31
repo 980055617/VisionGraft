@@ -268,6 +268,48 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
 
 
+    private void OnRuntimeTrackScaleResetClicked()
+    {
+        if (isNormalMode || !TryGetSelectedManualRotationTrack(out uint trackId))
+        {
+            return;
+        }
+
+        PauseForManualRotationEdit();
+        ResetManualScaleForTrack(trackId);
+        UpdateRuntimeTrackRotationUiState();
+        PersistManualScale(trackId);
+        ExperimentLog.Operation("change_scale", $"track={trackId} scale=1 op=reset");
+    }
+
+
+
+    private void OnRuntimeTrackScaleSliderChanged(float value)
+    {
+        if (suppressRuntimeTrackScaleCallback || isNormalMode)
+        {
+            return;
+        }
+
+        if (!TryGetSelectedManualRotationTrack(out uint trackId))
+        {
+            return;
+        }
+
+        PauseForManualRotationEdit();
+        SetManualScaleForTrack(trackId, value);
+        UpdateRuntimeTrackRotationUiState();
+        PersistManualScale(trackId);
+        // 向きと同じく、Else の大きさはユーザーの調整が唯一の決め手になる。
+        // 交絡になり得るのでモデル変更・回転と同じ粒度で記録する
+        // （Docs/experiment-flow.md「操作の統制」）。
+        ExperimentLog.Operation(
+            "change_scale",
+            $"track={trackId} scale={ExperimentCsv.Format(value)} frame={GetCurrentPlaybackFrame()}");
+    }
+
+
+
     private void OnRuntimeInteractiveMotionToggleClicked()
     {
         if (isNormalMode)
@@ -342,7 +384,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             UiComponentWriter.ApplyInteractable(trackYawResetButton, !isNormalMode);
         }
 
+        Button trackScaleResetButton = FindButton(runtimeSettingsRoot, "trackscalereset");
+        if (trackScaleResetButton != null)
+        {
+            UiComponentWriter.ApplyInteractable(trackScaleResetButton, !isNormalMode);
+        }
+
         if (runtimeTrackSelectionText == null && runtimeTrackYawSlider == null && runtimeTrackYawValueText == null &&
+            runtimeTrackScaleSlider == null && runtimeTrackScaleValueText == null &&
             runtimeTrackFrontGuideText == null && runtimeTrackKeyInfoText == null)
         {
             return;
@@ -353,6 +402,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (runtimeTrackYawSlider != null)
             {
                 UiComponentWriter.ApplyInteractable(runtimeTrackYawSlider, false);
+            }
+            if (runtimeTrackScaleSlider != null)
+            {
+                UiComponentWriter.ApplyInteractable(runtimeTrackScaleSlider, false);
             }
             return;
         }
@@ -376,21 +429,34 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 suppressRuntimeTrackYawCallback = false;
                 UiComponentWriter.ApplyInteractable(runtimeTrackYawSlider, false);
             }
+            if (runtimeTrackScaleValueText != null)
+            {
+                UiComponentWriter.ApplyTextContent(runtimeTrackScaleValueText, "x1.00");
+            }
+            if (runtimeTrackScaleSlider != null)
+            {
+                suppressRuntimeTrackScaleCallback = true;
+                UiComponentWriter.ApplySliderValueWithoutNotify(runtimeTrackScaleSlider, ManualScaleDefault);
+                suppressRuntimeTrackScaleCallback = false;
+                UiComponentWriter.ApplyInteractable(runtimeTrackScaleSlider, false);
+            }
             if (runtimeTrackFrontGuideText != null)
             {
                 UiComponentWriter.ApplyTextContent(runtimeTrackFrontGuideText, "Arrow above head = FRONT  |  +:left  -:right");
             }
             if (runtimeTrackKeyInfoText != null)
             {
-                UiComponentWriter.ApplyTextContent(runtimeTrackKeyInfoText, "Keys:0  Frame:0");
+                UiComponentWriter.ApplyTextContent(runtimeTrackKeyInfoText, "Keys Y:0 S:0  Frame:0");
             }
             return;
         }
 
         int keyCount = GetManualYawKeyCountForTrack(trackId);
-        bool hasKeyAtCurrent = HasManualYawKeyAtCurrentFrame(trackId);
+        int scaleKeyCount = GetManualScaleKeyCountForTrack(trackId);
+        bool hasKeyAtCurrent = HasManualYawKeyAtCurrentFrame(trackId) || HasManualScaleKeyAtCurrentFrame(trackId);
         int frame = GetCurrentPlaybackFrame();
         float yaw = GetManualYawOffsetDegForTrack(trackId);
+        float manualScale = GetManualScaleForTrack(trackId);
         if (runtimeTrackSelectionText != null)
         {
             UiComponentWriter.ApplyTextContent(runtimeTrackSelectionText, trackId.ToString());
@@ -406,13 +472,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             UiComponentWriter.ApplySliderValueWithoutNotify(runtimeTrackYawSlider, yaw);
             suppressRuntimeTrackYawCallback = false;
         }
+        if (runtimeTrackScaleValueText != null)
+        {
+            UiComponentWriter.ApplyTextContent(runtimeTrackScaleValueText, "x" + manualScale.ToString("F2"));
+        }
+        if (runtimeTrackScaleSlider != null)
+        {
+            UiComponentWriter.ApplyInteractable(runtimeTrackScaleSlider, true);
+            suppressRuntimeTrackScaleCallback = true;
+            UiComponentWriter.ApplySliderValueWithoutNotify(runtimeTrackScaleSlider, manualScale);
+            suppressRuntimeTrackScaleCallback = false;
+        }
         if (runtimeTrackFrontGuideText != null)
         {
             UiComponentWriter.ApplyTextContent(runtimeTrackFrontGuideText, "Arrow above head = FRONT  |  +:left  -:right");
         }
         if (runtimeTrackKeyInfoText != null)
         {
-            UiComponentWriter.ApplyTextContent(runtimeTrackKeyInfoText, "Keys:" + keyCount + "  Frame:" + frame + (hasKeyAtCurrent ? " [key]" : " [interp]"));
+            UiComponentWriter.ApplyTextContent(
+                runtimeTrackKeyInfoText,
+                "Keys Y:" + keyCount + " S:" + scaleKeyCount + "  Frame:" + frame +
+                (hasKeyAtCurrent ? " [key]" : " [interp]"));
         }
     }
 

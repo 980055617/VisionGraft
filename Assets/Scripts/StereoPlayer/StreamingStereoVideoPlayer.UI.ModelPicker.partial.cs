@@ -702,7 +702,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         GameObject preview = Object.Instantiate(prefab, holder.transform);
         preview.name = $"Preview_{prefab.name}";
         preview.transform.localPosition = Vector3.zero;
-        preview.transform.localRotation = Quaternion.identity;
+        // 配置側（TrackInstanceFactory / ApplyModelBaseRotation）が prefab の root 補正を
+        // 尊重するので、プレビューも同じ向きで見せる。identity に潰すと
+        // 06_DieselLocomotive のように「プレビューは縦、配置は横」で食い違う。
+        preview.transform.localRotation = prefab.transform.localRotation;
         preview.transform.localScale = Vector3.one;
         DisableRuntimeModelPickerPreviewComponents(preview);
 

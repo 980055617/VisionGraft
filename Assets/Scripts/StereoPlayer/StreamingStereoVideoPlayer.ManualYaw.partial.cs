@@ -26,78 +26,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private float EvaluateManualYawOffsetDegForFrame(uint trackId, int frame)
     {
-        if (!manualYawKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> keys) || keys == null || keys.Count == 0)
-        {
-            return 0f;
-        }
-
-        if (keys.Count == 1)
-        {
-            foreach (KeyValuePair<int, float> kv in keys)
-            {
-                return kv.Value;
-            }
-        }
-
-        int firstFrame = int.MaxValue;
-        int lastFrame = int.MinValue;
-        float firstYaw = 0f;
-        float lastYaw = 0f;
-        int prevFrame = int.MinValue;
-        int nextFrame = int.MaxValue;
-        float prevYaw = 0f;
-        float nextYaw = 0f;
-
-        foreach (KeyValuePair<int, float> kv in keys)
-        {
-            int keyFrame = kv.Key;
-            float keyYaw = kv.Value;
-            if (keyFrame < firstFrame)
-            {
-                firstFrame = keyFrame;
-                firstYaw = keyYaw;
-            }
-            if (keyFrame > lastFrame)
-            {
-                lastFrame = keyFrame;
-                lastYaw = keyYaw;
-            }
-
-            if (keyFrame <= frame && keyFrame > prevFrame)
-            {
-                prevFrame = keyFrame;
-                prevYaw = keyYaw;
-            }
-            if (keyFrame >= frame && keyFrame < nextFrame)
-            {
-                nextFrame = keyFrame;
-                nextYaw = keyYaw;
-            }
-        }
-
-        if (frame <= firstFrame)
-        {
-            return firstYaw;
-        }
-        if (frame >= lastFrame)
-        {
-            return lastYaw;
-        }
-        if (prevFrame == int.MinValue)
-        {
-            return nextYaw;
-        }
-        if (nextFrame == int.MaxValue)
-        {
-            return prevYaw;
-        }
-        if (prevFrame == nextFrame)
-        {
-            return prevYaw;
-        }
-
-        float t = Mathf.InverseLerp(prevFrame, nextFrame, frame);
-        return Mathf.Lerp(prevYaw, nextYaw, t);
+        manualYawKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> keys);
+        return TrackKeyframeCurve.Evaluate(keys, frame, 0f);
     }
 
 

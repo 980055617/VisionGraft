@@ -202,6 +202,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // バッチは -remember true を明示しない限りこれを OFF にする（測定の再現性のため）。
     public bool rememberTrackCustomization = true;
 
+    // バッチ検証専用の手動 yaw 注入。"track:deg" をカンマ区切りで書く（例: "0:90,1:-45"）。
+    // 実機の手動回転は VR の UI からしか操作できず、Editor では再現できない。
+    // 回転経路（ApplyManualTrackYawOffset → prefab 補正の合成）を batchmode で
+    // 目視確認するための入口。空文字なら何もしないので、通常再生には影響しない。
+    public string batchManualYawSpec = "";
+
+    // 同じくバッチ検証専用の手動スケール注入。"track:倍率" をカンマ区切りで（例: "1:2.0"）。
+    public string batchManualScaleSpec = "";
+
+    // バッチ検証専用。設定パネルを開いた状態で始める。
+    // パネルの配置は目で見るしか確認できず、実機では VR に入らないと開けない。
+    // 過去に Home / Bundle ボタンを枠外に置いた事故があるので、撮って確かめる口を用意する。
+    public bool batchOpenSettingsOnStart;
+
     // SMAL FK のあとに四肢を keypoint の位置へ向ける（Human の AimAt に相当）。
     // 既定 false。A/B で確認してから既定を決める。docs/smpl-retargeting.md 参照。
     public bool enableAnimalKeypointAimAt;
@@ -595,7 +609,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const float RuntimeFovxDefaultDeg = 90f;
     private const float RuntimeScreenDistanceMinMeters = 0.5f;
     private const float RuntimeScreenDistanceMaxMeters = 3.0f;
-    private static readonly Vector2 SettingsPanelSizeMeters = new Vector2(0.78f, 0.5f);
+    private static readonly Vector2 SettingsPanelSizeMeters = new Vector2(0.78f, 0.615f);
     private static readonly Vector2 SettingsPanelOffsetMeters = Vector2.zero;
     private const float SettingsPanelGapMeters = 0.08f;
     private const float SettingsPanelForwardOffsetMeters = 0.01f;

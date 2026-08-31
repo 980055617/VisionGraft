@@ -4849,3 +4849,466 @@ remap 直後、プレハブのマテリアルスロットが **null** になり�
 
 **マテリアルの設定だけを見て「問題がある」と判断したのが早計だった。**
 見た目を確認してから判断すること。
+
+## DieselLocomotive が縦向きに配置される（2026-08-28 実測）
+
+### 症状
+
+`bundle_train.svb` で Else に `06_DieselLocomotive` を割り当てると、機関車が**縦に立つ**。
+
+### 原因: prefab の root 回転が配置で上書きされる
+
+`ElseOrientationDiagnostics.Dump` の実測:
+
+```
+[ElseDiag] 06_DieselLocomotive root localRotation=(270.0, 0.0, 0.0) localScale=(1.000, 1.000, 1.000)
+[ElseDiag]   **rootBoundsSize=(3.593, 18.507, 5.259) longestAxis=Y**
+```
+
+prefab の root には X 軸 -90 度が入っている。メッシュはローカル Y が車体長（18.507m）で、
+この補正がローカル Y を world -Z へ倒して初めて横向きになる。**prefab の補正は正しい。**
+
+消しているのは配置側。`TrackPlacementWriter` は
+`root.SetPositionAndRotation(command.position, command.rotation)` で root の world 回転を
+まるごと書くので、prefab が持っていた補正が毎フレーム消える。長軸がローカル Y のまま
+world 上向きに残る＝縦。
+
+### 影響範囲: 75 個中 2 個だけ
+
+`ElseOrientationDiagnostics.DumpAllRootRotations` の実測:
+
+```
+[RootRot] Animal 21_Donkey1.0             euler=(270.0, 90.0, 0.0) angle=120.0
+[RootRot] Else   06_DieselLocomotive      euler=(270.0, 0.0, 0.0) angle=90.0
+[RootRot] **root に回転を持つ prefab: 2 / 75**
+```
+
+残り 73 個は恒等なので、合成しても何も変わらない。
+
+### 縦向きだけでなく**大きさも狂っている**
+
+`TrackInstanceFactory.Create` が `Object.Instantiate(prefab, Vector3.zero, Quaternion.identity)`
+で生成しているため、直後に走る `ReplaceableModel.Awake` が**補正前の姿勢**で world AABB を測る。
+
+| | Awake が測る「高さ」 | 実車 |
+|---|---|---|
+| 回転を潰す（現状） | 18.507m ＝ **車体長** | — |
+| 回転を保つ | 5.259m ＝ **屋根高** | 全高 4.2〜4.7m |
+
+`baseHeightMeters` は配置スケールの分母なので、現状は**車体長**を bbox 高さに合わせている。
+つまり縦向きと寸法の狂いは**同じ 1 つの原因**から出ている。
+
+直した後も bbox 高さに合う量は変わらない（合わせる相手が車体長から屋根高に変わるだけ）が、
+機関車そのものの寸法は 18.507 / 5.259 ＝ **約 3.5 倍**になる。全長が bbox 高さの 3.5 倍まで
+横に伸びるので、はみ出し方が大きく変わって見える。これは正しい帰結。
+
+### ピッカーのプレビューも縦だった
+
+`StreamingStereoVideoPlayer.UI.ModelPicker.partial.cs:704` は生成直後に
+`preview.transform.localRotation = Quaternion.identity;` と明示している。
+つまりプレビューも配置と同じく補正を潰しており、**両方とも縦**だった。
+配置側だけ直すと今度はプレビューと食い違うので、プレビューも prefab の回転を使うようにする。
+
+### 直し方（案 B: コードで合成）
+
+prefab を触らず、配置回転に prefab の補正を右から掛ける。
+
+1. `TrackInstanceFactory.Create` … `Quaternion.identity` ではなく `prefab.transform.localRotation`
+   で生成する。これをしないと Awake が補正前の AABB を測るので、`baseLocalRotation` を
+   記録しても意味がない
+2. `ReplaceableModel.Awake` … `baseLocalRotation = transform.localRotation` を控える
+3. 配置直前に `rotationPinhole = rotationPinhole * model.baseLocalRotation`
+
+R_prefab はモデル空間の補正なので**右から**掛ける。
+
+### 21_Donkey1.0 の root 回転は**ゴミ**（2026-08-28 判定）
+
+donkey は Animal なので `animator.isHuman == false` → `baseSkeletonHeightMeters = 0` →
+配置スケールは `baseHeightMeters`（world AABB の高さ）で全部決まる。
+root 回転 (270,90,0) は軸を混ぜるので、この値は大きく動く。
+
+一方、姿勢は SMAL FK が `ApplyWorldRotation` で骨の world 回転を直接書くため、
+root 回転を戻しても**骨の向きは変わらない**。変わるのはスケールと root からの位置オフセットだけ。
+つまり donkey にとってこの変更は「向きの修正」ではなく「スケールの変更」になる。
+
+判定は骨の位置で付いた（`ElseOrientationDiagnostics.DumpAnimalUpAxis`）。
+AABB の縦横比は決め手にならなかったので（下表）、四足なら確実な「頭が足より上」で見る。
+
+```
+[RotBounds] 21_Donkey1.0 rootRot=(270.0, 90.0, 0.0)
+[RotBounds]   回転なし size=(1.003, 2.204, 2.485) **height=2.204**
+[RotBounds]   回転あり size=(2.204, 2.485, 1.003) **height=2.485**
+```
+
+```
+[UpAxis]   head       local=(0.000, 1.638, 1.609) rotated=(-1.638, 1.609, 0.000)
+[UpAxis]   L_Toe0     local=(-0.115, 0.099, -0.236) rotated=(-0.099, -0.236, 0.115)
+[UpAxis]   tail_tip   local=(0.047, 0.747, -0.786) rotated=(-0.747, -0.786, -0.047)
+```
+
+root 回転の写像は `local (x, y, z) → (-y, z, x)`。つまりこの回転はローカル Z
+（鼻先 +1.609 〜 尾 -1.006 の**体軸**）を world の上へ持ち上げる。
+**ロバが尾で立って鼻を上に向ける**姿勢であり、機関車とまったく同じ壊れ方をしている。
+
+回転なし（＝現状の実行時の姿）では head y=1.638 > toe y=0.099 で正しく立っている。
+高さ 2.204m・体長 2.485m の比も四足として妥当。
+
+したがって **21_Donkey1.0 の root 回転は import 由来のゴミ**。コードに例外を入れず、
+prefab 側の root 回転を恒等へ正規化する。子の補償は不要 — 現状も実行時には
+配置がこの回転を潰しているので、正規化しても実行時の見た目は変わらない。
+むしろ潰され方に依存しなくなるぶん健全になる。
+
+### 直したら確認すること
+
+- `model_selection.json` の train track に `yawKeyframes` が残っていると、縦向きを回して
+  誤魔化した値のぶん逆にずれる。**確認済み（2026-08-28）: 実機の
+  `/sdcard/Android/data/<pkg>/files/model_selection.json` には Human bundle の 1 エントリしか
+  無く、train の保存値は存在しない。掃除は不要**
+- `TryApplyOwnedInteractiveMotion` は `ApplyReplaceableModelTransform` より前に early-return し、
+  独自に `TrackPlacementWriter.Apply` で回転を書く。**こちらには合成を入れていない。**
+  理由は 2 つ: (1) 対象は Human / Animal だけで、正規化後に root 回転を持つのは Else の
+  機関車 1 個だけになる (2) `ApplyFrozenPoseAndGesture` が使う `state.gestureRotation` は
+  実行中インスタンスの回転を控えた値なので、合成済みのものにもう一度掛けると二重適用になる。
+  将来 Human / Animal の prefab に root 補正が付いたら、そのときに合わせて見直すこと
+
+## bundle_train の Else 2 track と、回転後の bbox 合わせ（2026-08-28 実測）
+
+### 何が写っているか
+
+`source/pre_removal_stereo_video.mp4` の左目を抜いて確認した（配置には使わない。debug 用途）。
+
+| track | 実体 | bbox の傾向 |
+|---|---|---|
+| 0 | 線路脇の**信号柱**（画面左、x≈331） | 22 × 132 px で 61 秒間ほぼ不変。W/H = 0.17 の細長い縦箱 |
+| 1 | **列車**（遠景から接近して画面を埋め、また去る） | 54 × 34 → 811 × 272 → 114 × 253。W/H が 0.45〜2.98 まで動く |
+
+**track 0 は列車ではない。** 現状は Else の既定モデル（`06_DieselLocomotive`）が両方の track に
+入るので、信号柱の位置に機関車が置かれている。
+
+### 縦は合っている。横が合っていない
+
+`BatchPlaybackLogger` に `-bundle bundle_train.svb -diagLogs true -diagEveryN 30` を掛けて
+`[PLACE]`（縦）と `[HPOS]`（横）を突き合わせた（`scratchpad/run_train.ps1`）。
+
+縦は機関車の向き修正後に `sizeRatio` median 0.988 / 0.996 とほぼ完全に合う。
+横は合わせていないので、以下のようにずれる。
+
+| | bbox W/H | 投影幅 / bbox 幅 |
+|---|---|---|
+| track 0（信号柱） | 0.17 で一定 | **10.0〜13.1（median 11.4）** |
+| track 1（列車） | 0.45〜2.98 | **0.45〜8.07（median 1.36）** |
+
+track 0 は形が違うので原理的に合わない（細長い縦箱に横長の機関車）。
+track 1 は接近中（f=720〜780）に bbox W/H が 2.1〜2.6 まで伸びるのに、モデルの投影 W/H は
+1.0 前後しかない。**モデルの yaw が実際の列車の向きと合っていない**ぶんだけ、
+横方向に 0.45〜0.56 倍（＝半分の長さ）になる。
+
+`rotationPinhole = GetPinholeBasisRotation(screen)` は bundle から向きを取らず、
+カメラ基準の固定向きしか与えない。Else の向きは**ユーザーが手で決める**しかない。
+
+### `userScale` は主経路で捨てられている
+
+`TrackModelPlacement.ResolveDesiredLocalScale` は `hasFocalLengths` が真のとき
+`uniformScale = bboxWorldH / heightBasis` を返しており、`userScale` を掛けていない。
+掛けているのは焦点距離が取れないフォールバック分岐と Human の SMPL24 経路だけ。
+
+つまり**現状 Else には効くスケール調整が無い**。「回転してからサイズを合わせ直す」には、
+自動フィットと手動倍率の両方を作り直す必要がある。
+
+### 自動の「幅フィット」は入れない（2026-08-28 判断）
+
+「回転後に bbox に入る」を素直に実装すると
+`uniformScale = min(bbox幅 / 投影幅, bbox高 / 投影高)`（contain）になるが、これは入れない。
+
+**縦成分はもう満たされている。** yaw は AABB の高さを変えず、機関車の X 軸補正は
+`ReplaceableModel.Awake` の計測より前に入るので、`sizeRatio` は 0.985〜0.997 で合っている。
+開いているのは幅だけ。
+
+そして幅を min で詰めると、[TrackModelPlacement.ResolveDesiredLocalScale](../Assets/Scripts/StereoPlayer/TrackModelPlacement.cs)
+のコメントが 2026-08-07 に Animal で否定したのとまったく同じ壊れ方をする。
+今回の train 実測に当てはめるとこうなる。
+
+| | 現状の投影幅 / bbox 幅 | contain の倍率 | 結果 |
+|---|---|---|---|
+| track 0（信号柱） | median 11.37 | ×0.088 | 投影高 132px → **11.6px** |
+| track 1（列車）f=900 | 1.68 | ×0.60 | |
+| track 1（列車）f=930 | 8.07 | ×0.12 | **1 秒で 5 倍のポップ** |
+
+track 0 は「細長い縦箱に横長の機関車」で形が原理的に合わないので、min は必ず潰す側にしか働かない。
+track 1 は bbox の W/H が 0.45〜2.98 と動くため、min の採用軸が途中で入れ替わって不連続になる。
+
+したがって幅は**手動倍率**で合わせる。自動でやるのは従来どおり高さだけ。
+
+### Editor だけで向きと回転を確認する（2026-08-28）
+
+実機が無くても batchmode で確認できる。`BatchPlaybackLogger` の `-captureFrames` が
+メインカメラをそのままレンダリングして PNG に落とすので、**見た目をそのまま見られる**。
+
+```
+Unity.exe -batchmode -projectPath . -executeMethod BatchPlaybackLogger.Run
+          -logFile out.log -scene Assets/Scenes/TestScene.unity -playSeconds 34
+          -bundle bundle_train.svb
+          -captureFrames 0,300,750,840,900 -captureDir <dir> -captureWidth 1920
+          -manualYaw 0:90,1:90
+```
+
+手動回転は VR の UI からしか操作できないので、Editor で再現するために
+`-manualYaw "track:deg,..."` を足した（`StreamingStereoVideoPlayer.batchManualYawSpec` →
+`ApplyBatchManualYawSpec`）。フレーム 0 にキーを 1 個打つだけなので、
+`EvaluateManualYawOffsetDegForFrame` の「キーが 1 個なら全フレームその値」の分岐に乗る。
+空文字なら何もしないので通常再生には影響しない。
+
+ラッパは `scratchpad/run_train_cap.ps1`。
+
+確認結果（f=840、列車が最接近するあたり）:
+
+- **yaw 0**: 機関車 2 両とも横向きに寝ている。修正前の「縦に立つ」は解消
+- **yaw 90**: 側面が見える向きに回り、全長が出る。回転経路と prefab 補正の合成が両立している
+
+track 0（信号柱）にも機関車が入るので、画面左に小さい機関車がもう 1 両出る。
+これはモデル選択の問題であって配置の問題ではない。
+
+
+## Else の手動スケール（2026-08-28 実装）
+
+「回転したあとに大きさを合わせ直したい」「二つの frame でそれぞれ調整したら間が遷移してほしい」
+への対応。自動で幅を合わせる案は実測で否定したので（前節）、**手動倍率＋キーフレーム**にした。
+
+### 設計
+
+- **倍率**であって絶対値ではない。最終スケール = 自動フィット（bbox 高さ合わせ）× 手動倍率。
+  自動フィットは depth と bbox から毎フレーム動くので、絶対値で持つと遠近の変化に追従しなくなる
+- **真値は player 側の `manualScaleKeyframesByTrack`**。`ReplaceableModel.userScale` に貯めてはいけない
+  — モデルを変えると `TrackInstanceLifecycle` がインスタンスを作り直して既定へ戻る
+  （モデル選択で同じ罠を踏んで `pendingModelNameByTrack` を足したのと同型）。
+  コンポーネント側へは毎フレーム書き戻すだけ（`[PLACE]` ログが読むため）
+- **ロックの外側で掛ける**。`GetOrLockModelLocalScale` は Human / Animal のスケールを shot 先頭で
+  凍らせるので、内側で掛けるとロックした時点の倍率が焼き付き、以後スライダーを動かしても
+  shot 境界まで反映されない
+- 補間は yaw と同じ `TrackKeyframeCurve`。yaw 側の実装をそのまま切り出して共有した
+  （2 本目を書き写すと片方だけ直る事故になる）
+- 永続化は `model_selection.json` の `"scale"`。**MiniJson に writer が無く書き出しは手書き**なので、
+  読み・書き・Clone・IsEmpty・OverlayWith の 5 か所を足す必要がある。
+  往復は `TrackCustomizationJsonTests` で固定した
+
+### 見つけた欠陥 2 件（手動倍率を入れて初めて表面化した）
+
+いずれも Human / Animal 専用の測り直し経路で、Else には効かない。
+
+**⑧ `RefineDepthFromProjectedBones`** は「投影高が bbox に合う深度」へモデルを動かす。
+倍率を割り戻さないと、ユーザーが 2 倍にしたぶんだけモデルを**奥へ押しやって打ち消す**
+（投影高は距離に反比例するので見かけは戻るが、深度が壊れる）。
+`ratio = projectedH / (targetH * 手動倍率)` に直した。
+実測で、倍率 1.0 と 2.0 のどちらでも最終深度が 0.7667 に収束することを確認。
+
+**⑨ `RefineLockedScaleFromProjectedBones`** は 1 回きりロック済みスケールを測り直す。
+割り戻して測っても合わない。**投影高はスケールに厳密には比例しない**（モデルは眼から
+0.44〜0.77m と近く、2 倍にすると各ボーンの深度も動く）。実測では ×2 のとき boneRatio が
+0.977 ではなく 1.071 に出て、補正が ×0.934 と逆向きに効き、スライダーの 2.00 が
+実際には 1.55 倍にしかならなかった。
+
+そもそもこの補正の目的は「自動フィットを bbox にぴったり合わせる」ことで、手動倍率は
+ユーザーが**わざとそこからずらす**指定なので両立させる意味がない。
+**倍率が 1.0 でない track では ⑨ を丸ごと止める**ことにした。倍率 1.0 の track は従来どおり。
+
+### 実測
+
+`-manualScale` で注入して `[PLACE] userScale` と `sizeRatio` を見る（`scratchpad/run_train_scale.ps1`）。
+
+| 条件 | userScale | sizeRatio | 備考 |
+|---|---|---|---|
+| Else 倍率なし | 1.0000 | 0.997 | 自動フィットのまま |
+| Else ×2 | 2.0000 | **1.983** | ほぼ正確に 2 倍。投影幅も 80.7 → 164.0px（2.03 倍） |
+| Person 倍率なし | 1.0000 | 0.970 | |
+| Person ×2 | 2.0000 | 1.582 | モデルのスケールは 1.954 倍。見かけが 1.63 倍に留まるのは遠近 |
+
+**Person で 2.00 が見かけ 1.63 倍になるのは正しい挙動。** 倍率が掛かるのは
+「モデルのスケール」であって「画面に映る大きさ」ではない。人体モデルの AABB 中心は
+ルートより 0.20m 奥にあり、2 倍にするとその奥行きも 2 倍（0.39m）になるので、
+遠近のぶん投影が縮む。Else は前後の広がりが小さいので両者がほぼ一致する。
+
+### キーフレーム間の遷移
+
+`-manualScale "1:0:1.0,1:900:3.0"` で track 1 を f=0 で等倍・f=900 で 3 倍にした実測。
+
+```
+f=0   userScale=1.0000      f=480 userScale=2.0667
+f=60  userScale=1.1333      f=600 userScale=2.3333
+f=180 userScale=1.4000      f=720 userScale=2.6000
+f=300 userScale=1.6667      f=900 userScale=3.0000
+```
+
+完全な線形。同じ実行で track 0 は 1.0000 のまま（track ごとに独立している）。
+端点の外は最初／最後のキーで固定する（外挿しない）。
+
+### UI
+
+Settings パネルに `Scale` 行を足した。倍率の現在値を `x1.00` 形式で表示し、
+Track 行のボタン列は `<` `>` `Yaw 0` `Scl 1` の 4 つ。下端の情報行は
+`Keys Y:2 S:1  Frame:300 [interp]`（現在フレームにキーがあれば `[key]`）。
+
+行が 1 つ増えたので canvas を 900x520 → 900x640、`SettingsPanelSizeMeters` を
+0.78x0.5 → 0.78x0.615 にした。比を揃えてあるので文字の見かけの大きさは変わらない。
+
+`operations.csv` には `change_scale` として記録する（`change_rotation` と同じ粒度）。
+
+### 永続化からの復元も実測した
+
+`-manualScale` の注入と、保存ファイルからの復元は**別経路**なので、注入だけ通っても
+永続化が動く保証にはならない（バッチは `-remember true` を明示しない限り
+`rememberTrackCustomization` を OFF にする）。Editor 側の `persistentDataPath` に
+`{"numFrames": 1830, "tracks": {"1": {"model": ..., "yaw": {...}, "scale": {"0": 1, "900": 3}}}}`
+を仕込み、`-remember true` かつ `-manualScale` **なし**で回して確認した。
+
+```
+[Customization] restored video=train_demo_..._audio.mp4 models=1 yawTracks=1 scaleTracks=1
+[Customization] applied track=1 model=06_DieselLocomotive index=6
+f=0   userScale=1.0000   f=600 userScale=2.3333
+f=300 userScale=1.6667   f=900 userScale=3.0000
+```
+
+仕込む json のキーは `manifest.inputs.video_mp4`（`bundleFileName` ではない）。
+`numFrames` を実際と違う値にすると破棄経路に落ちるので、検証時は一致させること。
+仕込みと後片付けは `scratchpad/seed_model_selection.py` / `cleanup_model_selection.py`。
+**片付けを忘れると、次に Editor で再生したときに勝手に 3 倍で出て混乱する。**
+
+### Editor でパネルを見る
+
+パネルの配置は目で見るしか確認できず、実機では VR に入らないと開けない。
+過去に Home / Bundle ボタンを枠外に置いた事故があるので、
+`-openSettings true` で開いた状態から始められるようにした（`scratchpad/run_settings_cap.ps1`）。
+
+パネルは `RuntimeControlsPlacement.ResolveSettingsPose` が**中心**を screen の中心高さに置く
+（`settingsPanelSizeMeters.y` は位置計算に入らない）。したがって 0.5 → 0.615m にしても
+中心は動かず、上下へ約 5.8cm ずつ伸びるだけ。「パネルが高い」の原因にはならない。
+
+
+### Human への影響を A/B で実測した（2026-08-28）
+
+機関車の向き修正と手動スケールが Human を壊していないかを、推論ではなく数値で確認した。
+`bundle_human.svb` を `-diagEveryN 10` で 40 秒回し、変更を `git stash` した版と突き合わせる
+（`scratchpad/diff_human_ab.py`）。
+
+**同一コードの 2 run 間にもばらつきがある**ので、それも測って基準にした。バッチ再生は
+デコードされるフレームの巡り合わせが run ごとに変わり、FK 後の骨投影に効く。
+
+| | Person: 変更前 vs 変更後 | Person: 同一コード 2 run |
+|---|---|---|
+| `scale` | **完全一致** | 完全一致 |
+| `modelH` | **完全一致** | 完全一致 |
+| `userScale` | **完全一致** | 完全一致 |
+| `sizeRatio` | 最大 0.412% | 最大 **1.522%** |
+| `depth` | 最大 0.414% | 最大 **1.667%** |
+
+**Person はスケール・モデル高・倍率がビット一致。** 見かけ（`sizeRatio`）と深度の差は
+0.41% で、同一コードの run 間ばらつき 1.5% より小さい＝変更由来ではない。
+
+Other（`bundle_human` の track 1）は `modelH` が 18.5069 → 5.2589、`scale` が 3.6 倍に動くが、
+これは機関車の向き修正そのもの。`sizeRatio` は 0.71% しか動かない（bbox に合う見かけの大きさは
+変わらず、モデルの寸法だけが正しくなった）。
+
+なお `TestScene.unity` は Else の既定モデル index が 6（`06_DieselLocomotive`）になっているので、
+`bundle_human` のボールの位置にも機関車が出る。シーンの設定であって製品の既定ではない。
+
+**A/B のやり方の注意**: `git stash push -u` は未追跡の新規ファイルを別コミット
+（`stash@{0}^3`）に入れる。`git checkout stash@{0} -- .` だけでは追跡ファイルしか戻らず、
+新規に足したスクリプトが消えたままになる。`git checkout "stash@{0}^3" -- .` も併せて実行すること。
+
+
+## train で「モデルが追従しない・サイズが合わない」（2026-08-31 実機）
+
+### 症状
+
+実機で `bundle_train.svb` を見ると、列車が進んでもモデルが付いてこない。大きさも合っていない。
+
+### 原因: シーンの `displayTrackIds` が [0, 1] に固定されている
+
+実機ログの決定的な行:
+
+```
+[CONTACT-ENTRY] f=90 enable=False metaObjs=4 instances=2
+```
+
+**meta には 4 個いるのに、インスタンスは 2 個しかない。**
+`TestScene.unity` / `TrialScene.unity` の両方に
+
+```
+displayTrackIds: 0000000001000000
+```
+
+が焼かれている（uint[2] のリトルエンディアン = `[0, 1]`）。
+`TryApplyDisplayedTracks` は「空なら全 track、指定ありならその ID だけ」なので、
+**track 0 と 1 以外は一度も表示されない**。
+
+`bundle_human` は person + ball の 2 track なのでこの指定でちょうど足りていた。
+train はそうではない。
+
+### bundle_train の track 構成（実測）
+
+`source/placement_observations.json` から列挙（debug 用途。配置には使わない）。
+
+| track | 出現 | フレーム範囲 | bboxW 中央 | bboxH 中央 | 実体 |
+|---|---|---|---|---|---|
+| 0 | 1830 | 0〜1829 | 22 | 132 | 線路脇の信号柱（動かない） |
+| 1 | 936 | 0〜935 | 54 | 48 | 接近してくる列車 |
+| 2 | 923 | 0〜1113 | 43 | 38 | |
+| 3 | 796 | 87〜1282 | 38 | 21 | |
+| 4 | 675 | 230〜1436 | 45 | 49 | |
+| 5 | 318 | 1261〜1578 | 415 | 204 | 通過中の車両 |
+| 6 | 299 | 1415〜1713 | 445 | 203 | 通過中の車両 |
+| 7 | 218 | 1560〜1777 | 222 | 132 | |
+
+同時に出る track 数は最大 5（1 個: 52 フレーム / 2 個: 163 / 3 個: 1072 / 4 個: 314 / 5 個: 229）。
+
+**列車は 1 本の track ではない。** 接近中は track 1、通過中は track 5 → 6 → 7 と別 ID に
+振り直される。`displayTrackIds = [0, 1]` だと、f=935 以降に見えているのは
+**動かない信号柱に置いた機関車だけ**になる。これが「追従しない」の正体。
+
+「サイズが合わない」も同じ原因。track 0 の bbox は 22 × 132 の細長い縦箱なので、
+そこに高さを合わせた機関車は横に 11 倍はみ出す（前節の実測どおり）。
+
+### これはシーンの設定であってコードの不具合ではない
+
+`displayTrackIds` は Inspector の絞り込み用。ピッカーから任意の bundle を開く
+ビューア用途では**空**（全 track 表示）が正しい。
+
+
+### 対処: `displayTrackIds` を空にした（2026-08-31）
+
+**全 track 表示が既定**（ユーザー確認済み。同時に複数出てよい）。
+`TestScene.unity` / `TrialScene.unity` の両方で空にした（`Assets/Editor/DisplayTrackIdsReset.cs`）。
+実測で `instances` が `metaObjs` に追従するようになり、列車にモデルが付いていくことを確認。
+
+```
+（前）f=90  metaObjs=4 instances=2      ← 2 個で頭打ち
+（後）f=90  metaObjs=4 instances=4
+      f=240 metaObjs=5 instances=5
+```
+
+### 併発していた 2 つめ: `trackModelIndices` が全 track 表示だと害になる
+
+`displayTrackIds` を空にしただけだと、通過中の車両（track 5〜7）が**野球ボール**になり、
+動かない信号柱（track 0）にだけ機関車が乗る、という逆の状態になった（撮影で確認）。
+
+`trackModelIndices` は「この track にはこの index のモデル」という Inspector の固定指定で、
+`TestScene` には `[0→36, 1→39]` が焼かれていた。これは **Animal の番号**
+（36=LabradorDog / 39=Lynx）で、カテゴリが違う track では `Mathf.Clamp` で別物になる。
+
+| bundle | track 0 | track 1 | track 2 以降 |
+|---|---|---|---|
+| human | Human[16] | Else[6] = **機関車**（ボールの位置に機関車） | — |
+| train | Else[6] = 機関車（信号柱） | Else[6] = 機関車 | 指定なし → Else[0] = 野球ボール |
+| animal | Animal[36] = 犬 | Animal[39] = 山猫 | — |
+
+`bundle_animal` は track 0（f0〜1145）と track 1（f1146〜2119）が**同じ動物の ID 振り直し**なので、
+この指定だと途中で犬が山猫に変わる。実機で `model_selection.json` に `04_Soccer` を
+手で入れ直していたのも、この clamp が原因だった。
+
+モデル選択は実行時のピッカーが動画ごと・track ごとに保存するようになったので、
+Inspector 側の固定指定は役目を終えている。両シーンとも空にした。
+
+**ただし `TrialScene` の指定は `[0→16, 1→4]` で、`bundle_human` に対しては clamp されない
+正しい値だった**（Human 17 個中の 16、Else 7 個中の 4 = `04_Soccer`）。
+被験者実験の human 試行はこれを意図して設定されていた可能性が高い。
+実験の既定をどう与えるかは `model_selection.json` に寄せるのが本筋
+（動画ごとに持てるので、animal / train を巻き込まない）。

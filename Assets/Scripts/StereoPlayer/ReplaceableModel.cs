@@ -11,6 +11,16 @@ public class ReplaceableModel : MonoBehaviour
     public float userScale = 1f;
     public bool alignToGround = true;
     public Vector3 baseLocalScale;
+
+    // prefab が持っている向きの補正。**配置は root の world 回転を上書きする**ので、
+    // ここに控えておかないと作者が付けた補正が実行時に消える。
+    //
+    // 2026-08-28: 06_DieselLocomotive が縦に立っていたのがこれ。prefab root に
+    // X 軸 -90 度（長軸のローカル Y を -Z へ倒す）が入っているのに、
+    // TrackPlacementWriter の SetPositionAndRotation で消えていた。
+    // 全 75 モデル中、root に回転を持つのは 06_DieselLocomotive と 21_Donkey1.0 の 2 つだけ
+    // （実測）。残りは恒等なので合成しても影響しない。
+    public Quaternion baseLocalRotation = Quaternion.identity;
     public float baseHeightMeters;
     // Humanoid の骨格から推定した身長。Renderer の AABB には髪・靴・広げた腕が含まれ、
     // 骨格に対して相対的に大きくなる。AABB を bbox に合わせると骨格が bbox の 73% まで
@@ -27,6 +37,11 @@ public class ReplaceableModel : MonoBehaviour
     private void Awake()
     {
         baseLocalScale = transform.localScale;
+        baseLocalRotation = transform.localRotation;
+        if (Quaternion.Angle(Quaternion.identity, baseLocalRotation) > 0.01f)
+        {
+            Debug.Log($"[Model] {name}: prefab の向き補正を保持します euler={baseLocalRotation.eulerAngles:F1}");
+        }
         CaptureSkeletonHeight();
         if (referenceHeightMeters > 0f)
         {

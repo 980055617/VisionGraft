@@ -59,11 +59,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Image panelImage = RuntimeUiElementFactory.AddImage(panelObj);
         UiComponentWriter.ApplyGraphicColor(panelImage, new Color(0f, 0f, 0f, 0.65f));
 
-        CreateLabel(panelObj.transform, "Title", "Settings", 0.5f, 0.88f, 64, TextAnchor.MiddleCenter);
-        CreateLabel(panelObj.transform, "FovLabel", "FOVx", 0.12f, 0.55f, 48, TextAnchor.MiddleLeft);
-        runtimeFovxValueText = CreateLabel(panelObj.transform, "FovValue", string.Empty, 0.88f, 0.55f, 44, TextAnchor.MiddleRight);
+        // 行の配置は canvas 900x640 の割合。Scale 行を足したので全体を組み直してある。
+        //   0.90 Title / 0.80 Motion / 0.68 FOVx / 0.575 ScreenDist / 0.50 FrontGuide
+        //   0.42 Track / 0.28 Yaw / 0.145 Scale / 0.045 KeyInfo
+        // ラベルは 90px、スライダーは 60px の高さを取るので、行間は最低でも 64px 空けている。
+        CreateLabel(panelObj.transform, "Title", "Settings", 0.5f, 0.90f, 64, TextAnchor.MiddleCenter);
+        CreateLabel(panelObj.transform, "FovLabel", "FOVx", 0.12f, 0.68f, 48, TextAnchor.MiddleLeft);
+        runtimeFovxValueText = CreateLabel(panelObj.transform, "FovValue", string.Empty, 0.88f, 0.68f, 44, TextAnchor.MiddleRight);
 
-        runtimeFovxSlider = CreateSlider(panelObj.transform, "FovxSlider", 0.55f);
+        runtimeFovxSlider = CreateSlider(panelObj.transform, "FovxSlider", 0.68f);
         if (runtimeFovxSlider != null)
         {
             UnbindRuntimeSlider(runtimeFovxSlider, OnRuntimeFovxSliderChanged);
@@ -73,9 +77,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         UpdateRuntimeFovxText(runtimeFovxDeg);
 
-        CreateLabel(panelObj.transform, "ScreenDistLabel", "Screen Dist", 0.12f, 0.43f, 42, TextAnchor.MiddleLeft);
-        runtimeScreenDistanceValueText = CreateLabel(panelObj.transform, "ScreenDistValue", string.Empty, 0.88f, 0.43f, 38, TextAnchor.MiddleRight);
-        runtimeScreenDistanceSlider = CreateSlider(panelObj.transform, "ScreenDistanceSlider", 0.43f);
+        CreateLabel(panelObj.transform, "ScreenDistLabel", "Screen Dist", 0.12f, 0.575f, 42, TextAnchor.MiddleLeft);
+        runtimeScreenDistanceValueText = CreateLabel(panelObj.transform, "ScreenDistValue", string.Empty, 0.88f, 0.575f, 38, TextAnchor.MiddleRight);
+        runtimeScreenDistanceSlider = CreateSlider(panelObj.transform, "ScreenDistanceSlider", 0.575f);
         if (runtimeScreenDistanceSlider != null)
         {
             UnbindRuntimeSlider(runtimeScreenDistanceSlider, OnRuntimeScreenDistanceSliderChanged);
@@ -85,33 +89,49 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         UpdateRuntimeScreenDistanceText(screenDistanceMeters);
 
-        CreateLabel(panelObj.transform, "TrackLabel", "Track", 0.12f, 0.28f, 44, TextAnchor.MiddleLeft);
-        runtimeTrackSelectionText = CreateLabel(panelObj.transform, "TrackValue", "none", 0.88f, 0.28f, 40, TextAnchor.MiddleRight);
-        runtimeTrackFrontGuideText = CreateWideLabel(panelObj.transform, "TrackFrontGuide", "Arrow above head = FRONT  |  +:left  -:right", 0.5f, 0.36f, 24, TextAnchor.MiddleCenter);
-        runtimeTrackKeyInfoText = CreateWideLabel(panelObj.transform, "TrackKeyInfo", "Keys:0  Frame:0", 0.5f, 0.05f, 24, TextAnchor.MiddleCenter);
+        CreateLabel(panelObj.transform, "TrackLabel", "Track", 0.12f, 0.42f, 44, TextAnchor.MiddleLeft);
+        runtimeTrackSelectionText = CreateLabel(panelObj.transform, "TrackValue", "none", 0.88f, 0.42f, 40, TextAnchor.MiddleRight);
+        runtimeTrackFrontGuideText = CreateWideLabel(panelObj.transform, "TrackFrontGuide", "Arrow above head = FRONT  |  +:left  -:right", 0.5f, 0.50f, 24, TextAnchor.MiddleCenter);
+        runtimeTrackKeyInfoText = CreateWideLabel(panelObj.transform, "TrackKeyInfo", "Keys Y:0 S:0  Frame:0", 0.5f, 0.045f, 24, TextAnchor.MiddleCenter);
 
-        Button prevTrack = CreateSmallButton(panelObj.transform, "TrackPrevButton", new Vector2(-210f, -115f), "<");
+        // Track 行のボタン列。canvas 幅 900 の中心基準で、110px 幅が重ならないように置く。
+        // 右端は TrackValue（0.88 の右寄せ）に掛からない位置まで。
+        Button prevTrack = CreateSmallButton(panelObj.transform, "TrackPrevButton", new Vector2(-330f, -51f), "<");
         BindRuntimeButton(prevTrack, OnRuntimeTrackPrevClicked);
 
-        Button nextTrack = CreateSmallButton(panelObj.transform, "TrackNextButton", new Vector2(-90f, -115f), ">");
+        Button nextTrack = CreateSmallButton(panelObj.transform, "TrackNextButton", new Vector2(-210f, -51f), ">");
         BindRuntimeButton(nextTrack, OnRuntimeTrackNextClicked);
 
-        Button resetYaw = CreateSmallButton(panelObj.transform, "TrackYawResetButton", new Vector2(210f, -115f), "Reset");
+        Button resetYaw = CreateSmallButton(panelObj.transform, "TrackYawResetButton", new Vector2(-60f, -51f), "Yaw 0");
         BindRuntimeButton(resetYaw, OnRuntimeTrackYawResetClicked);
 
-        CreateLabel(panelObj.transform, "InteractiveMotionLabel", "Motion", 0.12f, 0.70f, 40, TextAnchor.MiddleLeft);
-        runtimeInteractiveMotionValueText = CreateLabel(panelObj.transform, "InteractiveMotionValue", string.Empty, 0.72f, 0.70f, 36, TextAnchor.MiddleRight);
-        Button motionToggle = CreateSmallButton(panelObj.transform, "InteractiveMotionToggleButton", new Vector2(315f, 105f), "Toggle");
+        Button resetScale = CreateSmallButton(panelObj.transform, "TrackScaleResetButton", new Vector2(90f, -51f), "Scl 1");
+        BindRuntimeButton(resetScale, OnRuntimeTrackScaleResetClicked);
+
+        CreateLabel(panelObj.transform, "InteractiveMotionLabel", "Motion", 0.12f, 0.80f, 40, TextAnchor.MiddleLeft);
+        runtimeInteractiveMotionValueText = CreateLabel(panelObj.transform, "InteractiveMotionValue", string.Empty, 0.72f, 0.80f, 36, TextAnchor.MiddleRight);
+        Button motionToggle = CreateSmallButton(panelObj.transform, "InteractiveMotionToggleButton", new Vector2(315f, 192f), "Toggle");
         BindRuntimeButton(motionToggle, OnRuntimeInteractiveMotionToggleClicked);
 
-        CreateLabel(panelObj.transform, "YawLabel", "Yaw", 0.12f, 0.12f, 44, TextAnchor.MiddleLeft);
-        runtimeTrackYawValueText = CreateLabel(panelObj.transform, "YawValue", "0.0 deg", 0.88f, 0.12f, 40, TextAnchor.MiddleRight);
-        runtimeTrackYawSlider = CreateSlider(panelObj.transform, "TrackYawSlider", 0.12f);
+        CreateLabel(panelObj.transform, "YawLabel", "Yaw", 0.12f, 0.28f, 44, TextAnchor.MiddleLeft);
+        runtimeTrackYawValueText = CreateLabel(panelObj.transform, "YawValue", "0.0 deg", 0.88f, 0.28f, 40, TextAnchor.MiddleRight);
+        runtimeTrackYawSlider = CreateSlider(panelObj.transform, "TrackYawSlider", 0.28f);
         if (runtimeTrackYawSlider != null)
         {
             UiComponentWriter.ApplySliderRange(runtimeTrackYawSlider, -180f, 180f);
             UiComponentWriter.ApplySliderValueWithoutNotify(runtimeTrackYawSlider, 0f);
             BindRuntimeSlider(runtimeTrackYawSlider, OnRuntimeTrackYawSliderChanged);
+        }
+
+        // Scale は自動フィット（bbox 高さ合わせ）に対する**倍率**。1.0 が「自動のまま」。
+        CreateLabel(panelObj.transform, "ScaleLabel", "Scale", 0.12f, 0.145f, 44, TextAnchor.MiddleLeft);
+        runtimeTrackScaleValueText = CreateLabel(panelObj.transform, "ScaleValue", "x1.00", 0.88f, 0.145f, 40, TextAnchor.MiddleRight);
+        runtimeTrackScaleSlider = CreateSlider(panelObj.transform, "TrackScaleSlider", 0.145f);
+        if (runtimeTrackScaleSlider != null)
+        {
+            UiComponentWriter.ApplySliderRange(runtimeTrackScaleSlider, ManualScaleMin, ManualScaleMax);
+            UiComponentWriter.ApplySliderValueWithoutNotify(runtimeTrackScaleSlider, ManualScaleDefault);
+            BindRuntimeSlider(runtimeTrackScaleSlider, OnRuntimeTrackScaleSliderChanged);
         }
 
         UpdateRuntimeTrackRotationUiState();

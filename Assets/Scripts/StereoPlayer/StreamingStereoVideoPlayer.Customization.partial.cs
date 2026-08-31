@@ -59,6 +59,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         int restoredModels = 0;
         int restoredYaw = 0;
+        int restoredScale = 0;
         int frames = manifest != null ? manifest.num_frames : 0;
 
         foreach (KeyValuePair<uint, TrackCustomization> kv in merged.tracks)
@@ -77,27 +78,97 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 restoredModels++;
             }
 
-            if (entry.yawKeyframes != null && entry.yawKeyframes.Count > 0)
+            bool hasKeyframes =
+                (entry.yawKeyframes != null && entry.yawKeyframes.Count > 0) ||
+                (entry.scaleKeyframes != null && entry.scaleKeyframes.Count > 0);
+            if (hasKeyframes)
             {
-                // yaw キーフレームはフレーム番号に紐づくので、フレーム数が変わったら別の場面に当たる。
+                // キーフレームはフレーム番号に紐づくので、フレーム数が変わったら別の場面に当たる。
                 int storedFrames = ResolveStoredNumFrames(key);
                 if (storedFrames > 0 && frames > 0 && storedFrames != frames)
                 {
                     Debug.LogWarning(
-                        $"[Customization] numFrames 不一致 ({storedFrames} != {frames}) のため yaw を破棄します: " +
+                        $"[Customization] numFrames 不一致 ({storedFrames} != {frames}) のため yaw/scale を破棄します: " +
                         $"track={kv.Key}");
                 }
                 else
                 {
-                    manualYawKeyframesByTrack[kv.Key] = new SortedDictionary<int, float>(entry.yawKeyframes);
-                    restoredYaw++;
+                    if (entry.yawKeyframes != null && entry.yawKeyframes.Count > 0)
+                    {
+                        manualYawKeyframesByTrack[kv.Key] = new SortedDictionary<int, float>(entry.yawKeyframes);
+                        restoredYaw++;
+                    }
+                    if (entry.scaleKeyframes != null && entry.scaleKeyframes.Count > 0)
+                    {
+                        manualScaleKeyframesByTrack[kv.Key] = new SortedDictionary<int, float>(entry.scaleKeyframes);
+                        restoredScale++;
+                    }
                 }
             }
         }
 
         Debug.Log(
             $"[Customization] restored video={key} models={restoredModels} yawTracks={restoredYaw} " +
+            $"scaleTracks={restoredScale} " +
             $"session={(ExperimentSessionOverrides.Active ? "experiment(読むだけ)" : "normal(書き込み可)")}");
+    }
+
+
+    // batchManualYawSpec / batchManualScaleSpec をキーフレーム辞書に流し込む。
+    //
+    // 書式は 2 通り:
+    //   "track:値"        … フレーム 0 に 1 個だけ打つ。キーが 1 個なので全フレームその値
+    //   "track:frame:値"  … 指定フレームに打つ。複数並べればキーフレーム間の補間を確認できる
+    //
+    // 例: "1:0:1.0,1:900:3.0" は track 1 を f=0 で等倍、f=900 で 3 倍にし、間を補間する。
+    private void ApplyBatchManualOverrideSpecs()
+    {
+        ApplyBatchSpec(batchManualYawSpec, nameof(batchManualYawSpec), manualYawKeyframesByTrack);
+        ApplyBatchSpec(batchManualScaleSpec, nameof(batchManualScaleSpec), manualScaleKeyframesByTrack);
+    }
+
+
+    private static void ApplyBatchSpec(
+        string spec, string specName, Dictionary<uint, SortedDictionary<int, float>> target)
+    {
+        if (string.IsNullOrEmpty(spec))
+        {
+            return;
+        }
+
+        int applied = 0;
+        var touched = new HashSet<uint>();
+        foreach (string part in spec.Split(','))
+        {
+            string[] kv = part.Split(':');
+            if ((kv.Length != 2 && kv.Length != 3) ||
+                !uint.TryParse(kv[0].Trim(), out uint trackId) ||
+                !float.TryParse(kv[kv.Length - 1].Trim(), out float value))
+            {
+                Debug.LogWarning($"[Customization] {specName} を解釈できません: '{part}'");
+                continue;
+            }
+
+            int frame = 0;
+            if (kv.Length == 3 && !int.TryParse(kv[1].Trim(), out frame))
+            {
+                Debug.LogWarning($"[Customization] {specName} のフレーム番号を解釈できません: '{part}'");
+                continue;
+            }
+
+            // 同じ track に複数キーを打てるように、その track の初出のときだけ作り直す。
+            if (touched.Add(trackId) ||
+                !target.TryGetValue(trackId, out SortedDictionary<int, float> keys) || keys == null)
+            {
+                keys = new SortedDictionary<int, float>();
+                target[trackId] = keys;
+            }
+
+            keys[frame] = value;
+            applied++;
+        }
+
+        Debug.Log($"[Customization] {specName}='{spec}' applied={applied}");
     }
 
 
@@ -192,6 +263,29 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         else
         {
             entry.yawKeyframes = null;
+        }
+
+        RequestTrackCustomizationSave();
+    }
+
+
+    private void PersistManualScale(uint trackId)
+    {
+        VideoCustomization target = ResolveWritableCustomization();
+        if (target == null)
+        {
+            return;
+        }
+
+        TrackCustomization entry = target.GetOrCreate(trackId);
+        if (manualScaleKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> keys) &&
+            keys != null && keys.Count > 0)
+        {
+            entry.scaleKeyframes = new SortedDictionary<int, float>(keys);
+        }
+        else
+        {
+            entry.scaleKeyframes = null;
         }
 
         RequestTrackCustomizationSave();

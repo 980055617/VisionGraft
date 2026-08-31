@@ -11,7 +11,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 物理サイズ（ControlsBarSizeMeters）も同じ比率で広げないとボタンが縮む。
     private const float RuntimeControlsDefaultCanvasHeight = 440f;
     private const float RuntimeSettingsDefaultCanvasWidth = 900f;
-    private const float RuntimeSettingsDefaultCanvasHeight = 520f;
+    // Scale 行を足したぶん縦に伸ばした（520 → 640）。SettingsPanelSizeMeters.y も
+    // 同じ比で 0.5 → 0.615 にしてあるので、文字の見かけの大きさは変わらない。
+    private const float RuntimeSettingsDefaultCanvasHeight = 640f;
     private const float RuntimeModelPickerDefaultCanvasWidth = 980f;
     private const float RuntimeModelPickerDefaultCanvasHeight = 660f;
     private const int RuntimeModelPickerEntriesPerPage = 6;
@@ -32,6 +34,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private Text runtimeTrackSelectionText;
     private Slider runtimeTrackYawSlider;
     private Text runtimeTrackYawValueText;
+    private Slider runtimeTrackScaleSlider;
+    private Text runtimeTrackScaleValueText;
     private Text runtimeTrackFrontGuideText;
     private Text runtimeTrackKeyInfoText;
     private Text runtimeInteractiveMotionValueText;
@@ -43,11 +47,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private readonly List<Button> runtimeModelPickerEntryButtons = new List<Button>();
     private readonly List<GameObject> runtimeModelPickerPreviewInstances = new List<GameObject>();
     private bool runtimeSettingsOpen;
+    private bool batchSettingsForcedOpen;
     private bool runtimeModelPickerOpen;
     private bool runtimeFovxInitialized;
     private bool suppressRuntimeProgressCallback;
     private bool suppressRuntimeScreenDistanceCallback;
     private bool suppressRuntimeTrackYawCallback;
+    private bool suppressRuntimeTrackScaleCallback;
     private int runtimeSettingsPlacementLockDepth;
     private int runtimeModelPickerPageIndex;
     private int runtimeModelPickerTrackId = -1;
@@ -99,6 +105,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (runtimeSettingsRoot != null)
         {
+            if (batchOpenSettingsOnStart && !batchSettingsForcedOpen)
+            {
+                batchSettingsForcedOpen = true;
+                runtimeSettingsOpen = true;
+            }
+
             SceneObjectWriter.ApplyActive(runtimeSettingsRoot, runtimeSettingsOpen);
             SetScreenColliderBlockForRuntimePanels();
             UpdateRuntimeSettingsPlacement();

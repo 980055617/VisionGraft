@@ -37,6 +37,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const float MinProjectedBoneRatioForScaleRefine = 0.4f;
     private const float MaxProjectedBoneRatioForScaleRefine = 3.0f;
     private readonly Dictionary<uint, SortedDictionary<int, float>> manualYawKeyframesByTrack = new Dictionary<uint, SortedDictionary<int, float>>();
+    // 自動フィットに対する倍率のキーフレーム。既定 1.0。ManualScale.partial.cs 参照。
+    private readonly Dictionary<uint, SortedDictionary<int, float>> manualScaleKeyframesByTrack = new Dictionary<uint, SortedDictionary<int, float>>();
     private int selectedManualRotationTrackId = -1;
     private GameObject manualYawGuideRoot;
     private Transform manualYawGuideShaft;

@@ -160,6 +160,8 @@ adb pull /sdcard/Android/data/<パッケージ名>/files/ExperimentLogs ./logs
 | `pause` / `resume` | — |
 | `seek` | シーク先（0..1 の正規化位置） |
 | `change_model` | `track=... category=... index=... prefab=...` |
+| `change_rotation` | `track=... yaw=... frame=...`（Reset は `yaw=0 op=reset`） |
+| `change_scale` | `track=... scale=... frame=...`（Reset は `scale=1 op=reset`）。自動フィットに対する倍率 |
 | `video_loop` | 何周目か |
 | `trial_end_pressed` | 被験者が視聴終了を押した |
 

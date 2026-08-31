@@ -380,15 +380,11 @@ MonoBehaviour:
   screenOffsetMeters: {x: 0, y: 0, z: 0}
   fitScreenToFov: 1
   displayModel: 1
-  displayTrackIds: 0000000001000000
+  displayTrackIds: 
   selectedHumanIndex: 0
   selectedAnimalIndex: 0
   selectedElseIndex: 0
-  trackModelIndices:
-  - trackId: 0
-    modelIndex: 16
-  - trackId: 1
-    modelIndex: 4
+  trackModelIndices: []
   enableBoneApply: 1
   boneApplyAlpha: 1
   enableJointSmoothing: 1
@@ -400,6 +396,47 @@ MonoBehaviour:
   logAnchorDepthRange: 0
   logInverseDepthRange: 0
   popoutRangeMeters: 0.35
+  refineScaleFromProjectedBones: 1
+  projectGenericRigBones: 1
+  extendTargetHeightForClippedBBox: 1
+  maxClippedHeightExtrapolation: 1.6
+  depthRefineMinRatio: 0.2
+  depthRefineFastTrackLow: 0.15
+  depthRefineFastTrackHigh: 0.6
+  alignTopWhenBottomClipped: 1
+  disableSmalBendForDiag: 0
+  useTwoAxisJointFrameMap: 0
+  rememberTrackCustomization: 1
+  batchManualYawSpec: 
+  batchManualScaleSpec: 
+  batchOpenSettingsOnStart: 0
+  enableAnimalKeypointAimAt: 0
+  logHorizontalPlacement: 0
+  logAnimalBoneVsKeypoint: 0
+  refineDepthFromProjectedBones: 1
+  projectedDepthScaleK: 1
+  projectedDepthSmoothingSeconds: 1.2
+  projectedDepthOrderEpsilonMeters: 0.04
+  logDepthRefineStages: 0
+  resolveOtherPenetration: 0
+  penetrationOverlapMarginPixels: 8
+  otherDepthGapSmoothingSeconds: 1.2
+  useMetricRatioForOtherDepth: 0
+  depthAffineB: 0
+  penetrationFrontBias: 0
+  logBoneVsKeypoint: 0
+  logBoneVsKeypointEveryNFrames: 30
+  logOtherDepthFollow: 0
+  logOtherDepthFollowEveryNFrames: 1
+  logDepthAffineFit: 0
+  logPenetrationResolve: 0
+  otherDepthSkeletonReference: 1
+  matchOtherScaleToFollowedDepth: 1
+  alignModelBodyToAnchorDepth: 0
+  logBodyAnchorAlign: 0
+  followOtherDepthToRefinedSkeleton: 1
+  projectedBoneRatioTarget: 1
+  enableHumanArmLengthCorrection: 0
   enableHumanBoneLengthCorrection: 1
   logHumanBoneLengthCorrection: 0
   enableHumanOtherContactCorrection: 0

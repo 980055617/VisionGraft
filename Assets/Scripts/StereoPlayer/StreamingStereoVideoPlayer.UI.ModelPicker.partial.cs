@@ -621,6 +621,50 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
+    // batchSwapModelSpec を解釈して、指定フレームに達したらモデルを差し替える。
+    // ピッカーのクリック（OnRuntimeModelPickerEntryClicked）と同じ 2 手を踏むので、
+    // 実機の操作とまったく同じ状態遷移になる。
+    private readonly HashSet<int> batchSwapDone = new HashSet<int>();
+
+    private void ApplyBatchSwapModelSpecForFrame(int frame)
+    {
+        if (string.IsNullOrEmpty(batchSwapModelSpec))
+        {
+            return;
+        }
+
+        string[] parts = batchSwapModelSpec.Split(',');
+        for (int i = 0; i < parts.Length; i++)
+        {
+            if (batchSwapDone.Contains(i))
+            {
+                continue;
+            }
+
+            string[] kv = parts[i].Split(':');
+            if (kv.Length != 3 ||
+                !uint.TryParse(kv[0].Trim(), out uint trackId) ||
+                !int.TryParse(kv[1].Trim(), out int atFrame) ||
+                !int.TryParse(kv[2].Trim(), out int modelIndex))
+            {
+                Debug.LogWarning($"[Customization] batchSwapModelSpec を解釈できません: '{parts[i]}'");
+                batchSwapDone.Add(i);
+                continue;
+            }
+
+            if (frame < atFrame)
+            {
+                continue;
+            }
+
+            batchSwapDone.Add(i);
+            selectedModelIndexByTrack[trackId] = modelIndex;
+            RecreateTrackInstanceForModelSelection(trackId);
+            Debug.Log($"[SWAP] f={frame} track={trackId} modelIndex={modelIndex} に差し替え");
+        }
+    }
+
+
     private void RecreateTrackInstanceForModelSelection(uint trackId)
     {
         if (trackInstances.TryGetValue(trackId, out GameObject existing) && existing != null)

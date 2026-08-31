@@ -211,6 +211,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 同じくバッチ検証専用の手動スケール注入。"track:倍率" をカンマ区切りで（例: "1:2.0"）。
     public string batchManualScaleSpec = "";
 
+    // バッチ検証専用。再生中にモデルを差し替える。"track:frame:index" をカンマ区切りで。
+    // 「途中でキャラを替えたら大きさが変わった」の再現用。実機ではピッカーからしか
+    // できない操作なので、Editor で同じ経路（RecreateTrackInstanceForModelSelection）を踏む。
+    public string batchSwapModelSpec = "";
+
     // バッチ検証専用。設定パネルを開いた状態で始める。
     // パネルの配置は目で見るしか確認できず、実機では VR に入らないと開けない。
     // 過去に Home / Bundle ボタンを枠外に置いた事故があるので、撮って確かめる口を用意する。

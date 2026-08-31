@@ -71,6 +71,7 @@ public static class BatchPlaybackLogger
         string manualScale = null;
         bool openSettings = false;
         string displayTracks = null;
+        string swapModel = null;
         string captureFrames = null;
         string captureDir = null;
         int captureWidth = 3840;
@@ -112,6 +113,7 @@ public static class BatchPlaybackLogger
             if (args[i] == "-openSettings") bool.TryParse(args[i + 1], out openSettings);
             // "all" で全 track 表示（displayTrackIds を空にする）。"0,1" のように ID 列も可。
             if (args[i] == "-displayTracks") displayTracks = args[i + 1];
+            if (args[i] == "-swapModel") swapModel = args[i + 1];
             if (args[i] == "-captureFrames") captureFrames = args[i + 1];
             if (args[i] == "-captureDir") captureDir = args[i + 1];
             if (args[i] == "-captureWidth") int.TryParse(args[i + 1], out captureWidth);
@@ -280,7 +282,8 @@ public static class BatchPlaybackLogger
         }
 
         // 手動 yaw / 手動スケールの注入（実機の VR UI 操作を Editor で代替する）。
-        if (!string.IsNullOrEmpty(manualYaw) || !string.IsNullOrEmpty(manualScale) || openSettings)
+        if (!string.IsNullOrEmpty(manualYaw) || !string.IsNullOrEmpty(manualScale) ||
+            !string.IsNullOrEmpty(swapModel) || openSettings)
         {
             int applied = 0;
             foreach (var p in UnityEngine.Object.FindObjectsByType<StreamingStereoVideoPlayer>(
@@ -289,11 +292,12 @@ public static class BatchPlaybackLogger
                 if (!string.IsNullOrEmpty(manualYaw)) { p.batchManualYawSpec = manualYaw; }
                 if (!string.IsNullOrEmpty(manualScale)) { p.batchManualScaleSpec = manualScale; }
                 if (openSettings) { p.batchOpenSettingsOnStart = true; }
+                if (!string.IsNullOrEmpty(swapModel)) { p.batchSwapModelSpec = swapModel; }
                 EditorUtility.SetDirty(p);
                 applied++;
             }
             Debug.Log("[BATCH] manualYaw=" + manualYaw + " manualScale=" + manualScale +
-                      " openSettings=" + openSettings + " applied to " + applied);
+                      " swapModel=" + swapModel + " openSettings=" + openSettings + " applied to " + applied);
         }
 
         // 診断ログはシーンに保存せず、この実行の間だけ有効にする。

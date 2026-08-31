@@ -11,6 +11,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private readonly Dictionary<uint, Vector3> lockedModelLocalScaleByTrack = new Dictionary<uint, Vector3>();
     // RefineLockedScaleFromProjectedBones を通した track。ロックが新しく作られると外れる。
     private readonly HashSet<uint> scaleRefinedByTrack = new HashSet<uint>();
+    // ⑨ が焼き込んだ補正倍率（refined / locked）。**モデルを替えても持ち越す。**
+    // 意味は「② の式がこの track の姿勢に対してどれだけずれるか」で、モデルインスタンスでは
+    // なく track の性質なので、差し替えのたびに測り直すと大きさが跳ねる（2026-08-31 実測で
+    // 同一モデルへの差し替えでも 15% 縮んだ）。shot 境界では破棄する。
+    private readonly Dictionary<uint, float> scaleRefineFactorByTrack = new Dictionary<uint, float>();
     // RefineDepthFromProjectedBones の補正比率を時間平滑化した値。shot 境界でクリアする。
     private readonly Dictionary<uint, float> smoothedProjectedDepthRatioByTrack = new Dictionary<uint, float>();
     // `disparity = a/Z + b` の b。bundle ごとに一度だけ推定する（shot 境界では変わらない）。

@@ -31,6 +31,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         int frame = metaFrameUsed;
+        ApplyBatchSwapModelSpecForFrame(frame);
         SyncShotBoundaryForFrame(frame);
         ApplyOtherProxyBoxesForFrame(metaFrameObjects, frame);
 
@@ -1720,9 +1721,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         // ratio を projectedBoneRatioTarget に合わせる（既定 1.0 = bbox ぴったり）。
-        Vector3 refined = locked * (Mathf.Max(0.1f, projectedBoneRatioTarget) / ratio);
+        float factor = Mathf.Max(0.1f, projectedBoneRatioTarget) / ratio;
+        Vector3 refined = locked * factor;
         lockedModelLocalScaleByTrack[obj.trackId] = refined;
         scaleRefinedByTrack.Add(obj.trackId);
+        // モデルを替えて再ロックしたときに掛け直すため、倍率そのものを覚えておく。
+        scaleRefineFactorByTrack[obj.trackId] = factor;
 
         TrackPlacementWriter.ApplyLocalScale(instance.transform, refined);
 
@@ -1748,8 +1752,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return lockedScale;
         }
 
-        // 新しくロックした = まだ FK 後の実測補正を通していない。shot 境界・モデル変更・
-        // インスタンス再生成のいずれでロックが消えても、ここで必ず補正がやり直される。
+        // 補正倍率が残っていれば、それは**同じ shot の同じ track**で一度測った結果。
+        // モデルを替えただけで測り直すと、差し替えた瞬間の姿勢が焼き込まれて大きさが跳ねる
+        // （2026-08-31 実測: 同一モデルへの差し替えでも 15% 縮んだ）。掛け直して確定させる。
+        if (scaleRefineFactorByTrack.TryGetValue(trackId, out float carriedFactor))
+        {
+            Vector3 carried = desiredLocalScale * carriedFactor;
+            scaleRefinedByTrack.Add(trackId);
+            lockedModelLocalScaleByTrack[trackId] = carried;
+            if (logPlacementMeasurement)
+            {
+                Debug.Log($"[SCALEFIX] track={trackId} 補正倍率 x{carriedFactor:F3} を持ち越し（測り直さない）");
+            }
+
+            return carried;
+        }
+
+        // 倍率が無い = shot 境界を越えた直後。ここで初めて FK 後の実測補正を通す。
         scaleRefinedByTrack.Remove(trackId);
         lockedModelLocalScaleByTrack[trackId] = desiredLocalScale;
         return desiredLocalScale;

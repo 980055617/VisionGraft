@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -95,7 +96,32 @@ public sealed class HomeMenu : MonoBehaviour
         }
 
         Debug.Log($"[Home] load scene: {sceneName}");
-        SceneManager.LoadScene(sceneName, LoadSceneMode.Single);
+        StartCoroutine(LoadSceneRoutine(sceneName));
+    }
+
+
+    // **同期 LoadScene は使わない。** 押した瞬間にフレームが止まり、画面が固まったまま
+    // 数秒待たされる（実機で「押しても反応しない」と報告された 2026-08-31）。
+    // 先に「読み込み中」を出して 1 フレーム描かせてから、非同期で読み込む。
+    private IEnumerator LoadSceneRoutine(string sceneName)
+    {
+        panel.Show(
+            "読み込み中",
+            sceneName == viewerSceneName
+                ? "bundle ピッカーを準備しています…"
+                : "実験シーンを準備しています…",
+            new List<ExperimentPanel.ButtonSpec>());
+
+        // Show した内容が実際に 1 枚描かれるまで待つ。1 フレームだと
+        // Canvas の再構築が間に合わないことがあるので 2 フレーム置く。
+        yield return null;
+        yield return null;
+
+        AsyncOperation op = SceneManager.LoadSceneAsync(sceneName, LoadSceneMode.Single);
+        while (op != null && !op.isDone)
+        {
+            yield return null;
+        }
     }
 
 

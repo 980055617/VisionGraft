@@ -70,6 +70,7 @@ public static class BatchPlaybackLogger
         string manualYaw = null;
         string manualScale = null;
         bool openSettings = false;
+        bool openPicker = false;
         string displayTracks = null;
         string swapModel = null;
         string captureFrames = null;
@@ -111,6 +112,7 @@ public static class BatchPlaybackLogger
             if (args[i] == "-manualYaw") manualYaw = args[i + 1];
             if (args[i] == "-manualScale") manualScale = args[i + 1];
             if (args[i] == "-openSettings") bool.TryParse(args[i + 1], out openSettings);
+            if (args[i] == "-openPicker") bool.TryParse(args[i + 1], out openPicker);
             // "all" で全 track 表示（displayTrackIds を空にする）。"0,1" のように ID 列も可。
             if (args[i] == "-displayTracks") displayTracks = args[i + 1];
             if (args[i] == "-swapModel") swapModel = args[i + 1];
@@ -124,7 +126,18 @@ public static class BatchPlaybackLogger
         savedAudioMute = EditorUtility.audioMasterMute;
         EditorUtility.audioMasterMute = true;
         AudioListener.volume = 0f;
-        Debug.Log("[BATCH] audio muted");
+        // **これだけでは動画の音が消えない。** VideoPlayer は Direct 出力なので
+        // AudioListener を経由しない（RuntimePlaybackController.ApplyMute が
+        // SetDirectAudioMute を呼んでいるのがその証拠）。プレイヤー側の mute を立てて、
+        // Update で毎フレーム SetDirectAudioMute が掛かるようにする。
+        // 保険として BatchAudioMute も batchmode 中ずっと掛け直している。
+        foreach (var p in UnityEngine.Object.FindObjectsByType<StreamingStereoVideoPlayer>(
+                     FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            p.mute = true;
+            EditorUtility.SetDirty(p);
+        }
+        Debug.Log("[BATCH] audio muted (listener + VideoPlayer direct)");
 
         Debug.Log("[BATCH] opening scene: " + scene);
         EditorSceneManager.OpenScene(scene, OpenSceneMode.Single);
@@ -283,7 +296,7 @@ public static class BatchPlaybackLogger
 
         // 手動 yaw / 手動スケールの注入（実機の VR UI 操作を Editor で代替する）。
         if (!string.IsNullOrEmpty(manualYaw) || !string.IsNullOrEmpty(manualScale) ||
-            !string.IsNullOrEmpty(swapModel) || openSettings)
+            !string.IsNullOrEmpty(swapModel) || openSettings || openPicker)
         {
             int applied = 0;
             foreach (var p in UnityEngine.Object.FindObjectsByType<StreamingStereoVideoPlayer>(
@@ -292,6 +305,7 @@ public static class BatchPlaybackLogger
                 if (!string.IsNullOrEmpty(manualYaw)) { p.batchManualYawSpec = manualYaw; }
                 if (!string.IsNullOrEmpty(manualScale)) { p.batchManualScaleSpec = manualScale; }
                 if (openSettings) { p.batchOpenSettingsOnStart = true; }
+                if (openPicker) { p.batchOpenModelPickerOnStart = true; }
                 if (!string.IsNullOrEmpty(swapModel)) { p.batchSwapModelSpec = swapModel; }
                 EditorUtility.SetDirty(p);
                 applied++;

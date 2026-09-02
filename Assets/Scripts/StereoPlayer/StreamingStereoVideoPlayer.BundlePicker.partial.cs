@@ -158,6 +158,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         bundlePickerCurrentDirectory = ResolveBundlePickerStartDirectory();
         RefreshBundlePickerEntries();
         SetLayerRecursively(bundlePickerRoot, 5); // ensure all descendants are UI layer
+
+        // **置き場所が決まるまで見せない。** 決まるまでの 0.5 秒は毎フレーム置き直すので、
+        // そのまま出すとパネルが頭にくっついて動いて見える（実機で報告 2026-08-31）。
+        // 隠している間に tracking origin の切り替えも終わるので、出た時点で静止している。
+        SetBundlePickerVisible(false);
         UpdateBundlePickerPlacement();
     }
 
@@ -238,6 +243,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (Time.unscaledTime - bundlePickerOpenedAt >= BundlePickerPlacementSettleSeconds || bundlePickerInteracted)
         {
             bundlePickerPlacementLocked = true;
+            SetBundlePickerVisible(true);
+        }
+    }
+
+
+    // 位置が決まるまでの間だけ描画を止める。root を非アクティブにすると
+    // UpdateBundlePickerPlacement を回す側の前提が変わるので、Canvas だけ切る。
+    private void SetBundlePickerVisible(bool visible)
+    {
+        if (bundlePickerRoot == null)
+        {
+            return;
+        }
+
+        Canvas[] canvases = bundlePickerRoot.GetComponentsInChildren<Canvas>(true);
+        for (int i = 0; i < canvases.Length; i++)
+        {
+            if (canvases[i] != null)
+            {
+                canvases[i].enabled = visible;
+            }
         }
     }
 

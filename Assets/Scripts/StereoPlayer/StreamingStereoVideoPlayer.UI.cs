@@ -17,6 +17,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const float RuntimeModelPickerDefaultCanvasWidth = 980f;
     private const float RuntimeModelPickerDefaultCanvasHeight = 660f;
     private const int RuntimeModelPickerEntriesPerPage = 6;
+    // ピッカーのプレビューをパネル面より手前に出す量（メートル）。
+    // world space canvas の z は等倍なので、これはそのまま実寸。
+    private const float PreviewForwardOffsetMeters = 0.01f;
 
     private GameObject runtimeControlsRoot;
     private Text runtimePauseButtonText;
@@ -46,8 +49,32 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private Button runtimeModelPickerNextButton;
     private readonly List<Button> runtimeModelPickerEntryButtons = new List<Button>();
     private readonly List<GameObject> runtimeModelPickerPreviewInstances = new List<GameObject>();
+    // プレビューの素のスケール。レイが乗ったセルだけ拡大して、外れたらここへ戻す。
+    private readonly List<Vector3> runtimeModelPickerPreviewBaseScales = new List<Vector3>();
+    private int runtimeModelPickerHoverIndex = -1;
+    // track を 1 つずつ送るのではなく、出ている ID を全部並べて直接押せるようにするボタン列。
+    private readonly List<Button> runtimeModelPickerTargetButtons = new List<Button>();
+
+    // 脇に出るパネル（Settings / モデルピッカー）の前後位置。掴み代のドラッグで動かす。
+    // + が遠ざける方向。Settings とピッカーで共有する（片方だけ動くと揃わない）。
+    private float runtimePanelDistanceOffsetMeters;
+    // 手前の限界。実機で「もっと前まで持ってきたい」との要望で広げた（2026-09-02）。
+    // 実際にどこまで寄るかは ApplyRuntimePanelDistanceOffset の最低距離で頭打ちになる。
+    private const float RuntimePanelDistanceOffsetMin = -1.0f;
+    private const float RuntimePanelDistanceOffsetMax = 1.0f;
+    // 掴み代を掴んでいる間だけ true。掴んだ瞬間のコントローラ位置を控えておく。
+    private bool runtimePanelDragActive;
+    private Vector3 runtimePanelDragStartPointer;
+    private float runtimePanelDragStartOffset;
+    private float runtimePanelDragLoggedOffset;
+    private float runtimePanelDragLoggedAt;
+    // コントローラを 1m 前後させたときに動く距離。1.0 なら手の動きとパネルが 1:1。
+    // 実機で「もう少し感度を上げたい」との要望で 2.5 倍に（2026-09-02）。
+    // 腕を前後に伸ばせる範囲は 0.5m 程度なので、1:1 では端まで届かなかった。
+    private const float RuntimePanelDragGain = 2.5f;
     private bool runtimeSettingsOpen;
     private bool batchSettingsForcedOpen;
+    private bool batchModelPickerForcedOpen;
     private bool runtimeModelPickerOpen;
     private bool runtimeFovxInitialized;
     private bool suppressRuntimeProgressCallback;
@@ -121,6 +148,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (runtimeModelPickerRoot != null)
         {
+            // **実機と同じ経路で開く。** フラグを直接立てると ToggleRuntimeModelPickerPanel が
+            // やっている対象の解決・一時停止を飛ばしてしまい、バッチでしか起きない状態になる。
+            //
+            // 一度きりにしない理由: 再生が再開すると CloseEditPanelsForResume が閉じるので、
+            // バッチでは開いた状態を保てない（実機では人が開くので問題にならない）。
+            // 検証用に、閉じられたら開き直す。
+            if (batchOpenModelPickerOnStart && !runtimeModelPickerOpen && metaLoaded)
+            {
+                batchModelPickerForcedOpen = true;
+                ToggleRuntimeModelPickerPanel();
+            }
+
             SceneObjectWriter.ApplyActive(runtimeModelPickerRoot, runtimeModelPickerOpen);
             SetScreenColliderBlockForRuntimePanels();
             UpdateRuntimeModelPickerPlacement();

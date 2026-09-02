@@ -100,7 +100,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             SettingsPanelGapMeters,
             SettingsPanelOffsetMeters,
             SettingsPanelForwardOffsetMeters);
-        TransformWriter.ApplyPose(runtimeSettingsRoot.transform, pose.position, pose.rotation);
+        TransformWriter.ApplyPose(
+            runtimeSettingsRoot.transform, ApplyRuntimePanelDistanceOffset(pose.position), pose.rotation);
 
         Canvas canvas = runtimeSettingsRoot.GetComponent<Canvas>();
         if (canvas != null)

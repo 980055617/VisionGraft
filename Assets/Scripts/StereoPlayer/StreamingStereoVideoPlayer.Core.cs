@@ -221,6 +221,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 過去に Home / Bundle ボタンを枠外に置いた事故があるので、撮って確かめる口を用意する。
     public bool batchOpenSettingsOnStart;
 
+    // 同じくバッチ検証専用。モデルピッカーを開いた状態で始める。
+    public bool batchOpenModelPickerOnStart;
+
     // SMAL FK のあとに四肢を keypoint の位置へ向ける（Human の AimAt に相当）。
     // 既定 false。A/B で確認してから既定を決める。docs/smpl-retargeting.md 参照。
     public bool enableAnimalKeypointAimAt;

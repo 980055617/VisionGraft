@@ -99,16 +99,40 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
+    // 触れる track の一覧。
+    //
+    // **生きているインスタンスだけを見てはいけない。** モデルを変更すると
+    // RecreateTrackInstanceForModelSelection がインスタンスを破棄し、次に
+    // ApplyTrackFrame が走るまで再生成されない。ところがピッカーを開いている間は
+    // 再生を止めているので走らず、**いま選んでいる track が一覧から消える**
+    // （2026-08-31 実機: 0 を変更したらタブから 0 が消えて 1 だけになった）。
+    //
+    // いま表示中のフレームに写っている track（metaFrameObjects）も足して和を取る。
+    // インスタンスの有無は「作り直し中かどうか」でしかなく、対象として選べるかとは別。
     private List<uint> GetAvailableTrackIdsForManualRotation()
     {
+        var seen = new HashSet<uint>();
         var ids = new List<uint>();
+
         foreach (KeyValuePair<uint, GameObject> kv in trackInstances)
         {
             if (kv.Value == null || !kv.Value.activeInHierarchy)
             {
                 continue;
             }
-            ids.Add(kv.Key);
+
+            if (seen.Add(kv.Key))
+            {
+                ids.Add(kv.Key);
+            }
+        }
+
+        for (int i = 0; i < metaFrameObjects.Count; i++)
+        {
+            if (seen.Add(metaFrameObjects[i].trackId))
+            {
+                ids.Add(metaFrameObjects[i].trackId);
+            }
         }
 
         ids.Sort();
@@ -177,14 +201,39 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        Bounds b = ComputeObjectBounds(instance);
-        float height = Mathf.Max(0.1f, b.size.y);
-        float len = Mathf.Clamp(height * 0.5f, 0.3f, 0.85f);
-        float y = Mathf.Clamp(height * 1.1f, 0.8f, 2.4f);
+        // **world で測った寸法を local にそのまま入れてはいけない。**
+        // ガイドは instance の子で、instance の localScale は bbox 合わせで 0.26 などに
+        // なっている。ComputeObjectBounds は world AABB を返すので、その値を local の
+        // 位置・大きさに使うと instance のスケールぶんもう一度縮み、**頭上に出るはずの矢印が
+        // モデルの中に埋まって小さな点に見える**（2026-08-31 実機で「変な点が見える」と報告）。
+        //
+        // world で決めた寸法を lossyScale で割って local に直す。こうすると
+        // モデルの大小によらずガイドの実寸が一定になる。
+        Transform root = instance.transform;
+        float lossyY = Mathf.Max(0.0001f, root.lossyScale.y);
 
-        if (manualYawGuideRoot.transform.parent != instance.transform)
+        // **ガイド自身を測ってはいけない。** ガイドは instance の子なので、素直に
+        // GetComponentsInChildren すると「モデルの上端」にガイドの高さが含まれる。
+        // すると次のフレームでガイドがさらに上へ行き、毎フレーム積み上がって
+        // **上空へ飛んでいく**（2026-08-31 実機。旧実装は y を [0.8, 2.4] に clamp して
+        // いたので気付かなかったが、clamp を外した時点でこの依存が表面化した）。
+        Bounds b = ComputeObjectBoundsExcluding(instance, manualYawGuideRoot);
+        // モデルの world 上端から、ルート原点までの高さ（local 単位）。
+        float topLocal = (b.max.y - root.position.y) / lossyY;
+
+        const float GuideGapMeters = 0.12f;    // 頭上の余白
+        const float GuideLengthMeters = 0.30f; // 矢印の長さ
+        const float GuideShaftMeters = 0.025f; // 軸の太さ
+        const float GuideTipMeters = 0.075f;   // 先端の大きさ
+
+        float y = topLocal + GuideGapMeters / lossyY;
+        float len = GuideLengthMeters / lossyY;
+        float shaft = GuideShaftMeters / lossyY;
+        float tip = GuideTipMeters / lossyY;
+
+        if (manualYawGuideRoot.transform.parent != root)
         {
-            manualYawGuideRoot.transform.SetParent(instance.transform, false);
+            manualYawGuideRoot.transform.SetParent(root, false);
         }
         TransformWriter.ApplyLocalTransform(manualYawGuideRoot.transform, Vector3.zero, Quaternion.identity, Vector3.one);
 
@@ -192,12 +241,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             manualYawGuideShaft,
             new Vector3(0f, y, len * 0.5f),
             Quaternion.identity,
-            new Vector3(0.04f, 0.04f, len));
+            new Vector3(shaft, shaft, len));
         TransformWriter.ApplyLocalTransform(
             manualYawGuideTip,
             new Vector3(0f, y, len),
             Quaternion.identity,
-            new Vector3(0.14f, 0.14f, 0.14f));
+            new Vector3(tip, tip, tip));
         SetManualYawGuideVisible(true);
     }
 
@@ -260,20 +309,33 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private static Bounds ComputeObjectBounds(GameObject go)
+    private static Bounds ComputeObjectBoundsExcluding(GameObject go, GameObject excludedSubtree)
     {
         Renderer[] renderers = go.GetComponentsInChildren<Renderer>(true);
-        if (renderers == null || renderers.Length == 0)
+        Transform excluded = excludedSubtree != null ? excludedSubtree.transform : null;
+
+        bool has = false;
+        Bounds b = default;
+        for (int i = 0; i < renderers.Length; i++)
         {
-            return new Bounds(go.transform.position, Vector3.one * 0.2f);
+            Renderer r = renderers[i];
+            if (r == null || (excluded != null && r.transform.IsChildOf(excluded)))
+            {
+                continue;
+            }
+
+            if (!has)
+            {
+                b = r.bounds;
+                has = true;
+            }
+            else
+            {
+                b.Encapsulate(r.bounds);
+            }
         }
 
-        Bounds b = renderers[0].bounds;
-        for (int i = 1; i < renderers.Length; i++)
-        {
-            b.Encapsulate(renderers[i].bounds);
-        }
-        return b;
+        return has ? b : new Bounds(go.transform.position, Vector3.one * 0.2f);
     }
 
 

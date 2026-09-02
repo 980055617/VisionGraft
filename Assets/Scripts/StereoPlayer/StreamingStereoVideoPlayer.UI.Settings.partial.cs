@@ -92,7 +92,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         CreateLabel(panelObj.transform, "TrackLabel", "Track", 0.12f, 0.42f, 44, TextAnchor.MiddleLeft);
         runtimeTrackSelectionText = CreateLabel(panelObj.transform, "TrackValue", "none", 0.88f, 0.42f, 40, TextAnchor.MiddleRight);
         runtimeTrackFrontGuideText = CreateWideLabel(panelObj.transform, "TrackFrontGuide", "Arrow above head = FRONT  |  +:left  -:right", 0.5f, 0.50f, 24, TextAnchor.MiddleCenter);
-        runtimeTrackKeyInfoText = CreateWideLabel(panelObj.transform, "TrackKeyInfo", "Keys Y:0 S:0  Frame:0", 0.5f, 0.045f, 24, TextAnchor.MiddleCenter);
+        runtimeTrackKeyInfoText = CreateWideLabel(panelObj.transform, "TrackKeyInfo", "Keys Y:0 S:0  Frame:0", 0.5f, 0.09f, 24, TextAnchor.MiddleCenter);
 
         // Track 行のボタン列。canvas 幅 900 の中心基準で、110px 幅が重ならないように置く。
         // 右端は TrackValue（0.88 の右寄せ）に掛からない位置まで。
@@ -133,6 +133,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             UiComponentWriter.ApplySliderValueWithoutNotify(runtimeTrackScaleSlider, ManualScaleDefault);
             BindRuntimeSlider(runtimeTrackScaleSlider, OnRuntimeTrackScaleSliderChanged);
         }
+
+        // 掴み代は**下端**。上に置くとタイトルと重なり、視線も上へ引っ張られる。
+        CreateRuntimePanelDragHandle(
+            panelObj.transform, "PanelDragHandle", new Vector2(0f, -302f), new Vector2(760f, 30f));
 
         UpdateRuntimeTrackRotationUiState();
         UpdateRuntimeInteractiveMotionUiState();
@@ -443,6 +447,151 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         UiComponentWriter.ApplyTextContent(runtimeSettingsButtonText, "Settings");
     }
 
+
+
+    // パネル位置を、頭から見て前後にずらす。回転は頭を向いたままでよいので触らない
+    // （同じ視線上を滑らせるだけなので向きは変わらない）。
+    private Vector3 ApplyRuntimePanelDistanceOffset(Vector3 position)
+    {
+        if (Mathf.Abs(runtimePanelDistanceOffsetMeters) < 0.0001f)
+        {
+            return position;
+        }
+
+        Transform head = GetViewOrHeadTransform();
+        if (head == null)
+        {
+            return position;
+        }
+
+        Vector3 away = position - head.position;
+        if (away.sqrMagnitude < 0.0001f)
+        {
+            return position;
+        }
+
+        // 近づけすぎて頭に刺さらないよう、最低 0.35m は残す。
+        float current = away.magnitude;
+        // 手が届く距離まで寄せたいので下限を 0.35m から 0.25m へ（2026-09-02 の要望）。
+        float target = Mathf.Max(0.25f, current + runtimePanelDistanceOffsetMeters);
+        return head.position + away.normalized * target;
+    }
+
+
+    // **上下のドラッグ量では距離を変えない。** 「上へ動かす＝遠ざかる」は対応がねじれていて、
+    // VR では手を前後させるほうが自然（2026-08-31 の相談）。
+    // UI のドラッグイベントは 2D の差分しか持たないので、掴んでいる間だけ
+    // コントローラの姿勢を直接読み、頭→パネル方向への移動量をそのまま距離にする。
+    private void OnRuntimePanelDragStateChanged(bool dragging)
+    {
+        runtimePanelDragActive = dragging;
+        if (!dragging)
+        {
+            Debug.Log($"[PANELDRAG] 離した offset={runtimePanelDistanceOffsetMeters:F3}m");
+            return;
+        }
+
+        runtimePanelDragStartOffset = runtimePanelDistanceOffsetMeters;
+        bool gotPointer = TryReadRuntimePanelPointerPosition(out Vector3 p);
+        runtimePanelDragStartPointer = gotPointer ? p : Vector3.zero;
+        // 掴めているか・コントローラの位置が取れているかを 1 行で分かるようにする。
+        // 実機でしか動かない経路なので、これが無いと切り分けができない。
+        Debug.Log($"[PANELDRAG] 掴んだ pointerOK={gotPointer} start={runtimePanelDragStartPointer:F3} offset={runtimePanelDragStartOffset:F3}m");
+    }
+
+
+    private void UpdateRuntimePanelDrag()
+    {
+        if (!runtimePanelDragActive || !TryReadRuntimePanelPointerPosition(out Vector3 pointer))
+        {
+            return;
+        }
+
+        Transform head = GetViewOrHeadTransform();
+        if (head == null)
+        {
+            return;
+        }
+
+        // 頭から見た「奥へ」の向き。パネルは水平方向に置くので水平面へ射影する。
+        Vector3 away = Vector3.ProjectOnPlane(head.forward, Vector3.up);
+        if (away.sqrMagnitude < 0.000001f)
+        {
+            return;
+        }
+
+        float moved = Vector3.Dot(pointer - runtimePanelDragStartPointer, away.normalized);
+        float before = runtimePanelDistanceOffsetMeters;
+        runtimePanelDistanceOffsetMeters = Mathf.Clamp(
+            runtimePanelDragStartOffset + moved * RuntimePanelDragGain,
+            RuntimePanelDistanceOffsetMin,
+            RuntimePanelDistanceOffsetMax);
+
+        // 位置の再計算はパネル側の毎フレーム更新に任せられない
+        // （UpdateRuntimeControlsPlacement は PlaceScreens 経由で、毎フレームとは限らない）。
+        // 動かした本人がその場で反映する。
+        UpdateRuntimeSettingsPlacement();
+        UpdateRuntimeModelPickerPlacement();
+
+        // 掴んでいる間は 0.5 秒ごとに必ず 1 行出す。動いていないのか、そもそも
+        // ここまで到達していないのかを実機ログで区別するため。
+        if (Time.unscaledTime - runtimePanelDragLoggedAt >= 0.5f ||
+            Mathf.Abs(runtimePanelDistanceOffsetMeters - runtimePanelDragLoggedOffset) >= 0.02f)
+        {
+            runtimePanelDragLoggedAt = Time.unscaledTime;
+            runtimePanelDragLoggedOffset = runtimePanelDistanceOffsetMeters;
+            Debug.Log($"[PANELDRAG] moved={moved:F3}m offset={before:F3} -> {runtimePanelDistanceOffsetMeters:F3}m pointer={pointer:F3}");
+        }
+    }
+
+
+    private bool TryReadRuntimePanelPointerPosition(out Vector3 position)
+    {
+        position = Vector3.zero;
+        if (!RuntimeXrRayPickReader.TryReadPointerPose(
+                xrInputDevices, out Vector3 local, out Quaternion _, out bool _))
+        {
+            return false;
+        }
+
+        // コントローラの姿勢はトラッキング空間なので、リグの姿勢を掛けて world にする。
+        Transform head = GetViewOrHeadTransform();
+        if (head == null)
+        {
+            position = local;
+            return true;
+        }
+
+        if (!RuntimeXrRayPickReader.TryReadHeadPose(xrInputDevices, out Vector3 headLocal, out Quaternion headLocalRot))
+        {
+            position = local;
+            return true;
+        }
+
+        Quaternion rigRotation = head.rotation * Quaternion.Inverse(headLocalRot);
+        position = head.position + rigRotation * (local - headLocal);
+        return true;
+    }
+
+
+    // パネル上端の掴み代。ここをドラッグすると前後に動く。
+    private void CreateRuntimePanelDragHandle(Transform parent, string name, Vector2 anchoredPos, Vector2 size)
+    {
+        RectTransform rect = RuntimeUiElementFactory.CreateRectChild(name, parent, out GameObject obj);
+        TransformWriter.ApplyCenteredRect(rect, anchoredPos, size);
+
+        Image image = RuntimeUiElementFactory.AddImage(obj);
+        UiComponentWriter.ApplyGraphicColor(image, new Color(0.30f, 0.34f, 0.40f, 0.55f));
+
+        RectTransform textRect = RuntimeUiElementFactory.CreateRectChild("Label", obj.transform, out GameObject textObj);
+        TransformWriter.ApplyStretchRect(textRect, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero);
+        Text text = RuntimeUiElementFactory.AddText(textObj);
+        UiComponentWriter.ApplyTextStyle(text, GetRuntimeUiFont(), 22, TextAnchor.MiddleCenter, new Color(0.85f, 0.9f, 1f, 1f));
+        UiComponentWriter.ApplyTextContent(text, "= hold here and move your hand to push / pull =");
+
+        RuntimePanelDragHandle handle = obj.AddComponent<RuntimePanelDragHandle>();
+        handle.onDragStateChanged = OnRuntimePanelDragStateChanged;
+    }
 
 
     private void EnsureEventSystem()

@@ -6,6 +6,40 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
     private static readonly Vector2 RuntimeModelPickerSizeMeters = new Vector2(0.84f, 0.58f);
 
+    // 一覧は 2 行 3 列。1 行 6 件の縦並びだと 1 件あたり 64 単位しか取れず、
+    // プレビューが小さすぎて何のモデルか分からなかった（2026-08-31 実機）。
+    // 件数は同じ 6 のまま、1 件あたりの面積を約 5 倍にしている。
+    private const int ModelPickerColumns = 3;
+    private static readonly Vector2 ModelPickerCellSize = new Vector2(300f, 175f);
+    private const float ModelPickerCellPitchX = 316f;
+    private const float ModelPickerCellPitchY = 200f;
+    // 上は track 行（y = 208）、下は Prev/Page/Next（y = -282、高さ 54）。両方に触らない位置。
+    private const float ModelPickerGridCenterY = -40f;
+    // セル内でプレビューを置く高さ（名前はセル下端に出る）。
+    private const float ModelPickerPreviewOffsetY = 22f;
+    private const float ModelPickerPreviewTargetSize = 108f;
+    // レイが乗っているセルのモデルを何倍にするか。
+    // セルの間隔は 316、素のプレビューは 108 なので 2.6 倍（281）でも隣のモデルには当たらない。
+    private const float ModelPickerPreviewHoverBoost = 2.6f;
+
+    // ヘッダの track ボタン列。**固定枠にしない。**
+    // 同時に出る track は bundle_train の実測で最大 5 だが、上限を決め打ちすると
+    // それを超えた ID に到達できなくなる。出ている数だけその場で作る。
+    private const float ModelPickerTargetRowY = 208f;
+    private const float ModelPickerTargetButtonWidth = 96f;
+    private const float ModelPickerTargetRowMaxWidth = 900f;
+
+
+    // 一覧 i 番目のセル中心（Panel ローカル座標）。ボタンとプレビューで必ず同じ式を使う。
+    private static Vector2 ResolveModelPickerCellCenter(int index)
+    {
+        int col = index % ModelPickerColumns;
+        int row = index / ModelPickerColumns;
+        return new Vector2(
+            (col - (ModelPickerColumns - 1) * 0.5f) * ModelPickerCellPitchX,
+            ModelPickerGridCenterY + (0.5f - row) * ModelPickerCellPitchY);
+    }
+
     private GameObject BuildRuntimeModelPickerUi()
     {
         EnsureEventSystem();
@@ -71,38 +105,41 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         runtimeModelPickerStatusText = CreateModelPickerText(
             panelObj.transform,
             "Status",
-            "Point at an object, or use Next target.",
-            new Vector2(0f, 236f),
-            new Vector2(870f, 44f),
+            "Point at an object, or pick a track below.",
+            new Vector2(0f, 250f),
+            new Vector2(760f, 40f),
             24,
             TextAnchor.MiddleCenter,
             new Color(0.9f, 0.95f, 1f, 1f));
 
-        // 対象送り。displayTrackIds の先頭（human 動画なら人）が常に選ばれるので、
-        // ボール（Else）へ切り替える手段が「指す」しか無かった。小さい対象は指しにくいので
-        // ボタンで回せるようにする（2026-08-28 の要望）。回転パネルの Prev/Next と同じ考え方。
-        CreateModelPickerButton(
-            panelObj.transform,
-            "ModelPickerTargetButton",
-            "Next target >",
-            new Vector2(330f, 236f),
-            new Vector2(220f, 46f),
-            StepRuntimeModelPickerTarget,
-            TextAnchor.MiddleCenter);
+        // 対象の選択。以前は「Next target >」で 1 つずつ送るだけだったので、
+        // 目的の track に届くまで何度も押す必要があり、いま何番を触っているかも分からなかった。
+        // **出ている track の ID を全部並べて直接押せる**ようにする（2026-08-31 の要望）。
+        //
+        // VR でドロップダウンにしないのは、開いたリストが別のワールド座標に浮いて
+        // レイで追いにくくなるため。常時表示なら 1 クリックで届く。
+        // 実体は UpdateRuntimeModelPickerTargetButtons が必要な数だけ作る。
+        runtimeModelPickerTargetButtons.Clear();
 
         runtimeModelPickerEntryButtons.Clear();
         for (int i = 0; i < RuntimeModelPickerEntriesPerPage; i++)
         {
             int localIndex = i;
-            float y = 166f - i * 74f;
             Button button = CreateModelPickerButton(
                 panelObj.transform,
                 $"ModelEntryButton_{i}",
                 string.Empty,
-                new Vector2(0f, y),
-                new Vector2(860f, 64f),
+                ResolveModelPickerCellCenter(i),
+                ModelPickerCellSize,
                 () => OnRuntimeModelPickerEntryClicked(localIndex),
-                TextAnchor.MiddleLeft);
+                // 名前はセルの下端。上半分はプレビューの場所として空けておく。
+                TextAnchor.LowerCenter);
+
+            // レイが乗ったらそのセルのモデルを拡大する。
+            RuntimeHoverNotifier hover = button.gameObject.AddComponent<RuntimeHoverNotifier>();
+            hover.index = localIndex;
+            hover.onHoverChanged = OnRuntimeModelPickerEntryHoverChanged;
+
             runtimeModelPickerEntryButtons.Add(button);
         }
 
@@ -110,7 +147,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             panelObj.transform,
             "ModelPickerPrevButton",
             "< Prev",
-            new Vector2(-220f, -282f),
+            new Vector2(-220f, -252f),
             new Vector2(180f, 54f),
             PrevRuntimeModelPickerPage,
             TextAnchor.MiddleCenter);
@@ -118,7 +155,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             panelObj.transform,
             "PageText",
             "Page 1/1",
-            new Vector2(0f, -282f),
+            new Vector2(0f, -252f),
             new Vector2(250f, 54f),
             26,
             TextAnchor.MiddleCenter,
@@ -127,18 +164,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             panelObj.transform,
             "ModelPickerNextButton",
             "Next >",
-            new Vector2(220f, -282f),
+            new Vector2(220f, -252f),
             new Vector2(180f, 54f),
             NextRuntimeModelPickerPage,
             TextAnchor.MiddleCenter);
+        // 閉じるは右上の X。以前は "Close" が対象送りボタンのすぐ隣にあり、
+        // 押し間違えやすかった（2026-08-31 の指摘）。離して、形でも区別できるようにする。
         CreateModelPickerButton(
             panelObj.transform,
             "ModelPickerCloseButton",
-            "Close",
-            new Vector2(390f, 282f),
-            new Vector2(130f, 48f),
+            "X",
+            new Vector2(438f, 288f),
+            new Vector2(60f, 60f),
             CloseRuntimeModelPickerPanel,
             TextAnchor.MiddleCenter);
+
+        // Settings と同じ掴み代。**下端**に置く。
+        CreateRuntimePanelDragHandle(
+            panelObj.transform, "PanelDragHandle", new Vector2(0f, -316f), new Vector2(760f, 26f));
 
         SceneObjectWriter.ApplyActive(root, false);
         return root;
@@ -146,6 +189,135 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
 
     // いま画面に出ている track を順に回して、モデル変更の対象を切り替える。
+    private void OnRuntimeModelPickerEntryHoverChanged(int index, bool hovered)
+    {
+        if (hovered)
+        {
+            runtimeModelPickerHoverIndex = index;
+        }
+        else if (runtimeModelPickerHoverIndex == index)
+        {
+            // 別のセルへ移った場合、Exit より先に Enter が来ることがある。
+            // 自分が現在の hover のときだけ解除する。
+            runtimeModelPickerHoverIndex = -1;
+        }
+
+        ApplyRuntimeModelPickerPreviewHover();
+    }
+
+
+    // 現在 hover しているセルのモデルだけ拡大し、他は素のスケールへ戻す。
+    private void ApplyRuntimeModelPickerPreviewHover()
+    {
+        for (int i = 0; i < runtimeModelPickerPreviewInstances.Count; i++)
+        {
+            GameObject holder = runtimeModelPickerPreviewInstances[i];
+            if (holder == null || i >= runtimeModelPickerPreviewBaseScales.Count)
+            {
+                continue;
+            }
+
+            float factor = i == runtimeModelPickerHoverIndex ? ModelPickerPreviewHoverBoost : 1f;
+            TransformWriter.ApplyLocalScale(holder.transform, runtimeModelPickerPreviewBaseScales[i] * factor);
+        }
+    }
+
+
+    // ヘッダの track ボタン。slot 番目に割り当てられている track へ直接切り替える。
+    private void OnRuntimeModelPickerTargetClicked(int slot)
+    {
+        List<uint> ids = GetAvailableTrackIdsForManualRotation();
+        if (ids == null || slot < 0 || slot >= ids.Count)
+        {
+            return;
+        }
+
+        PauseForManualRotationEdit();
+        runtimeModelPickerTrackId = (int)ids[slot];
+        runtimeModelPickerPageIndex = 0;
+        // 回転の対象も合わせておく。別々だと「どれを触っているか」が分からなくなる。
+        selectedManualRotationTrackId = runtimeModelPickerTrackId;
+        Debug.Log($"[ModelPicker] target -> track={runtimeModelPickerTrackId} (slot {slot})");
+        UpdateRuntimeModelPickerUiState();
+    }
+
+
+    // 出ている track の ID をボタン列へ流し込む。足りなければ作り、余ったら隠す。
+    private void UpdateRuntimeModelPickerTargetButtons()
+    {
+        List<uint> ids = GetAvailableTrackIdsForManualRotation();
+        int count = ids != null ? ids.Count : 0;
+
+        Transform panel = runtimeModelPickerRoot != null ? runtimeModelPickerRoot.transform.Find("Panel") : null;
+        if (logPlacementMeasurement)
+        {
+            Debug.Log($"[TARGETROW] ids={count} buttons={runtimeModelPickerTargetButtons.Count} panel={(panel != null ? panel.name : "null")}");
+        }
+        while (panel != null && runtimeModelPickerTargetButtons.Count < count)
+        {
+            int slot = runtimeModelPickerTargetButtons.Count;
+            Button created = CreateModelPickerButton(
+                panel,
+                $"ModelPickerTargetButton_{slot}",
+                string.Empty,
+                Vector2.zero,
+                new Vector2(ModelPickerTargetButtonWidth, 44f),
+                () => OnRuntimeModelPickerTargetClicked(slot),
+                TextAnchor.MiddleCenter);
+            runtimeModelPickerTargetButtons.Add(created);
+        }
+
+        // 数が変わっても中央に並ぶよう、間隔は毎回引き直す。
+        // 数が多いときは詰めて、行が canvas からはみ出さないようにする。
+        float pitch = count > 1
+            ? Mathf.Min(ModelPickerTargetButtonWidth + 8f, ModelPickerTargetRowMaxWidth / count)
+            : 0f;
+
+        for (int i = 0; i < runtimeModelPickerTargetButtons.Count; i++)
+        {
+            Button button = runtimeModelPickerTargetButtons[i];
+            if (button == null)
+            {
+                continue;
+            }
+
+            bool used = i < count;
+            SceneObjectWriter.ApplyActive(button.gameObject, used);
+            if (!used)
+            {
+                continue;
+            }
+
+            RectTransform rect = button.GetComponent<RectTransform>();
+            if (rect != null)
+            {
+                TransformWriter.ApplyCenteredRect(
+                    rect,
+                    new Vector2((i - (count - 1) * 0.5f) * pitch, ModelPickerTargetRowY),
+                    new Vector2(Mathf.Min(ModelPickerTargetButtonWidth, Mathf.Max(40f, pitch - 8f)), 44f));
+            }
+
+            bool isCurrent = (int)ids[i] == runtimeModelPickerTrackId;
+            Text label = button.GetComponentInChildren<Text>(true);
+            if (label != null)
+            {
+                UiComponentWriter.ApplyTextContent(label, ids[i].ToString());
+            }
+
+            if (button.targetGraphic is Image image)
+            {
+                UiComponentWriter.ApplyGraphicColor(
+                    image,
+                    isCurrent
+                        ? new Color(0.15f, 0.35f, 0.48f, 0.95f)
+                        : new Color(0.13f, 0.14f, 0.15f, 0.92f));
+            }
+
+            UiComponentWriter.ApplyInteractable(button, !isCurrent);
+        }
+    }
+
+
     private void StepRuntimeModelPickerTarget()
     {
         PauseForManualRotationEdit();
@@ -272,7 +444,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             SettingsPanelGapMeters,
             SettingsPanelOffsetMeters,
             SettingsPanelForwardOffsetMeters);
-        TransformWriter.ApplyPose(runtimeModelPickerRoot.transform, pose.position, pose.rotation);
+        TransformWriter.ApplyPose(
+            runtimeModelPickerRoot.transform, ApplyRuntimePanelDistanceOffset(pose.position), pose.rotation);
 
         RectTransform rect = runtimeModelPickerRoot.GetComponent<RectTransform>();
         if (rect != null)
@@ -294,6 +467,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             return;
         }
+
+        UpdateRuntimeModelPickerTargetButtons();
 
         if (!TryGetRuntimeModelPickerTarget(out uint trackId, out byte categoryId, out _))
         {
@@ -366,9 +541,43 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
+    // プレビューを作り直したときの状態。**毎フレーム作り直さないための番人。**
+    //
+    // UpdateRuntimeModelPickerUiState は UI.cs から毎フレーム呼ばれる。素直に書くと
+    // 6 体のモデルを毎フレーム Instantiate / Destroy することになり（人体は 1 体 30 renderer）、
+    // Quest では確実に重い。ページ・対象・選択が変わったときだけ作り直す。
+    private int previewBuiltPage = -1;
+    private int previewBuiltSelectedIndex = -1;
+    private int previewBuiltTrackId = -1;
+    private byte previewBuiltCategoryId = 255;
+    private int previewBuiltPrefabCount = -1;
+
+    private void InvalidateRuntimeModelPickerPreviews()
+    {
+        previewBuiltPage = -1;
+    }
+
+
     private void UpdateRuntimeModelPickerEntryButtons(GameObject[] prefabs, int selectedIndex, byte categoryId)
     {
-        ClearRuntimeModelPickerPreviews();
+        int currentTrackId = runtimeModelPickerTrackId;
+        bool previewsAreCurrent =
+            previewBuiltPage == runtimeModelPickerPageIndex &&
+            previewBuiltSelectedIndex == selectedIndex &&
+            previewBuiltTrackId == currentTrackId &&
+            previewBuiltCategoryId == categoryId &&
+            previewBuiltPrefabCount == prefabs.Length &&
+            runtimeModelPickerPreviewInstances.Count > 0;
+
+        if (!previewsAreCurrent)
+        {
+            ClearRuntimeModelPickerPreviews();
+            previewBuiltPage = runtimeModelPickerPageIndex;
+            previewBuiltSelectedIndex = selectedIndex;
+            previewBuiltTrackId = currentTrackId;
+            previewBuiltCategoryId = categoryId;
+            previewBuiltPrefabCount = prefabs.Length;
+        }
 
         int startIndex = runtimeModelPickerPageIndex * RuntimeModelPickerEntriesPerPage;
         Transform previewParent = runtimeModelPickerRoot != null ? runtimeModelPickerRoot.transform.Find("Panel") : null;
@@ -387,10 +596,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             {
                 GameObject prefab = prefabs[modelIndex];
                 string modelName = prefab != null ? CleanModelDisplayName(prefab.name) : "missing";
-                string mark = modelIndex == selectedIndex ? "> " : "  ";
                 if (label != null)
                 {
-                    UiComponentWriter.ApplyTextContent(label, $"{mark}{modelIndex + 1}. {modelName}");
+                    // 選択中は枠の色で示すので、行頭の "> " は付けない（中央寄せだと中心がずれる）。
+                    UiComponentWriter.ApplyTextContent(label, $"{modelIndex + 1}. {modelName}");
                 }
                 if (image != null)
                 {
@@ -403,10 +612,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
                 SceneObjectWriter.ApplyActive(button.gameObject, true);
                 UiComponentWriter.ApplyInteractable(button, true);
-                if (prefab != null && previewParent != null)
+                if (prefab != null && previewParent != null && !previewsAreCurrent)
                 {
-                    float y = 166f - i * 74f;
-                    CreateRuntimeModelPickerPreview(prefab, previewParent, new Vector3(-360f, y, -35f));
+                    Vector2 cell = ResolveModelPickerCellCenter(i);
+                    CreateRuntimeModelPickerPreview(
+                        prefab, previewParent, new Vector3(cell.x, cell.y + ModelPickerPreviewOffsetY, 0f));
                 }
             }
             else
@@ -418,6 +628,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 SceneObjectWriter.ApplyActive(button.gameObject, false);
             }
         }
+
+        ApplyRuntimeModelPickerPreviewHover();
 
         int pageCount = GetRuntimeModelPickerPageCount(prefabs.Length);
         if (runtimeModelPickerPageText != null)
@@ -717,8 +929,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         UiComponentWriter.ApplyTargetGraphic(button, buttonImage);
 
         RectTransform textRect = RuntimeUiElementFactory.CreateRectChild("Label", buttonObj.transform, out GameObject textObj);
-        Vector2 offsetMin = textAnchor == TextAnchor.MiddleLeft ? new Vector2(116f, 0f) : Vector2.zero;
-        Vector2 offsetMax = textAnchor == TextAnchor.MiddleLeft ? new Vector2(-18f, 0f) : Vector2.zero;
+        // LowerCenter はセル下端に名前を置くグリッド用。下辺にべったり付かないよう余白を取る。
+        Vector2 offsetMin =
+            textAnchor == TextAnchor.MiddleLeft ? new Vector2(116f, 0f) :
+            textAnchor == TextAnchor.LowerCenter ? new Vector2(8f, 12f) : Vector2.zero;
+        Vector2 offsetMax =
+            textAnchor == TextAnchor.MiddleLeft ? new Vector2(-18f, 0f) :
+            textAnchor == TextAnchor.LowerCenter ? new Vector2(-8f, 0f) : Vector2.zero;
         TransformWriter.ApplyStretchRect(
             textRect,
             Vector2.zero,
@@ -735,11 +952,25 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
+    // 一覧の各行の左に、そのモデルの実物を小さく置く。
+    //
+    // **world space canvas の中に 3D を置くときは z の扱いに注意。**
+    // canvas の localScale は (幅m/幅px, 高さm/高さpx, **1**) で、x/y は 1/1000 程度なのに
+    // z だけ等倍。ここを uniform スケールで作ると、1.7m の人体が
+    // 幅 4cm・奥行き 51m という針のような形になり、しかも localPosition.z = -35 が
+    // 「35 メートル手前」を意味してしまう。実機で「名前しか出ない」「変な点が見える」と
+    // 報告されたのはこれ（2026-08-31）。
+    //
+    // 対策は 2 つ:
+    //   - z 位置はキャンバス平面から**メートル単位**でわずかに手前へ（パネルとの z 争いを避ける）
+    //   - z のスケールに canvas の y スケールを掛けて、見かけを等倍に戻す
     private void CreateRuntimeModelPickerPreview(GameObject prefab, Transform parent, Vector3 localPosition)
     {
         GameObject holder = new GameObject("ModelPreview");
         holder.transform.SetParent(parent, false);
-        holder.transform.localPosition = localPosition;
+        // パネルの Image と同一平面だと描画順で消えるので、1cm だけ手前に出す。
+        // canvas の z は等倍なので、この 0.01 はそのまま 1cm。
+        holder.transform.localPosition = localPosition + new Vector3(0f, 0f, -PreviewForwardOffsetMeters);
         holder.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
         runtimeModelPickerPreviewInstances.Add(holder);
 
@@ -753,16 +984,49 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         preview.transform.localScale = Vector3.one;
         DisableRuntimeModelPickerPreviewComponents(preview);
 
+        // プレビューは画面上で小さいので、放っておくと LOD が最下位に落ちて粗く見える。
+        LODGroup[] lodGroups = preview.GetComponentsInChildren<LODGroup>(true);
+        for (int i = 0; i < lodGroups.Length; i++)
+        {
+            if (lodGroups[i] != null)
+            {
+                lodGroups[i].ForceLOD(0);
+            }
+        }
+
         if (!TryCalculateLocalRendererBounds(holder.transform, out Bounds bounds))
         {
-            holder.transform.localScale = Vector3.one * 52f;
+            ApplyPreviewScale(holder.transform, 52f);
             return;
         }
 
         preview.transform.localPosition -= bounds.center;
         float maxSize = Mathf.Max(bounds.size.x, Mathf.Max(bounds.size.y, bounds.size.z));
-        float scale = maxSize > 0.0001f ? 52f / maxSize : 52f;
-        holder.transform.localScale = Vector3.one * Mathf.Clamp(scale, 8f, 90f);
+        float scale = maxSize > 0.0001f ? ModelPickerPreviewTargetSize / maxSize : ModelPickerPreviewTargetSize;
+        // 上限 90 は野球ボール（0.076m）のような小さいモデルを潰していた。
+        // 必要な倍率は 118 / 0.076 = 1553。bounds の計算を直したので広い範囲を許してよい。
+        float applied = Mathf.Clamp(scale, 1f, 3000f);
+        ApplyPreviewScale(holder.transform, applied);
+
+        if (logPlacementMeasurement)
+        {
+            Debug.Log(
+                $"[PREVIEW] {prefab.name} boundsSize={bounds.size:F3} maxSize={maxSize:F3} " +
+                $"scale={scale:F2} applied={applied:F2} lossy={holder.transform.lossyScale:F5}");
+        }
+    }
+
+
+    // canvas の z が等倍であることを打ち消して、見かけを等倍にする。
+    // x/y はキャンバス座標（px 相当）なのでそのまま、z だけ「1px 相当のメートル数」を掛ける。
+    private void ApplyPreviewScale(Transform holder, float scale)
+    {
+        float metersPerCanvasUnit = RuntimeModelPickerSizeMeters.y / RuntimeModelPickerDefaultCanvasHeight;
+        Vector3 baseScale = new Vector3(scale, scale, scale * metersPerCanvasUnit);
+        TransformWriter.ApplyLocalScale(holder, baseScale);
+
+        // hover で拡大したあと戻す先。プレビューと同じ順序で積む。
+        runtimeModelPickerPreviewBaseScales.Add(baseScale);
     }
 
 
@@ -791,7 +1055,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private bool TryCalculateLocalRendererBounds(Transform root, out Bounds bounds)
+    // プレビュー用に、holder から見たモデルの大きさを測る。
+    //
+    // **renderer.bounds（world AABB）を使ってはいけない。** holder は world space canvas の
+    // 配下にあり、親の lossyScale が (0.00086, 0.00088, **1**) と極端に非等倍で、しかも
+    // パネルごと回転している。world の軸に沿った AABB を holder のローカルへ戻すと、
+    // パネル法線方向（スケール 1）の僅かな厚みが x（1/0.00086 倍）へ漏れて桁が跳ねる。
+    // 実測で人体 1 体が (623.160, 2.043, 0.650) と出て、maxSize=623 から
+    // scale が下限 8 にクランプされ、プレビューが本来の 1/3 の大きさになっていた
+    // （2026-08-31。実機で「名前しか出ない」と報告された症状の一部）。
+    //
+    // mesh の**ローカル** bounds を holder までの行列で運べば、途中のスケールは
+    // 行列の中で相殺されるので正しい寸法が出る（ElseOrientationDiagnostics と同じやり方）。
+    private static bool TryCalculateLocalRendererBounds(Transform root, out Bounds bounds)
     {
         bounds = default;
         if (root == null)
@@ -799,47 +1075,63 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        Renderer[] renderers = root.GetComponentsInChildren<Renderer>(true);
         bool hasBounds = false;
+        Renderer[] renderers = root.GetComponentsInChildren<Renderer>(true);
         for (int i = 0; i < renderers.Length; i++)
         {
             Renderer renderer = renderers[i];
-            if (renderer == null)
+            Mesh mesh = ResolvePreviewMesh(renderer);
+            if (mesh == null)
             {
                 continue;
             }
 
-            Bounds worldBounds = renderer.bounds;
-            Vector3 min = worldBounds.min;
-            Vector3 max = worldBounds.max;
-            Vector3[] corners =
+            Matrix4x4 toRoot = root.worldToLocalMatrix * renderer.transform.localToWorldMatrix;
+            Bounds inRoot = TransformBoundsByMatrix(mesh.bounds, toRoot);
+            if (!hasBounds)
             {
-                new Vector3(min.x, min.y, min.z),
-                new Vector3(min.x, min.y, max.z),
-                new Vector3(min.x, max.y, min.z),
-                new Vector3(min.x, max.y, max.z),
-                new Vector3(max.x, min.y, min.z),
-                new Vector3(max.x, min.y, max.z),
-                new Vector3(max.x, max.y, min.z),
-                new Vector3(max.x, max.y, max.z),
-            };
-
-            for (int j = 0; j < corners.Length; j++)
+                bounds = inRoot;
+                hasBounds = true;
+            }
+            else
             {
-                Vector3 local = root.InverseTransformPoint(corners[j]);
-                if (!hasBounds)
-                {
-                    bounds = new Bounds(local, Vector3.zero);
-                    hasBounds = true;
-                }
-                else
-                {
-                    bounds.Encapsulate(local);
-                }
+                bounds.Encapsulate(inRoot);
             }
         }
 
         return hasBounds;
+    }
+
+
+    private static Mesh ResolvePreviewMesh(Renderer renderer)
+    {
+        if (renderer == null)
+        {
+            return null;
+        }
+
+        if (renderer is SkinnedMeshRenderer skinned)
+        {
+            return skinned.sharedMesh;
+        }
+
+        MeshFilter filter = renderer.GetComponent<MeshFilter>();
+        return filter != null ? filter.sharedMesh : null;
+    }
+
+
+    private static Bounds TransformBoundsByMatrix(Bounds b, Matrix4x4 m)
+    {
+        Vector3 center = m.MultiplyPoint3x4(b.center);
+        Vector3 e = b.extents;
+        Vector3 x = m.MultiplyVector(new Vector3(e.x, 0f, 0f));
+        Vector3 y = m.MultiplyVector(new Vector3(0f, e.y, 0f));
+        Vector3 z = m.MultiplyVector(new Vector3(0f, 0f, e.z));
+        Vector3 extents = new Vector3(
+            Mathf.Abs(x.x) + Mathf.Abs(y.x) + Mathf.Abs(z.x),
+            Mathf.Abs(x.y) + Mathf.Abs(y.y) + Mathf.Abs(z.y),
+            Mathf.Abs(x.z) + Mathf.Abs(y.z) + Mathf.Abs(z.z));
+        return new Bounds(center, extents * 2f);
     }
 
 
@@ -854,6 +1146,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         runtimeModelPickerPreviewInstances.Clear();
+        runtimeModelPickerPreviewBaseScales.Clear();
+        runtimeModelPickerHoverIndex = -1;
     }
 
 

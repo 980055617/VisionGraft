@@ -287,6 +287,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         FlushTrackCustomizationSaveIfDue();
 
+        // 掴み代を掴んでいる間、コントローラの前後移動をパネル距離へ反映する。
+        //
+        // **EnsureRuntimeControls に置いてはいけない。** あれは OnPrepared から 1 回しか
+        // 呼ばれないので、掴んでも offset が 0 のまま動かなかった（2026-09-01 実機ログ:
+        // 「掴んだ pointerOK=True」は出るのに「moved=」が一度も出ない）。
+        // この下には bundle ピッカー用の早期 return があるので、その前で呼ぶ。
+        UpdateRuntimePanelDrag();
+
         // 再生中の切り替えにも追従させたいので毎フレーム適用する。
         // audioTrackCount は Prepare 後に確定するため、ここで見るのが確実。
         if (mute != appliedMute || (mute && vp != null && vp.isPrepared))

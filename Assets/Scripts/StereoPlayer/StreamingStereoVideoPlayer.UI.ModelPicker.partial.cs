@@ -1290,7 +1290,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        UiComponentWriter.ApplyTextContent(runtimeModelPickerButtonText, "Change");
+        // パネルはモデル選択とモデル編集の 2 面になったので、
+        // "Change"（= 差し替え）だけでは中身と合わない。
+        UiComponentWriter.ApplyTextContent(runtimeModelPickerButtonText, "Model");
     }
 
 

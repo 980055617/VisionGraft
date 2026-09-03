@@ -39,6 +39,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 前後送りで飛べるキーのフレーム。無ければ -1。ラベルにそのまま出す。
     private int runtimeTrackPrevKeyFrame = -1;
     private int runtimeTrackNextKeyFrame = -1;
+    private readonly List<SortedDictionary<int, float>> keyNavigationCurves =
+        new List<SortedDictionary<int, float>>();
 
     // 編集タブの行。canvas は 980x660 で原点は中心（上端 330 / 下端 -330）。
     private const float ModelEditRotationRowY = 110f;
@@ -284,26 +286,51 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private bool batchSeekTestDone;
     private float batchSeekTestVerifyAtRealtime = -1f;
+    private float batchSeekTestStartRealtime = -1f;
     private int batchSeekTestVerifyCount;
 
     // フレーム直指定シークが実際に効くかを実動画で確かめる。
     private void RunBatchSeekTestIfRequested()
     {
-        // **isPrepared だけでは早い。** prepare 直後は vp.frame が -1 のままで、
-        // その状態で frame を書いても乗らない（実測 2026-09-04: 目標 900 → vp.frame=-1）。
-        // 実際にデコードが進んでから試す。
         if (batchSeekTestFrame < 0 || batchSeekTestDone || vp == null || !vp.isPrepared || !metaLoaded)
         {
             return;
         }
 
-        if (vp.frame < 30L)
+        // **vp.frame で待たない。**
+        // ピッカーを開けば再生は止まるので、frame は 0 付近で固まる。
+        // 「vp.frame >= 30 になったら」で待つと永遠に発火しない。
+        // 実時間で待って、**実際の操作と同じ「既に止まっている」状態**で試す。
+        if (batchSeekTestStartRealtime < 0f)
         {
+            batchSeekTestStartRealtime = Time.realtimeSinceStartup;
+            return;
+        }
+
+        float elapsed = Time.realtimeSinceStartup - batchSeekTestStartRealtime;
+        if (elapsed < 3f)
+        {
+            return;
+        }
+
+        // **先に確実に止めてから試す。**
+        // 実際の操作ではパネルを開いている間は再生が止まっており、
+        // 「既に止まっているプレーヤーに time を書く」のが毎回の条件になる。
+        // 再生中に書いて効いても、それは本番の条件を試していない。
+        if (vp.isPlaying)
+        {
+            vp.Pause();
+            Debug.Log($"[SEEKTEST] 先に停止して 1 秒待ちます frame={vp.frame}");
+            batchSeekTestStartRealtime = Time.realtimeSinceStartup - 2f;
             return;
         }
 
         batchSeekTestDone = true;
         int before = GetCurrentPlaybackFrame();
+        Debug.Log(
+            $"[SEEKTEST] 開始 目標={batchSeekTestFrame} 直前={before} " +
+            $"isPlaying={vp.isPlaying} ピッカー開={runtimeModelPickerOpen} " +
+            $"タブ={(runtimeModelPickerTab == ModelPickerTabEdit ? "編集" : "モデル")}");
 
         SeekToTrackKeyFrame(batchSeekTestFrame);
 
@@ -375,8 +402,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         RuntimePlaybackController.ApplySeekTarget(
             vp, new RuntimePlaybackTimeline.SeekTarget(true, seconds, false, 0L));
 
-        // **止めるのはシークの後。** 先に Pause してから time を書くと、
-        // デコーダが動かないままでシークが消える（実測 2026-09-04）。
+        // 止めるのはシークの後。この順序自体は必須ではない——
+        // 停止済みのプレーヤーに書いてもシークは効く（実測 2026-09-04:
+        // isPlaying=False で目標 900 に対し 900 へ到達）。先に飛ばす方が
+        // 「飛んでから止まる」と順番が素直なのでこちらにしてある。
         PauseForManualRotationEdit();
 
         UpdateRuntimeProgressUi();
@@ -389,46 +418,30 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    // 現在フレームから見て前後にあるキーのフレームを探す。
-    //
-    // **4 本の曲線（yaw / pitch / roll / scale）の和を見る。**
-    // 片方だけを辿ると、たとえば scale だけのキーに飛べず、そのフレームは
-    // 前後送りでは到達できないのに Del は効く、という食い違いが起きる。
-    // Del は 4 本すべてから消すので、送りも 4 本の和で揃える。
+    // 探索自体は TrackKeyNavigation。ここは track の 4 本を集めて渡すだけ。
     private void RefreshTrackKeyNavigationTargets(uint trackId, int currentFrame)
     {
-        runtimeTrackPrevKeyFrame = -1;
-        runtimeTrackNextKeyFrame = -1;
+        keyNavigationCurves.Clear();
+        AddKeyNavigationCurve(manualYawKeyframesByTrack, trackId);
+        AddKeyNavigationCurve(manualPitchKeyframesByTrack, trackId);
+        AddKeyNavigationCurve(manualRollKeyframesByTrack, trackId);
+        AddKeyNavigationCurve(manualScaleKeyframesByTrack, trackId);
 
-        AccumulateKeyNavigationCandidates(manualYawKeyframesByTrack, trackId, currentFrame);
-        AccumulateKeyNavigationCandidates(manualPitchKeyframesByTrack, trackId, currentFrame);
-        AccumulateKeyNavigationCandidates(manualRollKeyframesByTrack, trackId, currentFrame);
-        AccumulateKeyNavigationCandidates(manualScaleKeyframesByTrack, trackId, currentFrame);
+        TrackKeyNavigation.FindNeighbors(
+            keyNavigationCurves,
+            currentFrame,
+            out runtimeTrackPrevKeyFrame,
+            out runtimeTrackNextKeyFrame);
     }
 
 
-    private void AccumulateKeyNavigationCandidates(
+    private void AddKeyNavigationCurve(
         Dictionary<uint, SortedDictionary<int, float>> source,
-        uint trackId,
-        int currentFrame)
+        uint trackId)
     {
-        if (source == null || !source.TryGetValue(trackId, out SortedDictionary<int, float> keys) || keys == null)
+        if (source != null && source.TryGetValue(trackId, out SortedDictionary<int, float> keys) && keys != null)
         {
-            return;
-        }
-
-        foreach (KeyValuePair<int, float> kv in keys)
-        {
-            int frame = kv.Key;
-            if (frame < currentFrame && frame > runtimeTrackPrevKeyFrame)
-            {
-                runtimeTrackPrevKeyFrame = frame;
-            }
-            else if (frame > currentFrame &&
-                     (runtimeTrackNextKeyFrame < 0 || frame < runtimeTrackNextKeyFrame))
-            {
-                runtimeTrackNextKeyFrame = frame;
-            }
+            keyNavigationCurves.Add(keys);
         }
     }
 

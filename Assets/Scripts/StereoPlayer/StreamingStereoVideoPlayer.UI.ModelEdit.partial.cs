@@ -1,0 +1,464 @@
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.UI;
+
+// モデル編集タブ。「Change」パネルの 2 面目。
+//
+// **なぜ Settings から出したか。**
+// Settings には系統の違う 2 種類が同居していた:
+//   - 系全体の設定 … Motion / Screen Dist
+//   - いま選んでいる対象の編集 … Track 選択 / Rot 0 / Scl 1 / Del / Scale / Keys
+// 後者はモデルを選ぶ操作と地続きなので、モデルピッカーと同じパネルに置く
+// （2026-09-04 ユーザー提案「設定に入れずにモデル編集という別のに入れる」）。
+//
+// **なぜ別ウィンドウにしなかったか。**
+//   - 操作バーに 7 個目のボタンが入らない。canvas 440 に 76px のボタンが 3 行、
+//     3 行目の下端が -213 で canvas の下端が -220。
+//   - どちらの面も「どの track を触るか」を必要とする。対象の行を共有すれば
+//     選択がずれない。**別ウィンドウにすると 2 つの選択状態が生まれる**
+//     （実際 Settings 側は selectedManualRotationTrackId、ピッカー側は
+//     runtimeModelPickerTrackId と別々に持っていた）。
+public partial class StreamingStereoVideoPlayer : MonoBehaviour
+{
+    private const int ModelPickerTabModels = 0;
+    private const int ModelPickerTabEdit = 1;
+
+    private int runtimeModelPickerTab = ModelPickerTabModels;
+    private Button runtimeModelPickerModelTabButton;
+    private Button runtimeModelPickerEditTabButton;
+    private readonly List<GameObject> runtimeModelPickerModelTabObjects = new List<GameObject>();
+    private readonly List<GameObject> runtimeModelPickerEditTabObjects = new List<GameObject>();
+
+    private Text runtimeTrackRotationValueText;
+    private Button runtimeTrackRotationResetButton;
+    private Button runtimeTrackScaleResetButtonRef;
+    private Button runtimeTrackKeyDeleteButtonRef;
+    private Button runtimeTrackKeyPrevButton;
+    private Button runtimeTrackKeyNextButton;
+
+    // 前後送りで飛べるキーのフレーム。無ければ -1。ラベルにそのまま出す。
+    private int runtimeTrackPrevKeyFrame = -1;
+    private int runtimeTrackNextKeyFrame = -1;
+
+    // 編集タブの行。canvas は 980x660 で原点は中心（上端 330 / 下端 -330）。
+    private const float ModelEditRotationRowY = 110f;
+    private const float ModelEditResetRowY = 48f;
+    private const float ModelEditScaleRowY = -30f;
+    private const float ModelEditKeyInfoRowY = -104f;
+    private const float ModelEditKeyNavRowY = -176f;
+    private const float ModelEditHintRowY = -246f;
+
+
+    private void RegisterModelPickerTabObject(int tab, GameObject obj)
+    {
+        if (obj == null)
+        {
+            return;
+        }
+
+        if (tab == ModelPickerTabEdit)
+        {
+            runtimeModelPickerEditTabObjects.Add(obj);
+        }
+        else
+        {
+            runtimeModelPickerModelTabObjects.Add(obj);
+        }
+    }
+
+
+    private void SetRuntimeModelPickerTab(int tab)
+    {
+        if (runtimeModelPickerTab == tab)
+        {
+            return;
+        }
+
+        runtimeModelPickerTab = tab;
+        ApplyRuntimeModelPickerTabVisibility();
+
+        // 編集タブに来た時点で、いま選んでいる対象の値を出す。
+        // 開いた直後に「x1.00 / Keys 0」と出てから正しい値に化けるのを避ける。
+        if (tab == ModelPickerTabEdit)
+        {
+            UpdateRuntimeTrackRotationUiState();
+        }
+        else
+        {
+            InvalidateRuntimeModelPickerPreviews();
+        }
+
+        ExperimentLog.Operation("model_panel_tab", tab == ModelPickerTabEdit ? "edit" : "models");
+    }
+
+
+    private void ApplyRuntimeModelPickerTabVisibility()
+    {
+        bool edit = runtimeModelPickerTab == ModelPickerTabEdit;
+
+        for (int i = 0; i < runtimeModelPickerModelTabObjects.Count; i++)
+        {
+            GameObject obj = runtimeModelPickerModelTabObjects[i];
+            if (obj != null)
+            {
+                SceneObjectWriter.ApplyActive(obj, !edit);
+            }
+        }
+
+        for (int i = 0; i < runtimeModelPickerEditTabObjects.Count; i++)
+        {
+            GameObject obj = runtimeModelPickerEditTabObjects[i];
+            if (obj != null)
+            {
+                SceneObjectWriter.ApplyActive(obj, edit);
+            }
+        }
+
+        // モデルタブのプレビューは 3D の実体なので、隠すときは消す。
+        // 残したままだとパネルの手前に浮いたまま編集タブに被る。
+        if (edit)
+        {
+            ClearRuntimeModelPickerPreviews();
+        }
+
+        ApplyModelPickerTabHighlight(runtimeModelPickerModelTabButton, !edit);
+        ApplyModelPickerTabHighlight(runtimeModelPickerEditTabButton, edit);
+    }
+
+
+    private static void ApplyModelPickerTabHighlight(Button button, bool active)
+    {
+        if (button == null || !(button.targetGraphic is Image image))
+        {
+            return;
+        }
+
+        UiComponentWriter.ApplyGraphicColor(
+            image,
+            active
+                ? new Color(0.16f, 0.42f, 0.66f, 0.96f)
+                : new Color(0.13f, 0.14f, 0.15f, 0.92f));
+    }
+
+
+    private void BuildRuntimeModelEditTab(Transform parent)
+    {
+        runtimeModelPickerEditTabObjects.Clear();
+
+        runtimeTrackRotationValueText = CreateModelPickerText(
+            parent,
+            "TrackRotationValue",
+            "回転  yaw 0.0  pitch 0.0  roll 0.0",
+            new Vector2(0f, ModelEditRotationRowY),
+            new Vector2(900f, 48f),
+            30,
+            TextAnchor.MiddleCenter,
+            Color.white);
+        RegisterModelPickerTabObject(ModelPickerTabEdit, runtimeTrackRotationValueText.gameObject);
+
+        runtimeTrackRotationResetButton = CreateModelPickerButton(
+            parent,
+            "TrackYawResetButton",
+            "回転をリセット",
+            new Vector2(-160f, ModelEditResetRowY),
+            new Vector2(300f, 56f),
+            OnRuntimeTrackYawResetClicked,
+            TextAnchor.MiddleCenter);
+        RegisterModelPickerTabObject(ModelPickerTabEdit, runtimeTrackRotationResetButton.gameObject);
+
+        runtimeTrackScaleResetButtonRef = CreateModelPickerButton(
+            parent,
+            "TrackScaleResetButton",
+            "大きさをリセット",
+            new Vector2(160f, ModelEditResetRowY),
+            new Vector2(300f, 56f),
+            OnRuntimeTrackScaleResetClicked,
+            TextAnchor.MiddleCenter);
+        RegisterModelPickerTabObject(ModelPickerTabEdit, runtimeTrackScaleResetButtonRef.gameObject);
+
+        // Scale は自動フィット（bbox 高さ合わせ）に対する**倍率**。1.0 が「自動のまま」。
+        Text scaleLabel = CreateModelPickerText(
+            parent,
+            "ScaleLabel",
+            "大きさ",
+            new Vector2(-380f, ModelEditScaleRowY),
+            new Vector2(180f, 48f),
+            30,
+            TextAnchor.MiddleLeft,
+            Color.white);
+        RegisterModelPickerTabObject(ModelPickerTabEdit, scaleLabel.gameObject);
+
+        runtimeTrackScaleValueText = CreateModelPickerText(
+            parent,
+            "ScaleValue",
+            "x1.00",
+            new Vector2(380f, ModelEditScaleRowY),
+            new Vector2(160f, 48f),
+            30,
+            TextAnchor.MiddleRight,
+            Color.white);
+        RegisterModelPickerTabObject(ModelPickerTabEdit, runtimeTrackScaleValueText.gameObject);
+
+        // 操作列は Settings と同じ (-180..240)。canvas が 80px 広いだけで列は共通に収まる。
+        runtimeTrackScaleSlider = CreateSlider(parent, "TrackScaleSlider", ModelEditScaleRowY);
+        if (runtimeTrackScaleSlider != null)
+        {
+            UiComponentWriter.ApplySliderRange(runtimeTrackScaleSlider, ManualScaleMin, ManualScaleMax);
+            UiComponentWriter.ApplySliderValueWithoutNotify(runtimeTrackScaleSlider, ManualScaleDefault);
+            BindRuntimeSlider(runtimeTrackScaleSlider, OnRuntimeTrackScaleSliderChanged);
+            RegisterModelPickerTabObject(ModelPickerTabEdit, runtimeTrackScaleSlider.gameObject);
+        }
+
+        runtimeTrackKeyInfoText = CreateModelPickerText(
+            parent,
+            "TrackKeyInfo",
+            "キー 回転:0 大きさ:0",
+            new Vector2(0f, ModelEditKeyInfoRowY),
+            new Vector2(900f, 44f),
+            28,
+            TextAnchor.MiddleCenter,
+            new Color(0.9f, 0.95f, 1f, 1f));
+        RegisterModelPickerTabObject(ModelPickerTabEdit, runtimeTrackKeyInfoText.gameObject);
+
+        // **キーの前後送り。**
+        // Del だけだと「現在フレームちょうどに止めないと消せない」。bundle_train は
+        // 1830 フレーム、bundle_human は 2167 フレームで、シークバーは数百 px しかない。
+        // 目的のフレームに手で合わせるのは実質不可能だという指摘（2026-09-04）。
+        //
+        // 一覧ではなく前後送りにしたのは、VR で小さい的を並べる設計が破綻するため。
+        // 飛び先のフレーム番号をボタンに出せば、一覧の「どこにキーがあるか分かる」も概ね賄える。
+        runtimeTrackKeyPrevButton = CreateModelPickerButton(
+            parent,
+            "TrackKeyPrevButton",
+            "< ―",
+            new Vector2(-330f, ModelEditKeyNavRowY),
+            new Vector2(240f, 60f),
+            OnRuntimeTrackKeyPrevClicked,
+            TextAnchor.MiddleCenter);
+        RegisterModelPickerTabObject(ModelPickerTabEdit, runtimeTrackKeyPrevButton.gameObject);
+
+        runtimeTrackKeyDeleteButtonRef = CreateModelPickerButton(
+            parent,
+            "TrackKeyDeleteButton",
+            "この位置のキーを消す",
+            new Vector2(0f, ModelEditKeyNavRowY),
+            new Vector2(380f, 60f),
+            OnRuntimeTrackKeyDeleteClicked,
+            TextAnchor.MiddleCenter);
+        RegisterModelPickerTabObject(ModelPickerTabEdit, runtimeTrackKeyDeleteButtonRef.gameObject);
+
+        runtimeTrackKeyNextButton = CreateModelPickerButton(
+            parent,
+            "TrackKeyNextButton",
+            "― >",
+            new Vector2(330f, ModelEditKeyNavRowY),
+            new Vector2(240f, 60f),
+            OnRuntimeTrackKeyNextClicked,
+            TextAnchor.MiddleCenter);
+        RegisterModelPickerTabObject(ModelPickerTabEdit, runtimeTrackKeyNextButton.gameObject);
+
+        Text keyHint = CreateModelPickerText(
+            parent,
+            "TrackKeyHint",
+            "対象を掴んで回すと現在フレームにキーが入ります。キーとキーの間は自動で補間されます。",
+            new Vector2(0f, ModelEditHintRowY),
+            new Vector2(900f, 44f),
+            22,
+            TextAnchor.MiddleCenter,
+            new Color(0.75f, 0.8f, 0.85f, 1f));
+        RegisterModelPickerTabObject(ModelPickerTabEdit, keyHint.gameObject);
+    }
+
+
+    private void OnRuntimeTrackKeyPrevClicked()
+    {
+        SeekToTrackKeyFrame(runtimeTrackPrevKeyFrame);
+    }
+
+
+    private void OnRuntimeTrackKeyNextClicked()
+    {
+        SeekToTrackKeyFrame(runtimeTrackNextKeyFrame);
+    }
+
+
+    private bool batchSeekTestDone;
+    private float batchSeekTestVerifyAtRealtime = -1f;
+    private int batchSeekTestVerifyCount;
+
+    // フレーム直指定シークが実際に効くかを実動画で確かめる。
+    private void RunBatchSeekTestIfRequested()
+    {
+        // **isPrepared だけでは早い。** prepare 直後は vp.frame が -1 のままで、
+        // その状態で frame を書いても乗らない（実測 2026-09-04: 目標 900 → vp.frame=-1）。
+        // 実際にデコードが進んでから試す。
+        if (batchSeekTestFrame < 0 || batchSeekTestDone || vp == null || !vp.isPrepared || !metaLoaded)
+        {
+            return;
+        }
+
+        if (vp.frame < 30L)
+        {
+            return;
+        }
+
+        batchSeekTestDone = true;
+        int before = GetCurrentPlaybackFrame();
+
+        SeekToTrackKeyFrame(batchSeekTestFrame);
+
+        // **シークは非同期。** 書いた直後の vp.frame はまだ古い値を返すので、
+        // ここだけを見て「効かない」と判断してはいけない。少し後でもう一度見る。
+        Debug.Log($"[SEEKTEST] 目標={batchSeekTestFrame} 直前={before} 直後={GetCurrentPlaybackFrame()} vp.frame={vp.frame}");
+        batchSeekTestVerifyAtRealtime = Time.realtimeSinceStartup + 1f;
+    }
+
+
+    private void VerifyBatchSeekTestIfDue()
+    {
+        if (batchSeekTestVerifyAtRealtime < 0f || Time.realtimeSinceStartup < batchSeekTestVerifyAtRealtime)
+        {
+            return;
+        }
+
+        batchSeekTestVerifyCount++;
+        batchSeekTestVerifyAtRealtime = batchSeekTestVerifyCount < 5
+            ? Time.realtimeSinceStartup + 1f
+            : -1f;
+        int landed = GetCurrentPlaybackFrame();
+        bool ok = Mathf.Abs(landed - batchSeekTestFrame) <= 2;
+        Debug.Log(
+            $"[SEEKTEST] #{batchSeekTestVerifyCount}: 現在={landed} vp.frame={(vp != null ? vp.frame : -1L)} " +
+            $"vp.time={(vp != null ? vp.time : 0d):F3} isPlaying={(vp != null && vp.isPlaying)} " +
+            $"目標={batchSeekTestFrame} 判定={(ok ? "到達" : "未到達")}");
+    }
+
+
+    // キーのフレーム番号を秒に直すための fps。
+    // 進捗バーと同じ ResolveSeekFps を使う。ここだけ別の fps を使うと、
+    // バーの位置とキーの位置がじわじわずれる。
+    private float ResolveSeekFpsForKeyNavigation()
+    {
+        float manifestFps = manifest != null ? manifest.fps : 0f;
+        return RuntimePlaybackTimeline.ResolveSeekFps(
+            metaHeader.fps, manifestFps, vp != null ? vp.frameRate : 0d);
+    }
+
+
+    private void SeekToTrackKeyFrame(int frame)
+    {
+        if (isNormalMode || frame < 0 || vp == null)
+        {
+            return;
+        }
+
+        bool wasPlaying = vp.isPlaying;
+
+        // **秒で飛ばす。** 進捗バーが使っているのと同じ経路。
+        //
+        // シークは**非同期**で、完了には実時間で 1 秒弱かかる。
+        // 書いた直後の vp.time / vp.frame は古い値のままなので、
+        // それを見て「効かない」と判断してはいけない
+        // （batchmode の Update は実時間を待たないので、Update 回数で待っても進まない）。
+        //
+        // **半フレーム分足す。** 秒 → frame は floor なので、frame/fps ちょうどだと
+        // 丸め誤差で 1 手前に落ち得る。キーの上に乗らないと Del が押せなくなり、
+        // 前後送りを足した意味が消える。フレームの真ん中を狙う。
+        float fps = ResolveSeekFpsForKeyNavigation();
+        if (fps <= 0.001f)
+        {
+            Debug.Log($"[KEYNAV] fps が分からないので移動できません frame={frame}");
+            return;
+        }
+
+        double seconds = (frame + 0.5d) / fps;
+        RuntimePlaybackController.ApplySeekTarget(
+            vp, new RuntimePlaybackTimeline.SeekTarget(true, seconds, false, 0L));
+
+        // **止めるのはシークの後。** 先に Pause してから time を書くと、
+        // デコーダが動かないままでシークが消える（実測 2026-09-04）。
+        PauseForManualRotationEdit();
+
+        UpdateRuntimeProgressUi();
+        UpdateRuntimeTrackRotationUiState();
+        Debug.Log(
+            $"[KEYNAV] frame={frame} へ移動 秒={seconds:F3} fps={fps:F3} " +
+            $"canSetTime={vp.canSetTime} 再生中だった={wasPlaying} " +
+            $"vp.frame={vp.frame} 現在={GetCurrentPlaybackFrame()}");
+        ExperimentLog.Operation("seek_key", $"frame={frame}");
+    }
+
+
+    // 現在フレームから見て前後にあるキーのフレームを探す。
+    //
+    // **4 本の曲線（yaw / pitch / roll / scale）の和を見る。**
+    // 片方だけを辿ると、たとえば scale だけのキーに飛べず、そのフレームは
+    // 前後送りでは到達できないのに Del は効く、という食い違いが起きる。
+    // Del は 4 本すべてから消すので、送りも 4 本の和で揃える。
+    private void RefreshTrackKeyNavigationTargets(uint trackId, int currentFrame)
+    {
+        runtimeTrackPrevKeyFrame = -1;
+        runtimeTrackNextKeyFrame = -1;
+
+        AccumulateKeyNavigationCandidates(manualYawKeyframesByTrack, trackId, currentFrame);
+        AccumulateKeyNavigationCandidates(manualPitchKeyframesByTrack, trackId, currentFrame);
+        AccumulateKeyNavigationCandidates(manualRollKeyframesByTrack, trackId, currentFrame);
+        AccumulateKeyNavigationCandidates(manualScaleKeyframesByTrack, trackId, currentFrame);
+    }
+
+
+    private void AccumulateKeyNavigationCandidates(
+        Dictionary<uint, SortedDictionary<int, float>> source,
+        uint trackId,
+        int currentFrame)
+    {
+        if (source == null || !source.TryGetValue(trackId, out SortedDictionary<int, float> keys) || keys == null)
+        {
+            return;
+        }
+
+        foreach (KeyValuePair<int, float> kv in keys)
+        {
+            int frame = kv.Key;
+            if (frame < currentFrame && frame > runtimeTrackPrevKeyFrame)
+            {
+                runtimeTrackPrevKeyFrame = frame;
+            }
+            else if (frame > currentFrame &&
+                     (runtimeTrackNextKeyFrame < 0 || frame < runtimeTrackNextKeyFrame))
+            {
+                runtimeTrackNextKeyFrame = frame;
+            }
+        }
+    }
+
+
+    // 前後送りのボタンに飛び先のフレーム番号を出す。無ければ押せなくする。
+    private void ApplyTrackKeyNavigationButtons()
+    {
+        ApplyKeyNavButton(runtimeTrackKeyPrevButton, runtimeTrackPrevKeyFrame, true);
+        ApplyKeyNavButton(runtimeTrackKeyNextButton, runtimeTrackNextKeyFrame, false);
+    }
+
+
+    private void ApplyKeyNavButton(Button button, int frame, bool isPrev)
+    {
+        if (button == null)
+        {
+            return;
+        }
+
+        bool enabled = !isNormalMode && frame >= 0;
+        UiComponentWriter.ApplyInteractable(button, enabled);
+
+        Text label = button.GetComponentInChildren<Text>(true);
+        if (label == null)
+        {
+            return;
+        }
+
+        // ◀ ▶ は端末のフォントに無いと豆腐になる。既存の "< Prev" と同じ ASCII にする。
+        string body = enabled ? frame.ToString() : "―";
+        UiComponentWriter.ApplyTextContent(label, isPrev ? "< " + body : body + " >");
+    }
+}

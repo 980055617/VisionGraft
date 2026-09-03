@@ -15,6 +15,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private bool panelLayoutDumped;
 
+    // 開いているパネルを書き出す。設定・モデル一覧・モデル編集のどれでも同じ扱い。
+    // -openSettings / -openPicker / -pickerTab で開いたものが対象になる。
     private void DumpPanelLayoutIfRequested()
     {
         if (!batchDumpPanelLayout || panelLayoutDumped)
@@ -22,13 +24,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        if (runtimeSettingsRoot == null || !runtimeSettingsOpen)
+        bool settingsReady = runtimeSettingsRoot != null && runtimeSettingsOpen;
+        bool pickerReady = runtimeModelPickerRoot != null && runtimeModelPickerOpen;
+        if (!settingsReady && !pickerReady)
         {
             return;
         }
 
         panelLayoutDumped = true;
-        DumpOnePanelLayout("Settings", runtimeSettingsRoot, RuntimeSettingsDefaultCanvasWidth, RuntimeSettingsDefaultCanvasHeight);
+
+        if (settingsReady)
+        {
+            DumpOnePanelLayout(
+                "Settings", runtimeSettingsRoot, RuntimeSettingsDefaultCanvasWidth, RuntimeSettingsDefaultCanvasHeight);
+        }
+
+        if (pickerReady)
+        {
+            string tab = runtimeModelPickerTab == ModelPickerTabEdit ? "ModelEdit" : "ModelList";
+            DumpOnePanelLayout(
+                tab, runtimeModelPickerRoot, RuntimeModelPickerDefaultCanvasWidth, RuntimeModelPickerDefaultCanvasHeight);
+        }
     }
 
 

@@ -199,34 +199,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
 
 
-    private void OnRuntimeTrackPrevClicked()
-    {
-        if (isNormalMode)
-        {
-            return;
-        }
-
-        PauseForManualRotationEdit();
-        StepSelectedManualRotationTrack(-1);
-        UpdateRuntimeTrackRotationUiState();
-    }
-
-
-
-    private void OnRuntimeTrackNextClicked()
-    {
-        if (isNormalMode)
-        {
-            return;
-        }
-
-        PauseForManualRotationEdit();
-        StepSelectedManualRotationTrack(1);
-        UpdateRuntimeTrackRotationUiState();
-    }
-
-
-
     private void OnRuntimeTrackYawResetClicked()
     {
         if (isNormalMode || !TryGetSelectedManualRotationTrack(out uint trackId))
@@ -244,29 +216,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // モデル変更と同じく交絡になり得るので prefab 名と同じ粒度で記録する
         // （Docs/experiment-flow.md「操作の統制」）。
         ExperimentLog.Operation("change_rotation", $"track={trackId} yaw=0 op=reset");
-    }
-
-
-
-    private void OnRuntimeTrackYawSliderChanged(float value)
-    {
-        if (suppressRuntimeTrackYawCallback || isNormalMode)
-        {
-            return;
-        }
-
-        if (!TryGetSelectedManualRotationTrack(out uint trackId))
-        {
-            return;
-        }
-
-        PauseForManualRotationEdit();
-        SetManualYawOffsetDegForTrack(trackId, value);
-        UpdateRuntimeTrackRotationUiState();
-        PersistManualYaw(trackId);
-        ExperimentLog.Operation(
-            "change_rotation",
-            $"track={trackId} yaw={ExperimentCsv.Format(value)} frame={GetCurrentPlaybackFrame()}");
     }
 
 
@@ -402,61 +351,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
 
 
+    // 編集タブの表示をいまの対象・いまのフレームに合わせる。
+    //
+    // 参照先は**モデル編集タブ**（Change パネル）。以前は Settings パネルの中を
+    // FindButton(runtimeSettingsRoot, ...) で名前引きしていたが、対象ごとの編集は
+    // そちらへ移した（2026-09-04）。いまは生成時に持った参照をそのまま使う。
     private void UpdateRuntimeTrackRotationUiState()
     {
-        Button trackPrevButton = FindButton(runtimeSettingsRoot, "trackprev");
-        if (trackPrevButton != null)
-        {
-            UiComponentWriter.ApplyInteractable(trackPrevButton, !isNormalMode);
-        }
-
-        Button trackNextButton = FindButton(runtimeSettingsRoot, "tracknext");
-        if (trackNextButton != null)
-        {
-            UiComponentWriter.ApplyInteractable(trackNextButton, !isNormalMode);
-        }
-
-        Button trackYawResetButton = FindButton(runtimeSettingsRoot, "trackyawreset");
-        if (trackYawResetButton != null)
-        {
-            UiComponentWriter.ApplyInteractable(trackYawResetButton, !isNormalMode);
-        }
-
-        Button trackScaleResetButton = FindButton(runtimeSettingsRoot, "trackscalereset");
-        if (trackScaleResetButton != null)
-        {
-            UiComponentWriter.ApplyInteractable(trackScaleResetButton, !isNormalMode);
-        }
-
-        // Del は「現在フレームにキーがあるとき」だけ押せる。押せるかどうかで
-        // そのフレームがキーなのか補間なのかが分かる。
-        Button trackKeyDeleteButton = FindButton(runtimeSettingsRoot, "trackkeydelete");
-        if (trackKeyDeleteButton != null)
-        {
-            bool canDelete = !isNormalMode &&
-                             TryGetSelectedManualRotationTrack(out uint deletableTrack) &&
-                             (HasManualYawKeyAtCurrentFrame(deletableTrack) ||
-                              HasManualScaleKeyAtCurrentFrame(deletableTrack));
-            UiComponentWriter.ApplyInteractable(trackKeyDeleteButton, canDelete);
-        }
-
-        if (runtimeTrackSelectionText == null && runtimeTrackYawSlider == null && runtimeTrackYawValueText == null &&
-            runtimeTrackScaleSlider == null && runtimeTrackScaleValueText == null &&
-            runtimeTrackFrontGuideText == null && runtimeTrackKeyInfoText == null)
-        {
-            return;
-        }
-
         if (isNormalMode)
         {
-            if (runtimeTrackYawSlider != null)
-            {
-                UiComponentWriter.ApplyInteractable(runtimeTrackYawSlider, false);
-            }
+            ApplyTrackEditControlsInteractable(false);
             if (runtimeTrackScaleSlider != null)
             {
                 UiComponentWriter.ApplyInteractable(runtimeTrackScaleSlider, false);
             }
+            runtimeTrackPrevKeyFrame = -1;
+            runtimeTrackNextKeyFrame = -1;
+            ApplyTrackKeyNavigationButtons();
             return;
         }
 
@@ -464,20 +375,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (!TryGetSelectedManualRotationTrack(out uint trackId))
         {
-            if (runtimeTrackSelectionText != null)
+            ApplyTrackEditControlsInteractable(false);
+            if (runtimeTrackRotationValueText != null)
             {
-                UiComponentWriter.ApplyTextContent(runtimeTrackSelectionText, "none");
-            }
-            if (runtimeTrackYawValueText != null)
-            {
-                UiComponentWriter.ApplyTextContent(runtimeTrackYawValueText, "0.0 deg");
-            }
-            if (runtimeTrackYawSlider != null)
-            {
-                suppressRuntimeTrackYawCallback = true;
-                UiComponentWriter.ApplySliderValueWithoutNotify(runtimeTrackYawSlider, 0f);
-                suppressRuntimeTrackYawCallback = false;
-                UiComponentWriter.ApplyInteractable(runtimeTrackYawSlider, false);
+                UiComponentWriter.ApplyTextContent(runtimeTrackRotationValueText, "対象がありません");
             }
             if (runtimeTrackScaleValueText != null)
             {
@@ -490,14 +391,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 suppressRuntimeTrackScaleCallback = false;
                 UiComponentWriter.ApplyInteractable(runtimeTrackScaleSlider, false);
             }
-            if (runtimeTrackFrontGuideText != null)
-            {
-                UiComponentWriter.ApplyTextContent(runtimeTrackFrontGuideText, "Arrow above head = FRONT  |  +:left  -:right");
-            }
             if (runtimeTrackKeyInfoText != null)
             {
-                UiComponentWriter.ApplyTextContent(runtimeTrackKeyInfoText, "Keys Y:0 S:0  Frame:0");
+                UiComponentWriter.ApplyTextContent(runtimeTrackKeyInfoText, "キー 回転:0 大きさ:0");
             }
+            runtimeTrackPrevKeyFrame = -1;
+            runtimeTrackNextKeyFrame = -1;
+            ApplyTrackKeyNavigationButtons();
             return;
         }
 
@@ -505,22 +405,25 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         int scaleKeyCount = GetManualScaleKeyCountForTrack(trackId);
         bool hasKeyAtCurrent = HasManualYawKeyAtCurrentFrame(trackId) || HasManualScaleKeyAtCurrentFrame(trackId);
         int frame = GetCurrentPlaybackFrame();
-        float yaw = GetManualYawOffsetDegForTrack(trackId);
         float manualScale = GetManualScaleForTrack(trackId);
-        if (runtimeTrackSelectionText != null)
+        GetManualRotationForTrack(trackId, out float yaw, out float pitch, out float roll);
+
+        ApplyTrackEditControlsInteractable(true);
+
+        // Del は「現在フレームにキーがあるとき」だけ押せる。押せるかどうかで
+        // そのフレームがキーなのか補間なのかが分かる。
+        if (runtimeTrackKeyDeleteButtonRef != null)
         {
-            UiComponentWriter.ApplyTextContent(runtimeTrackSelectionText, trackId.ToString());
+            UiComponentWriter.ApplyInteractable(runtimeTrackKeyDeleteButtonRef, hasKeyAtCurrent);
         }
-        if (runtimeTrackYawValueText != null)
+
+        if (runtimeTrackRotationValueText != null)
         {
-            UiComponentWriter.ApplyTextContent(runtimeTrackYawValueText, yaw.ToString("F1") + " deg");
-        }
-        if (runtimeTrackYawSlider != null)
-        {
-            UiComponentWriter.ApplyInteractable(runtimeTrackYawSlider, true);
-            suppressRuntimeTrackYawCallback = true;
-            UiComponentWriter.ApplySliderValueWithoutNotify(runtimeTrackYawSlider, yaw);
-            suppressRuntimeTrackYawCallback = false;
+            UiComponentWriter.ApplyTextContent(
+                runtimeTrackRotationValueText,
+                "回転  yaw " + yaw.ToString("F1") +
+                "  pitch " + pitch.ToString("F1") +
+                "  roll " + roll.ToString("F1"));
         }
         if (runtimeTrackScaleValueText != null)
         {
@@ -533,16 +436,34 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             UiComponentWriter.ApplySliderValueWithoutNotify(runtimeTrackScaleSlider, manualScale);
             suppressRuntimeTrackScaleCallback = false;
         }
-        if (runtimeTrackFrontGuideText != null)
-        {
-            UiComponentWriter.ApplyTextContent(runtimeTrackFrontGuideText, "Arrow above head = FRONT  |  +:left  -:right");
-        }
         if (runtimeTrackKeyInfoText != null)
         {
             UiComponentWriter.ApplyTextContent(
                 runtimeTrackKeyInfoText,
-                "Keys Y:" + keyCount + " S:" + scaleKeyCount + "  Frame:" + frame +
-                (hasKeyAtCurrent ? " [key]" : " [interp]"));
+                "キー 回転:" + keyCount + " 大きさ:" + scaleKeyCount +
+                "   現在 " + frame + (hasKeyAtCurrent ? " [キー]" : " [補間]"));
+        }
+
+        RefreshTrackKeyNavigationTargets(trackId, frame);
+        ApplyTrackKeyNavigationButtons();
+    }
+
+
+    private void ApplyTrackEditControlsInteractable(bool interactable)
+    {
+        if (runtimeTrackRotationResetButton != null)
+        {
+            UiComponentWriter.ApplyInteractable(runtimeTrackRotationResetButton, interactable);
+        }
+        if (runtimeTrackScaleResetButtonRef != null)
+        {
+            UiComponentWriter.ApplyInteractable(runtimeTrackScaleResetButtonRef, interactable);
+        }
+        // Del はここでは常に伏せる。「現在フレームにキーがあるか」を
+        // 呼び出し側が見てから改めて押せるようにする。
+        if (runtimeTrackKeyDeleteButtonRef != null)
+        {
+            UiComponentWriter.ApplyInteractable(runtimeTrackKeyDeleteButtonRef, false);
         }
     }
 
@@ -592,16 +513,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void RefreshRuntimeSettingsPerFrame()
     {
+        // 対象ごとの編集はモデル編集タブへ移ったので、そちらが開いている間も更新する。
+        // 現在フレームが動けばキー情報も前後送りの飛び先も変わる。
+        bool editTabOpen = runtimeModelPickerOpen && runtimeModelPickerTab == ModelPickerTabEdit;
+        if (editTabOpen)
+        {
+            UpdateRuntimeTrackRotationUiState();
+        }
+
+        // 向きのガイドは「いま編集している」ときだけ出す。
+        UpdateManualYawGuide(runtimeSettingsOpen || editTabOpen);
+
         if (!runtimeSettingsOpen)
         {
-            UpdateManualYawGuide(false);
             return;
         }
 
         UpdateRuntimeScreenDistanceUiState();
-        UpdateRuntimeTrackRotationUiState();
         UpdateRuntimeInteractiveMotionUiState();
-        UpdateManualYawGuide(true);
     }
 
 

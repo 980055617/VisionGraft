@@ -70,11 +70,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 行は 84px 間隔。ラベルの枠は 90px だが文字は中央にあるので、
         // 枠が数 px 触れても見た目は重ならない。
         //
-        // 外したもの（2026-09-03 ユーザー合意）:
+        // 外したもの:
         //   FOVx      … 配置には効かず（manifest の fx_norm が優先される）、
-        //                動かすと映像だけ拡縮して奥行きの対応が壊れる
-        //   Yaw       … 対象を掴んで回せるようになったので重複
-        //   矢印の説明 … 同上で役割が薄い
+        //                動かすと映像だけ拡縮して奥行きの対応が壊れる（2026-09-03）
+        //   Yaw       … 対象を掴んで回せるようになったので重複（同上）
+        //   矢印の説明 … 同上で役割が薄い（同上）
+        //   Track / Rot 0 / Scl 1 / Del / Scale / Keys
+        //             … **系統が違う。** ここに残っていたのは「いま選んでいる対象を編集する」
+        //                操作で、Motion や Screen Dist のような系全体の設定ではなかった。
+        //                モデル編集タブ（Change パネル）へ移した（2026-09-04 ユーザー提案）。
         CreateSettingsLabel(panelObj.transform, "Title", "Settings", SettingsRowY(0), 60, TextAnchor.MiddleCenter, 900f, 0f);
 
         CreateSettingsLabel(panelObj.transform, "InteractiveMotionLabel", "Motion", SettingsRowY(1), 40, TextAnchor.MiddleLeft);
@@ -97,50 +101,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         UpdateRuntimeScreenDistanceText(screenDistanceMeters);
 
-        CreateSettingsLabel(panelObj.transform, "TrackLabel", "Track", SettingsRowY(3), 44, TextAnchor.MiddleLeft);
-        runtimeTrackSelectionText =
-            CreateSettingsValue(panelObj.transform, "TrackValue", "none", SettingsRowY(3), 40);
-
-        // ボタン列は 1 行まるごと使う。5 つ × 110 幅を 112 間隔で中央に並べる（-279 〜 279）。
-        float buttonRow = SettingsRowY(4);
-        Button prevTrack = CreateSmallButton(panelObj.transform, "TrackPrevButton", new Vector2(-224f, buttonRow), "<");
-        BindRuntimeButton(prevTrack, OnRuntimeTrackPrevClicked);
-
-        Button nextTrack = CreateSmallButton(panelObj.transform, "TrackNextButton", new Vector2(-112f, buttonRow), ">");
-        BindRuntimeButton(nextTrack, OnRuntimeTrackNextClicked);
-
-        Button resetYaw = CreateSmallButton(panelObj.transform, "TrackYawResetButton", new Vector2(0f, buttonRow), "Rot 0");
-        BindRuntimeButton(resetYaw, OnRuntimeTrackYawResetClicked);
-
-        Button resetScale = CreateSmallButton(panelObj.transform, "TrackScaleResetButton", new Vector2(112f, buttonRow), "Scl 1");
-        BindRuntimeButton(resetScale, OnRuntimeTrackScaleResetClicked);
-
-        // 現在フレームのキーを消す。Reset（0 や 1 を打つ）とは別で、打ち間違えの取り消し。
-        Button deleteKey = CreateSmallButton(panelObj.transform, "TrackKeyDeleteButton", new Vector2(224f, buttonRow), "Del");
-        BindRuntimeButton(deleteKey, OnRuntimeTrackKeyDeleteClicked);
-
-        // Scale は自動フィット（bbox 高さ合わせ）に対する**倍率**。1.0 が「自動のまま」。
-        CreateSettingsLabel(panelObj.transform, "ScaleLabel", "Scale", SettingsRowY(5), 44, TextAnchor.MiddleLeft);
-        runtimeTrackScaleValueText =
-            CreateSettingsValue(panelObj.transform, "ScaleValue", "x1.00", SettingsRowY(5), 40);
-        runtimeTrackScaleSlider = CreateSlider(panelObj.transform, "TrackScaleSlider", SettingsRowY(5));
-        if (runtimeTrackScaleSlider != null)
-        {
-            UiComponentWriter.ApplySliderRange(runtimeTrackScaleSlider, ManualScaleMin, ManualScaleMax);
-            UiComponentWriter.ApplySliderValueWithoutNotify(runtimeTrackScaleSlider, ManualScaleDefault);
-            BindRuntimeSlider(runtimeTrackScaleSlider, OnRuntimeTrackScaleSliderChanged);
-        }
-
-        // 枠を 90 ではなく 56 にして、下の掴み代（-306）と離す。
-        runtimeTrackKeyInfoText = CreateSettingsLabel(
-            panelObj.transform, "TrackKeyInfo", "Keys Y:0 S:0  Frame:0", SettingsRowY(6), 24,
-            TextAnchor.MiddleCenter, 860f, 0f, 56f);
-
         // 掴み代は**下端**。上に置くとタイトルと重なり、視線も上へ引っ張られる。
         CreateRuntimePanelDragHandle(
-            panelObj.transform, "PanelDragHandle", new Vector2(0f, -306f), new Vector2(760f, 24f));
+            panelObj.transform, "PanelDragHandle", new Vector2(0f, SettingsDragHandleY), new Vector2(760f, 24f));
 
-        UpdateRuntimeTrackRotationUiState();
         UpdateRuntimeInteractiveMotionUiState();
 
         return settingsRootObj;
@@ -148,15 +112,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
 
 
-    // 設定パネルの 3 列。canvas は 900x640 で、原点は中心。
+    // 設定パネルの 3 列。canvas は 900x340 で、原点は中心。
+    //
+    // 高さは 640 → 340。対象ごとの編集をモデル編集タブへ移して 3 行しか残らず、
+    // そのままだと下 2/3 が空いた枠だけの板になる（「UI が汚い」の一因）。
+    // メートル換算は 1px あたり 0.615/640 のまま据え置き、文字の大きさは変えない。
     private const float SettingsLabelCenterX = -320f;
     private const float SettingsLabelWidth = 260f;
     private const float SettingsValueCenterX = 350f;
     private const float SettingsValueWidth = 180f;
     private const float SettingsControlCenterX = 30f;
     private const float SettingsControlWidth = 420f;
-    private const float SettingsRowTopY = 250f;
+    private const float SettingsRowTopY = 118f;
     private const float SettingsRowPitch = 84f;
+    private const float SettingsDragHandleY = -150f;
 
 
     private static float SettingsRowY(int row)

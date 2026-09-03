@@ -134,6 +134,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (direction == 0)
         {
             selectedManualRotationTrackId = (int)ids[0];
+            runtimeModelPickerTrackId = selectedManualRotationTrackId;
             return true;
         }
 
@@ -156,6 +157,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         selectedManualRotationTrackId = (int)ids[next];
+        runtimeModelPickerTrackId = selectedManualRotationTrackId;
         return true;
     }
 

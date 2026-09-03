@@ -25,7 +25,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // ヘッダの track ボタン列。**固定枠にしない。**
     // 同時に出る track は bundle_train の実測で最大 5 だが、上限を決め打ちすると
     // それを超えた ID に到達できなくなる。出ている数だけその場で作る。
-    private const float ModelPickerTargetRowY = 208f;
+    // 上から: タブ(284) / 状態(232) / 対象の track(186) / 以下はタブごとの中身。
+    private const float ModelPickerTabRowY = 284f;
+    private const float ModelPickerStatusRowY = 232f;
+    private const float ModelPickerTargetRowY = 186f;
+    private const float ModelPickerPageRowY = -262f;
     private const float ModelPickerTargetButtonWidth = 96f;
     private const float ModelPickerTargetRowMaxWidth = 900f;
 
@@ -93,20 +97,37 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Image panelImage = RuntimeUiElementFactory.AddImage(panelObj);
         UiComponentWriter.ApplyGraphicColor(panelImage, new Color(0.06f, 0.07f, 0.08f, 0.88f));
 
-        runtimeModelPickerTitleText = CreateModelPickerText(
+        // **タイトルの場所をタブに使う。**
+        // 「Change Model」という見出しは、いま何のパネルかは伝えるが操作ではない。
+        // 同じ場所にタブを置けば縦を 1 行も使わずに 2 面を持てる。
+        // 加えて、以前は Title(250..314) と Status(230..270) が 20px 重なっていた。
+        //
+        // 操作バーに 7 個目のボタンを足す案は採らなかった。バーの canvas は 440 で
+        // 3 行目の下端が -213、canvas の下端は -220。7 個目を入れると全ボタンと
+        // ControlsBarSizeMeters を動かすことになり、prefab 経路とフォールバック経路の
+        // 両方を直す必要が出る（EnsureNavigationButtonsExist の罠）。
+        runtimeModelPickerModelTabButton = CreateModelPickerButton(
             panelObj.transform,
-            "Title",
-            "Change Model",
-            new Vector2(0f, 282f),
-            new Vector2(860f, 64f),
-            46,
-            TextAnchor.MiddleCenter,
-            Color.white);
+            "ModelPickerTabModel",
+            "モデル",
+            new Vector2(-170f, ModelPickerTabRowY),
+            new Vector2(300f, 58f),
+            () => SetRuntimeModelPickerTab(ModelPickerTabModels),
+            TextAnchor.MiddleCenter);
+        runtimeModelPickerEditTabButton = CreateModelPickerButton(
+            panelObj.transform,
+            "ModelPickerTabEdit",
+            "編集",
+            new Vector2(170f, ModelPickerTabRowY),
+            new Vector2(300f, 58f),
+            () => SetRuntimeModelPickerTab(ModelPickerTabEdit),
+            TextAnchor.MiddleCenter);
+
         runtimeModelPickerStatusText = CreateModelPickerText(
             panelObj.transform,
             "Status",
             "Point at an object, or pick a track below.",
-            new Vector2(0f, 250f),
+            new Vector2(0f, ModelPickerStatusRowY),
             new Vector2(760f, 40f),
             24,
             TextAnchor.MiddleCenter,
@@ -120,17 +141,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // レイで追いにくくなるため。常時表示なら 1 クリックで届く。
         // 実体は UpdateRuntimeModelPickerTargetButtons が必要な数だけ作る。
         runtimeModelPickerTargetButtons.Clear();
+        runtimeModelPickerModelTabObjects.Clear();
 
-        // 「この track にはモデルを置かない」。track 行のすぐ下、一覧の左上の手前に置く。
+        // 「この track にはモデルを置かない」。ページ送りの左、一覧の外に固定で置く。
         // モデルの中に混ぜるとページを跨いだときに見失うので、常に同じ場所に出す。
+        //
+        // **対象の行には置けない。** あの行は track の数だけ幅を使う。
+        // train は 8 本あり、pitch 104 で中心 ±364、幅 96 なので左端は -412。
+        // 以前はこのボタンが -460..-260 にいて 96px 重なっていた。
         runtimeModelPickerHideButton = CreateModelPickerButton(
             panelObj.transform,
             "ModelPickerHideButton",
             "表示しない",
-            new Vector2(-360f, ModelPickerTargetRowY),
-            new Vector2(200f, 44f),
+            new Vector2(-390f, ModelPickerPageRowY),
+            new Vector2(180f, 54f),
             OnRuntimeModelPickerHideClicked,
             TextAnchor.MiddleCenter);
+        RegisterModelPickerTabObject(ModelPickerTabModels, runtimeModelPickerHideButton.gameObject);
 
         runtimeModelPickerEntryButtons.Clear();
         for (int i = 0; i < RuntimeModelPickerEntriesPerPage; i++)
@@ -152,13 +179,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             hover.onHoverChanged = OnRuntimeModelPickerEntryHoverChanged;
 
             runtimeModelPickerEntryButtons.Add(button);
+            RegisterModelPickerTabObject(ModelPickerTabModels, button.gameObject);
         }
 
+        // -252 だと枠が -279..-225 で、グリッド下段の下端 -227.5 と 2.5px 重なっていた。
         runtimeModelPickerPrevButton = CreateModelPickerButton(
             panelObj.transform,
             "ModelPickerPrevButton",
             "< Prev",
-            new Vector2(-220f, -252f),
+            new Vector2(-200f, ModelPickerPageRowY),
             new Vector2(180f, 54f),
             PrevRuntimeModelPickerPage,
             TextAnchor.MiddleCenter);
@@ -166,8 +195,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             panelObj.transform,
             "PageText",
             "Page 1/1",
-            new Vector2(0f, -252f),
-            new Vector2(250f, 54f),
+            new Vector2(0f, ModelPickerPageRowY),
+            new Vector2(200f, 54f),
             26,
             TextAnchor.MiddleCenter,
             Color.white);
@@ -175,10 +204,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             panelObj.transform,
             "ModelPickerNextButton",
             "Next >",
-            new Vector2(220f, -252f),
+            new Vector2(200f, ModelPickerPageRowY),
             new Vector2(180f, 54f),
             NextRuntimeModelPickerPage,
             TextAnchor.MiddleCenter);
+        RegisterModelPickerTabObject(ModelPickerTabModels, runtimeModelPickerPrevButton.gameObject);
+        RegisterModelPickerTabObject(ModelPickerTabModels, runtimeModelPickerPageText.gameObject);
+        RegisterModelPickerTabObject(ModelPickerTabModels, runtimeModelPickerNextButton.gameObject);
         // 閉じるは右上の X。以前は "Close" が対象送りボタンのすぐ隣にあり、
         // 押し間違えやすかった（2026-08-31 の指摘）。離して、形でも区別できるようにする。
         CreateModelPickerButton(
@@ -190,9 +222,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             CloseRuntimeModelPickerPanel,
             TextAnchor.MiddleCenter);
 
+        BuildRuntimeModelEditTab(panelObj.transform);
+
         // Settings と同じ掴み代。**下端**に置く。
         CreateRuntimePanelDragHandle(
             panelObj.transform, "PanelDragHandle", new Vector2(0f, -316f), new Vector2(760f, 26f));
+
+        ApplyRuntimeModelPickerTabVisibility();
 
         SceneObjectWriter.ApplyActive(root, false);
         return root;
@@ -287,6 +323,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         PauseForManualRotationEdit();
         runtimeModelPickerTrackId = (int)ids[slot];
+        runtimeTrackPrevKeyFrame = -1;
+        runtimeTrackNextKeyFrame = -1;
         runtimeModelPickerPageIndex = 0;
         // 回転の対象も合わせておく。別々だと「どれを触っているか」が分からなくなる。
         selectedManualRotationTrackId = runtimeModelPickerTrackId;
@@ -523,6 +561,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         UpdateRuntimeModelPickerTargetButtons();
 
+        // 編集タブのときはモデル一覧を触らない。プレビューの作り直しが走ると
+        // 3D の実体が編集タブの手前に浮き、セルのボタンも表示に戻ってしまう。
+        // 対象の行と状態行は両方のタブで使うのでここより上で更新する。
+        bool editTabActive = runtimeModelPickerTab == ModelPickerTabEdit;
+
         if (!TryGetRuntimeModelPickerTarget(out uint trackId, out byte categoryId, out _))
         {
             ApplyRuntimeModelPickerUnavailable("Point at a displayed object first.");
@@ -565,10 +608,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         int pageCount = GetRuntimeModelPickerPageCount(prefabs.Length);
         runtimeModelPickerPageIndex = Mathf.Clamp(runtimeModelPickerPageIndex, 0, Mathf.Max(0, pageCount - 1));
 
-        if (runtimeModelPickerTitleText != null)
-        {
-            UiComponentWriter.ApplyTextContent(runtimeModelPickerTitleText, $"{category} models");
-        }
         if (runtimeModelPickerStatusText != null)
         {
             string selectedName = hidden
@@ -583,6 +622,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 runtimeModelPickerStatusText, $"{targetInfo}  |  {category}  |  Selected: {selectedName}");
         }
 
+        if (editTabActive)
+        {
+            return;
+        }
+
         UpdateRuntimeModelPickerEntryButtons(prefabs, selectedIndex, categoryId);
     }
 
@@ -590,10 +634,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private void ApplyRuntimeModelPickerUnavailable(string message)
     {
         ClearRuntimeModelPickerPreviews();
-        if (runtimeModelPickerTitleText != null)
-        {
-            UiComponentWriter.ApplyTextContent(runtimeModelPickerTitleText, "Change Model");
-        }
         if (runtimeModelPickerStatusText != null)
         {
             UiComponentWriter.ApplyTextContent(runtimeModelPickerStatusText, message);

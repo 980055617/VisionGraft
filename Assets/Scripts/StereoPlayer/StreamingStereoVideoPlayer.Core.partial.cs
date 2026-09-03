@@ -334,6 +334,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         HandleRuntimePauseInput();
         RefreshRuntimeSettingsPerFrame();
         UpdateRuntimeProgressUi();
+        RunBatchSeekTestIfRequested();
+        VerifyBatchSeekTestIfDue();
     }
 
 

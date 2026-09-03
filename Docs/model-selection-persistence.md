@@ -762,3 +762,138 @@ bundle ピッカーにも `Home` を足した（選ぶ前に戻れるように�
 
 `numFrames` 不一致のときは yaw と scale を**まとめて**破棄する。片方だけ残すと、
 向きだけ合っていて大きさが合わない、という分かりにくい状態になる。
+
+## 対象ごとの編集を「モデル編集」タブへ分けた（2026-09-04）
+
+### きっかけ
+
+`Del` は**現在フレームちょうど**のキーしか消せなかった。ユーザーの指摘:
+
+> 現在のフレームに合わせないと消せないってことでしょ，それはよくない
+
+正しい。bundle_train は 1830 フレーム、bundle_human は 2167 フレームで、シークバーは
+数百 px しかない。1 px あたり 3〜7 フレーム進むので、**目的のフレームに手で合わせるのは
+実質不可能**。打ち間違えたキーを消す手段が事実上無かった。
+
+### Settings は系統の違う 2 種類を同居させていた
+
+| 系統 | 項目 |
+|---|---|
+| 系全体の設定 | Motion、Screen Dist |
+| **いま選んでいる対象の編集** | Track 選択、Rot 0 / Scl 1 / Del、Scale、Keys |
+
+後者はモデルを選ぶ操作と地続きで、Settings に置く理由が無かった
+（ユーザー提案「設定に入れずにモデル編集という別のに入れる方がいいのでは？」）。
+
+### 置き場所: 操作バーの 7 個目ではなく、Change パネルの 2 タブ目
+
+操作バーに `Edit` ボタンを足す案は**採らなかった**。実測:
+
+| | 値 |
+|---|---|
+| バーの canvas | 1000 × **440**（y は -220..220） |
+| ボタン | 360 × 76、3 行 × 2 列 |
+| 行の y | -12 / -100 / -175 |
+| 3 行目の下端 | **-213**（canvas の下端は -220） |
+
+7 個目を入れるには全ボタンと `ControlsBarSizeMeters` を動かすことになり、しかも
+`EnsureNavigationButtonsExist` は **prefab 経路とフォールバック経路の両方**を直す必要がある
+（片方だけ直して実機でボタンが生成されなかった事故が既にある）。
+
+Change パネルのタブにすれば縦を 1 行も使わない。以前の見出し「Change Model」の場所を
+そのままタブ 2 枚（`モデル` / `編集`）に置き換えた。
+
+### 決め手は「どの track を触るか」を 1 つにできること
+
+**別ウィンドウにすると選択状態が 2 つになる。** 実際そうなっていた:
+
+| 経路 | フィールド |
+|---|---|
+| Settings の `< >` | `selectedManualRotationTrackId` だけを更新 |
+| ピッカーの track 行 | `runtimeModelPickerTrackId` を更新し、`selectedManualRotationTrackId` にも写す |
+
+Settings 側から送ると `runtimeModelPickerTrackId` が取り残される。
+`TryGetRuntimeModelPickerTarget` は `runtimeModelPickerTrackId` を**最優先**で見るので、
+「Settings で track 5 を選んだのにモデル変更は track 1 に効く」という食い違いが起こり得た。
+
+同じパネルに入れて対象の行を共有し、`StepSelectedManualRotationTrack` からも
+`runtimeModelPickerTrackId` へ写すようにして、選択の実体を 1 つに揃えた。
+
+### キーの前後送り
+
+```
+キー 回転:3 大きさ:1   現在 512 [補間]
+[ ◀ 240 ]  [ この位置のキーを消す ]  [ 610 ▶ ]
+```
+
+一覧ではなく**前後送り**にした。VR で小さい的を並べる設計は破綻する
+（同じ日に「0.2m のモデルが狙えない」で時間を使っている）。
+飛び先のフレーム番号をボタンに出せば、一覧の「どこにキーがあるか分かる」も概ね賄える。
+
+**4 本の曲線（yaw / pitch / roll / scale）の和を辿る。** 片方だけを辿ると、
+たとえば scale だけのキーには飛べないのに `Del` は効く、という食い違いが起きる。
+`OnRuntimeTrackKeyDeleteClicked` は 4 本すべてから消すので、送りも和で揃えた。
+
+**シークは正規化位置を経由しない。** `frame → 0..1 → 秒 → frame` と往復すると丸めで
+1 ずれることがあり、1 ずれるとキーの上に乗らず `Del` が押せなくなって、
+前後送りを足した意味が消える。`SeekTarget(hasFrame: true, frame)` で直接飛ばす。
+
+### 「ゆっくり遷移」は既に実装済みだった
+
+`TrackKeyframeCurve.Evaluate` は最初から `Mathf.Lerp` で線形補間しており、
+key1 → key2 は既にフレーム数に比例して滑らかに変化する。
+`Mathf.SmoothStep`（キー付近だけ緩める ease-in-out）が要るかは**実機で見てから決める**。
+見えている挙動を確かめずに足すと、存在する機能をもう一度作ることになる。
+
+### ついでに直した既存のレイアウト不良
+
+いずれも `-dumpPanelLayout` で数えて確認する。
+
+| 箇所 | 症状 |
+|---|---|
+| Title(250..314) × Status(230..270) | 20px 重なっていた。Title をタブに置き換えて解消 |
+| Prev/Next(-279..-225) × グリッド下段(-227.5) | 2.5px 重なっていた。行を -262 へ下げた |
+| 「表示しない」(-460..-260) × 対象の行 | **train の 8 track で 96px 重なる**。対象の行は track の数だけ幅を使う（pitch 104、中心 ±364、幅 96 → 左端 -412）。「表示しない」をページ送りの行の左端へ移した |
+
+### Settings の canvas を 640 → 340 に詰めた
+
+残るのは Title / Motion / Screen Dist の 3 行だけ。そのままだと下 2/3 が空いた枠になる。
+`SettingsPanelSizeMeters` も同じ比（0.615/640 m/px 据え置き）で 0.615 → 0.327 に縮めた。
+比を変えると文字だけ拡縮して読みにくくなる。
+
+### シークの検証（2026-09-04、バッチ実測）
+
+`-seekTestFrame N` を足して、実動画で確かめた。`run_seek_test.ps1`。
+
+```
+[KEYNAV] frame=900 へ移動 秒=30.017 fps=30.000 canSetTime=True 再生中だった=True
+[SEEKTEST] #1: 現在=900 vp.frame=900 vp.time=30.000 isPlaying=False 判定=到達
+```
+
+**確定した作法は 3 つ。**
+
+| | |
+|---|---|
+| 秒で飛ばす | 進捗バーと同じ `SeekTarget(hasTime)` 経路 |
+| 半フレーム足す | `(frame + 0.5) / fps`。秒 → frame は floor なので、`frame/fps` ちょうどだと丸めで 1 手前に落ち得る。1 ずれるとキーの上に乗らず `Del` が押せない |
+| 止めるのはシークの**後** | 先に `Pause()` してから `time` を書くと、デコーダが動かないままシークが消える |
+
+### 測り方を 2 回間違えた（記録）
+
+**1. EditMode テストでは検証できない。**
+`RuntimePlaybackControllerTests` の既存失敗 2 件（`ApplySeekTargetWritesFrameWhenTargetHasFrame`
+は「42 を期待して -1」、`...WritesTimeWhenTargetHasTime` は「1.25 を期待して 0.0」）は、
+**fixture が clip 無し・未 prepare の `VideoPlayer` を作っている**ため。
+Unity のセッターはその状態では何も書かず、ゲッターは -1 / 0 を返す。
+**実装の不具合ではなく fixture の限界。**「未調査」だったこの 2 件はこれで説明がつく。
+
+**2. batchmode の Update は実時間を待たない。**
+`Time.frameCount + 90` で待って「シークが効かない」と判断したが、
+180 Update 回しても動画は 0 フレームしか進んでいなかった（`vp.time` が 1.000 のまま）。
+`Time.realtimeSinceStartup` で 1 秒待ったら 923 まで進んでいて、
+**効いていないのではなく測っていなかった**だけだった。
+
+いったん「frame 代入は効かない」と書いたが、それも同じ測り方での判断なので**根拠が無い**。
+秒の経路で目的を達したのでそちらを採ったが、frame 代入の可否は未確認のまま。
+
+動画の再生状態を測るときは **Update 回数ではなく `Time.realtimeSinceStartup`** で待つこと。

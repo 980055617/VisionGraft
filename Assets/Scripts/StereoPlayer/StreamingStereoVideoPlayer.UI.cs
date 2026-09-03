@@ -13,7 +13,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const float RuntimeSettingsDefaultCanvasWidth = 900f;
     // Scale 行を足したぶん縦に伸ばした（520 → 640）。SettingsPanelSizeMeters.y も
     // 同じ比で 0.5 → 0.615 にしてあるので、文字の見かけの大きさは変わらない。
-    private const float RuntimeSettingsDefaultCanvasHeight = 640f;
+    // 640 → 340。対象ごとの編集をモデル編集タブへ移して Title / Motion / Screen Dist の
+    // 3 行だけになったため（2026-09-04）。SettingsPanelSizeMeters も同じ比で縮めてある。
+    private const float RuntimeSettingsDefaultCanvasHeight = 340f;
     private const float RuntimeModelPickerDefaultCanvasWidth = 980f;
     private const float RuntimeModelPickerDefaultCanvasHeight = 660f;
     private const int RuntimeModelPickerEntriesPerPage = 6;
@@ -34,15 +36,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private Text runtimeFovxValueText;
     private Slider runtimeScreenDistanceSlider;
     private Text runtimeScreenDistanceValueText;
-    private Text runtimeTrackSelectionText;
-    private Slider runtimeTrackYawSlider;
-    private Text runtimeTrackYawValueText;
+    // 対象ごとの編集はモデル編集タブが持つ（UI.ModelEdit.partial.cs）。
+    // Yaw スライダーと矢印の説明は掛け替わって消えた（2026-09-03）。
     private Slider runtimeTrackScaleSlider;
     private Text runtimeTrackScaleValueText;
-    private Text runtimeTrackFrontGuideText;
     private Text runtimeTrackKeyInfoText;
     private Text runtimeInteractiveMotionValueText;
-    private Text runtimeModelPickerTitleText;
     private Text runtimeModelPickerStatusText;
     private Text runtimeModelPickerPageText;
     private Button runtimeModelPickerPrevButton;
@@ -81,7 +80,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private bool runtimeFovxInitialized;
     private bool suppressRuntimeProgressCallback;
     private bool suppressRuntimeScreenDistanceCallback;
-    private bool suppressRuntimeTrackYawCallback;
     private bool suppressRuntimeTrackScaleCallback;
     private int runtimeSettingsPlacementLockDepth;
     private int runtimeModelPickerPageIndex;
@@ -145,7 +143,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             UpdateRuntimeSettingsPlacement();
             UpdateRuntimeScreenDistanceUiState();
             UpdateRuntimeTrackRotationUiState();
-            DumpPanelLayoutIfRequested();
             UpdateRuntimeInteractiveMotionUiState();
         }
 
@@ -160,6 +157,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (batchOpenModelPickerOnStart && !runtimeModelPickerOpen && metaLoaded)
             {
                 batchModelPickerForcedOpen = true;
+                if (!string.IsNullOrEmpty(batchModelPickerTab) && batchModelPickerTab == "edit")
+                {
+                    SetRuntimeModelPickerTab(ModelPickerTabEdit);
+                }
+
                 ToggleRuntimeModelPickerPanel();
                 runtimeModelPickerPageIndex = Mathf.Max(0, batchModelPickerPage);
             }
@@ -169,6 +171,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             UpdateRuntimeModelPickerPlacement();
             UpdateRuntimeModelPickerUiState();
         }
+
+        // **両方のブロックの後で呼ぶ。** 設定ブロックの中に置いていたときは
+        // ピッカーが開く前に 1 回走って終わり、パネルの方が一度も出なかった。
+        DumpPanelLayoutIfRequested();
     }
 
     private void UnbindRuntimeControls()
@@ -191,10 +197,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             UnbindRuntimeSlider(runtimeFovxSlider, OnRuntimeFovxSliderChanged);
             UnbindRuntimeSlider(runtimeScreenDistanceSlider, OnRuntimeScreenDistanceSliderChanged);
-            UnbindRuntimeSlider(runtimeTrackYawSlider, OnRuntimeTrackYawSliderChanged);
-            UnbindRuntimeButton(FindButton(runtimeSettingsRoot, "trackprev"), OnRuntimeTrackPrevClicked);
-            UnbindRuntimeButton(FindButton(runtimeSettingsRoot, "tracknext"), OnRuntimeTrackNextClicked);
-            UnbindRuntimeButton(FindButton(runtimeSettingsRoot, "trackyawreset"), OnRuntimeTrackYawResetClicked);
             UnbindRuntimeButton(FindButton(runtimeSettingsRoot, "interactivemotiontoggle"), OnRuntimeInteractiveMotionToggleClicked);
         }
 

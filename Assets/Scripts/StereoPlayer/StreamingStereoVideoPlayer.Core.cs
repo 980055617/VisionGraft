@@ -235,6 +235,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 目的のモデルが 2 ページ目にあると、バッチではクリックできず確認できないため。
     public int batchModelPickerPage;
 
+    // モデルパネルをどちらのタブで開くか。"edit" で編集タブ。
+    public string batchModelPickerTab;
+
+    // キーの前後送りが使うフレーム直指定シークの検証用。
+    // EditMode テストでは clip の無い VideoPlayer しか作れず、frame を書いても
+    // -1 のままなので確かめられない（RuntimePlaybackControllerTests の既存失敗 2 件はこれ）。
+    // 実動画での確認はバッチでやるしかない。
+    public int batchSeekTestFrame = -1;
+
     // SMAL FK のあとに四肢を keypoint の位置へ向ける（Human の AimAt に相当）。
     // 既定 false。A/B で確認してから既定を決める。docs/smpl-retargeting.md 参照。
     public bool enableAnimalKeypointAimAt;
@@ -628,7 +637,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const float RuntimeFovxDefaultDeg = 90f;
     private const float RuntimeScreenDistanceMinMeters = 0.5f;
     private const float RuntimeScreenDistanceMaxMeters = 3.0f;
-    private static readonly Vector2 SettingsPanelSizeMeters = new Vector2(0.78f, 0.615f);
+    // 高さは canvas 340px × (0.615/640 m/px)。canvas を詰めたので板も同じ比で縮める。
+    // 比を変えると文字だけ拡縮して読みにくくなる。
+    private static readonly Vector2 SettingsPanelSizeMeters = new Vector2(0.78f, 0.327f);
     private static readonly Vector2 SettingsPanelOffsetMeters = Vector2.zero;
     private const float SettingsPanelGapMeters = 0.08f;
     private const float SettingsPanelForwardOffsetMeters = 0.01f;

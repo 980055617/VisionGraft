@@ -40,6 +40,10 @@ public static class TrackInstanceFactory
     //
     // isTrigger にするのは物理に参加させないため。Physics.Raycast は既定
     // （queriesHitTriggers = true）でトリガーにも当たる。
+    // 掴み判定の最小の厚み。一番長い辺に対する比。
+    private const float GrabColliderMinSideRatio = 0.25f;
+
+
     private static void AddGrabCollider(GameObject instance)
     {
         if (instance.GetComponent<BoxCollider>() != null)
@@ -49,13 +53,24 @@ public static class TrackInstanceFactory
 
         if (!TryComputeLocalBounds(instance.transform, out Bounds bounds))
         {
+            Debug.LogWarning($"[GRABBOX] {instance.name}: bounds が取れず箱を作れません。掴めません");
             return;
         }
 
         BoxCollider box = instance.AddComponent<BoxCollider>();
         box.isTrigger = true;
         box.center = bounds.center;
-        box.size = bounds.size;
+
+        // **細い対象は掴めない。** train の信号柱は bbox 22x132px で、モデルもそれに合わせて
+        // 細くなる。レイで当てるのが現実的でないので、掴み判定だけ最小の厚みを持たせる。
+        // 見た目には影響しない（isTrigger で描画もされない）。
+        float minSide = Mathf.Max(bounds.size.x, Mathf.Max(bounds.size.y, bounds.size.z)) * GrabColliderMinSideRatio;
+        box.size = new Vector3(
+            Mathf.Max(bounds.size.x, minSide),
+            Mathf.Max(bounds.size.y, minSide),
+            Mathf.Max(bounds.size.z, minSide));
+
+        Debug.Log($"[GRABBOX] {instance.name} center={box.center:F3} size={box.size:F3} (bounds={bounds.size:F3})");
     }
 
 

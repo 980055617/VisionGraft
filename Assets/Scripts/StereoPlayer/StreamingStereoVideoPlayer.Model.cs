@@ -42,6 +42,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const float MinProjectedBoneRatioForScaleRefine = 0.4f;
     private const float MaxProjectedBoneRatioForScaleRefine = 3.0f;
     private readonly Dictionary<uint, SortedDictionary<int, float>> manualYawKeyframesByTrack = new Dictionary<uint, SortedDictionary<int, float>>();
+    // pitch / roll。yaw と同じ作りで、既定は 0（回さない）。
+    // 掴んで手首をひねる操作が 3 軸を同時に動かすので、yaw だけでは足りない（2026-09-02）。
+    private readonly Dictionary<uint, SortedDictionary<int, float>> manualPitchKeyframesByTrack = new Dictionary<uint, SortedDictionary<int, float>>();
+    private readonly Dictionary<uint, SortedDictionary<int, float>> manualRollKeyframesByTrack = new Dictionary<uint, SortedDictionary<int, float>>();
     // 自動フィットに対する倍率のキーフレーム。既定 1.0。ManualScale.partial.cs 参照。
     private readonly Dictionary<uint, SortedDictionary<int, float>> manualScaleKeyframesByTrack = new Dictionary<uint, SortedDictionary<int, float>>();
     private int selectedManualRotationTrackId = -1;

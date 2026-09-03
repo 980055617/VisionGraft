@@ -59,27 +59,35 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Image panelImage = RuntimeUiElementFactory.AddImage(panelObj);
         UiComponentWriter.ApplyGraphicColor(panelImage, new Color(0f, 0f, 0f, 0.65f));
 
-        // 行の配置は canvas 900x640 の割合。Scale 行を足したので全体を組み直してある。
-        //   0.90 Title / 0.80 Motion / 0.68 FOVx / 0.575 ScreenDist / 0.50 FrontGuide
-        //   0.42 Track / 0.28 Yaw / 0.145 Scale / 0.045 KeyInfo
-        // ラベルは 90px、スライダーは 60px の高さを取るので、行間は最低でも 64px 空けている。
-        CreateLabel(panelObj.transform, "Title", "Settings", 0.5f, 0.90f, 64, TextAnchor.MiddleCenter);
-        CreateLabel(panelObj.transform, "FovLabel", "FOVx", 0.12f, 0.68f, 48, TextAnchor.MiddleLeft);
-        runtimeFovxValueText = CreateLabel(panelObj.transform, "FovValue", string.Empty, 0.88f, 0.68f, 44, TextAnchor.MiddleRight);
+        // **3 列に切る。** 以前は要素ごとに勝手な位置と幅を持っていて、実測で
+        // ラベルとスライダーが 58px、値とスライダーが 58px 重なっていた（2026-09-03）。
+        // 列を固定すれば重なりが構造的に起きない。
+        //
+        //   ラベル列 : -450 〜 -190（左寄せ）
+        //   操作列   : -180 〜  240（スライダー / ボタン）
+        //   値列     :  260 〜  440（右寄せ）
+        //
+        // 行は 84px 間隔。ラベルの枠は 90px だが文字は中央にあるので、
+        // 枠が数 px 触れても見た目は重ならない。
+        //
+        // 外したもの（2026-09-03 ユーザー合意）:
+        //   FOVx      … 配置には効かず（manifest の fx_norm が優先される）、
+        //                動かすと映像だけ拡縮して奥行きの対応が壊れる
+        //   Yaw       … 対象を掴んで回せるようになったので重複
+        //   矢印の説明 … 同上で役割が薄い
+        CreateSettingsLabel(panelObj.transform, "Title", "Settings", SettingsRowY(0), 60, TextAnchor.MiddleCenter, 900f, 0f);
 
-        runtimeFovxSlider = CreateSlider(panelObj.transform, "FovxSlider", 0.68f);
-        if (runtimeFovxSlider != null)
-        {
-            UnbindRuntimeSlider(runtimeFovxSlider, OnRuntimeFovxSliderChanged);
-            UpdateFovxSliderRange();
-            UiComponentWriter.ApplySliderValueWithoutNotify(runtimeFovxSlider, runtimeFovxDeg);
-            BindRuntimeSlider(runtimeFovxSlider, OnRuntimeFovxSliderChanged);
-        }
-        UpdateRuntimeFovxText(runtimeFovxDeg);
+        CreateSettingsLabel(panelObj.transform, "InteractiveMotionLabel", "Motion", SettingsRowY(1), 40, TextAnchor.MiddleLeft);
+        runtimeInteractiveMotionValueText =
+            CreateSettingsValue(panelObj.transform, "InteractiveMotionValue", string.Empty, SettingsRowY(1), 36);
+        Button motionToggle = CreateSmallButton(
+            panelObj.transform, "InteractiveMotionToggleButton", new Vector2(-120f, SettingsRowY(1)), "Toggle");
+        BindRuntimeButton(motionToggle, OnRuntimeInteractiveMotionToggleClicked);
 
-        CreateLabel(panelObj.transform, "ScreenDistLabel", "Screen Dist", 0.12f, 0.575f, 42, TextAnchor.MiddleLeft);
-        runtimeScreenDistanceValueText = CreateLabel(panelObj.transform, "ScreenDistValue", string.Empty, 0.88f, 0.575f, 38, TextAnchor.MiddleRight);
-        runtimeScreenDistanceSlider = CreateSlider(panelObj.transform, "ScreenDistanceSlider", 0.575f);
+        CreateSettingsLabel(panelObj.transform, "ScreenDistLabel", "Screen Dist", SettingsRowY(2), 40, TextAnchor.MiddleLeft);
+        runtimeScreenDistanceValueText =
+            CreateSettingsValue(panelObj.transform, "ScreenDistValue", string.Empty, SettingsRowY(2), 36);
+        runtimeScreenDistanceSlider = CreateSlider(panelObj.transform, "ScreenDistanceSlider", SettingsRowY(2));
         if (runtimeScreenDistanceSlider != null)
         {
             UnbindRuntimeSlider(runtimeScreenDistanceSlider, OnRuntimeScreenDistanceSliderChanged);
@@ -89,44 +97,33 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         UpdateRuntimeScreenDistanceText(screenDistanceMeters);
 
-        CreateLabel(panelObj.transform, "TrackLabel", "Track", 0.12f, 0.42f, 44, TextAnchor.MiddleLeft);
-        runtimeTrackSelectionText = CreateLabel(panelObj.transform, "TrackValue", "none", 0.88f, 0.42f, 40, TextAnchor.MiddleRight);
-        runtimeTrackFrontGuideText = CreateWideLabel(panelObj.transform, "TrackFrontGuide", "Arrow above head = FRONT  |  +:left  -:right", 0.5f, 0.50f, 24, TextAnchor.MiddleCenter);
-        runtimeTrackKeyInfoText = CreateWideLabel(panelObj.transform, "TrackKeyInfo", "Keys Y:0 S:0  Frame:0", 0.5f, 0.09f, 24, TextAnchor.MiddleCenter);
+        CreateSettingsLabel(panelObj.transform, "TrackLabel", "Track", SettingsRowY(3), 44, TextAnchor.MiddleLeft);
+        runtimeTrackSelectionText =
+            CreateSettingsValue(panelObj.transform, "TrackValue", "none", SettingsRowY(3), 40);
 
-        // Track 行のボタン列。canvas 幅 900 の中心基準で、110px 幅が重ならないように置く。
-        // 右端は TrackValue（0.88 の右寄せ）に掛からない位置まで。
-        Button prevTrack = CreateSmallButton(panelObj.transform, "TrackPrevButton", new Vector2(-330f, -51f), "<");
+        // ボタン列は 1 行まるごと使う。5 つ × 110 幅を 112 間隔で中央に並べる（-279 〜 279）。
+        float buttonRow = SettingsRowY(4);
+        Button prevTrack = CreateSmallButton(panelObj.transform, "TrackPrevButton", new Vector2(-224f, buttonRow), "<");
         BindRuntimeButton(prevTrack, OnRuntimeTrackPrevClicked);
 
-        Button nextTrack = CreateSmallButton(panelObj.transform, "TrackNextButton", new Vector2(-210f, -51f), ">");
+        Button nextTrack = CreateSmallButton(panelObj.transform, "TrackNextButton", new Vector2(-112f, buttonRow), ">");
         BindRuntimeButton(nextTrack, OnRuntimeTrackNextClicked);
 
-        Button resetYaw = CreateSmallButton(panelObj.transform, "TrackYawResetButton", new Vector2(-60f, -51f), "Yaw 0");
+        Button resetYaw = CreateSmallButton(panelObj.transform, "TrackYawResetButton", new Vector2(0f, buttonRow), "Rot 0");
         BindRuntimeButton(resetYaw, OnRuntimeTrackYawResetClicked);
 
-        Button resetScale = CreateSmallButton(panelObj.transform, "TrackScaleResetButton", new Vector2(90f, -51f), "Scl 1");
+        Button resetScale = CreateSmallButton(panelObj.transform, "TrackScaleResetButton", new Vector2(112f, buttonRow), "Scl 1");
         BindRuntimeButton(resetScale, OnRuntimeTrackScaleResetClicked);
 
-        CreateLabel(panelObj.transform, "InteractiveMotionLabel", "Motion", 0.12f, 0.80f, 40, TextAnchor.MiddleLeft);
-        runtimeInteractiveMotionValueText = CreateLabel(panelObj.transform, "InteractiveMotionValue", string.Empty, 0.72f, 0.80f, 36, TextAnchor.MiddleRight);
-        Button motionToggle = CreateSmallButton(panelObj.transform, "InteractiveMotionToggleButton", new Vector2(315f, 192f), "Toggle");
-        BindRuntimeButton(motionToggle, OnRuntimeInteractiveMotionToggleClicked);
-
-        CreateLabel(panelObj.transform, "YawLabel", "Yaw", 0.12f, 0.28f, 44, TextAnchor.MiddleLeft);
-        runtimeTrackYawValueText = CreateLabel(panelObj.transform, "YawValue", "0.0 deg", 0.88f, 0.28f, 40, TextAnchor.MiddleRight);
-        runtimeTrackYawSlider = CreateSlider(panelObj.transform, "TrackYawSlider", 0.28f);
-        if (runtimeTrackYawSlider != null)
-        {
-            UiComponentWriter.ApplySliderRange(runtimeTrackYawSlider, -180f, 180f);
-            UiComponentWriter.ApplySliderValueWithoutNotify(runtimeTrackYawSlider, 0f);
-            BindRuntimeSlider(runtimeTrackYawSlider, OnRuntimeTrackYawSliderChanged);
-        }
+        // 現在フレームのキーを消す。Reset（0 や 1 を打つ）とは別で、打ち間違えの取り消し。
+        Button deleteKey = CreateSmallButton(panelObj.transform, "TrackKeyDeleteButton", new Vector2(224f, buttonRow), "Del");
+        BindRuntimeButton(deleteKey, OnRuntimeTrackKeyDeleteClicked);
 
         // Scale は自動フィット（bbox 高さ合わせ）に対する**倍率**。1.0 が「自動のまま」。
-        CreateLabel(panelObj.transform, "ScaleLabel", "Scale", 0.12f, 0.145f, 44, TextAnchor.MiddleLeft);
-        runtimeTrackScaleValueText = CreateLabel(panelObj.transform, "ScaleValue", "x1.00", 0.88f, 0.145f, 40, TextAnchor.MiddleRight);
-        runtimeTrackScaleSlider = CreateSlider(panelObj.transform, "TrackScaleSlider", 0.145f);
+        CreateSettingsLabel(panelObj.transform, "ScaleLabel", "Scale", SettingsRowY(5), 44, TextAnchor.MiddleLeft);
+        runtimeTrackScaleValueText =
+            CreateSettingsValue(panelObj.transform, "ScaleValue", "x1.00", SettingsRowY(5), 40);
+        runtimeTrackScaleSlider = CreateSlider(panelObj.transform, "TrackScaleSlider", SettingsRowY(5));
         if (runtimeTrackScaleSlider != null)
         {
             UiComponentWriter.ApplySliderRange(runtimeTrackScaleSlider, ManualScaleMin, ManualScaleMax);
@@ -134,9 +131,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             BindRuntimeSlider(runtimeTrackScaleSlider, OnRuntimeTrackScaleSliderChanged);
         }
 
+        // 枠を 90 ではなく 56 にして、下の掴み代（-306）と離す。
+        runtimeTrackKeyInfoText = CreateSettingsLabel(
+            panelObj.transform, "TrackKeyInfo", "Keys Y:0 S:0  Frame:0", SettingsRowY(6), 24,
+            TextAnchor.MiddleCenter, 860f, 0f, 56f);
+
         // 掴み代は**下端**。上に置くとタイトルと重なり、視線も上へ引っ張られる。
         CreateRuntimePanelDragHandle(
-            panelObj.transform, "PanelDragHandle", new Vector2(0f, -302f), new Vector2(760f, 30f));
+            panelObj.transform, "PanelDragHandle", new Vector2(0f, -306f), new Vector2(760f, 24f));
 
         UpdateRuntimeTrackRotationUiState();
         UpdateRuntimeInteractiveMotionUiState();
@@ -144,6 +146,48 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return settingsRootObj;
     }
 
+
+
+    // 設定パネルの 3 列。canvas は 900x640 で、原点は中心。
+    private const float SettingsLabelCenterX = -320f;
+    private const float SettingsLabelWidth = 260f;
+    private const float SettingsValueCenterX = 350f;
+    private const float SettingsValueWidth = 180f;
+    private const float SettingsControlCenterX = 30f;
+    private const float SettingsControlWidth = 420f;
+    private const float SettingsRowTopY = 250f;
+    private const float SettingsRowPitch = 84f;
+
+
+    private static float SettingsRowY(int row)
+    {
+        return SettingsRowTopY - row * SettingsRowPitch;
+    }
+
+
+    private Text CreateSettingsLabel(
+        Transform parent, string name, string initialText, float y, int fontSize, TextAnchor anchor,
+        // 既定の枠は 78。行間 84 に対して 6px の隙間が残るので、隣の行と触れない。
+        // 90 にしていたときは上下の行と 6px ずつ重なっていた（実測 2026-09-03）。
+        float width = SettingsLabelWidth, float centerX = SettingsLabelCenterX, float height = 78f)
+    {
+        RectTransform rect = RuntimeUiElementFactory.CreateRectChild(name, parent, out GameObject obj);
+        TransformWriter.ApplyCenteredRect(rect, new Vector2(centerX, y), new Vector2(width, height));
+
+        Text text = RuntimeUiElementFactory.AddText(obj);
+        UiComponentWriter.ApplyTextStyle(text, GetRuntimeUiFont(), fontSize, anchor, Color.white);
+        UiComponentWriter.ApplyTextOverflow(text, HorizontalWrapMode.Wrap, VerticalWrapMode.Truncate);
+        UiComponentWriter.ApplyTextContent(text, initialText);
+        return text;
+    }
+
+
+    private Text CreateSettingsValue(Transform parent, string name, string initialText, float y, int fontSize)
+    {
+        return CreateSettingsLabel(
+            parent, name, initialText, y, fontSize, TextAnchor.MiddleRight,
+            SettingsValueWidth, SettingsValueCenterX);
+    }
 
 
     private Text CreateLabel(Transform parent, string name, string initialText, float anchorX, float anchorY, int fontSize, TextAnchor anchor)
@@ -175,11 +219,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
 
 
-    private Slider CreateSlider(Transform parent, string name, float anchorY)
+    // y は行の**ピクセル座標**（中心原点）。以前は 0..1 の割合で、幅 520 を中央に置いていたので
+    // 左のラベルと右の値の両方に食い込んでいた。操作列の内側に収める。
+    private Slider CreateSlider(Transform parent, string name, float y)
     {
         RectTransform sliderRect = RuntimeUiElementFactory.CreateRectChild(name, parent, out GameObject sliderObj);
-        Vector2 sliderAnchor = new Vector2(0.5f, anchorY);
-        TransformWriter.ApplyAnchoredRect(sliderRect, sliderAnchor, sliderAnchor, Vector2.zero, new Vector2(520f, 60f));
+        TransformWriter.ApplyCenteredRect(
+            sliderRect, new Vector2(SettingsControlCenterX, y), new Vector2(SettingsControlWidth, 44f));
 
         Image background = RuntimeUiElementFactory.AddImage(sliderObj);
         UiComponentWriter.ApplyGraphicColor(background, new Color(1f, 1f, 1f, 0.2f));

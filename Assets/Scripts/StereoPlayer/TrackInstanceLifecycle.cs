@@ -11,8 +11,24 @@ public static class TrackInstanceLifecycle
         Dictionary<uint, Vector3> lockedModelLocalScaleByTrack,
         ref int selectedManualRotationTrackId)
     {
-        if (prefab == null || instances == null || prefabSources == null || lockedModelLocalScaleByTrack == null)
+        if (instances == null || prefabSources == null || lockedModelLocalScaleByTrack == null)
         {
+            return null;
+        }
+
+        // prefab が null = 「この track には置かない」。既存のインスタンスは片付ける。
+        // 単に非アクティブにするのではなく破棄する。ユーザーが「表示しない」を選んだ track に
+        // 姿勢適用やスケールのロックが走り続ける必要はない。
+        if (prefab == null)
+        {
+            if (instances.TryGetValue(trackId, out GameObject hidden) && hidden != null)
+            {
+                SceneObjectWriter.DestroyObject(hidden);
+            }
+
+            instances.Remove(trackId);
+            prefabSources.Remove(trackId);
+            lockedModelLocalScaleByTrack.Remove(trackId);
             return null;
         }
 

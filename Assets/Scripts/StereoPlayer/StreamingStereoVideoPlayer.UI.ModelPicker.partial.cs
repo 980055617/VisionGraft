@@ -121,6 +121,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 実体は UpdateRuntimeModelPickerTargetButtons が必要な数だけ作る。
         runtimeModelPickerTargetButtons.Clear();
 
+        // 「この track にはモデルを置かない」。track 行のすぐ下、一覧の左上の手前に置く。
+        // モデルの中に混ぜるとページを跨いだときに見失うので、常に同じ場所に出す。
+        runtimeModelPickerHideButton = CreateModelPickerButton(
+            panelObj.transform,
+            "ModelPickerHideButton",
+            "表示しない",
+            new Vector2(-360f, ModelPickerTargetRowY),
+            new Vector2(200f, 44f),
+            OnRuntimeModelPickerHideClicked,
+            TextAnchor.MiddleCenter);
+
         runtimeModelPickerEntryButtons.Clear();
         for (int i = 0; i < RuntimeModelPickerEntriesPerPage; i++)
         {
@@ -220,6 +231,48 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             float factor = i == runtimeModelPickerHoverIndex ? ModelPickerPreviewHoverBoost : 1f;
             TransformWriter.ApplyLocalScale(holder.transform, runtimeModelPickerPreviewBaseScales[i] * factor);
         }
+    }
+
+
+    // 「表示しない」。もう一度押すと既定のモデルに戻す（トグル）。
+    private void OnRuntimeModelPickerHideClicked()
+    {
+        if (!TryGetRuntimeModelPickerTarget(out uint trackId, out byte categoryId, out _))
+        {
+            return;
+        }
+
+        PauseForManualRotationEdit();
+
+        bool nowHidden = !IsHiddenModelIndex(ResolveSelectedModelIndex(trackId, 0));
+        if (nowHidden)
+        {
+            selectedModelIndexByTrack[trackId] = HiddenModelIndex;
+        }
+        else
+        {
+            // 既定へ戻す。カテゴリごとの既定 index を使う。
+            selectedModelIndexByTrack[trackId] = IsCategoryAnimal(categoryId) ? selectedAnimalIndex
+                : IsCategoryOther(categoryId) ? selectedElseIndex : selectedHumanIndex;
+        }
+
+        RecreateTrackInstanceForModelSelection(trackId);
+
+        GameObject[] prefabs = ResolveRuntimeModelPickerPrefabs(categoryId);
+        string persisted = HiddenModelName;
+        if (!nowHidden && prefabs != null)
+        {
+            int idx = Mathf.Clamp(selectedModelIndexByTrack[trackId], 0, prefabs.Length - 1);
+            persisted = prefabs[idx] != null ? prefabs[idx].name : null;
+        }
+        PersistModelSelection(trackId, persisted);
+
+        ExperimentLog.Operation(
+            "change_model",
+            $"track={trackId} category={ResolveRuntimeModelPickerCategoryLabel(categoryId).ToLowerInvariant()} " +
+            $"index={selectedModelIndexByTrack[trackId]} prefab={(nowHidden ? HiddenModelName : persisted)}");
+
+        UpdateRuntimeModelPickerUiState();
     }
 
 
@@ -487,7 +540,28 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         int defaultIndex = IsCategoryAnimal(categoryId) ? selectedAnimalIndex
             : IsCategoryOther(categoryId) ? selectedElseIndex : selectedHumanIndex;
-        int selectedIndex = Mathf.Clamp(ResolveSelectedModelIndex(trackId, defaultIndex), 0, prefabs.Length - 1);
+        int rawSelected = ResolveSelectedModelIndex(trackId, defaultIndex);
+        bool hidden = IsHiddenModelIndex(rawSelected);
+        // 非表示のときは「どれも選ばれていない」ことを示したいので、どのセルとも一致しない値にする。
+        int selectedIndex = hidden ? -1 : Mathf.Clamp(rawSelected, 0, prefabs.Length - 1);
+
+        if (runtimeModelPickerHideButton != null)
+        {
+            Text hideLabel = runtimeModelPickerHideButton.GetComponentInChildren<Text>(true);
+            if (hideLabel != null)
+            {
+                UiComponentWriter.ApplyTextContent(hideLabel, hidden ? "表示する" : "表示しない");
+            }
+
+            if (runtimeModelPickerHideButton.targetGraphic is Image hideImage)
+            {
+                UiComponentWriter.ApplyGraphicColor(
+                    hideImage,
+                    hidden
+                        ? new Color(0.48f, 0.24f, 0.16f, 0.95f)
+                        : new Color(0.13f, 0.14f, 0.15f, 0.92f));
+            }
+        }
         int pageCount = GetRuntimeModelPickerPageCount(prefabs.Length);
         runtimeModelPickerPageIndex = Mathf.Clamp(runtimeModelPickerPageIndex, 0, Mathf.Max(0, pageCount - 1));
 
@@ -497,7 +571,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         if (runtimeModelPickerStatusText != null)
         {
-            string selectedName = prefabs[selectedIndex] != null ? CleanModelDisplayName(prefabs[selectedIndex].name) : "missing";
+            string selectedName = hidden
+                ? "表示しない"
+                : (prefabs[selectedIndex] != null ? CleanModelDisplayName(prefabs[selectedIndex].name) : "missing");
             List<uint> targets = GetAvailableTrackIdsForManualRotation();
             int pos = targets != null ? targets.IndexOf(trackId) + 1 : 0;
             string targetInfo = targets != null && targets.Count > 1
@@ -998,6 +1074,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             ApplyPreviewScale(holder.transform, 52f);
             return;
+        }
+
+        // **奥行きの方が横幅より長いモデルは、横向きに回して見せる。**
+        // 機関車は長軸（18.5m）がホルダーの Z に向くので、正面から見ると端から見る形になり
+        // 「細長い塊」にしか見えない（2026-09-02 の指摘）。90 度回して側面を見せる。
+        // 球は差が出ず、人・動物は高さが最長なのでこの条件に入らない。実測で該当するのは
+        // 06_DieselLocomotive だけ。
+        if (bounds.size.z > bounds.size.x * 1.2f)
+        {
+            preview.transform.localRotation = Quaternion.Euler(0f, 90f, 0f) * preview.transform.localRotation;
+            // 回したので測り直す。回転前の bounds で中心を引くと位置がずれる。
+            if (!TryCalculateLocalRendererBounds(holder.transform, out bounds))
+            {
+                ApplyPreviewScale(holder.transform, ModelPickerPreviewTargetSize);
+                return;
+            }
         }
 
         preview.transform.localPosition -= bounds.center;

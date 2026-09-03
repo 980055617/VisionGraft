@@ -325,31 +325,31 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (IsCategoryAnimal(categoryId))
         {
-            if (animalPrefabs != null && animalPrefabs.Length > 0)
-            {
-                int idx = ResolveSelectedModelIndex(trackId, selectedAnimalIndex);
-                idx = Mathf.Clamp(idx, 0, animalPrefabs.Length - 1);
-                return animalPrefabs[idx];
-            }
-            return null;
+            return ResolvePrefabFromSelection(trackId, animalPrefabs, selectedAnimalIndex);
         }
         if (IsCategoryOther(categoryId))
         {
-            if (elsePrefabs != null && elsePrefabs.Length > 0)
-            {
-                int idx = ResolveSelectedModelIndex(trackId, selectedElseIndex);
-                idx = Mathf.Clamp(idx, 0, elsePrefabs.Length - 1);
-                return elsePrefabs[idx];
-            }
+            return ResolvePrefabFromSelection(trackId, elsePrefabs, selectedElseIndex);
+        }
+        return ResolvePrefabFromSelection(trackId, humanPrefabs, selectedHumanIndex);
+    }
+
+
+    // 「置かない」なら null を返す。Clamp より前に見ること（-1 は 0 に丸められてしまう）。
+    private GameObject ResolvePrefabFromSelection(uint trackId, GameObject[] prefabs, int defaultIndex)
+    {
+        int index = ResolveSelectedModelIndex(trackId, defaultIndex);
+        if (IsHiddenModelIndex(index))
+        {
             return null;
         }
-        if (humanPrefabs != null && humanPrefabs.Length > 0)
+
+        if (prefabs == null || prefabs.Length == 0)
         {
-            int idx = ResolveSelectedModelIndex(trackId, selectedHumanIndex);
-            idx = Mathf.Clamp(idx, 0, humanPrefabs.Length - 1);
-            return humanPrefabs[idx];
+            return null;
         }
-        return null;
+
+        return prefabs[Mathf.Clamp(index, 0, prefabs.Length - 1)];
     }
 
 
@@ -366,6 +366,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         return humanPrefabs;
+    }
+
+
+    // 「この track にはモデルを置かない」を表す選択値。
+    //
+    // 一覧の index は 0 以上なので、負の値なら衝突しない。ResolveTrackPrefab が null を返し、
+    // TrackInstanceLifecycle が既存インスタンスを片付ける。
+    // 保存は prefab 名の代わりに HiddenModelName を書く（index はモデルの増減でずれるため）。
+    public const int HiddenModelIndex = -1;
+    public const string HiddenModelName = "(none)";
+
+    private static bool IsHiddenModelIndex(int index)
+    {
+        return index == HiddenModelIndex;
     }
 
 

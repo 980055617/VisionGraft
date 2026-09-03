@@ -202,6 +202,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // バッチは -remember true を明示しない限りこれを OFF にする（測定の再現性のため）。
     public bool rememberTrackCustomization = true;
 
+    // 対象を掴んで手首をひねると回る。既定 ON。
+    // 実機で誤爆するようなら Inspector で切れるようにしてある。
+    public bool enableGrabRotate = true;
+
     // バッチ検証専用の手動 yaw 注入。"track:deg" をカンマ区切りで書く（例: "0:90,1:-45"）。
     // 実機の手動回転は VR の UI からしか操作できず、Editor では再現できない。
     // 回転経路（ApplyManualTrackYawOffset → prefab 補正の合成）を batchmode で
@@ -223,6 +227,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     // 同じくバッチ検証専用。モデルピッカーを開いた状態で始める。
     public bool batchOpenModelPickerOnStart;
+
+    // 同じくバッチ検証専用。パネルの要素を canvas 座標で書き出す。
+    public bool batchDumpPanelLayout;
+
+    // 同じくバッチ検証専用。ピッカーを開いたときに表示するページ（0 起点）。
+    // 目的のモデルが 2 ページ目にあると、バッチではクリックできず確認できないため。
+    public int batchModelPickerPage;
 
     // SMAL FK のあとに四肢を keypoint の位置へ向ける（Human の AimAt に相当）。
     // 既定 false。A/B で確認してから既定を決める。docs/smpl-retargeting.md 参照。

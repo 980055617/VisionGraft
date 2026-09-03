@@ -16,6 +16,9 @@ public sealed class TrackCustomization
 {
     public string modelPrefabName;
     public SortedDictionary<int, float> yawKeyframes;
+    // 掴んで回す操作は 3 軸を同時に動かすので、pitch / roll も持つ。既定 0。
+    public SortedDictionary<int, float> pitchKeyframes;
+    public SortedDictionary<int, float> rollKeyframes;
     // 自動フィットに対する倍率。既定 1.0（キーが無い＝等倍）。
     public SortedDictionary<int, float> scaleKeyframes;
 
@@ -25,6 +28,8 @@ public sealed class TrackCustomization
         {
             return string.IsNullOrEmpty(modelPrefabName) &&
                    (yawKeyframes == null || yawKeyframes.Count == 0) &&
+                   (pitchKeyframes == null || pitchKeyframes.Count == 0) &&
+                   (rollKeyframes == null || rollKeyframes.Count == 0) &&
                    (scaleKeyframes == null || scaleKeyframes.Count == 0);
         }
     }
@@ -35,6 +40,14 @@ public sealed class TrackCustomization
         if (yawKeyframes != null && yawKeyframes.Count > 0)
         {
             copy.yawKeyframes = new SortedDictionary<int, float>(yawKeyframes);
+        }
+        if (pitchKeyframes != null && pitchKeyframes.Count > 0)
+        {
+            copy.pitchKeyframes = new SortedDictionary<int, float>(pitchKeyframes);
+        }
+        if (rollKeyframes != null && rollKeyframes.Count > 0)
+        {
+            copy.rollKeyframes = new SortedDictionary<int, float>(rollKeyframes);
         }
         if (scaleKeyframes != null && scaleKeyframes.Count > 0)
         {
@@ -85,6 +98,14 @@ public sealed class VideoCustomization
             if (kv.Value.yawKeyframes != null && kv.Value.yawKeyframes.Count > 0)
             {
                 dst.yawKeyframes = new SortedDictionary<int, float>(kv.Value.yawKeyframes);
+            }
+            if (kv.Value.pitchKeyframes != null && kv.Value.pitchKeyframes.Count > 0)
+            {
+                dst.pitchKeyframes = new SortedDictionary<int, float>(kv.Value.pitchKeyframes);
+            }
+            if (kv.Value.rollKeyframes != null && kv.Value.rollKeyframes.Count > 0)
+            {
+                dst.rollKeyframes = new SortedDictionary<int, float>(kv.Value.rollKeyframes);
             }
             if (kv.Value.scaleKeyframes != null && kv.Value.scaleKeyframes.Count > 0)
             {
@@ -231,6 +252,8 @@ public static class TrackCustomizationStore
             }
 
             entry.yawKeyframes = ParseKeyframes(t, "yaw", 0f);
+            entry.pitchKeyframes = ParseKeyframes(t, "pitch", 0f);
+            entry.rollKeyframes = ParseKeyframes(t, "roll", 0f);
             entry.scaleKeyframes = ParseKeyframes(t, "scale", 1f);
         }
 
@@ -318,6 +341,8 @@ public static class TrackCustomizationStore
                 }
 
                 needComma = AppendKeyframes(sb, "yaw", track.Value.yawKeyframes, needComma);
+                needComma = AppendKeyframes(sb, "pitch", track.Value.pitchKeyframes, needComma);
+                needComma = AppendKeyframes(sb, "roll", track.Value.rollKeyframes, needComma);
                 AppendKeyframes(sb, "scale", track.Value.scaleKeyframes, needComma);
 
                 sb.Append("}");

@@ -287,6 +287,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         FlushTrackCustomizationSaveIfDue();
 
+        // 対象を掴んで回す。パネルの掴み代と同じく毎フレーム走らせる必要がある。
+        UpdateGrabRotate();
+
         // 掴み代を掴んでいる間、コントローラの前後移動をパネル距離へ反映する。
         //
         // **EnsureRuntimeControls に置いてはいけない。** あれは OnPrepared から 1 回しか

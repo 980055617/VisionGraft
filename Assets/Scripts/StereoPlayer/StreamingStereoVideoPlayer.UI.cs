@@ -54,6 +54,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private int runtimeModelPickerHoverIndex = -1;
     // track を 1 つずつ送るのではなく、出ている ID を全部並べて直接押せるようにするボタン列。
     private readonly List<Button> runtimeModelPickerTargetButtons = new List<Button>();
+    // 「この track にはモデルを置かない」のトグル。
+    private Button runtimeModelPickerHideButton;
 
     // 脇に出るパネル（Settings / モデルピッカー）の前後位置。掴み代のドラッグで動かす。
     // + が遠ざける方向。Settings とピッカーで共有する（片方だけ動くと揃わない）。
@@ -143,6 +145,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             UpdateRuntimeSettingsPlacement();
             UpdateRuntimeScreenDistanceUiState();
             UpdateRuntimeTrackRotationUiState();
+            DumpPanelLayoutIfRequested();
             UpdateRuntimeInteractiveMotionUiState();
         }
 
@@ -158,6 +161,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             {
                 batchModelPickerForcedOpen = true;
                 ToggleRuntimeModelPickerPanel();
+                runtimeModelPickerPageIndex = Mathf.Max(0, batchModelPickerPage);
             }
 
             SceneObjectWriter.ApplyActive(runtimeModelPickerRoot, runtimeModelPickerOpen);

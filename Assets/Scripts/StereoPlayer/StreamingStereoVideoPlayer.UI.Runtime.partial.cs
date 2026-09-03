@@ -235,7 +235,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         PauseForManualRotationEdit();
-        SetManualYawOffsetDegForTrack(trackId, 0f);
+        // 3 軸まとめて 0 に戻す。yaw だけ戻しても pitch / roll が残ると
+        // 「Reset したのに傾いたまま」になる。
+        SetManualRotationForTrack(trackId, 0f, 0f, 0f);
         UpdateRuntimeTrackRotationUiState();
         PersistManualYaw(trackId);
         // Else は bundle に向きの推定値が無く、ここでの調整が唯一の向きの決め手になる。
@@ -267,6 +269,41 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             $"track={trackId} yaw={ExperimentCsv.Format(value)} frame={GetCurrentPlaybackFrame()}");
     }
 
+
+
+    // 現在フレームの yaw / scale のキーを消す。両方まとめて消す。
+    // 片方ずつにするとボタンが 2 つ増えて Track 行に入らないうえ、
+    // 「このフレームの調整を取り消す」という意図では普通どちらも消したい。
+    private void OnRuntimeTrackKeyDeleteClicked()
+    {
+        if (isNormalMode || !TryGetSelectedManualRotationTrack(out uint trackId))
+        {
+            return;
+        }
+
+        PauseForManualRotationEdit();
+        bool removedYaw = RemoveManualYawKeyAtCurrentFrame(trackId);
+        bool removedScale = RemoveManualScaleKeyAtCurrentFrame(trackId);
+        if (!removedYaw && !removedScale)
+        {
+            return;
+        }
+
+        if (removedYaw)
+        {
+            PersistManualYaw(trackId);
+        }
+        if (removedScale)
+        {
+            PersistManualScale(trackId);
+        }
+
+        UpdateRuntimeTrackRotationUiState();
+        ExperimentLog.Operation(
+            "change_rotation",
+            $"track={trackId} op=delete_key frame={GetCurrentPlaybackFrame()} " +
+            $"yaw={removedYaw} scale={removedScale}");
+    }
 
 
     private void OnRuntimeTrackScaleResetClicked()
@@ -389,6 +426,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (trackScaleResetButton != null)
         {
             UiComponentWriter.ApplyInteractable(trackScaleResetButton, !isNormalMode);
+        }
+
+        // Del は「現在フレームにキーがあるとき」だけ押せる。押せるかどうかで
+        // そのフレームがキーなのか補間なのかが分かる。
+        Button trackKeyDeleteButton = FindButton(runtimeSettingsRoot, "trackkeydelete");
+        if (trackKeyDeleteButton != null)
+        {
+            bool canDelete = !isNormalMode &&
+                             TryGetSelectedManualRotationTrack(out uint deletableTrack) &&
+                             (HasManualYawKeyAtCurrentFrame(deletableTrack) ||
+                              HasManualScaleKeyAtCurrentFrame(deletableTrack));
+            UiComponentWriter.ApplyInteractable(trackKeyDeleteButton, canDelete);
         }
 
         if (runtimeTrackSelectionText == null && runtimeTrackYawSlider == null && runtimeTrackYawValueText == null &&

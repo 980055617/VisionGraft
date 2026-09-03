@@ -6,11 +6,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // Depends on: track/manualYaw dictionaries and selected track state in Model.cs
     // Provides: manual yaw keyframe evaluation, guide object management, joint yaw apply
 
+    // 手動回転を配置回転に重ねる。
+    //
+    // 軸の順は **yaw（world の上）→ pitch（その結果の右）→ roll（その結果の前）**。
+    // yaw だけのときの式を変えていないので、これまで保存した yaw はそのままの意味で効く。
     private Quaternion ApplyManualTrackYawOffset(uint trackId, int frame, Quaternion baseRotation, Vector3 upAxis)
     {
         float yawDeg = EvaluateManualYawOffsetDegForFrame(trackId, frame);
+        float pitchDeg = EvaluateManualPitchDegForFrame(trackId, frame);
+        float rollDeg = EvaluateManualRollDegForFrame(trackId, frame);
 
-        if (Mathf.Abs(yawDeg) < 0.001f)
+        if (Mathf.Abs(yawDeg) < 0.001f && Mathf.Abs(pitchDeg) < 0.001f && Mathf.Abs(rollDeg) < 0.001f)
         {
             return baseRotation;
         }
@@ -20,7 +26,62 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             upAxis = Vector3.up;
         }
 
-        return Quaternion.AngleAxis(yawDeg, upAxis.normalized) * baseRotation;
+        Quaternion result = Quaternion.AngleAxis(yawDeg, upAxis.normalized) * baseRotation;
+        if (Mathf.Abs(pitchDeg) >= 0.001f)
+        {
+            result = Quaternion.AngleAxis(pitchDeg, result * Vector3.right) * result;
+        }
+        if (Mathf.Abs(rollDeg) >= 0.001f)
+        {
+            result = Quaternion.AngleAxis(rollDeg, result * Vector3.forward) * result;
+        }
+
+        return result;
+    }
+
+
+    private float EvaluateManualPitchDegForFrame(uint trackId, int frame)
+    {
+        manualPitchKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> keys);
+        return TrackKeyframeCurve.Evaluate(keys, frame, 0f);
+    }
+
+
+    private float EvaluateManualRollDegForFrame(uint trackId, int frame)
+    {
+        manualRollKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> keys);
+        return TrackKeyframeCurve.Evaluate(keys, frame, 0f);
+    }
+
+
+    private void SetManualRotationForTrack(uint trackId, float yawDeg, float pitchDeg, float rollDeg)
+    {
+        int frame = GetCurrentPlaybackFrame();
+        WriteKey(manualYawKeyframesByTrack, trackId, frame, Mathf.Clamp(yawDeg, -180f, 180f));
+        WriteKey(manualPitchKeyframesByTrack, trackId, frame, Mathf.Clamp(pitchDeg, -180f, 180f));
+        WriteKey(manualRollKeyframesByTrack, trackId, frame, Mathf.Clamp(rollDeg, -180f, 180f));
+    }
+
+
+    private static void WriteKey(
+        Dictionary<uint, SortedDictionary<int, float>> target, uint trackId, int frame, float value)
+    {
+        if (!target.TryGetValue(trackId, out SortedDictionary<int, float> keys) || keys == null)
+        {
+            keys = new SortedDictionary<int, float>();
+            target[trackId] = keys;
+        }
+
+        keys[frame] = value;
+    }
+
+
+    private void GetManualRotationForTrack(uint trackId, out float yaw, out float pitch, out float roll)
+    {
+        int frame = GetCurrentPlaybackFrame();
+        yaw = EvaluateManualYawOffsetDegForFrame(trackId, frame);
+        pitch = EvaluateManualPitchDegForFrame(trackId, frame);
+        roll = EvaluateManualRollDegForFrame(trackId, frame);
     }
 
 
@@ -156,6 +217,53 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         keys[frame] = Mathf.Clamp(yawDeg, -180f, 180f);
+    }
+
+
+    // 現在フレームに打ってあるキーを消す。消したら true。
+    //
+    // **「0 を打つ」とは別物。** Reset は 0 のキーを追加するので、一度打ったフレームは
+    // 以後ずっとキーであり続ける。打ち間違えを取り消す手段がこれまで無かった
+    // （2026-09-02 の指摘）。
+    private bool RemoveManualYawKeyAtCurrentFrame(uint trackId)
+    {
+        if (!manualYawKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> keys) || keys == null)
+        {
+            return false;
+        }
+
+        int frame = GetCurrentPlaybackFrame();
+        bool removed = keys.Remove(frame);
+
+        // 空になったら辞書からも外す。残しておくと「キーがある track」として扱われる。
+        if (keys.Count == 0)
+        {
+            manualYawKeyframesByTrack.Remove(trackId);
+        }
+
+        // pitch / roll も同じフレームのキーを消す。3 軸は 1 回の操作で一緒に打つので、
+        // 消すときも揃えないと「yaw だけ残った」半端な状態になる。
+        removed |= RemoveKey(manualPitchKeyframesByTrack, trackId, frame);
+        removed |= RemoveKey(manualRollKeyframesByTrack, trackId, frame);
+        return removed;
+    }
+
+
+    private static bool RemoveKey(
+        Dictionary<uint, SortedDictionary<int, float>> target, uint trackId, int frame)
+    {
+        if (!target.TryGetValue(trackId, out SortedDictionary<int, float> keys) || keys == null)
+        {
+            return false;
+        }
+
+        bool removed = keys.Remove(frame);
+        if (keys.Count == 0)
+        {
+            target.Remove(trackId);
+        }
+
+        return removed;
     }
 
 
@@ -358,7 +466,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         float yawDeg = EvaluateManualYawOffsetDegForFrame(trackId, frame);
-        if (Mathf.Abs(yawDeg) < 0.001f)
+        float pitchDeg = EvaluateManualPitchDegForFrame(trackId, frame);
+        float rollDeg = EvaluateManualRollDegForFrame(trackId, frame);
+        if (Mathf.Abs(yawDeg) < 0.001f && Mathf.Abs(pitchDeg) < 0.001f && Mathf.Abs(rollDeg) < 0.001f)
         {
             return;
         }
@@ -368,7 +478,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             upAxis = Vector3.up;
         }
 
+        // ApplyManualTrackYawOffset と同じ順で組む。片方だけ変えると
+        // モデルの向きと keypoint の向きがずれる。
         Quaternion yawRot = Quaternion.AngleAxis(yawDeg, upAxis.normalized);
+        if (Mathf.Abs(pitchDeg) >= 0.001f)
+        {
+            yawRot = Quaternion.AngleAxis(pitchDeg, yawRot * Vector3.right) * yawRot;
+        }
+        if (Mathf.Abs(rollDeg) >= 0.001f)
+        {
+            yawRot = Quaternion.AngleAxis(rollDeg, yawRot * Vector3.forward) * yawRot;
+        }
+
         for (int i = 0; i < jointsWorld.Length && i < vis.Length; i++)
         {
             if (vis[i] == 0)

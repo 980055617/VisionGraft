@@ -56,6 +56,28 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
+    // yaw 側と同じ。現在フレームのキーを消す。
+    private bool RemoveManualScaleKeyAtCurrentFrame(uint trackId)
+    {
+        if (!manualScaleKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> keys) || keys == null)
+        {
+            return false;
+        }
+
+        if (!keys.Remove(GetCurrentPlaybackFrame()))
+        {
+            return false;
+        }
+
+        if (keys.Count == 0)
+        {
+            manualScaleKeyframesByTrack.Remove(trackId);
+        }
+
+        return true;
+    }
+
+
     private int GetManualScaleKeyCountForTrack(uint trackId)
     {
         if (!manualScaleKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> keys) || keys == null)

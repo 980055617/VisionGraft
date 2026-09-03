@@ -24,9 +24,103 @@ public static class TrackInstanceFactory
 
         EnableSkinnedBoundsPoseTracking(instance);
         ForceHighestLod(instance);
+        AddGrabCollider(instance);
         LogSpringBoneStateIfAny(instance);
         return instance;
     }
+
+    // 掴んで回すためのレイ当たり判定を root に足す。
+    //
+    // 実測では Human 0/16、Animal 0/52、Else は球 6 個だけしか collider を持っていない
+    // （2026-09-02）。掴む操作には対象に当たり判定が要るので、bounds から箱を作る。
+    //
+    // **スクリーンのピックとは干渉しない。** TryPickScreenByRay は Physics.Raycast ではなく
+    // 平面との数学的な交差で解いているので、ここで collider を足しても
+    // 「指してオブジェクトを選ぶ」既存の挙動は変わらない。
+    //
+    // isTrigger にするのは物理に参加させないため。Physics.Raycast は既定
+    // （queriesHitTriggers = true）でトリガーにも当たる。
+    private static void AddGrabCollider(GameObject instance)
+    {
+        if (instance.GetComponent<BoxCollider>() != null)
+        {
+            return;
+        }
+
+        if (!TryComputeLocalBounds(instance.transform, out Bounds bounds))
+        {
+            return;
+        }
+
+        BoxCollider box = instance.AddComponent<BoxCollider>();
+        box.isTrigger = true;
+        box.center = bounds.center;
+        box.size = bounds.size;
+    }
+
+
+    // root から見たメッシュの合成 bounds。renderer.bounds（world AABB）は使わない。
+    // 親のスケールや回転が混ざると桁が狂う（モデルピッカーのプレビューで踏んだのと同じ罠）。
+    private static bool TryComputeLocalBounds(Transform root, out Bounds bounds)
+    {
+        bounds = default;
+        bool has = false;
+        foreach (Renderer r in root.GetComponentsInChildren<Renderer>(true))
+        {
+            Mesh mesh = ResolveMesh(r);
+            if (mesh == null)
+            {
+                continue;
+            }
+
+            Matrix4x4 toRoot = root.worldToLocalMatrix * r.transform.localToWorldMatrix;
+            Bounds inRoot = TransformBounds(mesh.bounds, toRoot);
+            if (!has)
+            {
+                bounds = inRoot;
+                has = true;
+            }
+            else
+            {
+                bounds.Encapsulate(inRoot);
+            }
+        }
+
+        return has;
+    }
+
+
+    private static Mesh ResolveMesh(Renderer renderer)
+    {
+        if (renderer == null)
+        {
+            return null;
+        }
+
+        if (renderer is SkinnedMeshRenderer skinned)
+        {
+            return skinned.sharedMesh;
+        }
+
+        MeshFilter filter = renderer.GetComponent<MeshFilter>();
+        return filter != null ? filter.sharedMesh : null;
+    }
+
+
+    private static Bounds TransformBounds(Bounds b, Matrix4x4 m)
+    {
+        Vector3 center = m.MultiplyPoint3x4(b.center);
+        Vector3 e = b.extents;
+        Vector3 x = m.MultiplyVector(new Vector3(e.x, 0f, 0f));
+        Vector3 y = m.MultiplyVector(new Vector3(0f, e.y, 0f));
+        Vector3 z = m.MultiplyVector(new Vector3(0f, 0f, e.z));
+        Vector3 extents = new Vector3(
+            Mathf.Abs(x.x) + Mathf.Abs(y.x) + Mathf.Abs(z.x),
+            Mathf.Abs(x.y) + Mathf.Abs(y.y) + Mathf.Abs(z.y),
+            Mathf.Abs(x.z) + Mathf.Abs(y.z) + Mathf.Abs(z.z));
+        return new Bounds(center, extents * 2f);
+    }
+
 
     // VRM の揺れもの（髪・スカート）が本当に動く状態で生成されたかを 1 行残す。
     //

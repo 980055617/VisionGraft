@@ -80,6 +80,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
             bool hasKeyframes =
                 (entry.yawKeyframes != null && entry.yawKeyframes.Count > 0) ||
+                (entry.pitchKeyframes != null && entry.pitchKeyframes.Count > 0) ||
+                (entry.rollKeyframes != null && entry.rollKeyframes.Count > 0) ||
                 (entry.scaleKeyframes != null && entry.scaleKeyframes.Count > 0);
             if (hasKeyframes)
             {
@@ -97,6 +99,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     {
                         manualYawKeyframesByTrack[kv.Key] = new SortedDictionary<int, float>(entry.yawKeyframes);
                         restoredYaw++;
+                    }
+                    if (entry.pitchKeyframes != null && entry.pitchKeyframes.Count > 0)
+                    {
+                        manualPitchKeyframesByTrack[kv.Key] = new SortedDictionary<int, float>(entry.pitchKeyframes);
+                    }
+                    if (entry.rollKeyframes != null && entry.rollKeyframes.Count > 0)
+                    {
+                        manualRollKeyframesByTrack[kv.Key] = new SortedDictionary<int, float>(entry.rollKeyframes);
                     }
                     if (entry.scaleKeyframes != null && entry.scaleKeyframes.Count > 0)
                     {
@@ -196,7 +206,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         pendingModelNameByTrack.Remove(trackId);
-        if (prefabs == null || string.IsNullOrEmpty(prefabName))
+        if (string.IsNullOrEmpty(prefabName))
+        {
+            return;
+        }
+
+        // 「置かない」はモデル名ではないので、一覧を探しに行かない。
+        if (prefabName == HiddenModelName)
+        {
+            selectedModelIndexByTrack[trackId] = HiddenModelIndex;
+            Debug.Log($"[Customization] applied track={trackId} model=表示しない");
+            return;
+        }
+
+        if (prefabs == null)
         {
             return;
         }
@@ -255,17 +278,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         TrackCustomization entry = target.GetOrCreate(trackId);
-        if (manualYawKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> keys) &&
-            keys != null && keys.Count > 0)
-        {
-            entry.yawKeyframes = new SortedDictionary<int, float>(keys);
-        }
-        else
-        {
-            entry.yawKeyframes = null;
-        }
+        entry.yawKeyframes = CopyKeysOrNull(manualYawKeyframesByTrack, trackId);
+        entry.pitchKeyframes = CopyKeysOrNull(manualPitchKeyframesByTrack, trackId);
+        entry.rollKeyframes = CopyKeysOrNull(manualRollKeyframesByTrack, trackId);
 
         RequestTrackCustomizationSave();
+    }
+
+
+    private static SortedDictionary<int, float> CopyKeysOrNull(
+        Dictionary<uint, SortedDictionary<int, float>> source, uint trackId)
+    {
+        if (!source.TryGetValue(trackId, out SortedDictionary<int, float> keys) || keys == null || keys.Count == 0)
+        {
+            return null;
+        }
+
+        return new SortedDictionary<int, float>(keys);
     }
 
 

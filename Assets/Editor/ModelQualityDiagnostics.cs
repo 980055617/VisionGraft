@@ -124,6 +124,46 @@ public static class ModelQualityDiagnostics
     }
 
 
+    // モデルに当たり判定があるかを数える。掴んで回すにはレイが当たる必要がある。
+    // 無ければ生成時に bounds から箱を足すことになるので、設計の前提が変わる。
+    //
+    //   Unity.exe -batchmode ... -executeMethod ModelQualityDiagnostics.DumpColliders -quit
+    public static void DumpColliders()
+    {
+        var sb = new StringBuilder();
+        foreach (string folder in new[] { "Human", "Animal", "Else" })
+        {
+            int total = 0;
+            int withCollider = 0;
+            var sample = new StringBuilder();
+            foreach (GameObject go in Resources.LoadAll<GameObject>($"Models/{folder}"))
+            {
+                if (go == null || !IsIndexedPrefabName(go.name))
+                {
+                    continue;
+                }
+
+                total++;
+                Collider[] colliders = go.GetComponentsInChildren<Collider>(true);
+                if (colliders.Length > 0)
+                {
+                    withCollider++;
+                    if (sample.Length < 200)
+                    {
+                        sample.Append(go.name).Append('(').Append(colliders.Length).Append(") ");
+                    }
+                }
+            }
+
+            sb.AppendLine($"[Collider] {folder}: 当たり判定を持つ prefab {withCollider} / {total}  {sample}");
+        }
+
+        // レイが当たるレイヤーの確認材料として、track インスタンスが置かれる既定レイヤーも出す。
+        sb.AppendLine($"[Collider] Default レイヤー番号 = {LayerMask.NameToLayer("Default")}");
+        Debug.Log(sb.ToString());
+    }
+
+
     private static bool IsIndexedPrefabName(string name)
     {
         return !string.IsNullOrEmpty(name) &&

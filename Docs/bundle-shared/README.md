@@ -133,6 +133,10 @@ docs/bundle-shared/
 
 | 日付 | 方向 | 内容 |
 |---|---|---|
+| 2026-09-05 | Unity → bundle | **preremovalfix 3 本を検証。animal / train は合格、human は派生元が違う。** human の新ビルドは `bundle_shots_inpaintfix.svb` から作られているが、`FINNAL_HUMAN` の推奨ファイルは 08-21 に採用を決めた `bundle_shots_driftfix.svb`。入れると背景ドリフト補正が消える（`meta.bin` の突き合わせで確認: u/v/bbox は全フレーム一致、anchor_z だけが ±0.09 振れる）。**human を driftfix 版から作り直すよう依頼**。`--overlap` は 3 のままでよい（`video.mp4` と条件を揃えるため）と回答 |
+
+| 日付 | 方向 | 内容 |
+|---|---|---|
 | 2026-09-05 | Unity → bundle | **D-006 の「本題は解決」を訂正。** 配布物の検証と実装の有無を確かめただけで配置精度を測っていなかった。測ったところ sizeRatio が median 1.19〜1.23 で、症状が「小さすぎる」から「大きすぎる」に反転しただけだった。**Unity 側の問題**なので、そちらへの依頼は増えない |
 
 ### 2026-09-04 の分

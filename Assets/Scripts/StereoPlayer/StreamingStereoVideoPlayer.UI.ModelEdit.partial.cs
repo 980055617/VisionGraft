@@ -292,6 +292,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // フレーム直指定シークが実際に効くかを実動画で確かめる。
     private void RunBatchSeekTestIfRequested()
     {
+        // **batchmode でしか走らせない。**
+        // batchSeekTestFrame は public なのでシーンの serialize 値が優先され、
+        // 何かの拍子で 0 になると 0 >= 0 で成立してしまう。
+        // そのとき実機で「開始直後にフレーム 0 へ飛んで止まる」。
+        // 検証用の仕掛けは、検証の場でしか動かないようにする。
+        if (!Application.isBatchMode)
+        {
+            return;
+        }
+
         if (batchSeekTestFrame < 0 || batchSeekTestDone || vp == null || !vp.isPrepared || !metaLoaded)
         {
             return;

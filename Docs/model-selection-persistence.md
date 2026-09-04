@@ -1421,3 +1421,44 @@ animal だけ基準フレームで 15% 大きい理由は未特定。human は 0
 （`TryProjectBonesToEyeHeight` は Humanoid なら対応表、それ以外は SkinnedMeshRenderer の
 ボーン総当たり。総当たりは尻尾・耳・ヒゲなど bbox に含まれない骨まで拾い得る）。
 次に見るならそこ。
+
+### 再訂正: 指標そのものが違った。配置に欠陥は無い（2026-09-05、同日 3 度目）
+
+`sizeRatio` は `TryProjectRendererBoundsToEyeHeight`（**world 軸平行の AABB**）で測っている。
+Debug.cs のコメントに書いてある:
+
+> AABB は world 軸平行なので姿勢が傾くと過大に出る。ボーン位置ベースでも測って比較する。
+
+**⑨ が合わせているのは `boneRatio` のほうで、`sizeRatio` ではない。**
+`[PLACE]` ログには両方出ており、同じ行にこうある:
+
+```
+sizeRatio=1.162   boneRatio=1.000   topBone=er.L  bottomBone=arm.003.L
+```
+
+`boneRatio` で測り直した結果:
+
+| | boneRatio median | ±15% 外 | sizeRatio median（参考） |
+|---|---:|---:|---:|
+| animal shot 先頭 | **1.000** | 22.9% | 1.169 |
+| animal 全区間 | 1.060 | 33.9% | 1.211 |
+| human 全区間 | 0.977 | 9.4% | **1.306** |
+
+**⑨ は基準フレームで boneRatio を 1.000 ちょうどに合わせている。** 設計どおり。
+
+決め手は **human の AABB のほうが animal より膨らんでいる**こと（1.306 対 1.211）。
+AABB の過大は姿勢に由来する共通の性質で、animal 固有の欠陥ではない。
+
+**結論: animal の配置に欠陥は無い。** 「15% 大きい」も「⑧ が悪化させている」も、
+AABB を基準に見ていたことによる誤りだった。
+
+### 同じ誤りを 3 回した
+
+1. 全区間の中央値を 1.0 と比べた（期待値は 1.2 前後）
+2. shot 先頭で測り直したが、まだ `sizeRatio`（AABB）を見ていた
+3. `boneRatio` が同じログ行に出ていることに気づいていなかった
+
+**`[PLACE]` を読むときは `boneRatio` を見ること。** `sizeRatio` は AABB なので
+姿勢が傾く対象（四足動物・座位・仰向け）では常に過大に出る。参考値でしかない。
+
+⑧ / 見切れ補正のパラメータは**変更していない**。変える根拠が無かった。

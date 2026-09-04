@@ -2,7 +2,7 @@
 
 ← [課題一覧に戻る](README.md)
 
-**状態**: 本題は解決。`pre_removal_stereo_video.mp4` の作り直しを追加依頼中（2026-09-04） ／ **提起**: [Unity側] 2026-08-26
+**状態**: 仕様の質問は解決。**配置精度は未解決（Unity 側の問題）**。`pre_removal_stereo_video.mp4` の作り直しを依頼中（2026-09-05） ／ **提起**: [Unity側] 2026-08-26
 
 ### 質問 `[Unity側]` 2026-08-26
 
@@ -379,11 +379,12 @@ FINNAL_ANIMAL/bundle_shots_depthdriftfix_shotsfix.svb   (109,600,867 bytes)
 | `usedAnchor.source` が `animal_camera_root` 2109/2120 = 99.5% | **2109 / 11 = 99.5% / 0.5%** |
 | `source/pre_removal_stereo_video.mp4` = 39,555,746 bytes（旧ビルドと同一） | **一致** |
 
-**D-006 の本題（bbox / anchor の仕様と配置精度）は解決したと判断する。**
-Unity 側の残作業として挙げていた ⑧ の animal 対応
-（`TryProjectBonesToEyeHeight` が `animator.isHuman` を要求していた件）も
+**bbox / anchor の仕様についての質問は解決した。** Unity 側の残作業として挙げていた
+⑧ の animal 対応（`TryProjectBonesToEyeHeight` が `animator.isHuman` を要求していた件）も
 実装済みで、Humanoid なら対応表・そうでなければ SkinnedMeshRenderer のボーン総当たり、
 という形になっている。
+
+**ただし配置精度そのものはまだ解決していない。次節を参照。**
 
 #### 2. 追加依頼: `pre_removal_stereo_video.mp4` を作り直してほしい
 
@@ -439,3 +440,303 @@ outputs.preRemovalStereo3dVideoForBundle = .../20260827-animal-shotsfix-depthfix
 そちらが本文で明示的に開示していたので誤解は生じなかったが、
 **D-002 は「provenance の記録と中身が食い違う」ことで起きた**ので、
 据え置いたファイルはその旨が `pipeline_manifest.json` からも分かると安全だと思う。
+
+---
+
+### 回答 `[bundle側]` 2026-09-04 — 3 本とも修正前 depth 由来だった。3 本とも再生成中、manifest の記録も直した
+
+検証ありがとう。**D-006 の本題クローズに異議なし。**
+
+先に ③（human / train はどうなっているか）から答える。**そこが一番効く答えだったため。**
+
+#### ③ 3 本とも同じ depth 世代 — ただし「3 本とも修正前」
+
+**心配していた「animal だけが古い depth 由来」は起きていない。3 本とも等しく修正前。**
+実験刺激としては**揃っている**。ただし揃って古いので、3 本とも作り直しの対象になる。
+
+追跡はパス表記ではなく中身の一致で行った（`pipeline_manifest.json` が信用できないのは
+そちらの ④ の指摘どおりなので）。
+
+各 bundle の `source/pre_removal_stereo_video.mp4` は、対応する `FINNAL_*` の
+2026-08-07 の Quest 用トランスコードと **SHA256 完全一致**:
+
+| bundle | sidecar のサイズ | 一致した実体 |
+|---|---:|---|
+| animal | 39,555,746 | `FINNAL_ANIMAL/animal_..._2x2_video_3D_with_audio_quest_h264.mp4` (08-07 03:11) |
+| human | 61,131,836 | `FINNAL_HUMAN/Human_..._2x2_video_3D_with_audio_quest_h264.mp4` (08-07 03:10) |
+| train | 54,924,498 | `FINNAL_TRAIN/train_..._2x2_video_3D_with_audio_quest_h264.mp4` (08-07 03:11) |
+
+08-07 のこれらは**トランスコードだけ**で、中身のステレオ映像は
+その前の `_2x2_video_3D_with_audio.mp4` そのもの。生成時刻とそのとき存在していた
+`depth.npz` を並べると:
+
+| clip | ステレオ映像の生成 | 使われた `depth.npz` | D-001 修正(08-05)より |
+|---|---|---|---|
+| animal | 2026-07-29 06:15 | 739,369,453 bytes (07-28 21:09) | **前** |
+| human | 2026-07-28 02:58 | 613,540,666 bytes (07-27 21:16) | **前** |
+| train | 2026-07-30 20:59 | 779,446,720 bytes (07-29 14:57) | **前** |
+
+**3 本とも修正前。** 対照条件の映像品質は動画によって違わない（揃って古い）。
+
+#### 「修正済み depth」がどれかも同定し直した — `FINNAL_*_depthfix/` は使っていない別世代
+
+作り直しに使う depth を取り違えると意味がないので、**配布中の bundle を実際に
+再現できる depth はどれか**を実測で確定した。
+
+human / train は anchor が `depth_sample` 経路なので、bundle 同梱の
+`placement_observations.json` にある `depthStats.median`（サンプル窓の中央値そのもの）を
+各候補 npz から再計算して突き合わせられる:
+
+| clip | 候補 | 一致 |
+|---|---|---|
+| human | `FINNAL_HUMAN/Human_..._depth.npz` (07-27) | maxerr 0.109 |
+| human | **`20260805-human-depth-chunkfix/...`** (08-05) | **maxerr 0.00000000（完全一致）** |
+| human | `FINNAL_HUMAN_depthfix/...` (08-06, 614,705,699) | maxerr 0.105 |
+| train | `FINNAL_TRAIN/train_..._depth.npz` (07-29) | maxerr 0.311 |
+| train | **`20260805-train-depth-chunkfix/...`** (08-05) | **maxerr 0.00000000（完全一致）** |
+
+animal は anchor が `animal_camera_root` 経路で depth を直接引かないため同じ手が使えないが、
+`20260827-animal-shotsfix-depthfix/` の depth は
+`20260805-animal-depth-chunkfix/` と **SHA256 一致**（`5c733185b5a5851d…`）だった。
+
+**注意喚起**: `FINNAL_HUMAN_depthfix/` と `FINNAL_ANIMAL_depthfix/`（08-06）に**third generation の
+`depth.npz` が置いてある**が、これは**どの配布物にも使われていない**。
+サイズも中身も 08-05 版と違う。作り直すときにこちらを掴むと静かに別物になるので、
+**使うのは `20260805-*-depth-chunkfix/` のほう**。
+
+#### ② 再生成 — 3 本とも実行中
+
+`scripts/regen_pre_removal_stereo.py` を新規に用意して、**新しいディレクトリ**に出している
+（`20260827-*` と `FINNAL_*` には一切書き込まない。あそこの据え置きファイルが
+「何が配布されたか」の唯一の物証なので）。
+
+```
+20260904-animal-preremoval-depthfix/
+20260904-human-preremoval-depthfix/
+20260904-train-preremoval-depthfix/
+```
+
+段は当時と同じ 4 つ:
+`reconstruct_splatting_from_depth_video.py`（前方ワープ）→
+`inpainting_inference_origin_fix.py`（穴埋め）→ 音声 mux → Quest 用トランスコード。
+
+**やる価値があるかを先に測った。** 修正前後の depth の差は、`--max_disp 20.0` の下では
+そのままピクセル視差の差になる:
+
+| clip | 視差差 p50 | p90 | p99 | max |
+|---|---:|---:|---:|---:|
+| animal | 1.40 px | 4.21 px | 6.44 px | 14.12 px |
+| human | 1.10 px | 3.31 px | 4.19 px | 9.13 px |
+| train | 2.70 px | 5.68 px | 6.26 px | 10.85 px |
+
+最大視差 20px に対して中央値で 1〜3px、上位 10% で 3〜6px 違う。**別物の立体映像になる。**
+作り直す意味はある。
+
+#### ②-補足: パラメータの食い違いを 1 つ見つけた（`--overlap`）
+
+**当時の 3 本はすべて `--overlap 3` で作られていた。現在の既定値は 10。**
+（`run_sam2_to_bundle.py` の `--stereo-overlap` が 2026-07-30 に 3 → 10 に変わっている。
+ジョブログ全部を検索したが、`--overlap 10` で走った記録はどこにも無い。）
+
+**今回は 3 のまま作り直す。** 理由は、`video.mp4`（置換あり条件）が overlap=3 のままなので、
+**対照条件だけ 10 で作り直すと、depth 修正とは無関係な差が条件間に入る**から。
+実験のペアが崩れる。
+
+10 のほうが新しく品質も良い想定（チャンク境界のクロスフェードが 0.1s → 0.33s）だが、
+そちらに揃えるなら**両条件 × 3 本 = 6 本すべて**作り直す必要がある（+6 GPU 時間程度）。
+**それを希望するかどうかは判断してほしい。** 今回の配布物は overlap=3 で出す。
+
+各出力ディレクトリに `pre_removal_provenance.json` を置いて、
+入力の SHA256・ステレオパラメータ・所要時間を記録してある。
+
+#### ④ `pipeline_manifest.json` の記録齟齬 — 直した
+
+指摘のとおり。`pipeline_manifest.json` は**パスしか記録していなかった**ので、
+そのパスの中身が「この実行が作ったもの」か「前のジョブから引き継いだもの」かを
+区別できなかった。08-27 のジョブはステレオ連鎖を丸ごとコピーしていたので、
+コピー時刻がジョブ実行中になり、**mtime でも見分けられない**。
+
+`scripts/run_sam2_to_bundle.py` に 2 つ足した:
+
+1. **`stageExecution`** — 各ステージが `regenerated` か `carried-over` かを記録する。
+   実行/スキップの判定そのものを経由させているので、記録と実態がずれない。
+
+   ```json
+   "stageExecution": {
+     "stages": {
+       "original_depth": "regenerated",
+       "pre_removal_sbs_2x2": "carried-over",
+       "pre_removal_stereo_3d": "carried-over"
+     }
+   }
+   ```
+
+2. **`outputFacts`** — 主要な成果物の **SHA256 / サイズ / mtime**。
+   2 つのビルドの manifest を直接突き合わせられるので、
+   今回そちらが手作業でやった追跡が次からは不要になる。
+
+あわせて `depthPolicy.originalDepth` に注意書きを入れた
+（「これはこの実行が指していた depth であって、除去前ステレオがそこから
+作られたかどうかは `stageExecution` を見ろ」）。
+
+**ただしこれは前向きの修正で、すでに配布済みの `pipeline_manifest.json` は直らない。**
+今回配布する animal の bundle には、`stageExecution` に相当する情報を
+`pre_removal_provenance.json` として同梱する。
+
+#### 配布物（animal）
+
+```
+FINNAL_ANIMAL/bundle_shots_depthdriftfix_shotsfix_preremovalfix.svb   (111,633,123 bytes)
+```
+
+`bundle_shots_depthdriftfix_shotsfix.svb` の `source/pre_removal_stereo_video.mp4` **だけ**を
+差し替えたもの。**既存ファイルは無変更。**
+
+| | 旧 | 新 |
+|---|---|---|
+| `source/pre_removal_stereo_video.mp4` | 39,555,746 bytes / `8ace32e0679f4d28…` | **41,582,894 bytes / `90d5cbf33d81f29d…`** |
+| 由来 depth | 07-28 版（D-001 修正前） | **`20260805-animal-depth-chunkfix`（修正後）** |
+
+`source/pre_removal_provenance.json` を新規に同梱した（入力の SHA256、
+ステレオパラメータ、所要時間）。**同梱の `source/pipeline_manifest.json` は
+08-27 ビルドのままなので、`preRemoval*` のパスはこの provenance のほうが正しい。**
+④ の修正は次回ビルドから効く。
+
+再ビルドはしていないので、**残り 11 メンバは SHA256 完全一致**（`video.mp4`、
+`meta.bin`、`manifest.json`、`keypoints3d.json` ほか）。
+コンテナ仕様も旧版と同一（h264 / 2560x640 / yuv420p / 30fps / 2120 frames / aac 2ch）。
+
+**中身が本当に変わっていることの確認** — 同一フレームの左右を旧新で比較した:
+
+| フレーム | 右目（合成側）平均差 | 右目 最大差 | 左目（原映像側）平均差 |
+|---:|---:|---:|---:|
+| 300 | 4.86 | 79 | 0.86 |
+| 900 | 4.35 | 142 | 0.59 |
+| 1500 | 9.09 | 186 | 1.01 |
+
+**深度から合成される右目だけが動き、原映像そのままの左目はほぼ動いていない**
+（左目の差は再エンコードのノイズ相当）。差分画像も被写体の輪郭と
+奥行き境界に沿って光る、視差シフト特有の形になっている。
+エンコーダの差ではなく depth 修正が効いた、と言える。
+
+比較画像の出力先（こちらの環境）:
+`.scratch/d006_preremoval_check_20260904/`
+
+#### 配布物（human）
+
+```
+FINNAL_HUMAN/bundle_shots_inpaintfix_preremovalfix.svb   (129,230,511 bytes)
+```
+
+`bundle_shots_inpaintfix.svb`（D-002 で「推奨」とした版）の
+`source/pre_removal_stereo_video.mp4` だけを差し替え。**既存ファイルは無変更。**
+
+| | 旧 | 新 |
+|---|---|---|
+| `source/pre_removal_stereo_video.mp4` | 61,131,836 bytes / `a557990365ac8d65…` | **66,528,570 bytes / `1c7773858d6ec25d…`** |
+| 由来 depth | 07-27 版（D-001 修正前） | **`20260805-human-depth-chunkfix`（修正後）** |
+
+残り 4 メンバは SHA256 完全一致。コンテナ仕様も同一（h264 / 2560x640 / yuv420p / 2167 frames）。
+`source/pre_removal_provenance.json` を同梱。
+
+| フレーム | 右目（合成側）平均差 | 右目 最大差 | 左目（原映像側）平均差 |
+|---:|---:|---:|---:|
+| 300 | 7.65 | 208 | 1.49 |
+| 900 | 5.90 | 199 | 1.17 |
+| 1500 | 5.52 | 192 | 1.65 |
+
+animal と同じく**右目だけが動いている**。
+
+#### 配布物（train）
+
+```
+FINNAL_TRAIN/bundle_shots_inpaintfix_zquantfix_preremovalfix.svb   (113,056,433 bytes)
+```
+
+**ベースは `bundle_shots_inpaintfix_zquantfix.svb`**（D-008 の `quant_pos_scale=0.0001` 版）。
+`bundle_shots_inpaintfix.svb` から作ると D-008 の刻み幅が消えるため。
+差し替え後も `manifest.quant_pos_scale = 0.0001` と
+`anchor_z_order_check.py` の数値（全体 87.1% / 同値 5.7%）が変わっていないことを確認済み。
+
+| | 旧 | 新 |
+|---|---|---|
+| `source/pre_removal_stereo_video.mp4` | 54,924,498 bytes / `3f8156c978cfc36d…` | **53,602,205 bytes / `596482b706a84f79…`** |
+| 由来 depth | 07-29 版（D-001 修正前） | **`20260805-train-depth-chunkfix`（修正後）** |
+
+残り 4 メンバは SHA256 完全一致。コンテナ仕様も同一（h264 / 2560x640 / yuv420p / 1830 frames）。
+
+| フレーム | 右目（合成側）平均差 | 右目 最大差 | 左目（原映像側）平均差 |
+|---:|---:|---:|---:|
+| 300 | 6.07 | 146 | 1.20 |
+| 900 | 5.30 | 223 | 1.46 |
+| 1500 | 3.29 | 142 | 0.18 |
+
+#### 配布物まとめ — 3 本セットで差し替えてほしい
+
+| clip | ファイル | ベースにした版 | 所要 |
+|---|---|---|---|
+| animal | `FINNAL_ANIMAL/bundle_shots_depthdriftfix_shotsfix_preremovalfix.svb` | `bundle_shots_depthdriftfix_shotsfix.svb` | 51.8 分 |
+| human | `FINNAL_HUMAN/bundle_shots_inpaintfix_preremovalfix.svb` | `bundle_shots_inpaintfix.svb` | 56.9 分 |
+| train | `FINNAL_TRAIN/bundle_shots_inpaintfix_zquantfix_preremovalfix.svb` | **`bundle_shots_inpaintfix_zquantfix.svb`（D-008）** | 45.1 分 |
+
+**1 本だけ入れ替えないでほしい。** そちらが心配していた
+「動画によって対照条件の品質が違う」状態に、今度は逆向きでなる。
+
+3 本とも:
+
+- **`source/pre_removal_stereo_video.mp4` 以外は 1 バイトも変えていない**（SHA256 で確認）
+- 由来 depth は `20260805-*-depth-chunkfix`（D-001 修正後）
+- ステレオパラメータは当時と同じ（`max_disp 20.0` / `frames_chunk 23` / **`overlap 3`** /
+  `num_inference_steps 8` / `tile_num 1`）
+- `source/pre_removal_provenance.json` を同梱（入力の SHA256 とパラメータ）
+- **右目（深度から合成される側）だけが動き、左目（原映像そのまま）は
+  再エンコードのノイズ相当しか動いていない**。差分画像も奥行き境界に沿って光る
+  視差シフト特有の形になっている
+
+比較画像の出力先（こちらの環境）: `.scratch/d006_preremoval_check_20260904/`
+
+#### まだ返事をもらっていないこと
+
+**`--overlap` を 3 のままにするか、10 に揃えるか。** 上記は 3（＝当時と同じ、
+`video.mp4` と条件が揃う）で作ってある。10 にするなら
+**置換あり条件も含めて 6 本すべて**作り直す必要がある（+6 GPU 時間程度）。
+判断をもらえれば回す。
+
+**急ぎでないとのことなので、実験実施前に間に合わせる。**
+
+
+### 訂正 `[Unity側]` 2026-09-05 — 「本題は解決」は早すぎた。配置は改善していない
+
+前節で「本題（bbox / anchor の仕様と配置精度）は解決したと判断する」と書いたが、
+**配布物が申告どおりであることと、Unity 側の実装が入っていることを確かめただけで、
+配置が実際に良くなったかを測っていなかった。** 測ったので訂正する。
+
+新ビルド（`bundle_shots_depthdriftfix_shotsfix.svb`）を再生し、`[PLACE]` ログから
+sizeRatio（モデルの投影高 ÷ bbox 高、1.0 が理想）を全 2120 フレームで集計した。
+
+| | n | median | p10〜p90 | ±15% 外 |
+|---|---:|---:|---|---:|
+| **track 0（旧ビルド）端に接しない** | 415 | **0.592** | 0.317〜0.940 | **87.0%** |
+| **track 0（旧ビルド）2 辺以上が接する** | 405 | **1.021** | 0.936〜1.119 | **6.2%** |
+| track 0（新）全体 | 1146 | 1.186 | 0.990〜1.583 | 58.8% |
+| track 0（新）下端に接しない | 485 | **1.176** | 1.004〜1.337 | **56.3%** |
+| track 0（新）下端に接する | 661 | 1.262 | 0.982〜1.879 | 60.7% |
+| track 1（新）全体 | 974 | 1.230 | 1.025〜1.521 | 62.6% |
+
+**症状が「小さすぎる」から「大きすぎる」に反転しただけで、精度は上がっていない。**
+
+- 端に接しないフレーム: median 0.592 → 1.176、±15% 外 87.0% → 56.3%（改善したが依然 6 割が外れ）
+- 端に接するフレーム: 旧ビルドでは median 1.021 / ±15% 外 6.2% と**良好だったのが悪化**
+  （区分の取り方が旧「2 辺以上」と新「下端」で違うので厳密な比較ではない）
+
+**これは Unity 側の問題で、そちらへの依頼ではない。** sizeRatio はモデルの投影高を
+bbox 高で割った値で、分子はこちらのスケーリング（⑧ と scale refine）が決めている。
+今回 ⑧ が animal で初めて動くようになったので、その効き方が過剰である可能性が高い。
+
+**変化の要因を切り分けていない。** 今回の測定は「新しい bundle」と「⑧ が animal で
+動くようになったこと」が同時に変わった後の値で、どちらの寄与かは分けていない。
+旧ビルドが手元に無いため、切り分けるなら ⑧ を無効にした対照を取る必要がある。
+
+**この課題で bundle 側にお願いしているのは
+`pre_removal_stereo_video.mp4` の作り直しと human / train の depth 世代の照会だけ**で、
+配置精度のほうは Unity 側で追う。進展があればここに追記する。

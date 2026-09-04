@@ -92,3 +92,6 @@ Assets/AssetStoreTools*
 /Assets/StreamingAssets/*.svb.meta
 !/Assets/StreamingAssets/bundle.svb
 !/Assets/StreamingAssets/bundle.svb.meta
+
+# 共有フォルダはそのまま相手に渡すので、生成物を混ぜない
+Docs/bundle-shared/__pycache__/

@@ -158,6 +158,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         selectedManualRotationTrackId = (int)ids[next];
         runtimeModelPickerTrackId = selectedManualRotationTrackId;
+        runtimeModelPickerPreferredTrackId = selectedManualRotationTrackId;
         return true;
     }
 

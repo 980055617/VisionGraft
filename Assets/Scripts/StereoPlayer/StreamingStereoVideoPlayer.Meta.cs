@@ -588,6 +588,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // 選択の反映にはこちらの更新だけで足りる。
             selectedManualRotationTrackId = bestTrack;
             runtimeModelPickerTrackId = bestTrack;
+            runtimeModelPickerPreferredTrackId = bestTrack;
             runtimeModelPickerPageIndex = 0;
             Debug.Log($"[Pick] track={bestTrack} pixel={pick.pixel} eye={pick.eye}");
             UpdateRuntimeModelPickerUiState();

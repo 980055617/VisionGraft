@@ -84,6 +84,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private int runtimeSettingsPlacementLockDepth;
     private int runtimeModelPickerPageIndex;
     private int runtimeModelPickerTrackId = -1;
+    // 人が明示的に選んだ track。自動解決では書き換えない。
+    private int runtimeModelPickerPreferredTrackId = -1;
     private readonly List<InputDevice> xrInputDevices = new List<InputDevice>();
     private void EnsureRuntimeControls()
     {

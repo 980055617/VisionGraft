@@ -928,3 +928,67 @@ Unity のセッターはその状態では何も書かず、ゲッターは -1 /
 触れず、レイアウト検査ではキーが 0 本だったので**実機まで一度も実行されない**ところだった。
 `TrackKeyNavigationTests` が 6 件、和・scale だけのキー・現在フレームの除外・端・空・
 「曲線ごとの最初ではなく最も近いもの」を踏む。
+
+## シークで編集タブの track が変わらなかった（2026-09-04 実機報告）
+
+### 原因は毎フレーム更新されていなかったこと
+
+`UpdateRuntimeModelPickerUiState()`（track 行と状態行を描く処理）は
+`EnsureRuntimeControls()` と操作イベントからしか呼ばれていなかった。ところが
+`EnsureRuntimeControls()` は **`OnPrepared` から 1 回だけ**呼ばれる
+（[Core.partial.cs](../Assets/Scripts/StereoPlayer/StreamingStereoVideoPlayer.Core.partial.cs) の `OnPrepared`）。
+
+そのためシークバーでフレームが変わり、写っている track が入れ替わっても、
+パネル側は起動時のまま止まっていた。
+
+**`UpdateRuntimePanelDrag` を `EnsureRuntimeControls` に置いて「掴んでも動かない」に
+なったのと同じ罠。** このクラスで「毎フレーム動いてほしい処理」を足すときは、
+`EnsureRuntimeControls` ではなく `UpdateRuntimePlaybackTick` 側に置くこと。
+
+### 直したこと
+
+| | |
+|---|---|
+| 毎フレーム更新 | パネルが開いている間 `UpdateRuntimeModelPickerUiState()` を回す。一覧の再生成は `previewBuilt*` のキャッシュが止めるので重くない |
+| 解決順 | 「対象 → 値」。逆だと track が切り替わった瞬間、編集タブの値が 1 フレーム古い track のものになる |
+| 選択の一元化 | `UpdateRuntimeModelPickerUiState` が `selectedManualRotationTrackId` も揃える。表示している track と編集される track がずれない |
+| 選択の保持 | `runtimeModelPickerPreferredTrackId` を追加。**人が明示的に選んだときだけ**記録し、自動解決では上書きしない。無いと、選んだ track が写っていない区間を通っただけで選択が失われ、戻ってきても別の track のままになる |
+
+毎フレーム化にあたり、同じ track 一覧を 1 フレームに 2 回作っていたのを 1 回に減らした
+（`UpdateRuntimeModelPickerTargetButtons` が作った一覧を返す）。
+
+バッチ実測（bundle_train、frame 92 → 1500）:
+
+```
+[SEEKTEST] 移動前の track: 一覧=[0,1,2,3] picker=0 編集=0
+[SEEKTEST] 移動後の track: 一覧=[0,5,6]   picker=0 編集=0
+```
+
+追従するようになり、両方のフレームに写っている track 0 は選択が保持されている。
+
+## bundle ピッカーが振り向くと戻らない（2026-09-04）
+
+`bundlePickerPlacementLocked` は開いてから 0.5 秒で **永久に** true になり、以後まったく
+追従しない。固定自体には理由がある（tracking origin が Device に切り替わるまでの数フレームで
+固定すると、切り替えでワールドがずれてパネルが視界の外へ飛ぶ、2026-08-28）。
+しかし永久固定だと、見回した先にパネルが無くて戻れない。
+
+**常時追従には戻さない。** 押そうとした瞬間にパネルが動くと狙えない
+（2026-08-31「bundle ピッカーに入る瞬間 window が頭追従する」）。
+視界から外れたときだけ置き直す:
+
+| | |
+|---|---|
+| 角度 | 50 度。パネルは幅 1.2m を 1.1m 先に出すので半幅は約 29 度。その外側 |
+| 距離 | 2.2m。向きだけ見ていると、パネルを背にして前へ進んだときに戻らない |
+
+見ている間は絶対に動かない。
+
+## 準備中の画面にポインタの線が残っていた（2026-09-04）
+
+`UpdateGrabRotate` に「掴む対象があるか」のガードが無かった。bundle を選んだあと
+再生が始まるまでの間は `bundlePickerActive` が false でパネルも開いていないので、
+**掴む対象が一つも無いのに線だけが出ていた**。その段階では見るカメラもリグも
+落ち着いていないので、線が古い姿勢のまま空中に残る。
+
+`!metaLoaded || trackInstances.Count == 0` で抜けるようにした。

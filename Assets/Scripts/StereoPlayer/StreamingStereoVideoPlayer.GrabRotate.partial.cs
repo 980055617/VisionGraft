@@ -44,6 +44,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // **掴む対象が無いときは線を出さない。**
+        // bundle を選んだあと再生が始まるまでの間は、bundlePickerActive が false で
+        // パネルも開いていないので、ここを抜けて線だけが出ていた。
+        // その段階では見るカメラもリグもまだ落ち着いておらず、
+        // 線が古い姿勢のまま空中に残る（2026-09-04 実機報告）。
+        if (!metaLoaded || trackInstances.Count == 0)
+        {
+            EndGrabRotate("掴む対象がまだ無い");
+            SetPointerRayVisible(false);
+            prevGrabTriggerPressed = false;
+            return;
+        }
+
         // パネルを開いている間は掴まない。パネル操作のトリガーで対象が回ってしまう。
         // 線もそちらの邪魔になるので消す（パネルには ISDK 側のレイが出る）。
         if (runtimeSettingsOpen || runtimeModelPickerOpen || bundlePickerActive)
@@ -221,6 +234,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 掴んだ対象を、回転・モデル変更の対象にも合わせる。別々だと混乱する。
         selectedManualRotationTrackId = (int)trackId;
         runtimeModelPickerTrackId = (int)trackId;
+        runtimeModelPickerPreferredTrackId = (int)trackId;
 
         Debug.Log($"[GRAB] 掴んだ track={trackId} yaw={grabRotateStartYaw:F1} pitch={grabRotateStartPitch:F1} roll={grabRotateStartRoll:F1}");
     }

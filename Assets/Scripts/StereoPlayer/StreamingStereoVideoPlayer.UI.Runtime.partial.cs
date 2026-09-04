@@ -515,14 +515,30 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         // 対象ごとの編集はモデル編集タブへ移ったので、そちらが開いている間も更新する。
         // 現在フレームが動けばキー情報も前後送りの飛び先も変わる。
-        bool editTabOpen = runtimeModelPickerOpen && runtimeModelPickerTab == ModelPickerTabEdit;
-        if (editTabOpen)
+        // 対象の解決が先。逆にすると、フレームが変わって track が切り替わったとき
+        // 編集タブの値が 1 フレーム古い track のものになる。
+        //
+        // **パネルの中身も毎フレーム更新する。**
+        // UpdateRuntimeModelPickerUiState は EnsureRuntimeControls と操作イベントからしか
+        // 呼ばれていなかったが、EnsureRuntimeControls は OnPrepared から 1 回だけだ。
+        // そのためシークバーを動かしてフレームが変わっても、写っている track が
+        // 入れ替わったことがパネルに反映されなかった（2026-09-04 実機報告）。
+        // 一覧の再生成は previewBuilt* のキャッシュで押さえてあるので毎回呼んでも重くない。
+        //
+        // UpdateRuntimePanelDrag を EnsureRuntimeControls に置いて動かなかったのと同じ罠。
+        if (runtimeModelPickerOpen)
+        {
+            UpdateRuntimeModelPickerUiState();
+        }
+
+        if (runtimeModelPickerOpen && runtimeModelPickerTab == ModelPickerTabEdit)
         {
             UpdateRuntimeTrackRotationUiState();
         }
 
         // 向きのガイドは「いま編集している」ときだけ出す。
-        UpdateManualYawGuide(runtimeSettingsOpen || editTabOpen);
+        UpdateManualYawGuide(
+            runtimeSettingsOpen || (runtimeModelPickerOpen && runtimeModelPickerTab == ModelPickerTabEdit));
 
         if (!runtimeSettingsOpen)
         {

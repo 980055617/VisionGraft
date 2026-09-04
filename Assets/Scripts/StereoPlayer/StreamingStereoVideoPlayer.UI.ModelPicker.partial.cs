@@ -323,6 +323,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         PauseForManualRotationEdit();
         runtimeModelPickerTrackId = (int)ids[slot];
+        runtimeModelPickerPreferredTrackId = runtimeModelPickerTrackId;
         runtimeTrackPrevKeyFrame = -1;
         runtimeTrackNextKeyFrame = -1;
         runtimeModelPickerPageIndex = 0;
@@ -334,7 +335,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
 
     // 出ている track の ID をボタン列へ流し込む。足りなければ作り、余ったら隠す。
-    private void UpdateRuntimeModelPickerTargetButtons()
+    // 作った一覧を返す。この関数は毎フレーム呼ばれるので、
+    // 呼び出し側が同じものをもう一度作らなくて済むようにする。
+    private List<uint> UpdateRuntimeModelPickerTargetButtons()
     {
         List<uint> ids = GetAvailableTrackIdsForManualRotation();
         int count = ids != null ? ids.Count : 0;
@@ -406,6 +409,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
             UiComponentWriter.ApplyInteractable(button, !isCurrent);
         }
+
+        return ids;
     }
 
 
@@ -423,6 +428,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         int current = ids.IndexOf((uint)Mathf.Max(0, runtimeModelPickerTrackId));
         int next = ids.Count > 0 ? (current + 1) % ids.Count : 0;
         runtimeModelPickerTrackId = (int)ids[next];
+        runtimeModelPickerPreferredTrackId = runtimeModelPickerTrackId;
         runtimeModelPickerPageIndex = 0;
 
         // 回転の対象も合わせておく。別々だと「どれを触っているか」が分からなくなる。
@@ -559,7 +565,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        UpdateRuntimeModelPickerTargetButtons();
+        List<uint> availableTracks = UpdateRuntimeModelPickerTargetButtons();
 
         // 編集タブのときはモデル一覧を触らない。プレビューの作り直しが走ると
         // 3D の実体が編集タブの手前に浮き、セルのボタンも表示に戻ってしまう。
@@ -573,6 +579,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         runtimeModelPickerTrackId = (int)trackId;
+
+        // **編集対象もここで揃える。**
+        // パネルに出ている track と、回転・大きさ・キーがかかる track が
+        // 違うと、見ているものと触っているものがずれる。
+        selectedManualRotationTrackId = (int)trackId;
+
         GameObject[] prefabs = ResolveRuntimeModelPickerPrefabs(categoryId);
         string category = ResolveRuntimeModelPickerCategoryLabel(categoryId);
         if (prefabs == null || prefabs.Length == 0)
@@ -613,7 +625,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             string selectedName = hidden
                 ? "表示しない"
                 : (prefabs[selectedIndex] != null ? CleanModelDisplayName(prefabs[selectedIndex].name) : "missing");
-            List<uint> targets = GetAvailableTrackIdsForManualRotation();
+            List<uint> targets = availableTracks;
             int pos = targets != null ? targets.IndexOf(trackId) + 1 : 0;
             string targetInfo = targets != null && targets.Count > 1
                 ? $"Track {trackId} ({pos}/{targets.Count})"
@@ -807,6 +819,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (!TryReadFrameObjects(frame, metaFrameObjects) || metaFrameObjects.Count == 0)
         {
             return false;
+        }
+
+        // **人が選んだ track を最優先で見る。**
+        // この下の runtimeModelPickerTrackId は自動解決の結果でも上書きされるので、
+        // 選んだ track が写っていない区間を通ると選択が失われ、
+        // 戻ってきても別の track のままになる。
+        if (TryResolveRuntimeModelPickerTargetFromTrack(
+                runtimeModelPickerPreferredTrackId, out trackId, out categoryId, out isAnimal))
+        {
+            return true;
         }
 
         if (TryResolveRuntimeModelPickerTargetFromTrack(runtimeModelPickerTrackId, out trackId, out categoryId, out isAnimal))

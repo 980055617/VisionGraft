@@ -337,6 +337,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         batchSeekTestDone = true;
         int before = GetCurrentPlaybackFrame();
+        Debug.Log($"[SEEKTEST] 移動前の track: {DescribeAvailableTracksForLog()}");
         Debug.Log(
             $"[SEEKTEST] 開始 目標={batchSeekTestFrame} 直前={before} " +
             $"isPlaying={vp.isPlaying} ピッカー開={runtimeModelPickerOpen} " +
@@ -348,6 +349,29 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // ここだけを見て「効かない」と判断してはいけない。少し後でもう一度見る。
         Debug.Log($"[SEEKTEST] 目標={batchSeekTestFrame} 直前={before} 直後={GetCurrentPlaybackFrame()} vp.frame={vp.frame}");
         batchSeekTestVerifyAtRealtime = Time.realtimeSinceStartup + 1f;
+    }
+
+
+    private string DescribeAvailableTracksForLog()
+    {
+        List<uint> ids = GetAvailableTrackIdsForManualRotation();
+        var sb = new System.Text.StringBuilder();
+        sb.Append("一覧=[");
+        for (int i = 0; i < ids.Count; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append(',');
+            }
+
+            sb.Append(ids[i]);
+        }
+
+        sb.Append("] ボタン数=").Append(runtimeModelPickerTargetButtons.Count);
+        sb.Append(" picker=").Append(runtimeModelPickerTrackId);
+        sb.Append(" 編集=").Append(selectedManualRotationTrackId);
+        sb.Append(" 選択済=").Append(runtimeModelPickerPreferredTrackId);
+        return sb.ToString();
     }
 
 
@@ -363,6 +387,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             ? Time.realtimeSinceStartup + 1f
             : -1f;
         int landed = GetCurrentPlaybackFrame();
+        Debug.Log($"[SEEKTEST] 移動後の track: {DescribeAvailableTracksForLog()}");
         bool ok = Mathf.Abs(landed - batchSeekTestFrame) <= 2;
         Debug.Log(
             $"[SEEKTEST] #{batchSeekTestVerifyCount}: 現在={landed} vp.frame={(vp != null ? vp.frame : -1L)} " +

@@ -37,6 +37,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 開いた時刻。ここから数フレームだけ置き直す。
     private float bundlePickerOpenedAt;
     private const float BundlePickerPlacementSettleSeconds = 0.5f;
+    // これだけ面から外れたら前に戻す。パネルの半幅（約 29 度）の外側。
+    private const float BundlePickerRecenterAngleDeg = 50f;
+    private const float BundlePickerRecenterDistanceMeters = 2.2f;
 
     private struct BundlePickerEntry
     {
@@ -180,7 +183,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void UpdateBundlePickerPlacement()
     {
-        if (!bundlePickerActive || bundlePickerRoot == null || bundlePickerPlacementLocked)
+        if (!bundlePickerActive || bundlePickerRoot == null)
         {
             return;
         }
@@ -190,6 +193,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         Transform head = GetViewOrHeadTransform();
         if (head == null)
+        {
+            return;
+        }
+
+        // 固定中は、見失ったときだけ置き直す。
+        if (bundlePickerPlacementLocked && !ShouldRecenterBundlePicker(head))
         {
             return;
         }
@@ -236,15 +245,46 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         TransformWriter.ApplyPose(bundlePickerRoot.transform, pos, rot);
 
-        // **追従はしない。** ただし開いた直後の一瞬だけは置き直す。
+        // **常時追従はしない。** ただし開いた直後の一瞬だけは置き直す。
         // tracking origin が Device に切り替わるまでの数フレームで固定すると、
         // 切り替えでワールドがずれてパネルが視界の外へ飛ぶ（2026-08-28 実機）。
-        // 落ち着いたら固定して、閲覧中は動かさない。
+        // 落ち着いたら固定して、見ている間は動かさない。
         if (Time.unscaledTime - bundlePickerOpenedAt >= BundlePickerPlacementSettleSeconds || bundlePickerInteracted)
         {
             bundlePickerPlacementLocked = true;
             SetBundlePickerVisible(true);
         }
+    }
+
+
+    // 固定したパネルを、視界から外れたときだけ前に戻す。
+    //
+    // **常時追従にはしない。** 押そうとした瞬間にパネルが動くと狙えない
+    // （2026-08-31「bundle ピッカーに入る瞬間 window が頭追従する」）。
+    // 逆に固定したままだと、見回した先にパネルが無くて戻れない
+    // （2026-09-04「その場に止まって動かない」）。
+    //
+    // 視野の端を超えて初めて置き直す。パネルは幅 1.2m を 1.1m 先に出すので、
+    // 半幅は約 29 度。その外側をとって 50 度にしてあるので、
+    // 見ている間は絶対に動かない。
+    private bool ShouldRecenterBundlePicker(Transform head)
+    {
+        Vector3 toPanel = bundlePickerRoot.transform.position - head.position;
+        toPanel.y = 0f;
+        Vector3 forward = Vector3.ProjectOnPlane(head.forward, Vector3.up);
+        if (toPanel.sqrMagnitude < 0.0001f || forward.sqrMagnitude < 0.0001f)
+        {
+            return false;
+        }
+
+        if (Vector3.Angle(forward.normalized, toPanel.normalized) > BundlePickerRecenterAngleDeg)
+        {
+            return true;
+        }
+
+        // 歩いて離れた場合も戻す。向きだけ見ていると、
+        // パネルを背にして前へ進んだときに戻らない。
+        return toPanel.magnitude > BundlePickerRecenterDistanceMeters;
     }
 
 

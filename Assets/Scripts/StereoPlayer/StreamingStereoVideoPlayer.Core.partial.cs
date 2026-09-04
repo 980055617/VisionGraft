@@ -247,6 +247,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void OnVideoFrameReady(VideoPlayer player, long frame)
     {
+        // sendFrameReadyEvents は切ってあるので通常は呼ばれない。
+        // 誰かが再び有効にしたときのために、記録だけは残しておく。
         lastFrameReadyFrame = RuntimePlaybackTimeline.NormalizeFrameReadyFrame(frame);
         ApplyVideoFrameTexture(player);
     }
@@ -341,6 +343,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         HandleRuntimePauseInput();
         RefreshRuntimeSettingsPerFrame();
         UpdateRuntimeProgressUi();
+        // **画面のテクスチャをここで当てる。**
+        // 以前は OnVideoFrameReady からしか呼ばれておらず、
+        // sendFrameReadyEvents を切ったとたん画面が真っ黒になった（2026-09-04）。
+        // player.texture の**中身**はイベントに関係なく更新されるので、
+        // 参照を当て直すだけでよい。Stop → Prepare の後に差し替わるのも拾える。
+        ApplyVideoFrameTexture(vp);
+
         DetectStalledPlayback();
         ResumeAfterStallIfPending();
         RunBatchSeekTestIfRequested();

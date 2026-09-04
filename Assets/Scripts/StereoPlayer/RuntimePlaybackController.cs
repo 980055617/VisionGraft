@@ -32,7 +32,13 @@ public static class RuntimePlaybackController
         videoPlayer.renderMode = VideoRenderMode.APIOnly;
         videoPlayer.timeUpdateMode = VideoTimeUpdateMode.UnscaledGameTime;
         videoPlayer.playbackSpeed = 1f;
-        videoPlayer.sendFrameReadyEvents = true;
+
+        // **frameReady は使っていない。**
+        // UseFrameReadySync が false 固定なので lastFrameReadyFrame は読まれない。
+        // 一方で sendFrameReadyEvents はフレームごとにデコーダと同期を取るため
+        // CPU を大きく食う（Unity のドキュメントが明記している）。
+        // 使わない同期のために毎フレーム待つ理由が無い。
+        videoPlayer.sendFrameReadyEvents = false;
     }
 
 

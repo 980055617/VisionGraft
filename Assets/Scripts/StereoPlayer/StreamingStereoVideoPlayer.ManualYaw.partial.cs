@@ -8,9 +8,26 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     // 手動回転を配置回転に重ねる。
     //
-    // 軸の順は **yaw（world の上）→ pitch（その結果の右）→ roll（その結果の前）**。
-    // yaw だけのときの式を変えていないので、これまで保存した yaw はそのままの意味で効く。
-    private Quaternion ApplyManualTrackYawOffset(uint trackId, int frame, Quaternion baseRotation, Vector3 upAxis)
+    // **1 つの world 空間の回転として合成する。**
+    //
+    // 以前は yaw だけ base の**前**、pitch / roll は base の**後ろ**に掛けていた:
+    //   result = AngleAxis(yaw, up) * base * AngleAxis(pitch, right) * AngleAxis(roll, forward)
+    // （途中結果の軸で回す式は、整理するとこの形になる）
+    // つまり base を挿んでおり、**1 つの向きとしての意味を持たない**。
+    //
+    // 一方で掛んで回す側（ApplyGrabRotate）は world の差分をまとめて
+    // Quaternion.Euler(pitch, yaw, roll) に分解して保存している。分解と合成が
+    // 互いの逆になっていないので、**保存した 3 数と表示される向きが一致しない**。
+    // 掛んでいる間これが毎フレーム繰り返され、ずれが積み上がって暴れる
+    // （2026-09-04 実機: 1 回の掛みで roll が 40 → 103 → 106 と振れていた）。
+    //
+    // Quaternion.Euler(pitch, yaw, roll) に揃えると、分解（eulerAngles）と完全に逆になる。
+    //
+    // **保存済みの yaw は意味が変わらない。** yaw だけのときこの式は
+    // AngleAxis(yaw, Vector3.up) * base に等しく、スクリーンは
+    // ResolveYawOnlyViewRotation を通したヨーのみの基準で置かれているので
+    // screen.up は常に Vector3.up。これまでの式の yaw 軸と一致する。
+    private Quaternion ApplyManualTrackYawOffset(uint trackId, int frame, Quaternion baseRotation)
     {
         float yawDeg = EvaluateManualYawOffsetDegForFrame(trackId, frame);
         float pitchDeg = EvaluateManualPitchDegForFrame(trackId, frame);
@@ -21,22 +38,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return baseRotation;
         }
 
-        if (upAxis.sqrMagnitude < 0.000001f)
-        {
-            upAxis = Vector3.up;
-        }
-
-        Quaternion result = Quaternion.AngleAxis(yawDeg, upAxis.normalized) * baseRotation;
-        if (Mathf.Abs(pitchDeg) >= 0.001f)
-        {
-            result = Quaternion.AngleAxis(pitchDeg, result * Vector3.right) * result;
-        }
-        if (Mathf.Abs(rollDeg) >= 0.001f)
-        {
-            result = Quaternion.AngleAxis(rollDeg, result * Vector3.forward) * result;
-        }
-
-        return result;
+        return ManualRotationMath.Apply(baseRotation, yawDeg, pitchDeg, rollDeg);
     }
 
 

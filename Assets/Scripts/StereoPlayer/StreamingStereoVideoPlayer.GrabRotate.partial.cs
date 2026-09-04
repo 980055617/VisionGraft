@@ -26,10 +26,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private GameObject pointerRayRoot;
     private LineRenderer pointerRayLine;
 
-    // 掴み判定の太さと距離。モデルは world では 0.1〜0.3m しかないので、
-    // 細いレイだと狙いを外す。少し太くして当てやすくする。
-    private const float GrabCastRadiusMeters = 0.05f;
+    // 掴み判定が届く距離。
     private const float GrabCastDistanceMeters = 20f;
+
+    // 掴み判定の最小の厚み。一番長い辺に対する比。
+    // train の信号柱のような薄いモデルも狙えるようにするため。
+    // TrackInstanceFactory の同名の定数と同じ値にしておく。
+    private const float GrabColliderMinSideRatio = 0.25f;
     // 当たり判定を外したときに「これを狙っていた」と見なす角度。
     private const float GrabAngleToleranceDeg = 25f;
     private const float PointerRayLengthMeters = 2.5f;
@@ -57,11 +60,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        // パネルを開いている間は掴まない。パネル操作のトリガーで対象が回ってしまう。
-        // 線もそちらの邪魔になるので消す（パネルには ISDK 側のレイが出る）。
-        if (runtimeSettingsOpen || runtimeModelPickerOpen || bundlePickerActive)
+        // bundle ピッカーは入口の画面で、そもそも掴む対象が出ていない。
+        if (bundlePickerActive)
         {
-            EndGrabRotate("パネルが開いた");
+            EndGrabRotate("bundle ピッカーが開いた");
             SetPointerRayVisible(false);
             prevGrabTriggerPressed = false;
             return;
@@ -91,6 +93,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 SetPointerRayVisible(false);
             }
 
+            prevGrabTriggerPressed = triggerPressed;
+            return;
+        }
+
+        // **パネルを指している間だけ掴まない。**
+        // 以前はパネルが開いていたら一律で掴めなくしていたが、それだと
+        // 編集タブで値やキーを見ながら向きを合わせられない（2026-09-04 の要望）。
+        // 掴めない理由は「パネルが開いていること」ではなく「そのトリガーが
+        // パネル操作のものだから」なので、パネルを指しているかどうかで分ければよい。
+        if ((runtimeSettingsOpen || runtimeModelPickerOpen) &&
+            IsPointerOnRuntimePanel(origin, rotation * Vector3.forward))
+        {
+            EndGrabRotate("パネルを指している");
+            SetPointerRayVisible(false);
             prevGrabTriggerPressed = triggerPressed;
             return;
         }
@@ -183,45 +199,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         Vector3 direction = rotation * Vector3.forward;
 
-        // **細い線ではなく太さを持たせて当てる。**
-        // モデルは bbox 合わせで小さく、world では 0.1〜0.3m しかない。
-        // 細いレイでは狙いを外しやすく、実機で一度も当たらなかった（2026-09-03）。
-        //
-        // **最初に当たったものだけを見てはいけない。** 動画スクリーンにも当たり判定があり、
-        // パネルを閉じている間（＝掴みたいとき）は有効になっている。
-        // 手前をかすめてスクリーンに吸われるので、当たった全部から track を探す。
-        RaycastHit[] hits = Physics.SphereCastAll(origin, GrabCastRadiusMeters, direction, GrabCastDistanceMeters);
-        uint trackId = 0u;
-        bool found = false;
-
-        if (hits != null && hits.Length > 0)
+        if (!TryResolveTrackFromRay(origin, direction, out uint trackId, out string how))
         {
-            System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
-            for (int i = 0; i < hits.Length && !found; i++)
-            {
-                found = TryResolveTrackIdFromCollider(hits[i].collider, out trackId);
-            }
+            Debug.Log(
+                $"[GRAB] 対象が見つかりません origin={origin:F3} dir={direction:F3} " +
+                $"instances={trackInstances.Count}");
+            return;
         }
 
-        // **当たり判定に頼り切らない。**
-        // ポインタの線が見えない状態で 0.2m のモデルを狙うのは無理で、実機では
-        // 26 度もずれていた（2026-09-03 実測: dir=(-0.436, 0.183, 0.881)）。
-        // 外れたら「向いている方向に一番近い対象」を拾う。多少ずれても掴める。
-        if (!found)
-        {
-            found = TryFindNearestTrackByAngle(origin, direction, out trackId, out float angleDeg);
-            if (found)
-            {
-                Debug.Log($"[GRAB] 当たり判定は外れたので角度で拾いました track={trackId} 角度={angleDeg:F1}度");
-            }
-            else
-            {
-                Debug.Log(
-                    $"[GRAB] 対象が見つかりません origin={origin:F3} dir={direction:F3} " +
-                    $"instances={trackInstances.Count} 最小角={angleDeg:F1}度");
-                return;
-            }
-        }
+        Debug.Log($"[GRAB] 対象は track={trackId}（{how}）");
 
         PauseForManualRotationEdit();
 
@@ -257,13 +243,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         // 掴んだ状態の回転を、yaw / pitch / roll の 3 つに落として保存する。
         // キーフレームは軸ごとの float で持っているので、ここで euler に直す。
+        // **合成側と必ず同じ規則を使う。** ManualRotationMath にまとめてある。
+        // 別々に書くと、分解と合成が逆でなくなってもコンパイルは通り、
+        // 掴んでいる間にずれが積み上がるという形で静かに壊れる。
         Quaternion applied = Quaternion.AngleAxis(angle, axis) *
-                             Quaternion.Euler(grabRotateStartPitch, grabRotateStartYaw, grabRotateStartRoll);
-        Vector3 euler = applied.eulerAngles;
-
-        float yaw = Mathf.DeltaAngle(0f, euler.y);
-        float pitch = Mathf.DeltaAngle(0f, euler.x);
-        float roll = Mathf.DeltaAngle(0f, euler.z);
+                             ManualRotationMath.ComposeOffset(
+                                 grabRotateStartYaw, grabRotateStartPitch, grabRotateStartRoll);
+        ManualRotationMath.DecomposeOffset(applied, out float yaw, out float pitch, out float roll);
 
         SetManualRotationForTrack(grabRotateTrackId, yaw, pitch, roll);
 
@@ -296,6 +282,169 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             $"track={grabRotateTrackId} op=grab yaw={ExperimentCsv.Format(yaw)} " +
             $"pitch={ExperimentCsv.Format(pitch)} roll={ExperimentCsv.Format(roll)} " +
             $"frame={GetCurrentPlaybackFrame()}");
+    }
+
+
+    // ポインタが開いているパネルの面を指しているか。
+    //
+    // world space canvas は板なので、面との交点が枠の中かどうかで判定できる。
+    // ISDK のレイ判定に相乗りしないのは、あちらが押下のタイミングでしか結果を
+    // 返さず、毎フレームの「いま指しているか」には使えないため。
+    private bool IsPointerOnRuntimePanel(Vector3 origin, Vector3 direction)
+    {
+        return IsPointerOnPanelRect(origin, direction, runtimeModelPickerRoot, runtimeModelPickerOpen) ||
+               IsPointerOnPanelRect(origin, direction, runtimeSettingsRoot, runtimeSettingsOpen);
+    }
+
+
+    private static bool IsPointerOnPanelRect(Vector3 origin, Vector3 direction, GameObject root, bool open)
+    {
+        if (!open || root == null)
+        {
+            return false;
+        }
+
+        // パネルを作るときと同じ順で canvas を探す。
+        // prefab 経路だと Canvas が子にいることがある。
+        Canvas canvas = root.GetComponent<Canvas>();
+        if (canvas == null)
+        {
+            canvas = root.GetComponentInChildren<Canvas>(true);
+        }
+
+        RectTransform rect = canvas != null
+            ? canvas.transform as RectTransform
+            : root.GetComponent<RectTransform>();
+        if (rect == null)
+        {
+            return false;
+        }
+
+        // Plane.Raycast は裏から当てると false を返すので、自分で解く。
+        // パネルの裏側から指していても「パネルを指している」で正しい。
+        Vector3 normal = rect.forward;
+        float denominator = Vector3.Dot(normal, direction);
+        if (Mathf.Abs(denominator) < 0.000001f)
+        {
+            return false;
+        }
+
+        float t = Vector3.Dot(normal, rect.position - origin) / denominator;
+        if (t <= 0f)
+        {
+            return false;
+        }
+
+        Vector3 local = rect.InverseTransformPoint(origin + direction * t);
+        Rect bounds = rect.rect;
+
+        // 枠のすぐ外を狙ったつもりが中に入っていた、を避けるための余白。
+        // canvas 座標なので 40 は板の 4% 程度。
+        const float margin = 40f;
+        return local.x >= bounds.xMin - margin && local.x <= bounds.xMax + margin &&
+               local.y >= bounds.yMin - margin && local.y <= bounds.yMax + margin;
+    }
+
+
+    // レイが指している track を返す。**掴みと選択で同じ規則を使う。**
+    // 別々の規則にすると「掴めた対象と選ばれた対象が違う」が起きる。
+    //
+    // 順に、細いレイ → 太いレイ → 角度の最近傍。手前で緩くしていくので、
+    // まっすぐ刺さっていればそれが必ず勝つ。
+    private bool TryResolveTrackFromRay(Vector3 origin, Vector3 direction, out uint trackId, out string how)
+    {
+        trackId = 0u;
+        how = "なし";
+
+        // **Unity の物理には頼らない。自分で交差を解く。**
+        //
+        // 実機で collider の world bounds を見たら、実体が 0.95m 先にいるのに
+        // 中心 (0,0,0)・大きさ (1,1,1) という「設定前の既定値」のままだった
+        // （2026-09-04 実測）。このプロジェクトは m_AutoSyncTransforms: 0 で、
+        // モデルは毎フレーム script で置き直しているため、物理側の表現が実体に
+        // 追いついていない。Physics.SyncTransforms() を挟んでも変わらなかった。
+        //
+        // レイと箱の交差は Bounds.IntersectRay で解ける。transform から直接
+        // 引くので、物理の同期状態に一切左右されない。対象は数個しかないので
+        // 全部見ても安い。
+        Vector3 dir = direction.normalized;
+        float bestDistance = float.MaxValue;
+        bool found = false;
+
+        foreach (KeyValuePair<uint, GameObject> kv in trackInstances)
+        {
+            GameObject instance = kv.Value;
+            if (instance == null || !instance.activeInHierarchy)
+            {
+                continue;
+            }
+
+            if (!TryRayHitTrackInstance(instance, origin, dir, out float distance))
+            {
+                continue;
+            }
+
+            // **手前を採る。** ここは実際の交差なので、奥行きで正しく決まる。
+            // 近い 2 体でどちらを指しているかが、これで初めて正しく解ける。
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                trackId = kv.Key;
+                found = true;
+            }
+        }
+
+        if (found)
+        {
+            how = $"交差 {bestDistance:F2}m";
+            return true;
+        }
+
+        // 外れたら、向いている方向に最も近い対象。狙いが少しずれても掴めるようにする保険。
+        // **奥行きを見ないので、これに頼り切ってはいけない。**
+        if (TryFindNearestTrackByAngle(origin, direction, out trackId, out float angleDeg))
+        {
+            how = $"角度 {angleDeg:F1}度";
+            return true;
+        }
+
+        return false;
+    }
+
+
+    // レイが対象の箱に刺さるか。**physics を通さない。**
+    // 箱は描画の bounds をそのモデルのローカル空間で取ったもの。
+    private static bool TryRayHitTrackInstance(
+        GameObject instance, Vector3 origin, Vector3 direction, out float distance)
+    {
+        distance = 0f;
+        if (!TryCalculateLocalRendererBounds(instance.transform, out Bounds local))
+        {
+            return false;
+        }
+
+        // **細い対象は狙えない。** train の信号柱のように薄いモデルがあるので、
+        // 掴み判定だけ最小の厚みを持たせる（collider に入れていたのと同じ考え方）。
+        Vector3 size = local.size;
+        float minSide = Mathf.Max(size.x, Mathf.Max(size.y, size.z)) * GrabColliderMinSideRatio;
+        local.size = new Vector3(
+            Mathf.Max(size.x, minSide),
+            Mathf.Max(size.y, minSide),
+            Mathf.Max(size.z, minSide));
+
+        Matrix4x4 worldToLocal = instance.transform.worldToLocalMatrix;
+        Vector3 localOrigin = worldToLocal.MultiplyPoint3x4(origin);
+        Vector3 localDirection = worldToLocal.MultiplyVector(direction);
+
+        // direction は正規化済みなので、返る t はそのまま world のメートル。
+        // 変換は線形なので、局所空間で解いた t が world でもそのまま使える。
+        if (!local.IntersectRay(new Ray(localOrigin, localDirection), out float enter))
+        {
+            return false;
+        }
+
+        distance = Mathf.Max(0f, enter);
+        return distance <= GrabCastDistanceMeters;
     }
 
 

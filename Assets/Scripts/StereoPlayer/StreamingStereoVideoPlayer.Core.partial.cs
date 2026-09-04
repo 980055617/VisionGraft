@@ -341,8 +341,81 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         HandleRuntimePauseInput();
         RefreshRuntimeSettingsPerFrame();
         UpdateRuntimeProgressUi();
+        DetectStalledPlayback();
+        ResumeAfterStallIfPending();
         RunBatchSeekTestIfRequested();
         VerifyBatchSeekTestIfDue();
+    }
+
+
+    // **「再生中なのにフレームが進まない」を検出して復帰させる。**
+    //
+    // 実機で再現した（2026-09-04）。isPlaying=True・prepared=True のまま
+    // frame=80 から 9 秒間 1 つも進まず、logcat では Play() の直後に
+    // c2.qti.avc.decoder が flush → release されていた。デコーダが落ちても
+    // VideoPlayer 側の状態は「再生中」のままなので、押しても何も起きない。
+    //
+    // 原因側（なぜ release されるか）は未特定。ただ、ここで詰まると動画を
+    // 見る手段が完全に無くなるので、まず抜け出せるようにする。
+    private void DetectStalledPlayback()
+    {
+        if (vp == null || !vp.isPrepared || !vp.isPlaying)
+        {
+            stallLastFrame = -1L;
+            stallSinceRealtime = -1f;
+            return;
+        }
+
+        long frame = vp.frame;
+        if (frame != stallLastFrame)
+        {
+            stallLastFrame = frame;
+            stallSinceRealtime = Time.realtimeSinceStartup;
+            return;
+        }
+
+        if (stallSinceRealtime < 0f)
+        {
+            stallSinceRealtime = Time.realtimeSinceStartup;
+            return;
+        }
+
+        float stalledSeconds = Time.realtimeSinceStartup - stallSinceRealtime;
+        if (stalledSeconds < StallRecoverySeconds)
+        {
+            return;
+        }
+
+        stallSinceRealtime = Time.realtimeSinceStartup;
+        stallRecoveryCount++;
+        Debug.LogWarning(
+            $"[STALL] 再生中なのに {stalledSeconds:F1} 秒フレームが進みません " +
+            $"frame={frame} prepared={vp.isPrepared} url={(string.IsNullOrEmpty(vp.url) ? "(空)" : "あり")} " +
+            $"復帰 {stallRecoveryCount} 回目");
+
+        // 同じ位置へ戻せるよう覚えてから作り直す。
+        double resumeSeconds = vp.time;
+        vp.Stop();
+        vp.Prepare();
+        stallResumeSeconds = resumeSeconds;
+        stallResumePending = true;
+    }
+
+
+    // Prepare が終わったら、止まった位置へ戻して再生を続ける。
+    private void ResumeAfterStallIfPending()
+    {
+        if (!stallResumePending || vp == null || !vp.isPrepared)
+        {
+            return;
+        }
+
+        stallResumePending = false;
+        RuntimePlaybackController.ApplySeekTarget(
+            vp, new RuntimePlaybackTimeline.SeekTarget(true, stallResumeSeconds, false, 0L));
+        RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
+        Debug.Log($"[STALL] {stallResumeSeconds:F2} 秒の位置から再生を戻しました");
+        UpdatePauseButtonLabel();
     }
 
 

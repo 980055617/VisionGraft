@@ -60,7 +60,11 @@ public class RuntimePlaybackControllerTests
             Assert.That(videoPlayer.renderMode, Is.EqualTo(VideoRenderMode.APIOnly));
             Assert.That(videoPlayer.timeUpdateMode, Is.EqualTo(VideoTimeUpdateMode.UnscaledGameTime));
             Assert.That(videoPlayer.playbackSpeed, Is.EqualTo(1f).Within(0.0001f));
-            Assert.That(videoPlayer.sendFrameReadyEvents, Is.True);
+            // **false で固定する。**
+            // frameReady の値は一度も読まれていない（UseFrameReadySync が false 固定）のに、
+            // この設定はフレームごとにデコーダと同期を取る。
+            // 使わない同期のために毎フレーム待つ理由が無い（2026-09-04）。
+            Assert.That(videoPlayer.sendFrameReadyEvents, Is.False);
         }
         finally
         {

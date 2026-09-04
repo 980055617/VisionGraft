@@ -197,7 +197,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // TrackInstanceLifecycle がインスタンスを作り直すので、新しいモデルにも掛かる。
         TryApplyHumanBoneLengthCorrection(instance, target);
         Quaternion rotationPinhole = GetPinholeBasisRotation(screen);
-        rotationPinhole = ApplyManualTrackYawOffset(target.trackId, frame, rotationPinhole, screen != null ? screen.up : Vector3.up);
+        rotationPinhole = ApplyManualTrackYawOffset(target.trackId, frame, rotationPinhole);
 
         // prefab が持っている向きの補正を右から掛ける。**配置は root の world 回転を
         // 上書きするので、これをしないと作者の補正が消える。**

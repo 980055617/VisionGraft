@@ -564,19 +564,60 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        float bestDistSq = DisplayTrackSelectThresholdPixels * DisplayTrackSelectThresholdPixels;
+        // **まず 3D の当たり判定で決める。**
+        //
+        // 以前はスクリーン上の画素（anchorU/V）との距離だけで決めていたが、
+        // モデルはスクリーンより**手前**に飛び出して置かれている。A を貫いたレイが
+        // その先でスクリーンに当たる画素は A の anchor とは別の場所になり、
+        // 近くに B がいると B の anchor のほうが近くなる。
+        // 「A を指しているのに B が対象になる」の正体がこれ
+        // （2026-09-04 実機報告）。指しているのは 3D の物体なので 3D で解く。
         int bestTrack = -1;
+        string how = "3D";
+        if (TryResolveTrackFromRay(pick.ray.origin, pick.ray.direction, out uint rayTrack, out string rayHow))
+        {
+            bestTrack = (int)rayTrack;
+            how = rayHow;
+        }
+        else
+        {
+            // 3D で当たらないとき（「表示しない」でモデルが無い等）だけ画素で拾う。
+            float bestDistSq = DisplayTrackSelectThresholdPixels * DisplayTrackSelectThresholdPixels;
+            for (int i = 0; i < metaFrameObjects.Count; i++)
+            {
+                MetaObj obj = metaFrameObjects[i];
+                float dx = obj.anchorU - pick.pixel.x;
+                float dy = obj.anchorV - pick.pixel.y;
+                float distSq = dx * dx + dy * dy;
+                if (distSq <= bestDistSq)
+                {
+                    bestDistSq = distSq;
+                    bestTrack = (int)obj.trackId;
+                }
+            }
+
+            how = "画素";
+        }
+
+        // 旧規則が何を選んでいたかも出す。食い違っていれば上の説明どおりの状況。
+        int pixelTrack = -1;
+        float pixelBest = DisplayTrackSelectThresholdPixels * DisplayTrackSelectThresholdPixels;
         for (int i = 0; i < metaFrameObjects.Count; i++)
         {
             MetaObj obj = metaFrameObjects[i];
             float dx = obj.anchorU - pick.pixel.x;
             float dy = obj.anchorV - pick.pixel.y;
             float distSq = dx * dx + dy * dy;
-            if (distSq <= bestDistSq)
+            if (distSq <= pixelBest)
             {
-                bestDistSq = distSq;
-                bestTrack = (int)obj.trackId;
+                pixelBest = distSq;
+                pixelTrack = (int)obj.trackId;
             }
+        }
+
+        if (pixelTrack != bestTrack)
+        {
+            Debug.Log($"[Pick] 旧規則なら track={pixelTrack} を選んでいました（今回は {bestTrack}）");
         }
 
         if (bestTrack >= 0)
@@ -590,7 +631,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             runtimeModelPickerTrackId = bestTrack;
             runtimeModelPickerPreferredTrackId = bestTrack;
             runtimeModelPickerPageIndex = 0;
-            Debug.Log($"[Pick] track={bestTrack} pixel={pick.pixel} eye={pick.eye}");
+            Debug.Log($"[Pick] track={bestTrack}（{how}） pixel={pick.pixel} eye={pick.eye}");
             UpdateRuntimeModelPickerUiState();
         }
     }

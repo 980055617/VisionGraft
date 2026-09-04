@@ -93,6 +93,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (runtimeProgressSlider != null)
         {
             BindRuntimeSlider(runtimeProgressSlider, OnRuntimeProgressSliderChanged);
+            EnsureProgressDragNotifier(runtimeProgressSlider);
         }
         runtimeProgressText = FindText(root, "progresstext");
         RepositionRuntimeBarElements(root);
@@ -404,6 +405,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (runtimeProgressSlider != null)
         {
             BindRuntimeSlider(runtimeProgressSlider, OnRuntimeProgressSliderChanged);
+            EnsureProgressDragNotifier(runtimeProgressSlider);
         }
 
         runtimeProgressText = FindText(root, "progresstext");

@@ -79,6 +79,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private bool runtimeModelPickerOpen;
     private bool runtimeFovxInitialized;
     private bool suppressRuntimeProgressCallback;
+    private RuntimeSliderDragNotifier runtimeProgressDragNotifier;
     private bool suppressRuntimeScreenDistanceCallback;
     private bool suppressRuntimeTrackScaleCallback;
     private int runtimeSettingsPlacementLockDepth;

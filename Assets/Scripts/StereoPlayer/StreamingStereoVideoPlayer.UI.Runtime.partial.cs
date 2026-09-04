@@ -551,6 +551,25 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
 
 
+    // 進捗バーに「掛んでいるか」を知らせる仕掛けを付ける。
+    // prefab 経路とフォールバック経路の両方から呼ばれるので、ここで重複を防ぐ。
+    private void EnsureProgressDragNotifier(Slider slider)
+    {
+        if (slider == null)
+        {
+            return;
+        }
+
+        runtimeProgressDragNotifier = slider.GetComponent<RuntimeSliderDragNotifier>();
+        if (runtimeProgressDragNotifier == null)
+        {
+            runtimeProgressDragNotifier = slider.gameObject.AddComponent<RuntimeSliderDragNotifier>();
+        }
+
+        runtimeProgressDragNotifier.onDragChanged = OnRuntimeProgressDragChanged;
+    }
+
+
     private void UpdateRuntimeProgressUi()
     {
         if (runtimeProgressSlider == null && runtimeControlsRoot != null)
@@ -559,6 +578,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (runtimeProgressSlider != null)
             {
                 BindRuntimeSlider(runtimeProgressSlider, OnRuntimeProgressSliderChanged);
+                EnsureProgressDragNotifier(runtimeProgressSlider);
             }
             runtimeProgressText = FindText(runtimeControlsRoot, "progresstext");
         }
@@ -597,13 +617,25 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             manifestFrames,
             GetCurrentPlaybackFrame());
 
-        suppressRuntimeProgressCallback = true;
-        UiComponentWriter.ApplySliderValueWithoutNotify(runtimeProgressSlider, progress.normalized);
-        suppressRuntimeProgressCallback = false;
+        // **掴んでいる間はつまみを触らない。**
+        // ここは毎フレーム走るので、上書きするとドラッグしたそばから
+        // 現在の再生位置に戻され、動かしている様子がまったく見えない
+        // （2026-09-04 の指摘）。掴んでいる間は指の位置がそのまま残るようにする。
+        bool dragging = runtimeProgressDragNotifier != null && runtimeProgressDragNotifier.IsDragging;
+        if (!dragging)
+        {
+            suppressRuntimeProgressCallback = true;
+            UiComponentWriter.ApplySliderValueWithoutNotify(runtimeProgressSlider, progress.normalized);
+            suppressRuntimeProgressCallback = false;
+        }
 
         if (runtimeProgressText != null)
         {
-            UiComponentWriter.ApplyTextContent(runtimeProgressText, progress.clockText);
+            // 掴んでいる間は「飛ぼうとしている位置」を出す。離すまで映像は動かないので、
+            // 数字が出ていないとどこへ行くのか分からない。
+            UiComponentWriter.ApplyTextContent(
+                runtimeProgressText,
+                dragging ? ResolveSeekPreviewClockText(runtimeProgressSlider.value) : progress.clockText);
         }
     }
 
@@ -616,6 +648,54 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // **掴んでいる間はシークしない。**
+        // 以前は値が動くたびに毎フレーム シークしていたので、ドラッグ中ずっと
+        // デコーダが flush され続け、離したあと映像が出るまで待たされていた。
+        // 離したときに 1 回だけ飛ばす。
+        if (runtimeProgressDragNotifier != null && runtimeProgressDragNotifier.IsDragging)
+        {
+            return;
+        }
+
+        SeekToNormalizedPosition(normalized);
+    }
+
+
+    // 掴んでいたつまみを離したとき。ここで初めて飛ばす。
+    private void OnRuntimeProgressDragChanged(bool dragging)
+    {
+        if (dragging || vp == null || runtimeProgressSlider == null)
+        {
+            return;
+        }
+
+        SeekToNormalizedPosition(runtimeProgressSlider.value);
+    }
+
+
+    // 掴んでいる間に出す「飛び先」の時刻。進捗バーと同じ換算を使う。
+    private string ResolveSeekPreviewClockText(float normalized)
+    {
+        float fpsFallback = ResolveSeekFpsForKeyNavigation();
+        double totalDuration = ResolveTotalPlaybackDuration(fpsFallback);
+        float target = (float)(Mathf.Clamp01(normalized) * totalDuration);
+        return RuntimePlaybackTimeline.FormatClock(target) + " / " +
+               RuntimePlaybackTimeline.FormatClock((float)totalDuration);
+    }
+
+
+    private double ResolveTotalPlaybackDuration(float fpsFallback)
+    {
+        long totalFramesVp = vp.frameCount > 0 ? (long)vp.frameCount : 0L;
+        int totalFramesMeta = metaHeader.numFrames > 0 ? (int)metaHeader.numFrames : (manifest != null && manifest.num_frames > 0 ? manifest.num_frames : 0);
+        int manifestFrames = manifest != null ? manifest.num_frames : 0;
+        long totalFrames = RuntimePlaybackTimeline.ResolveTotalFrames(totalFramesVp, totalFramesMeta, manifestFrames);
+        return RuntimePlaybackTimeline.ResolveTotalDuration(vp.length, fpsFallback, totalFrames);
+    }
+
+
+    private void SeekToNormalizedPosition(float normalized)
+    {
         normalized = Mathf.Clamp01(normalized);
         long totalFramesVp = vp.frameCount > 0 ? (long)vp.frameCount : 0L;
         int totalFramesMeta = metaHeader.numFrames > 0 ? (int)metaHeader.numFrames : (manifest != null && manifest.num_frames > 0 ? manifest.num_frames : 0);

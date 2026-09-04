@@ -363,6 +363,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         screenDistanceMeters = ClampRuntimeScreenDistance(value);
         UpdateRuntimeScreenDistanceText(screenDistanceMeters);
+        ReleaseLockedScalesForViewingChange();
         PlaceScreensWithoutMovingSettings();
     }
 
@@ -390,6 +391,29 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         UiComponentWriter.ApplyTextContent(runtimeScreenDistanceValueText, value.ToString("F2") + " m");
     }
 
+
+
+    // スクリーン距離を変えたら、確定済みの表示スケールを捨てる。
+    //
+    // **見かけの大きさは距離を変えても変わらないのが正しい。**
+    // モデルは映像の対象に張り付いているので、スクリーンが遠ざかればモデルも
+    // 遠ざかり、同じ画角を占める。DecodeAnchorDepthMetersFromBundle は
+    // zPlacement = screenDist - eps - popout なので深度は追従する。
+    //
+    // ところが Human / Animal のスケールは shot 先頭で凍らせてある
+    // （GetOrLockModelLocalScale）。深度だけ動いてスケールが据え置かれるので、
+    // **人だけ大きさが変わって見えていた**
+    // （2026-09-05 実機報告: Else と動画本体は変わらず Human だけ変わる）。
+    // ロックを外せば次のフレームで新しい距離に合わせて張り直される。
+    //
+    // **補正倍率（⑨）は捨てない。** あれは track の姿勢に対する比率で、
+    // 視点の距離とは無関係。捨てるとその瞬間の姿勢で測り直され、
+    // モデル差し替えで踏んだのと同じ跦ねが起きる。
+    private void ReleaseLockedScalesForViewingChange()
+    {
+        lockedModelLocalScaleByTrack.Clear();
+        scaleRefinedByTrack.Clear();
+    }
 
 
     private void ToggleRuntimeSettingsPanel()

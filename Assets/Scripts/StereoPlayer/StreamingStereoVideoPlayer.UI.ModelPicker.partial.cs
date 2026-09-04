@@ -1138,12 +1138,28 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // **四足動物は必ず同じ向きに揃える。**
+        // prefab の向きをそのまま使うと、モデルごとに頭が左右バラバラになる
+        // （2026-09-05 実機: Dog / Lion は右向き、Wolf / Buffalo は左向き）。
+        // 前脚と後脚のボーン位置から「前」を求めて、頭が右に来るよう回す。
+        // 規則は AnimalPoseApplier と同じ（front - rear）で、ボーン名は
+        // AnimalRigDefinition が定める正規化済みの名前を使う。
+        if (TryResolvePreviewFacing(preview.transform, out float yawToFaceRight))
+        {
+            preview.transform.localRotation =
+                Quaternion.Euler(0f, yawToFaceRight, 0f) * preview.transform.localRotation;
+            if (!TryCalculateLocalRendererBounds(holder.transform, out bounds))
+            {
+                ApplyPreviewScale(holder.transform, ModelPickerPreviewTargetSize);
+                return;
+            }
+        }
         // **奥行きの方が横幅より長いモデルは、横向きに回して見せる。**
         // 機関車は長軸（18.5m）がホルダーの Z に向くので、正面から見ると端から見る形になり
         // 「細長い塊」にしか見えない（2026-09-02 の指摘）。90 度回して側面を見せる。
         // 球は差が出ず、人・動物は高さが最長なのでこの条件に入らない。実測で該当するのは
         // 06_DieselLocomotive だけ。
-        if (bounds.size.z > bounds.size.x * 1.2f)
+        else if (bounds.size.z > bounds.size.x * 1.2f)
         {
             preview.transform.localRotation = Quaternion.Euler(0f, 90f, 0f) * preview.transform.localRotation;
             // 回したので測り直す。回転前の bounds で中心を引くと位置がずれる。
@@ -1159,7 +1175,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float scale = maxSize > 0.0001f ? ModelPickerPreviewTargetSize / maxSize : ModelPickerPreviewTargetSize;
         // 上限 90 は野球ボール（0.076m）のような小さいモデルを潰していた。
         // 必要な倍率は 118 / 0.076 = 1553。bounds の計算を直したので広い範囲を許してよい。
-        float applied = Mathf.Clamp(scale, 1f, 3000f);
+        //
+        // **下限を 1 にしてはいけない。** prefab が目標より大きいモデルは
+        // 縮める必要があり、倍率は 1 を下回る。実測（2026-09-05）では
+        // Wolf が 0.53、Buffalo が 0.33 を必要としていたのに 1.00 へ切り上げられ、
+        // Buffalo はセルをはみ出して隣のセルを覛っていた。
+        // 上限を広げたときに下限を見直していなかった。
+        float applied = Mathf.Clamp(scale, 0.0001f, 3000f);
         ApplyPreviewScale(holder.transform, applied);
 
         if (logPlacementMeasurement)
@@ -1173,6 +1195,76 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     // canvas の z が等倍であることを打ち消して、見かけを等倍にする。
     // x/y はキャンバス座標（px 相当）なのでそのまま、z だけ「1px 相当のメートル数」を掛ける。
+    // 四足動物のプレビューを、頭が右を向くように回すためのヨー角を返す。
+    // 骨が見つからないモデル（球・機関車・人）は false。
+    private static bool TryResolvePreviewFacing(Transform previewRoot, out float yawDegrees)
+    {
+        yawDegrees = 0f;
+        if (!TryAveragePreviewBonePosition(previewRoot, "front_l_upper", "front_r_upper", out Vector3 front) ||
+            !TryAveragePreviewBonePosition(previewRoot, "rear_l_upper", "rear_r_upper", out Vector3 rear))
+        {
+            return false;
+        }
+
+        // ホルダー基準の水平面で見た「前」。上下の傾きは向きの判定に要らない。
+        Vector3 forward = previewRoot.parent != null
+            ? previewRoot.parent.InverseTransformPoint(front) - previewRoot.parent.InverseTransformPoint(rear)
+            : front - rear;
+        forward.y = 0f;
+        if (forward.sqrMagnitude < 0.000001f)
+        {
+            return false;
+        }
+
+        // +X（見る側から見て右）に向ける。
+        yawDegrees = Vector3.SignedAngle(forward.normalized, Vector3.right, Vector3.up);
+        return true;
+    }
+
+
+    private static bool TryAveragePreviewBonePosition(
+        Transform root, string leftName, string rightName, out Vector3 center)
+    {
+        center = Vector3.zero;
+        Transform l = FindPreviewBone(root, leftName);
+        Transform r = FindPreviewBone(root, rightName);
+        if (l == null && r == null)
+        {
+            return false;
+        }
+
+        if (l == null)
+        {
+            center = r.position;
+            return true;
+        }
+
+        if (r == null)
+        {
+            center = l.position;
+            return true;
+        }
+
+        center = (l.position + r.position) * 0.5f;
+        return true;
+    }
+
+
+    private static Transform FindPreviewBone(Transform root, string name)
+    {
+        Transform[] all = root.GetComponentsInChildren<Transform>(true);
+        for (int i = 0; i < all.Length; i++)
+        {
+            if (all[i] != null && string.Equals(all[i].name, name, System.StringComparison.OrdinalIgnoreCase))
+            {
+                return all[i];
+            }
+        }
+
+        return null;
+    }
+
+
     private void ApplyPreviewScale(Transform holder, float scale)
     {
         float metersPerCanvasUnit = RuntimeModelPickerSizeMeters.y / RuntimeModelPickerDefaultCanvasHeight;

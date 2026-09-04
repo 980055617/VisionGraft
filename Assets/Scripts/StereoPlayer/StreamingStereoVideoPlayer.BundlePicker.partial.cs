@@ -58,6 +58,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         CloseBundlePickerUi();
+
+        // 選んでいる間に裏で読み終わっているはず。終わっていなければここで待つ。
+        yield return WaitForModelPrefabs();
         yield return EnsureBundleAndPrepareVideo(bundlePickerSelectedPath);
     }
 

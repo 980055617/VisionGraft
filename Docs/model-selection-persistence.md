@@ -992,3 +992,100 @@ Unity のセッターはその状態では何も書かず、ゲッターは -1 /
 落ち着いていないので、線が古い姿勢のまま空中に残る。
 
 `!metaLoaded || trackInstances.Count == 0` で抜けるようにした。
+
+## 遷移画面で 2.3 秒固まる（2026-09-04 実機実測）
+
+### 症状
+
+Home →「自由に見る」→「bundle ピッカーを準備しています…」の画面で、
+**VR のコントローラー（モデルとレイ）が空中でその場に止まる。**
+
+VR ではメインスレッドが止まっても頭の向きだけコンポジタが再投影し続けるので、
+見回すことはできてしまう。そのため「アプリが固まっている」ではなく
+「コントローラーだけ止まっている」という見え方になる。**これはメインスレッドが
+止まっているときの典型的な症状。**
+
+### 実測
+
+```
+11:19:58.743  [Home] load scene: TestScene
+11:19:58.923  [LOADTIME] シーン開始（起動から 9.46 秒）
+11:20:01.235  [LOADTIME] prefab 読み込み 合計 2304ms
+                         (Human 867ms / Animal 1246ms / Else 195ms)
+11:20:01.237  [LOADTIME] ピッカーへ入る（起動から 11.77 秒）
+```
+
+| | |
+|---|---|
+| シーンの切り替え | **180ms**。`LoadSceneAsync` は既に使っており、ここは問題ない |
+| `LoadModelPrefabs()` | **2304ms**。これが固まりの正体 |
+
+`Resources.LoadAll<GameObject>()` は**同期**で、prefab だけでなく mesh / texture まで
+全部読む。対象は 75 prefab（Animal 52 / Human 16 / Else 7）、素材 35MB。
+シーンが切り替わった直後の `Start()` でこれをやるので、2.3 秒まるごと Update が回らない。
+
+### 外れた見立て（記録）
+
+最初「bundle の展開（.svb は無圧縮で 120MB 超）が同期でメインスレッドを止めている」と
+考えて、展開と前回ぶんの削除をワーカースレッドへ出した。**それ自体は正しい改善だが、
+ユーザーが言っていた画面はそこではなかった。**
+
+「picker 準備中の画面」= bundle を選んだあとの展開中、と読んだが、
+実際は Home →「自由に見る」直後の遷移画面（`HomeMenu.LoadSceneRoutine` が出す
+「bundle ピッカーを準備しています…」）だった。
+
+**どの画面かを先に確定してから原因を探すこと。** 画面の特定を飛ばして
+「同期 IO がある → それだ」と進めたので、無関係な場所を 1 往復ぶん直した。
+
+### ログが取れなかった件
+
+端末の logcat リングバッファが既定で **256 KiB** しかなく、起動時のログは数十秒で
+流れて消える。`adb logcat -d` では何も残っていなかった。
+
+```
+adb logcat -G 32M    # バッファを広げる
+adb logcat -c        # 消す
+# ここで再現してもらう
+adb logcat -d -v time > out.log
+```
+
+実機ログを見るときは**先にバッファを広げて消す**。
+
+### 直し方: 一覧を作っておいて `Resources.LoadAsync` で 1 つずつ
+
+`Resources` には**一覧 API が無い**。`LoadAll` は名前を知らなくても読めるが同期。
+`LoadAsync` はフレームを跨げるが名前が要る。そこで一覧をビルド時に作る。
+
+| | |
+|---|---|
+| `ModelResourceIndexGenerator` | `Assets/Resources/Models/model_index.txt` を作る。`IPreprocessBuildWithReport` で**ビルドのたびに作り直す**ので、モデルを増やしても手作業は要らない。手動なら `Tools/VisionGraft/モデル一覧を作り直す` |
+| `LoadModelPrefabsAsync()` | 一覧を読んで `Resources.LoadAsync` を 1 件ずつ。各件で `yield` するのでフレームが回り続ける |
+| 一覧が無いとき | 従来の `Resources.LoadAll` に落ちる。遅いが壊れはしない（警告は出す） |
+
+**さらに、読み込みを bundle ピッカーの裏に回した。** 人が bundle を選ぶのに数秒かかるので、
+その間に終わる。待つのは実際に prefab が要る直前（選んだ bundle を開くところ）の
+`WaitForModelPrefabs()` だけ。
+
+### 並び順は変えてはいけない
+
+`humanPrefabs` などの**並びは index の意味そのもの**で、`trackModelIndices` や
+`selectedHumanIndex`、保存済みの選択が指す先が変わる。静かに壊れるので、
+`VerifyModelPrefabOrderInBatch()` が **batchmode でだけ** `Resources.LoadAll` と
+突き合わせる（実機では走らせない）。
+
+```
+[ORDERCHECK] Human 16 件すべて一致
+[ORDERCHECK] Animal 52 件すべて一致
+[ORDERCHECK] Else 7 件すべて一致
+```
+
+### 効果（バッチ実測）
+
+| | シーン開始 → ピッカーへ入る |
+|---|---|
+| 変更前（実機） | 9.46 秒 → 11.77 秒 = **2.31 秒ブロック** |
+| 変更後（バッチ） | 3.21 秒 → 3.22 秒 = **10ms** |
+
+読み込み自体は 1441ms かかるが、フレームを跨ぐので Update は回り続ける。
+バッチでは人が選ばないので `prefab を待った時間 1543ms` と出るが、
+実機では選ぶ数秒のうちに終わっているはず。

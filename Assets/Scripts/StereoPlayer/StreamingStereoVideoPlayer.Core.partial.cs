@@ -48,8 +48,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private IEnumerator Start()
     {
+        Debug.Log($"[LOADTIME] シーン開始（起動から {Time.realtimeSinceStartup:F2} 秒）");
         ApplyPendingExperimentTrialRequest();
-        LoadModelPrefabs();
+
+        // **ピッカーを先に出して、読み込みはその裏で進める。**
+        // bundle を選ぶのに人は数秒使うので、その間に終わる。
+        // 待つのは実際に prefab が要る直前（bundle を開くところ）だけ。
+        StartCoroutine(LoadModelPrefabsAsync());
 
         vp = GetComponent<VideoPlayer>();
         if (vp == null)
@@ -67,12 +72,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         vp.errorReceived -= OnVideoErrorReceived;
         vp.errorReceived += OnVideoErrorReceived;
 
+        Debug.Log($"[LOADTIME] ピッカーへ入る（起動から {Time.realtimeSinceStartup:F2} 秒）");
         if (showBundlePickerOnStart)
         {
             yield return RunBundlePickerFlowAndPrepareVideo();
         }
         else
         {
+            yield return WaitForModelPrefabs();
             yield return EnsureBundleAndPrepareVideo();
         }
     }
@@ -529,12 +536,146 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         "00_Dog", "01_Wolf", "02_WildBoar", "03_Buffalo", "04_Lion", "05_Horse",
     };
 
-    private void LoadModelPrefabs()
+    // モデル prefab を**フレームを跨いで**読む。
+    //
+    // **Resources.LoadAll を Start で直接呼んではいけない。**
+    // あれは同期で、prefab だけでなく mesh / texture まで全部読む。
+    // 実機で 75 prefab に **2304ms**（2026-09-04 実測: Human 867 / Animal 1246 / Else 195）。
+    // その間 Update が一切回らず、VR では頭の向きだけコンポジタが再投影するので
+    // 「コントローラーだけ空中で固まる」見え方になる。
+    //
+    // 1 つずつ Resources.LoadAsync すればフレームを跨げるが、そのためには
+    // 読む前に名前を知っている必要がある。Resources に一覧 API は無いので、
+    // ModelResourceIndexGenerator がビルド前に一覧を作っている。
+    private IEnumerator LoadModelPrefabsAsync()
     {
-        humanPrefabs  = LoadPrefabsFromResources("Models/Human");
-        animalPrefabs = SortByPriority(LoadPrefabsFromResources("Models/Animal"), AnimalModelPriorityOrder);
-        elsePrefabs   = LoadPrefabsFromResources("Models/Else");
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        var human = new List<GameObject>();
+        var animal = new List<GameObject>();
+        var other = new List<GameObject>();
+
+        TextAsset index = Resources.Load<TextAsset>(ModelIndexResourcePath);
+        if (index == null || string.IsNullOrEmpty(index.text))
+        {
+            // 一覧が無いときは従来どおり同期で読む。遅いが壊れはしない。
+            Debug.LogWarning(
+                $"[Model] {ModelIndexResourcePath} が無いので同期読み込みに落ちます。" +
+                "Tools/VisionGraft/モデル一覧を作り直す で作れます。");
+            humanPrefabs  = LoadPrefabsFromResources("Models/Human");
+            animalPrefabs = SortByPriority(LoadPrefabsFromResources("Models/Animal"), AnimalModelPriorityOrder);
+            elsePrefabs   = LoadPrefabsFromResources("Models/Else");
+        }
+        else
+        {
+            string[] paths = index.text.Split(ModelIndexLineSeparators, System.StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < paths.Length; i++)
+            {
+                string path = paths[i].Trim();
+                if (path.Length == 0)
+                {
+                    continue;
+                }
+
+                ResourceRequest request = Resources.LoadAsync<GameObject>(path);
+                while (!request.isDone)
+                {
+                    yield return null;
+                }
+
+                if (!(request.asset is GameObject prefab))
+                {
+                    Debug.LogWarning($"[Model] 読めません: {path}");
+                    continue;
+                }
+
+                if (path.StartsWith("Models/Human", System.StringComparison.Ordinal))
+                {
+                    human.Add(prefab);
+                }
+                else if (path.StartsWith("Models/Animal", System.StringComparison.Ordinal))
+                {
+                    animal.Add(prefab);
+                }
+                else
+                {
+                    other.Add(prefab);
+                }
+            }
+
+            // 並びは従来と同じにする。ずれると selectedHumanIndex や
+            // trackModelIndices が指すモデルが変わってしまう。
+            human.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
+            other.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
+            animal.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
+            humanPrefabs = human.ToArray();
+            elsePrefabs = other.ToArray();
+            animalPrefabs = SortByPriority(animal.ToArray(), AnimalModelPriorityOrder);
+        }
+
         Debug.Log($"[Model] Human: {humanPrefabs.Length} prefab, Animal: {animalPrefabs.Length} prefab, Else: {elsePrefabs.Length} prefab");
+        Debug.Log($"[LOADTIME] prefab 読み込み {stopwatch.ElapsedMilliseconds}ms（フレームを跨いで）");
+        VerifyModelPrefabOrderInBatch();
+        modelPrefabsReady = true;
+    }
+
+
+    // 一覧経由で読んだ並びが、従来の Resources.LoadAll と同じかを確かめる。
+    // **並びがずれると trackModelIndices や selectedHumanIndex が別のモデルを指す。**
+    // 静かに壊れるので、batchmode でだけ突き合わせる（実機では走らせない）。
+    private void VerifyModelPrefabOrderInBatch()
+    {
+        if (!Application.isBatchMode)
+        {
+            return;
+        }
+
+        CompareModelPrefabOrder("Human", humanPrefabs, LoadPrefabsFromResources("Models/Human"));
+        CompareModelPrefabOrder(
+            "Animal", animalPrefabs, SortByPriority(LoadPrefabsFromResources("Models/Animal"), AnimalModelPriorityOrder));
+        CompareModelPrefabOrder("Else", elsePrefabs, LoadPrefabsFromResources("Models/Else"));
+    }
+
+
+    private static void CompareModelPrefabOrder(string label, GameObject[] actual, GameObject[] expected)
+    {
+        if (actual.Length != expected.Length)
+        {
+            Debug.LogError($"[ORDERCHECK] {label} 数が違う 一覧={actual.Length} LoadAll={expected.Length}");
+            return;
+        }
+
+        for (int i = 0; i < actual.Length; i++)
+        {
+            if (actual[i] == null || expected[i] == null || actual[i].name != expected[i].name)
+            {
+                Debug.LogError(
+                    $"[ORDERCHECK] {label} [{i}] が違う 一覧={(actual[i] != null ? actual[i].name : "null")} " +
+                    $"LoadAll={(expected[i] != null ? expected[i].name : "null")}");
+                return;
+            }
+        }
+
+        Debug.Log($"[ORDERCHECK] {label} {actual.Length} 件すべて一致");
+    }
+
+
+    // prefab が揃うまで待つ。bundle を開く直前にだけ必要で、
+    // それより前（ピッカー表示中）は揃っていなくてよい。
+    private IEnumerator WaitForModelPrefabs()
+    {
+        if (modelPrefabsReady)
+        {
+            yield break;
+        }
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        while (!modelPrefabsReady)
+        {
+            yield return null;
+        }
+
+        Debug.Log($"[LOADTIME] prefab を待った時間 {stopwatch.ElapsedMilliseconds}ms");
     }
 
     // Resources.LoadAll は Sources/ 内 FBX も拾うため、大文字始まり／数字始まりの名前のみ使用する

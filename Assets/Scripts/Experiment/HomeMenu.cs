@@ -117,11 +117,30 @@ public sealed class HomeMenu : MonoBehaviour
         yield return null;
         yield return null;
 
+        // どれだけ止まっているのかを測る。
+        //
+        // VR ではメインスレッドが止まっても頭の向きだけコンポジタが
+        // 再投影するので、見回せるのにコントローラーだけが空中で固まる。
+        // 「何秒固まったか」はフレーム間隔の最大値でしか分からない。
+        var loadStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        float worstFrameSeconds = 0f;
+        int frames = 0;
+
         AsyncOperation op = SceneManager.LoadSceneAsync(sceneName, LoadSceneMode.Single);
         while (op != null && !op.isDone)
         {
             yield return null;
+            frames++;
+            if (Time.unscaledDeltaTime > worstFrameSeconds)
+            {
+                worstFrameSeconds = Time.unscaledDeltaTime;
+            }
         }
+
+        Debug.Log(
+            $"[LOADTIME] {sceneName} 合計 {loadStopwatch.ElapsedMilliseconds}ms " +
+            $"回ったフレーム {frames} " +
+            $"最悪のフレーム {(worstFrameSeconds * 1000f):F0}ms");
     }
 
 

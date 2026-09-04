@@ -45,17 +45,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         // Use Android's getCacheDir() for truly internal storage accessible to the media codec
+        // GetSvbCacheDir は AndroidJavaClass を触るのでメインスレッドで呼ぶ。
         string cacheDir = GetSvbCacheDir();
-        try
+
+        // 前回の展開を消す。120MB 超を削除するのでこれもメインスレッドではやらない。
+        yield return RunBundleIoOffMainThread("前回の展開を削除", () =>
         {
-            if (Directory.Exists(cacheDir))
+            try
             {
-                Directory.Delete(cacheDir, true);
+                if (Directory.Exists(cacheDir))
+                {
+                    Directory.Delete(cacheDir, true);
+                }
             }
-        }
-        catch
-        {
-        }
+            catch
+            {
+            }
+        });
 
         string extractedVideoPath = Path.Combine(cacheDir, ExtractedVideoFileName);
         string extractedManifestPath = Path.Combine(cacheDir, ExtractedManifestFileName);
@@ -111,40 +117,49 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Debug.Log($"[Bundle] Opening: {selectedBundlePath}");
         }
 
-        try
+        bool extractOk = false;
+        string extractError = null;
+        yield return RunBundleIoOffMainThread("bundle の展開", () =>
         {
-            Directory.CreateDirectory(cacheDir);
+            try
+            {
+                Directory.CreateDirectory(cacheDir);
 
-            if (useStreamingAssets)
-            {
-                using (var ms = new MemoryStream(streamingBytes))
-                using (var za = new ZipArchive(ms, ZipArchiveMode.Read))
+                if (useStreamingAssets)
                 {
-                    if (!ExtractBundleEntries(za, extractedVideoPath, extractedManifestPath, extractedMetaPath,
-                            extractedAnimalControlTargetsPath, extractedOtherObjectProxiesPath,
-                            extractedHumanSmplPath, extractedNormalModeVideoPath))
+                    using (var ms = new MemoryStream(streamingBytes))
+                    using (var za = new ZipArchive(ms, ZipArchiveMode.Read))
                     {
-                        yield break;
+                        extractOk = ExtractBundleEntries(za, extractedVideoPath, extractedManifestPath, extractedMetaPath,
+                            extractedAnimalControlTargetsPath, extractedOtherObjectProxiesPath,
+                            extractedHumanSmplPath, extractedNormalModeVideoPath);
+                    }
+                }
+                else
+                {
+                    using (var fs = new FileStream(selectedBundlePath, FileMode.Open, FileAccess.Read))
+                    using (var za = new ZipArchive(fs, ZipArchiveMode.Read))
+                    {
+                        extractOk = ExtractBundleEntries(za, extractedVideoPath, extractedManifestPath, extractedMetaPath,
+                            extractedAnimalControlTargetsPath, extractedOtherObjectProxiesPath,
+                            extractedHumanSmplPath, extractedNormalModeVideoPath);
                     }
                 }
             }
-            else
+            catch (System.Exception ex)
             {
-                using (var fs = new FileStream(selectedBundlePath, FileMode.Open, FileAccess.Read))
-                using (var za = new ZipArchive(fs, ZipArchiveMode.Read))
-                {
-                    if (!ExtractBundleEntries(za, extractedVideoPath, extractedManifestPath, extractedMetaPath,
-                            extractedAnimalControlTargetsPath, extractedOtherObjectProxiesPath,
-                            extractedHumanSmplPath, extractedNormalModeVideoPath))
-                    {
-                        yield break;
-                    }
-                }
+                extractError = ex.Message;
             }
-        }
-        catch (System.Exception ex)
+        });
+
+        if (extractError != null)
         {
-            Debug.LogError($"[Bundle] Extraction failed: {ex.Message}");
+            Debug.LogError($"[Bundle] Extraction failed: {extractError}");
+            yield break;
+        }
+
+        if (!extractOk)
+        {
             yield break;
         }
 
@@ -161,9 +176,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         Debug.Log($"[Bundle] Manifest loaded. Video: {extractedVideoPath}");
         ApplyLoadedShotBoundaries(loadedShotBoundaries);
+
+        // ここから先はまだメインスレッド。meta.bin は数 MB あるし、
+        // sidecar の JSON も bundle によっては大きい。実機でどこが重いかを
+        // 切り分けられるよう、後で消さずに残しておく。
+        var loadStopwatch = System.Diagnostics.Stopwatch.StartNew();
         LoadMeta(extractedMetaPath);
+        Debug.Log($"[BUNDLETIME] meta.bin {loadStopwatch.ElapsedMilliseconds}ms");
+
+        loadStopwatch.Restart();
         LoadBundleSidecars(extractedAnimalControlTargetsPath, extractedOtherObjectProxiesPath);
         LoadHumanSmplSidecar(extractedHumanSmplPath);
+        Debug.Log($"[BUNDLETIME] sidecar {loadStopwatch.ElapsedMilliseconds}ms");
+
         RestoreTrackCustomization();
         // 復元の**あと**に流す。バッチ検証の指定を保存値に勝たせるため。
         ApplyBatchManualOverrideSpecs();
@@ -200,6 +225,36 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         return true;
     }
+
+    // 重いファイル IO をワーカースレッドでやる。
+    //
+    // **VR でメインスレッドを止めると、コントローラーが空中で固まる。**
+    // 頭の向きだけはコンポジタが再投影し続けるので見回せてしまい、
+    // 「アプリが固まっている」ではなく「コントローラーだけその場に止まる」
+    // という見え方になる（2026-09-04 実機報告）。
+    //
+    // .svb は 120MB 超あり、中身は無圧縮なので展開は事実上のファイルコピー。
+    // Quest の内部ストレージに 120MB 書く間、一切の Update が回らない。
+    //
+    // 中身は System.IO / System.IO.Compression だけなのでワーカースレッドで安全。
+    // Unity API を呼ぶもの（GetSvbCacheDir の AndroidJavaClass など）は入れないこと。
+    private IEnumerator RunBundleIoOffMainThread(string label, System.Action work)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var thread = new System.Threading.Thread(() => work())
+        {
+            IsBackground = true,
+        };
+        thread.Start();
+
+        while (thread.IsAlive)
+        {
+            yield return null;
+        }
+
+        Debug.Log($"[BUNDLETIME] {label} {stopwatch.ElapsedMilliseconds}ms（別スレッド）");
+    }
+
 
     private bool ExtractBundleEntries(ZipArchive za,
         string videoPath, string manifestPath, string metaPath,

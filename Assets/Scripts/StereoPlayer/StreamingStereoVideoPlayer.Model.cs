@@ -49,6 +49,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 自動フィットに対する倍率のキーフレーム。既定 1.0。ManualScale.partial.cs 参照。
     private readonly Dictionary<uint, SortedDictionary<int, float>> manualScaleKeyframesByTrack = new Dictionary<uint, SortedDictionary<int, float>>();
     private int selectedManualRotationTrackId = -1;
+    // モデル prefab の非同期読み込みが済んだか。Core.partial.cs の LoadModelPrefabsAsync 参照。
+    private bool modelPrefabsReady;
+    private const string ModelIndexResourcePath = "Models/model_index";
+    private static readonly string[] ModelIndexLineSeparators = { "\r\n", "\n" };
     private GameObject manualYawGuideRoot;
     private Transform manualYawGuideShaft;
     private Transform manualYawGuideTip;

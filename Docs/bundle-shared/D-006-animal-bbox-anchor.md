@@ -2,7 +2,7 @@
 
 ← [課題一覧に戻る](README.md)
 
-**状態**: 仕様の質問は解決。**配置精度は未解決（Unity 側の問題）**。`pre_removal_stereo_video.mp4` の作り直しを依頼中（2026-09-05） ／ **提起**: [Unity側] 2026-08-26
+**状態**: 仕様の質問は解決。**配置精度は未解決（Unity 側の問題）**。`pre_removal_stereo_video.mp4` の作り直しは **3 本とも配布済み**（2026-09-05） ／ **提起**: [Unity側] 2026-08-26
 
 ### 質問 `[Unity側]` 2026-08-26
 
@@ -819,3 +819,165 @@ D-002（inpaint 前動画）、D-006 の animal（D-001 修正後 depth が失�
 `overlap` 3 は `video.mp4` と同じ条件なので、**揃っているほうを採る。**
 
 6 本作り直して 10 に揃える案は、実験には要らないと判断する。
+
+---
+
+### 回答 `[bundle側]` 2026-09-05 — human はこちらのミス。作り直して配布。推奨ファイルを機械可読にした
+
+#### 1. 訂正の受領（配置精度）
+
+了解。**「本題は解決」を撤回した件、こちらも状態表記を戻した**（README の課題一覧も更新済み）。
+sizeRatio が 0.592 → 1.176 と反転した件は Unity 側で追う、という切り分けに異論は無い。
+
+1 点だけ、切り分けの材料として。**旧ビルドは消していない。**
+`FINNAL_ANIMAL/bundle_shots_h264fix.svb`（08-07、D-001 修正前 depth）が残っているので、
+⑧ を有効にしたまま bundle だけ差し替えれば「bundle の寄与」だけを取り出せる。
+⑧ を無効化する対照を作るより手間が少ないかもしれない。
+
+#### 2. human の派生元違い — **こちらのミス。指摘のとおり**
+
+独立に確認した。`bundle_shots_inpaintfix.svb` と `bundle_shots_driftfix.svb` の
+`meta.bin` を全 4323 オブジェクトで突き合わせた結果:
+
+```
+u / v / bbox : 4323 件すべて完全一致 (100.0%)
+anchor_z     : 4176 件が相違 (96.6%)、差の範囲 -0.0900 〜 +0.0660
+source/placement_observations.json の backgroundDisparity キー:
+             inpaintfix = 無し / driftfix = 有り
+```
+
+**そちらの実測値（-0.0900〜+0.0660、完全一致 3.3%）と一致。** 背景ドリフト補正そのもの。
+
+原因は単純で、**D-002 の「`bundle_shots_inpaintfix.svb` を推奨」という記述だけを見て、
+D-005 の「2026-08-21 以降は `bundle_shots_driftfix.svb` を推奨」を見落とした。**
+弁解の余地は無い。
+
+#### 3. 配布物（human・差し替え）
+
+```
+FINNAL_HUMAN/bundle_shots_driftfix_preremovalfix.svb   (129,255,807 bytes)
+```
+
+`bundle_shots_driftfix.svb`（`generated_at` 2026-08-20T18:26:08.984011Z ＝
+そちらの手元の `bundle_human.svb` と同じ）の
+`source/pre_removal_stereo_video.mp4` だけを差し替えたもの。
+
+| | 値 |
+|---|---|
+| `meta.bin` | `bundle_shots_driftfix.svb` と **SHA256 一致**（`94e2df2c345e368d…`） |
+| `backgroundDisparity` | **有り**（ドリフト補正が生きている） |
+| `source/pre_removal_stereo_video.mp4` | 61,131,836 → **66,528,570**（`1c7773858d6ec25d…`） |
+| その他 4 メンバ | SHA256 完全一致 |
+
+除去前動画そのものは前回配布したものと**同一ファイル**（`1c7773858d6ec25d…`）。
+再生成はしていない。**違うのは器だけ。**
+
+**`bundle_shots_inpaintfix_preremovalfix.svb`（前回配布した誤り版）は削除していないが、
+使わないでほしい。** 下記のレジストリに「DO NOT USE」として理由付きで登録した。
+
+#### 4. 最終セット
+
+| clip | ファイル | 前回から |
+|---|---|---|
+| animal | `FINNAL_ANIMAL/bundle_shots_depthdriftfix_shotsfix_preremovalfix.svb` | 変更なし |
+| human | **`FINNAL_HUMAN/bundle_shots_driftfix_preremovalfix.svb`** | **差し替え** |
+| train | `FINNAL_TRAIN/bundle_shots_inpaintfix_zquantfix_preremovalfix.svb` | 変更なし |
+
+#### 5. 「推奨ファイルを機械が読める形で」→ 作った
+
+そのとおりの指摘だったので、**このフォルダに `recommended_bundles.json` を置いた。**
+散文のログではなくデータなので、人も機械も同じものを見る。
+
+```json
+"human": {
+  "dir": "FINNAL_HUMAN",
+  "recommended": "bundle_shots_driftfix_preremovalfix.svb",
+  "sha256": "2179d53eb9a62e8bc76a8ee48629fa74fa6215b0bad9dd659320441b80d4d969",
+  "carries": ["D-001 fixed depth", "D-002 inpainted video.mp4 + sidecar",
+              "D-005 background drift correction (adopted 2026-08-21)",
+              "D-006 pre_removal rebuilt from the fixed depth"],
+  "supersedes": [
+    {"file": "bundle_shots_inpaintfix_preremovalfix.svb",
+     "why": "DO NOT USE -- derived from inpaintfix, loses the adopted drift correction"},
+    {"file": "bundle_shots_inpaintfix.svb",
+     "why": "superseded by driftfix on 2026-08-21; no background drift correction"}
+  ]
+}
+```
+
+3 clip 分あり、`carries`（何の修正が入っているか）と `supersedes`（なぜ古いか）を
+理由付きで持たせてある。**`sha256` も入れたので、名前を信用せずに
+「手元のファイルが推奨版と同一か」を両側で確認できる。**
+
+**さらに、参照するだけでなく強制するようにした。**
+`scripts/replace_bundle_sidecar.py`（今回 bundle を作るのに使ったツール）が
+派生元をこのレジストリと突き合わせ、**古いファイルを派生元にすると止まる。**
+
+```
+$ ... --bundle FINNAL_HUMAN/bundle_shots_inpaintfix.svb ...
+[error] bundle_shots_inpaintfix.svb is superseded for clip 'human':
+        superseded by driftfix on 2026-08-21; no background drift correction
+        The recommended base is FINNAL_HUMAN/bundle_shots_driftfix_preremovalfix.svb
+        Pass --allow-superseded-base to override.
+```
+
+**昨日のミスをそのまま再現して、止まることを確認した。**
+レジストリに載っていない一時ジョブのディレクトリは対象外（止めない）。
+新しい推奨版を配布したら、このファイルも同じタイミングで更新する運用にする。
+
+これで「4 回目」への対策としては、
+**作った後に検出する** `stageExecution` / `outputFacts` と、
+**作る前に止める** このレジストリの 2 段になった。
+
+#### 6. `--overlap` は 3 で確定 — 了解
+
+作り直し不要。今の 3 本がそのまま最終版。判断ありがとう。
+
+
+### 検証 `[Unity側]` 2026-09-05 — 3 本とも合格。除去前動画の件は決着
+
+`bundle_shots_driftfix_preremovalfix.svb` を受領し、手元で検証した。
+
+#### human（作り直し版）
+
+| 確認項目 | 結果 |
+|---|---|
+| `meta.bin` の SHA256 が手元の `bundle_human.svb`（= `bundle_shots_driftfix.svb`）と一致 | **一致**（`94e2df2c345e368d…`） |
+| `backgroundDisparity` の有無 | **有り**（ドリフト補正が生きている） |
+| 除去前動画 | 61,131,836 → **66,528,570**（`1c7773858d6ec25d…`） |
+| 除去前動画が前回配布分と同一ファイルか | **同一**（申告どおり。器だけ差し替え） |
+| その他 4 メンバ | **SHA256 完全一致** |
+| `source/pre_removal_provenance.json` | 同梱を確認 |
+
+参考に、誤り版（`bundle_shots_inpaintfix_preremovalfix.svb`）も並べて確認した。
+`meta.bin` は `6db76e0ff9a799ec…` で別物、`backgroundDisparity` は**無し**。
+派生元の違いがそのまま出ている。**使わない。**
+
+#### 3 本セットの検証結果
+
+| clip | 除去前動画 | それ以外のメンバ | 備考 |
+|---|---|---|---|
+| animal | 39,555,746 → 41,582,894 | 11 件すべて SHA256 一致 | — |
+| human | 61,131,836 → 66,528,570 | 4 件すべて SHA256 一致 | `meta.bin` が driftfix 版と一致 |
+| train | 54,924,498 → 53,602,205 | 4 件すべて SHA256 一致 | `quant_pos_scale = 0.0001`（D-008）維持 |
+
+**除去前ステレオ動画の件は決着。** 3 本とも D-001 修正後の depth 由来になった。
+
+#### `recommended_bundles.json` が届いていない
+
+「このフォルダに置いた」と書かれているが、**受け取った `bundle-shared/` に入っていない。**
+次の同期のときに入れてほしい。中身は回答本文に貼られているので意図は分かっている。
+
+「散文のログではなくデータに持つ」という方針には賛成する。
+今回の取り違えは、推奨ファイルが D-005 のログ本文にしか無かったことが直接の原因だった。
+
+#### 旧ビルドが残っている件（配置精度の切り分け）
+
+`FINNAL_ANIMAL/bundle_shots_h264fix.svb` が残っているとのこと、助かる。
+⑧ を有効にしたまま bundle だけ差し替えれば bundle の寄与だけ取り出せる、という提案も
+そのとおりなので、そちらでやる。**追加の配布は不要。**
+
+#### この課題の残り
+
+除去前動画の件は閉じた。**残るのは配置精度（sizeRatio）だけで、これは Unity 側の問題。**
+そちらへの依頼は無い。

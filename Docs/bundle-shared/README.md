@@ -114,7 +114,7 @@ docs/bundle-shared/
 | ID | 件名 | 状態 | 提起 | 最終更新 |
 |---|---|---|---|---|
 | [D-004](D-004-anchor-z-accuracy.md) | `anchor_z` が実距離をほとんど再現していない（全 bundle 共通） | **調査中**（a,b 較正は棄却済み。原因未解明） | [Unity側] 2026-08-20 | 2026-08-26 |
-| [D-006](D-006-animal-bbox-anchor.md) | animal bundle の bbox/anchor 仕様確認と再ビルド | 仕様は解決。**配置精度は未解決（Unity 側）**。除去前ステレオ動画の作り直しを依頼中 | [Unity側] 2026-08-26 | 2026-09-05 |
+| [D-006](D-006-animal-bbox-anchor.md) | animal bundle の bbox/anchor 仕様確認と再ビルド | 仕様・除去前動画とも解決。**残りは配置精度のみ（Unity 側）** | [Unity側] 2026-08-26 | 2026-09-05 |
 | [D-008](D-008-anchor-z-quantization.md) | 同一フレーム内で `anchor_z` が近接物体を分離できない | **修正ビルド受領・実機確認待ち** | [Unity側] 2026-09-04 | 2026-09-04 |
 
 **解決・棄却（`archive/`。読むだけ）**
@@ -140,6 +140,7 @@ docs/bundle-shared/
 | 2026-09-05 | Unity → bundle | **D-006 の「本題は解決」を訂正。** 配布物の検証と実装の有無を確かめただけで配置精度を測っていなかった。測ったところ sizeRatio が median 1.19〜1.23 で、症状が「小さすぎる」から「大きすぎる」に反転しただけだった。**Unity 側の問題**なので、そちらへの依頼は増えない |
 
 ### 2026-09-04 の分
+| 2026-09-05 | Unity → bundle | **human の作り直し版を検証、合格。3 本セットの除去前動画は決着。** `meta.bin` が driftfix 版と SHA256 一致・`backgroundDisparity` 有りを確認。`recommended_bundles.json` が同期に含まれていない旨を報告 |
 
 | 日付 | 方向 | 内容 |
 |---|---|---|

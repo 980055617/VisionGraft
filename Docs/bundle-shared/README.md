@@ -2876,7 +2876,12 @@ third_party/AniMer/data/smal/my_smpl_00781_4_all.pkl   (J, v_template, kintree_t
 ### 実測
 
 `meta.bin` を runtime と同じ手順で読み、`PinholePlacementSpace` の式をそのまま移植して
-3D 位置を出した（`scratchpad/train_depth_order.py`）。
+3D 位置を出した。**再現コードをこのフォルダに入れてある**: `train_depth_order.py`。
+
+```
+python train_depth_order.py <bundle.svb> [フレーム番号...]
+```
+
 
 ```
 frame 160   track 1  anchorU=369  anchorZ=0.8460  camX=-0.2508  視点からの距離 0.8828

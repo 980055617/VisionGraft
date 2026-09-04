@@ -15,12 +15,19 @@
 使い方:
     python train_depth_order.py <bundle.svb> [フレーム番号...]
 
-出力の「視点から」は原点からのユークリッド距離。
+**前後関係の判定は `camZ`（view 空間の Z）で行う。**
 
-**最後の判定行は「track 番号順＝手前から奥」を前提にしている。**
-train は奥から一車両ずつ現れるのでこの前提が成り立つが、
+当初このスクリプトは視点からのユークリッド距離
+`sqrt(x²+y²+z²)` で判定していたが、**これは誤り**（bundle 側の指摘、
+2026-09-04）。深度バッファも透視除算も両眼視差も効くのは `z` だけで、
+`x` の横ずれは入ってこない。遠ざかる列車は横方向の広がりが
+`camZ` の差より桁で大きいので、ユークリッド距離で見ると
+`anchor_z` を何に変えても 100% 逆転のままになる。参考として両方出すが、
+**判定は camZ の列を見ること。**
+
+また、判定は「track 番号順＝手前から奥」を前提にしている。
+train は奥から一車両ずつ現れるので成り立つが、
 人とボールのように無関係な対象が並ぶ bundle では意味を持たない。
-その場合は camZ の値そのものを見ること。
 """
 import json
 import math
@@ -85,7 +92,7 @@ def main():
           % (eye_w, eye_h, fx, fy, src, cx, cy, b["qpos"]))
     print()
     print("%6s %6s %8s %8s %9s %9s %9s %11s"
-          % ("frame", "track", "anchorU", "anchor_z", "camX", "camY", "camZ", "視点から"))
+          % ("frame", "track", "anchorU", "anchor_z", "camX", "camY", "camZ", "（参考）距離"))
 
     for fi in frames:
         objs = sorted(b["frames"][fi], key=lambda o: o["trackId"])
@@ -99,12 +106,19 @@ def main():
         for t, u, z, x, y, d in rows:
             print("%6d %6d %8d %8.4f %9.4f %9.4f %9.4f %11.4f" % (fi, t, u, z, x, y, z, d))
 
-        near_first = [r[0] for r in sorted(rows, key=lambda r: r[5])]
         by_id = [r[0] for r in rows]
-        # 前提: track 番号順＝手前から奥（train のように順に現れる場合のみ）
-        print("      近い順 = %s  （track 番号順 = %s） %s"
-              % (near_first, by_id,
-                 "一致" if near_first == by_id else "**逆転**（track 番号順＝手前から奥の場合）"))
+
+        # **こちらが本命。** camZ の昇順（手前から奥）。
+        by_z = [r[0] for r in sorted(rows, key=lambda r: (r[2], r[0]))]
+        ties = len(rows) - len({round(r[2], 6) for r in rows})
+        verdict = "一致" if by_z == by_id else "**逆転**"
+        if ties:
+            verdict += "（同値 %d 組あり──順序が決まっていない）" % ties
+        print("      camZ 順     = %s  （track 番号順 = %s） %s" % (by_z, by_id, verdict))
+
+        # 参考。**この列で判断してはいけない**（上の docstring 参照）。
+        by_dist = [r[0] for r in sorted(rows, key=lambda r: r[5])]
+        print("      （参考）距離順 = %s  ← 判定には使わない" % by_dist)
         print()
 
 

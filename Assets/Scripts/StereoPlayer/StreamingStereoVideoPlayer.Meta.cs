@@ -75,9 +75,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private float anchorZ01RangeMax = 1f;
     private bool hasAnchorZ01Range;
     private bool loggedInverseDepthRange;
+    // **manifest に無ければ meta.bin ヘッダの値を使う。**
+    // 以前は manifest しか見ておらず、無いときは 0 を返していた。0 を掛けると
+    // anchorZ が全オブジェクト 0 になり、**全部が同じ深度に潰れる**。
+    // 生成側の anchor_z_policy にも「manifest か meta.bin ヘッダから読め」とある
+    // （D-008、2026-09-04）。配布物は両方に入っているので実害は出ていなかった。
     private float GetQuantPosScale()
     {
-        return GetManifestQuantPosScale();
+        float fromManifest = GetManifestQuantPosScale();
+        if (fromManifest > 0f)
+        {
+            return fromManifest;
+        }
+
+        return metaHeader.quantPosScale;
     }
 
     private float GetQuantJointScale()

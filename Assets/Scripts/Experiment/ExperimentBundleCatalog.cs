@@ -18,11 +18,19 @@ public sealed class ExperimentBundleCatalog
     public string trainBundleFileName = DefaultTrainBundleFileName;
 
     // 2026-08-28: StreamingAssets を「動画ごとに最新 1 本」へ整理した。名前は据え置きで、
-    // 中身が再生成版に差し替わっている（depth drift 修正 + shot 再検出）。
-    //   bundle_human.svb  : 2026-08-20 ビルド
-    //   bundle_animal.svb : 2026-08-27 ビルド（shots 28）
-    //   bundle_train.svb  : 2026-08-19 ビルド（再生成不要と確認済み）
+    // 中身が再生成版に差し替わっていく。
     // 動画の同一性は manifest.inputs.video_mp4 で見ること。ファイル名は当てにならない。
+    //
+    // 2026-09-05 現在の中身（D-006 で 3 本とも除去前ステレオ動画を差し替えた）:
+    //   bundle_human.svb  : bundle_shots_driftfix_preremovalfix
+    //                       ← 背景ドリフト補正あり。**inpaintfix 系を入れないこと**。
+    //                       一度間違えた版が配布され、補正が消えるところだった
+    //   bundle_animal.svb : bundle_shots_depthdriftfix_shotsfix_preremovalfix（shots 28）
+    //   bundle_train.svb  : bundle_shots_inpaintfix_zquantfix_preremovalfix
+    //                       ← quant_pos_scale = 0.0001（D-008）
+    //
+    // **StreamingAssets は APK に丸ごと焼かれる。** 検証用の古い bundle を置きっぱなしに
+    // しないこと（2026-09-05 に 737MB → 380MB まで戻した）。
     public const string DefaultHumanBundleFileName = "bundle_human.svb";
     public const string DefaultAnimalBundleFileName = "bundle_animal.svb";
     public const string DefaultTrainBundleFileName = "bundle_train.svb";

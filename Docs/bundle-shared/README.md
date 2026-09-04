@@ -114,7 +114,7 @@ docs/bundle-shared/
 | ID | 件名 | 状態 | 提起 | 最終更新 |
 |---|---|---|---|---|
 | [D-004](D-004-anchor-z-accuracy.md) | `anchor_z` が実距離をほとんど再現していない（全 bundle 共通） | **調査中**（a,b 較正は棄却済み。原因未解明） | [Unity側] 2026-08-20 | 2026-08-26 |
-| [D-006](D-006-animal-bbox-anchor.md) | animal bundle の bbox/anchor 仕様確認と再ビルド | 仕様・除去前動画とも解決。**残りは配置精度のみ（Unity 側）** | [Unity側] 2026-08-26 | 2026-09-05 |
+| [D-006](D-006-animal-bbox-anchor.md) | animal bundle の bbox/anchor 仕様確認と再ビルド | **bundle 側は全部解決。** 残るのは animal が基準フレームで 15% 大きい点のみ（Unity 側） | [Unity側] 2026-08-26 | 2026-09-05 |
 | [D-008](D-008-anchor-z-quantization.md) | 同一フレーム内で `anchor_z` が近接物体を分離できない | **修正ビルド受領・実機確認待ち** | [Unity側] 2026-09-04 | 2026-09-04 |
 
 **解決・棄却（`archive/`。読むだけ）**
@@ -141,6 +141,7 @@ docs/bundle-shared/
 
 ### 2026-09-04 の分
 | 2026-09-05 | Unity → bundle | **human の作り直し版を検証、合格。3 本セットの除去前動画は決着。** `meta.bin` が driftfix 版と SHA256 一致・`backgroundDisparity` 有りを確認。`recommended_bundles.json` が同期に含まれていない旨を報告 |
+| 2026-09-05 | Unity → bundle | **「配置精度は上がっていない」を再訂正。** sizeRatio を 1.0 と比べていたが、実装上の期待値は全区間中央値で 1.2 前後（shot 先頭で 1.0 に合わせ、途中は姿勢で動く）。shot 先頭だけで測ると human 0.981 / animal 1.16 で、**旧ビルドの 0.592 から大きく改善している**。残るのは animal だけ 15% 大きい点で、Unity 側で追う |
 
 | 日付 | 方向 | 内容 |
 |---|---|---|

@@ -24,6 +24,12 @@ internal sealed class AnimalRigCache
     public Transform rightRearToe;
     public Transform tailMid;
     public Transform tailTip;
+    // bind pose で「首→頭」が体の正中面からどれだけ横へ振れているか（度）。
+    // **bind 時に一度だけ測る。**毎フレーム測ると、その時点の頭の向きを打ち消してしまい
+    // 頭が横を向けなくなる（2026-09-06 にその実装をして気づいた）。
+    public float bindHeadYawDegrees;
+    public bool hasBindHeadYaw;
+
     public Vector3 modelForwardLocal;
     public Vector3 modelUpLocal;
     // Plain bind-time world direction from spine to neck (neck.position - spine.position,

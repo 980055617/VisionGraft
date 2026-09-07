@@ -53,16 +53,10 @@ public sealed partial class AnimalPoseApplier
     // 詳細は jointFrameMap を組んでいるところのコメント。
     public bool useTwoAxisJointFrameMap;
 
-    // jointFrameMap のロールを拘束するための「第 2 基準方向」に使う joint。
-    //
-    // FromToRotation は rest 方向しか拘束しないので、ボーン軸まわりのロールが未定になる。
-    // 左右のペアは SmalRestDirByJoint では Y 成分の符号だけが違う鏡像だが、
-    // FromToRotation は左右それぞれ独立にロールを決めるので**鏡像の写像にならない**。
-    // 実測でも右後膝だけが両モデルで逆向きに曲がっていた（[ANIMALANG]、2026-08-28）。
-    //
-    // そこで各 joint に「同じ肢のもう 1 本のボーン」を対にして、SMAL 側と Unity 側で
-    // 同じ 2 軸から基底を組む。同じ肢の 2 本が張る平面はどちらの系でも同じ意味を持ち、
-    // 左右のペアは自動的に鏡像の写像になる。
+    // 頭（SMAL joint 16）に body_pose を当てるか。**既定 ON。**
+    // false にすると 2026-09-06 以前の挙動（頭は首に付いて動くだけ）に戻る。A/B 用。
+    public bool enableAnimalHeadPose = true;
+
     private static readonly Dictionary<int, int> SmalRollRefJoint = new Dictionary<int, int>
     {
         { 7, 8 }, { 8, 7 },      // 前肢 左: 肩 <-> 肘
@@ -70,6 +64,9 @@ public sealed partial class AnimalPoseApplier
         { 17, 18 }, { 18, 17 },  // 後肢 左: 股 <-> 膝
         { 21, 22 }, { 22, 21 },  // 後肢 右
         { 25, 26 }, { 26, 25 },  // 尾
+        // 頭は首を副軸にする。頭単体では「どちらが上か」が決まらず、
+        // 首振りが頷きに化けうる（FromToRotation はロールを拘束しない）。
+        { 16, 15 },
         // joint 15（neck）は対になる rest 方向を持つ joint が無いので従来どおり
         // FromToRotation にフォールバックする。
     };
@@ -81,6 +78,22 @@ public sealed partial class AnimalPoseApplier
         { 11, new Vector3(0.044701f, 0.095438f, -0.994431f) },   // RLeg1 -> RLeg2
         { 12, new Vector3(0.006267f, 0.179885f, -0.983668f) },   // RLeg2 -> RLeg3
         { 15, new Vector3(0.993402f, -0.000000f, -0.114686f) },  // Neck -> Head
+        // Head -> Mouth（joint 32）。2026-09-06 追加。
+        //
+        // **それまで頭は駆動されていなかった。**rest 方向が無いので
+        // `tw = parentTW * bindLoc` の分岐に落ち、首に付いて動くだけで頭自身の回転は
+        // 一切当たっていなかった。bind pose で頭が傾いている・下を向いているモデルは
+        // 何を再生してもそのままだった。
+        //
+        // データには動きが入っている。body_pose が rest から回っている量の実測
+        // （bundle_animal、40 秒、808 サンプル）: 首 31.6°、**頭 22.4°**（p90 32.0°、最大 49.2°）。
+        // 首に次ぐ大きさを丸ごと捨てていた。
+        //
+        // Unity 側の rest 方向は `PrimeAnimalBind` が既に採取している
+        // （頭ボーン → 頭のメッシュ重心。`TryGetBoneCenterDirectionWorld` のフォールバック）。
+        // 他の joint のような aim-child は無いが、どちらも「頭の付け根から口元へ」を
+        // 指す方向なので対応づけとして成立する。
+        { 16, new Vector3(0.800236f, 0.000000f, -0.599685f) },   // Head -> Mouth
         { 17, new Vector3(0.337957f, 0.086988f, -0.937133f) },   // LLegBack1 -> LLegBack2
         { 18, new Vector3(-0.194889f, -0.083158f, -0.977294f) }, // LLegBack2 -> LLegBack3
         { 21, new Vector3(0.337957f, -0.086988f, -0.937133f) },  // RLegBack1 -> RLegBack2
@@ -379,6 +392,7 @@ public sealed partial class AnimalPoseApplier
             }
 
             if (SmalRestDirByJoint.TryGetValue(joint, out Vector3 smalRestDir) &&
+                (joint != 16 || enableAnimalHeadPose) &&
                 cache.bindRotWorld.TryGetValue(bone, out Quaternion boneBindWorld) &&
                 cache.bindDirLocal.TryGetValue(bone, out Vector3 boneBindDirLocal))
             {
@@ -409,6 +423,7 @@ public sealed partial class AnimalPoseApplier
                 // wrong frame.
                 Quaternion restWorldRot = worldFk0 * boneBindWorld;
                 Vector3 unityRestDirWorld = (restWorldRot * boneBindDirLocal).normalized;
+
                 // 2 軸版（既定 OFF）。ロールを同じ肢のもう 1 本で拘束する。
                 // 従来の FromToRotation は smalRestDir -> unityRestDirWorld しか拘束せず、
                 // jointFrameMap * R(smalRestDir, θ) はどの θ でも同じ条件を満たす。

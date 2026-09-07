@@ -232,6 +232,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // シリアライズされている値を毎フレーム渡す。play mode に持ち越されない罠を避ける。
         animalPoseApplier.disableSmalBendForDiag = disableSmalBendForDiag;
         animalPoseApplier.useTwoAxisJointFrameMap = useTwoAxisJointFrameMap;
+        animalPoseApplier.enableAnimalHeadPose = enableAnimalHeadPose;
         animalPoseApplier.enableAnimalKeypointAimAt = enableAnimalKeypointAimAt;
         if (enableAnimalKeypointAimAt && !loggedAnimalAimAt)
         {
@@ -583,45 +584,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         return count > 0 ? sum / count : 0f;
-    }
-
-    private static bool TryGetVisibleJointBounds(Vector3[] jointsWorld, byte[] vis, int jointCount, out Bounds bounds)
-    {
-        bounds = default(Bounds);
-        if (jointsWorld == null || vis == null || jointCount <= 0)
-        {
-            return false;
-        }
-
-        bool hasAny = false;
-        int count = Mathf.Min(jointCount, Mathf.Min(jointsWorld.Length, vis.Length));
-        for (int i = 0; i < count; i++)
-        {
-            if (vis[i] == 0)
-            {
-                continue;
-            }
-
-            Vector3 p = jointsWorld[i];
-            if (float.IsNaN(p.x) || float.IsInfinity(p.x) ||
-                float.IsNaN(p.y) || float.IsInfinity(p.y) ||
-                float.IsNaN(p.z) || float.IsInfinity(p.z))
-            {
-                continue;
-            }
-
-            if (!hasAny)
-            {
-                bounds = new Bounds(p, Vector3.zero);
-                hasAny = true;
-            }
-            else
-            {
-                bounds.Encapsulate(p);
-            }
-        }
-
-        return hasAny;
     }
 
     private AnimalPoseSettings BuildAnimalPoseSettings()

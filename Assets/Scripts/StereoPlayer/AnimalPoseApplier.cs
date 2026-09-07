@@ -594,12 +594,6 @@ public sealed partial class AnimalPoseApplier
         ApplyAnimalLimbIkByChain(cache, cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, jointsWorld, vis, AnimalPoseJointChains.RightRear, alpha, !freezeAnimalDistal, tick.deltaTime);
     }
 
-    private void ApplyAnimalBonesFromSegment(AnimalRigCache cache, Transform primary, Transform secondary, Vector3[] jointsWorld, byte[] vis, int idxA, int idxB, float primaryAlpha, float secondaryAlpha)
-    {
-        ApplyAnimalBoneFromJoints(cache, primary, jointsWorld, vis, idxA, idxB, primaryAlpha);
-        ApplyAnimalBoneFromJoints(cache, secondary, jointsWorld, vis, idxA, idxB, secondaryAlpha);
-    }
-
     private void ApplyAnimalLimbByChain(AnimalRigCache cache, Transform upper, Transform lower, Transform paw, Vector3[] jointsWorld, byte[] vis, int[] chain, float alpha, bool applyDistal)
     {
         if (chain == null || chain.Length < 4)
@@ -818,6 +812,131 @@ public sealed partial class AnimalPoseApplier
         {
             RegisterAnimalAimChild(cache, bones[i], bones[i + 1]);
         }
+    }
+
+    // bind pose での「首→頭」の横振れを一度だけ測る。ここではまだ姿勢が当たっていない。
+    private static void CaptureBindHeadYaw(AnimalRigCache cache)
+    {
+        cache.hasBindHeadYaw = false;
+        if (cache.neck == null || cache.head == null || cache.root == null)
+        {
+            return;
+        }
+
+        // **軸は world の鉛直ではなく体の up を使う。**体が傾いているフレームで
+        // 鉛直まわりに回すと「首を横に振る」動きにならず、頭がねじれる
+        // （2026-09-06 に Vector3.up で実装して悪化させた）。
+        Vector3 up = cache.root.TransformDirection(
+            cache.modelUpLocal.sqrMagnitude > 0.001f
+                ? cache.modelUpLocal.normalized
+                : Vector3.up).normalized;
+        Vector3 fwd = cache.root.TransformDirection(
+            cache.modelForwardLocal.sqrMagnitude > 0.001f
+                ? cache.modelForwardLocal.normalized
+                : Vector3.back);
+        fwd -= up * Vector3.Dot(fwd, up);
+        // **狙うのは「顔がどこを向いているか」。**
+        // 「首→頭の位置」で測ると、頭ボーン自身の向きのずれが残る。
+        // 45_MountainGoat の実測: 首→頭 −41° に対し 頭→鼻 −50°（残り 9°）、
+        // 38_LionessV2 は −38° に対し −52°（残り 14°）、34_Hyena は −25° に対し −49°。
+        // 逆に 16_Deer1 は −12° に対し −4° で、位置基準だと 8° 行き過ぎる（2026-09-06）。
+        //
+        // 頭の子に鼻・顎・口のボーンがあればそれで測り、無ければ首→頭に落とす。
+        Transform faceTip = FindHeadFacingChild(cache.head);
+        Vector3 facing = faceTip != null
+            ? faceTip.position - cache.head.position
+            : cache.head.position - cache.neck.position;
+        facing -= up * Vector3.Dot(facing, up);
+        if (fwd.sqrMagnitude < 0.000001f || facing.sqrMagnitude < 0.000001f)
+        {
+            return;
+        }
+
+        cache.bindHeadYawDegrees = Vector3.SignedAngle(fwd.normalized, facing.normalized, up);
+        cache.hasBindHeadYaw = true;
+
+        // **補正は首の鎖に分散して bind 自体に焼き込む。**
+        //
+        // 頭ボーン 1 本で 50° 回すと、そこに折れが集中して首が「ぐにゅ」と潰れる
+        // （2026-09-06 ユーザー指摘。ヤギの首は Neck1 / Neck2 / neck / head の 4 本ある）。
+        // 実際の動物は首全体に分散して曲がるので、鎖の各ボーンへ等分する。
+        //
+        // ここは `PrimeAnimalBinds` より前に走るので、この回転を入れた状態が
+        // そのまま bind として採取される。FK 側で毎フレーム補正する必要は無い。
+        if (Mathf.Abs(cache.bindHeadYawDegrees) < HeadYawStraightenMinDegrees ||
+            Mathf.Abs(cache.bindHeadYawDegrees) > HeadYawStraightenMaxDegrees)
+        {
+            return;
+        }
+
+        List<Transform> chain = new List<Transform>();
+        for (Transform t = cache.head; t != null; t = t.parent)
+        {
+            chain.Add(t);
+            if (t == cache.neck)
+            {
+                // 首の根まで遡る。canonical な neck の上にも中間ボーン
+                // （Neck1 / Neck2 等）があることが多いので、spine / chest に当たるまで続ける。
+                Transform up2 = t.parent;
+                while (up2 != null && up2 != cache.spine && up2 != cache.root &&
+                       up2.name.IndexOf("neck", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    chain.Add(up2);
+                    up2 = up2.parent;
+                }
+
+                break;
+            }
+        }
+
+        if (chain.Count == 0)
+        {
+            return;
+        }
+
+        // 親から順に等分して掛ける。鎖なので子には親のぶんも積み上がる。
+        chain.Reverse();
+        float share = -cache.bindHeadYawDegrees / chain.Count;
+        Quaternion step = Quaternion.AngleAxis(share, up);
+        for (int i = 0; i < chain.Count; i++)
+        {
+            TransformWriter.ApplyWorldRotation(chain[i], step * chain[i].rotation);
+        }
+
+        Debug.Log($"[SMAL-FK-DBG] HEADYAW model={cache.root?.name} " +
+                  $"bind={cache.bindHeadYawDegrees:F1}° を首 {chain.Count} 本へ {share:F1}° ずつ分散");
+    }
+
+    // 補正を掛ける範囲。10° 未満は誤差、60° 超はリグの軸の取り方が特殊で
+    // 測定が破綻するモデル（48_Puma が 179°）。
+    private const float HeadYawStraightenMinDegrees = 10f;
+    private const float HeadYawStraightenMaxDegrees = 60f;
+
+    // 頭の向きを測る基準にする子ボーン。鼻・顎・口の順に探す。
+    private static readonly string[] HeadFacingChildNames = { "nose", "jaw", "mouth", "muzzle" };
+
+    private static Transform FindHeadFacingChild(Transform head)
+    {
+        if (head == null)
+        {
+            return null;
+        }
+
+        Transform[] children = head.GetComponentsInChildren<Transform>(true);
+        for (int i = 0; i < HeadFacingChildNames.Length; i++)
+        {
+            for (int k = 0; k < children.Length; k++)
+            {
+                if (children[k] != null && children[k] != head &&
+                    string.Equals(children[k].name, HeadFacingChildNames[i],
+                                  System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return children[k];
+                }
+            }
+        }
+
+        return null;
     }
 
     private void PrimeAnimalBind(AnimalRigCache cache, Transform bone)
@@ -1098,6 +1217,7 @@ public sealed partial class AnimalPoseApplier
         cache.tailMid = ResolveBone(bones, boneOverride?.tailMid, AnimalRigDefinition.TailMid);
         cache.tailTip = ResolveBone(bones, boneOverride?.tailTip, AnimalRigDefinition.TailTip);
         ResolveAnimalModelBasis(root, cache, settings);
+        CaptureBindHeadYaw(cache);
 
         if (cache.spine != null && cache.neck != null)
         {

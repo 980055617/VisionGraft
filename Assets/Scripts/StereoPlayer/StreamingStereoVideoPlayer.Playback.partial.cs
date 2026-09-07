@@ -224,6 +224,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 手動倍率は yaw と対で動く値なので、**同じ frame** で評価する。
         float manualScale = EvaluateManualScaleForFrame(target.trackId, frame);
         ApplyReplaceableModelTransform(instance, anchorWorld, rotationPinhole, targetHeight, target, uEyeF, vEyeF, bboxHAdjusted, screen, manualScale);
+        LogHipStageIfEnabled("1_placed", instance, target, screen);
         bool preserveRootScreenHeightAfterSkeleton =
             IsCategoryPerson(target.categoryId) &&
             ShouldPreserveRootScreenHeightAfterHumanSkeletonPlacement();
@@ -244,7 +245,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // モデルの原点オフセットを打ち消す。Hips を「ルートを置いた位置」へ持ってくることで、
         // ② がスケールを決めるときの前提「体が anchorZ にいる」を成立させる。
         // ⑦ の下端合わせより前に入れる（縦方向はこのあと ⑦ が合わせ直す）。
+        LogHipStageIfEnabled("2_skeleton", instance, target, screen);
         AlignModelBodyToAnchorDepthIfEnabled(instance, target);
+        LogHipStageIfEnabled("3_bodyalign", instance, target, screen);
 
         // ⑦ の投影ベース下端合わせが ④ の結果をどれだけ動かすかを測るため、直前の位置を控える。
         Vector3 preBottomFitPosition = instance.transform.position;
@@ -597,778 +600,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    // FK 適用後の骨格投影が bbox 高さに一致するよう、ロック済みスケールを一度だけ測り直す。
-    //
-    // ② ResolveDesiredLocalScale が使う bboxWorldH は「被写体が anchorZ という 1 枚の面に
-    // ある」前提の式で、前後に広がった姿勢では必ず過小評価になる（2026-08-18 実測: 立位 7% /
-    // 深い前傾 76% 過大。keypoints3d を同じスケールで投影しても同じ比なので式の前提の問題）。
-    // ここで FK 適用後の実測値から逆算し、基準フレームでの誤差を消す。
-    //
-    // 投影高さは scale に厳密には比例しない（scale を変えると各ボーンの深度も動く）が、
-    // root 深度 0.75 m に対して体の前後の広がりは 0.1 m 程度なので誤差は 2 次に留まる。
-    // 1 回の補正で十分収束するため反復はしない。
-    //
-    // 呼ぶのは ⑦ FitDisplayedModelToBBox の後。スケールを変えると下端が動くので、
-    // 補正後に下端合わせをやり直す。
-    // 診断: モデルの実ボーンの投影位置と、meta.bin の keypoints3d の投影位置を突き合わせる。
-    // 「試算（keypoints ベース）は合うのに実装（実ボーン）は効かない」原因の切り分け用。
-    private void LogBoneVsKeypointIfEnabled(MetaObj obj, GameObject instance, Transform screen, int frame)
-    {
-        if (!logBoneVsKeypoint || instance == null || !obj.hasSkeleton || obj.jointsCam == null)
-        {
-            return;
-        }
 
-        if (logBoneVsKeypointEveryNFrames > 0 && (frame % logBoneVsKeypointEveryNFrames) != 0)
-        {
-            return;
-        }
 
-        Animator animator = instance.GetComponentInChildren<Animator>(true);
-        if (animator == null || !animator.isHuman)
-        {
-            return;
-        }
 
-        HumanoidRigCache cache = GetOrBuildHumanoidCache(animator);
-        if (cache == null || !cache.ready)
-        {
-            return;
-        }
 
-        if (!TryGetProjectionIntrinsics(out float fx, out float fy, out _, out _) ||
-            !TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
-        {
-            return;
-        }
 
-        Quaternion worldToCam = Quaternion.Inverse(camRotation);
 
-        // keypoints を bbox 高さに合わせて投影する（試算と同じ手順）。
-        Vector3[] joints = obj.jointsCam;
-        const int PelvisIndex = 39;
-        if (joints.Length <= PelvisIndex || obj.bboxH <= 0f)
-        {
-            return;
-        }
 
-        float minY = float.MaxValue;
-        float maxY = float.MinValue;
-        for (int i = 0; i < joints.Length; i++)
-        {
-            float y = joints[i].y - joints[PelvisIndex].y;
-            if (y < minY) { minY = y; }
-            if (y > maxY) { maxY = y; }
-        }
 
-        float span = maxY - minY;
-        if (span <= 0.0001f)
-        {
-            return;
-        }
 
-        float pixelsPerMeter = obj.bboxH / span;
 
-        // 比べる部位: OpenPose25 の index → Humanoid ボーン
-        (int kp, HumanBodyBones bone, string label)[] pairs =
-        {
-            (1, HumanBodyBones.Neck, "Neck"),
-            (2, HumanBodyBones.RightUpperArm, "RSho"),
-            (3, HumanBodyBones.RightLowerArm, "RElb"),
-            (4, HumanBodyBones.RightHand, "RWri"),
-            (5, HumanBodyBones.LeftUpperArm, "LSho"),
-            (6, HumanBodyBones.LeftLowerArm, "LElb"),
-            (7, HumanBodyBones.LeftHand, "LWri"),
-            (9, HumanBodyBones.RightUpperLeg, "RHip"),
-            (10, HumanBodyBones.RightLowerLeg, "RKnee"),
-            (24, HumanBodyBones.RightFoot, "RFoot"),
-            (12, HumanBodyBones.LeftUpperLeg, "LHip"),
-            (13, HumanBodyBones.LeftLowerLeg, "LKnee"),
-            (21, HumanBodyBones.LeftFoot, "LFoot"),
-            // 足首の基準点ずれを切り分けるための追加ペア。
-            // Foot ボーンが Ankle と Toe のどちらに近いか、Toes ボーンが BigToe と合うかを見る。
-            (22, HumanBodyBones.RightFoot, "RFoot_vsToe"),
-            (19, HumanBodyBones.LeftFoot, "LFoot_vsToe"),
-            (22, HumanBodyBones.RightToes, "RToes"),
-            (19, HumanBodyBones.LeftToes, "LToes"),
-            (24, HumanBodyBones.RightFoot, "RFoot_vsHeel"),
-            (21, HumanBodyBones.LeftFoot, "LFoot_vsHeel"),
-        };
-
-        System.Text.StringBuilder sb = new System.Text.StringBuilder();
-        sb.Append($"[BONEKP] f={frame} track={obj.trackId} bboxH={obj.bboxH:F0}");
-        for (int i = 0; i < pairs.Length; i++)
-        {
-            (int kpIndex, HumanBodyBones boneId, string label) = pairs[i];
-            if (kpIndex >= joints.Length || !cache.bones.TryGetValue(boneId, out Transform bone) || bone == null)
-            {
-                continue;
-            }
-
-            // keypoint の投影位置（骨盤 anchor 基準）
-            float ku = obj.anchorU + (joints[kpIndex].x - joints[PelvisIndex].x) * pixelsPerMeter;
-            float kv = obj.anchorV - (joints[kpIndex].y - joints[PelvisIndex].y) * pixelsPerMeter;
-
-            // 実ボーンの投影位置
-            Vector3 cam = worldToCam * (bone.position - camOrigin);
-            if (cam.z <= 0.0001f)
-            {
-                continue;
-            }
-
-            float bu = (0.5f + (cam.x / cam.z) * fx * 0.5f) * manifest.eye_w;
-            float bv = (0.5f - (cam.y / cam.z) * fy * 0.5f) * manifest.eye_h;
-
-            sb.Append($" {label}=({bu - ku:F0},{bv - kv:F0})");
-        }
-
-        Debug.Log(sb.ToString());
-    }
-
-    // ⑩ Else が骨格モデルの内部に食い込んでいるとき、最小限だけ表面へ押し出す。
-    //
-    // 接触補正（Else を最寄りの部位へ引き寄せる）とは別物。**内部にあるときだけ、体から出る
-    // 方向にのみ動かす**ので、空中にある Else は一切動かない。押し出す向きは meta.bin の
-    // anchor_z が示す前後関係に従うため、背中に乗ったボールは奥側の表面へ出る。
-    //
-    // 発動条件は「画面上で重なっている」かつ「Else の中心が部位の内部にある」の両方。
-    private void ApplyOtherPenetrationResolveForFrame()
-    {
-        if (!resolveOtherPenetration || metaFrameObjects == null)
-        {
-            return;
-        }
-
-        for (int i = 0; i < metaFrameObjects.Count; i++)
-        {
-            MetaObj other = metaFrameObjects[i];
-            if (!IsCategoryOther(other.categoryId))
-            {
-                continue;
-            }
-
-            if (!trackInstances.TryGetValue(other.trackId, out GameObject otherInstance) ||
-                otherInstance == null ||
-                !otherInstance.activeInHierarchy)
-            {
-                continue;
-            }
-
-            if (!TryFindNearestSkeletonTrack(other, out MetaObj skeleton, out GameObject skeletonInstance))
-            {
-                continue;
-            }
-
-            if (!ResolveAnchorToScreen(other.anchorU, out Transform screen, out _, out _) ||
-                !TryGetProjectionIntrinsics(out float fx, out float fy, out _, out _) ||
-                !TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
-            {
-                continue;
-            }
-
-            Quaternion inv = Quaternion.Inverse(camRotation);
-            Vector3 otherCam = inv * (otherInstance.transform.position - camOrigin);
-            if (otherCam.z <= 0.0001f)
-            {
-                continue;
-            }
-
-            // Else の world 半径は投影サイズから逆算する。
-            // bbox 径の平均 = (W+H)/2、その半分が半径なので (W+H)*0.25 [px]。
-            // px → world は (2*px/eye_h) * (z/fy)。
-            float otherRadiusPixels = (other.bboxW + other.bboxH) * 0.25f;
-            float otherRadius = (2f * otherRadiusPixels / manifest.eye_h) * (otherCam.z / fy);
-
-            if (!TryFindNearestBoneToPoint(
-                    skeletonInstance, screen, camOrigin, camRotation, fx, fy,
-                    other.anchorU, other.anchorV,
-                    out float boneDepth, out float boneRadius, out float screenDistance))
-            {
-                continue;
-            }
-
-            // 画面上で重なっていないなら触らない（空中の Else はここで落ちる）。
-            if (screenDistance > otherRadiusPixels + Mathf.Max(0f, penetrationOverlapMarginPixels))
-            {
-                continue;
-            }
-
-            float frontSurface = boneDepth - boneRadius - otherRadius;
-            float backSurface = boneDepth + boneRadius + otherRadius;
-            if (otherCam.z <= frontSurface || otherCam.z >= backSurface)
-            {
-                continue;   // 内部にいない
-            }
-
-            // 押し出す向きは既定では bundle の前後関係に従う。
-            // ただし bundle が「奥」と言っていても、Else が画面上で体のシルエットの内側に
-            // 深く入っているなら、奥へ出しても隠れたままで症状が直らない。
-            // penetrationFrontBias を上げると、そういうフレームでは手前へ出す。
-            bool wantsFront = other.anchorZ < skeleton.anchorZ;
-            if (!wantsFront &&
-                penetrationFrontBias > 0f &&
-                screenDistance < otherRadiusPixels * penetrationFrontBias)
-            {
-                wantsFront = true;
-            }
-            float targetZ = wantsFront ? frontSurface : backSurface;
-
-            float screenDist = Mathf.Max(0.001f, screenDistanceMeters);
-            targetZ = Mathf.Clamp(
-                targetZ,
-                Mathf.Max(0.001f, MinDistanceFromHeadMeters),
-                screenDist - 0.0001f);
-
-            if (Mathf.Abs(targetZ - otherCam.z) <= 0.0001f)
-            {
-                continue;
-            }
-
-            if (logPenetrationResolve)
-            {
-                Debug.Log(
-                    $"[PENET] track={other.trackId} screenDist={screenDistance:F1}px " +
-                    $"z={otherCam.z:F4} → {targetZ:F4} moved={(targetZ - otherCam.z) * 1000f:F1}mm " +
-                    $"bone={boneDepth:F4} boneR={boneRadius * 1000f:F1}mm otherR={otherRadius * 1000f:F1}mm " +
-                    $"dir={(wantsFront ? "front" : "back")}");
-            }
-
-            // 画面上の位置 (u, v) を保ったまま深度だけ変える。
-            Vector3 moved = otherCam * (targetZ / otherCam.z);
-            TrackPlacementWriter.Apply(
-                otherInstance.transform,
-                TrackPlacementCommand.PositionOnly(
-                    camOrigin + camRotation * moved,
-                    otherInstance.transform.rotation,
-                    otherInstance.transform.localScale));
-        }
-    }
-
-    // 画面上で指定 uv に最も近いボーンを探し、その深度・太さ・画面距離を返す。
-    // 太さは「身長に対する比」の実測値（2026-08-19、BodyThicknessDump）から求める。
-    private bool TryFindNearestBoneToPoint(
-        GameObject instance,
-        Transform screen,
-        Vector3 camOrigin,
-        Quaternion camRotation,
-        float fx,
-        float fy,
-        float targetU,
-        float targetV,
-        out float boneDepth,
-        out float boneRadius,
-        out float screenDistance)
-    {
-        boneDepth = 0f;
-        boneRadius = 0f;
-        screenDistance = float.MaxValue;
-
-        Animator animator = instance != null ? instance.GetComponentInChildren<Animator>(true) : null;
-        if (animator == null || !animator.isHuman)
-        {
-            return false;
-        }
-
-        HumanoidRigCache cache = GetOrBuildHumanoidCache(animator);
-        if (cache == null || !cache.ready)
-        {
-            return false;
-        }
-
-        if (!TryProjectBonesToEyeHeight(instance, screen, out float topV, out float bottomV, out _, out _, out _))
-        {
-            return false;
-        }
-
-        // 投影された骨格の高さを身長の代理として使い、太さの比率をメートルに直す。
-        float projectedHeight = Mathf.Abs(bottomV - topV);
-        if (projectedHeight <= 0.0001f)
-        {
-            return false;
-        }
-
-        Quaternion worldToCam = Quaternion.Inverse(camRotation);
-        bool found = false;
-        foreach (var pair in cache.bones)
-        {
-            Transform bone = pair.Value;
-            if (bone == null)
-            {
-                continue;
-            }
-
-            Vector3 cam = worldToCam * (bone.position - camOrigin);
-            if (cam.z <= 0.0001f)
-            {
-                continue;
-            }
-
-            // PinholePlacementSpace.ReconstructCamLocalFromEyePixel の逆変換。
-            // x は fx、y は fy を使う（正方形ピクセルなので fx*eye_w = fy*eye_h）。
-            float u = (0.5f + (cam.x / cam.z) * fx * 0.5f) * manifest.eye_w;
-            float v = (0.5f - (cam.y / cam.z) * fy * 0.5f) * manifest.eye_h;
-
-            float du = u - targetU;
-            float dv = v - targetV;
-            float dist = Mathf.Sqrt(du * du + dv * dv);
-            if (dist >= screenDistance)
-            {
-                continue;
-            }
-
-            screenDistance = dist;
-            boneDepth = cam.z;
-            // 身長比の太さ → world 長。投影身長と深度から world 身長を復元する。
-            float worldHeight = (2f * projectedHeight / manifest.eye_h) * (cam.z / fy);
-            boneRadius = ResolveBoneThicknessRatio(pair.Key) * worldHeight;
-            found = true;
-        }
-
-        return found;
-    }
-
-    // 部位ごとの「体表面までの距離 ÷ 身長」。2026-08-19 に boneWeights と骨軸への
-    // 垂直距離で実測した値（docs/smpl-retargeting.md）。
-    private static float ResolveBoneThicknessRatio(HumanBodyBones bone)
-    {
-        switch (bone)
-        {
-            case HumanBodyBones.Spine: return 0.0845f;
-            case HumanBodyBones.Chest:
-            case HumanBodyBones.UpperChest: return 0.0954f;
-            case HumanBodyBones.Hips: return 0.0866f;
-            case HumanBodyBones.LeftUpperLeg:
-            case HumanBodyBones.RightUpperLeg: return 0.0522f;
-            case HumanBodyBones.LeftLowerLeg:
-            case HumanBodyBones.RightLowerLeg: return 0.0349f;
-            case HumanBodyBones.LeftUpperArm:
-            case HumanBodyBones.RightUpperArm: return 0.0316f;
-            case HumanBodyBones.LeftLowerArm:
-            case HumanBodyBones.RightLowerArm: return 0.0274f;
-            case HumanBodyBones.LeftFoot:
-            case HumanBodyBones.RightFoot:
-            case HumanBodyBones.LeftToes:
-            case HumanBodyBones.RightToes: return 0.0408f;
-            case HumanBodyBones.Head:
-            case HumanBodyBones.Neck: return 0.0554f;
-            case HumanBodyBones.LeftHand:
-            case HumanBodyBones.RightHand: return 0.0199f;
-            default: return 0.05f;
-        }
-    }
-
-    // ⑨ ⑧ で骨格モデルを動かしたあと、Else を「bundle が意図する深度差」を保つ位置へ移す。
-    // ⑧ は骨格を持つ track だけを動かすので、放置すると Else との差が bundle の意図から
-    // 3〜5 倍に開く（2026-08-20 実測、足上げ区間で 71.4mm → 237.0mm）。
-    // meta.bin の anchorZ はデコード済みの深度なので、その差が bundle の意図そのものになる。
-    //
-    // 基準にする骨格 track は「画面上でいちばん近いもの」。bundle_human のように
-    // person 1 + other 1 の構成では自明で、Else が無い bundle では何もしない。
-    private void ApplyOtherDepthFollowForFrame()
-    {
-        if (!followOtherDepthToRefinedSkeleton ||
-            !refineDepthFromProjectedBones ||
-            metaFrameObjects == null)
-        {
-            return;
-        }
-
-        for (int i = 0; i < metaFrameObjects.Count; i++)
-        {
-            MetaObj other = metaFrameObjects[i];
-            if (!IsCategoryOther(other.categoryId))
-            {
-                continue;
-            }
-
-            if (!trackInstances.TryGetValue(other.trackId, out GameObject otherInstance) ||
-                otherInstance == null ||
-                !otherInstance.activeInHierarchy)
-            {
-                continue;
-            }
-
-            if (!TryFindNearestSkeletonTrack(other, out MetaObj skeleton, out GameObject skeletonInstance))
-            {
-                continue;
-            }
-
-            if (!ResolveAnchorToScreen(other.anchorU, out Transform screen, out _, out _) ||
-                !TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
-            {
-                continue;
-            }
-
-            Quaternion inv = Quaternion.Inverse(camRotation);
-            // 人の深度は root ではなく体基準の点で測る。root はモデルによっては体の外にある
-            // （FBX の bind pose に焼き込まれた原点オフセット。Core.cs の
-            // otherDepthSkeletonReference を参照）。
-            Vector3 skeletonRef = ResolveHumanDepthReferencePoint(skeletonInstance, camRotation);
-            Vector3 skeletonCam = inv * (skeletonRef - camOrigin);
-            Vector3 otherCam = inv * (otherInstance.transform.position - camOrigin);
-            if (skeletonCam.z <= 0.0001f || otherCam.z <= 0.0001f)
-            {
-                continue;
-            }
-
-            float screenDist = Mathf.Max(0.001f, screenDistanceMeters);
-            float targetZ;
-            if (useMetricRatioForOtherDepth && TryResolveMetricDepthRatio(skeleton, other, out float ratio))
-            {
-                // disparity から実距離の比を復元して使う。配置深度は 1/z が実距離の 1/Z に
-                // 対応するので、比をそのまま掛ければよい。
-                targetZ = skeletonCam.z * ratio;
-            }
-            else
-            {
-                // フォールバック: meta.bin の深度差をそのまま再現する。
-                targetZ = skeletonCam.z - (skeleton.anchorZ - other.anchorZ);
-            }
-
-            // 骨格 track と Else の深度「差」を時間平滑化する。
-            // 個別の深度に掛けてはいけない: 両者は互いに打ち消し合って動いており、
-            // 片方だけ平滑化すると相殺が壊れてばらつきが増える（2026-08-25 実測、
-            // 人だけ固定で p10-p90 幅 79.5 → 126.5mm、球だけ固定で 101.0mm に悪化）。
-            targetZ = skeletonCam.z - SmoothOtherDepthGap(other.trackId, skeletonCam.z - targetZ);
-
-            targetZ = Mathf.Clamp(
-                targetZ,
-                Mathf.Max(0.001f, MinDistanceFromHeadMeters),
-                screenDist - 0.0001f);
-
-            // ⑨ の適用結果は [PLACE] には出ない（[PLACE] は各 track の ApplyMetaTarget 内で
-            // 出力されるが、⑨ は全 track の処理が終わったあとに走るため）。
-            // ⑨ 系を評価するときは必ずこのログを使うこと。
-            if (logOtherDepthFollow &&
-                (logOtherDepthFollowEveryNFrames <= 0 ||
-                 (GetCurrentFrameIndex() % logOtherDepthFollowEveryNFrames) == 0))
-            {
-                Debug.Log(
-                    $"[DEPTH9] ref={otherDepthSkeletonReference} f={GetCurrentFrameIndex()} track={other.trackId} " +
-                    $"skelTrack={skeleton.trackId} skelZ={skeletonCam.z:F4} otherZ={otherCam.z:F4} " +
-                    $"final={targetZ:F4} moved={(targetZ - otherCam.z) * 1000f:F1}mm " +
-                    $"gapBefore={(skeletonCam.z - otherCam.z) * 1000f:F1}mm " +
-                    $"gapAfter={(skeletonCam.z - targetZ) * 1000f:F1}mm " +
-                    $"intended={(skeleton.anchorZ - other.anchorZ) * 1000f:F1}mm " +
-                    $"bboxH={skeleton.bboxH:F0} otherBboxW={other.bboxW:F0} otherBboxH={other.bboxH:F0} " +
-                    $"factor={targetZ / otherCam.z:F4} scaleIn={otherInstance.transform.localScale.x:F5} " +
-                    $"matchScale={matchOtherScaleToFollowedDepth}");
-            }
-
-            if (Mathf.Abs(targetZ - otherCam.z) <= 0.0001f)
-            {
-                continue;
-            }
-
-            // 画面上の位置 (u, v) を保ったまま深度だけ変える。
-            // 深度が変わったぶん見かけの大きさも変わるので、必要ならスケールを合わせる。
-            // 配置パイプラインは「投影が bbox に一致する」前提で組まれているため、
-            // 深度だけ動かすと球が bbox より小さく写る（Hips 参照で 0.772 倍、2026-08-26 実測）。
-            //
-            // 累積しないのは ApplyMetaTarget が毎 tick 位置とスケールの両方を貼り直すため
-            // （1 メタフレーム内の otherZ / scaleIn の幅は実測 0.000）。毎 tick の
-            // localScale は「anchor 深度で bbox を張る desiredScale」なので、
-            // そこに depthFactor を掛けるのは代入と同じ意味になる。
-            float depthFactor = targetZ / otherCam.z;
-            Vector3 moved = otherCam * depthFactor;
-            Vector3 scale = matchOtherScaleToFollowedDepth
-                ? otherInstance.transform.localScale * depthFactor
-                : otherInstance.transform.localScale;
-            TrackPlacementWriter.Apply(
-                otherInstance.transform,
-                TrackPlacementCommand.PositionOnly(
-                    camOrigin + camRotation * moved,
-                    otherInstance.transform.rotation,
-                    scale));
-        }
-    }
-
-    // disparity から「Else の実距離 ÷ 骨格 track の実距離」を復元する。
-    //
-    //   disparity = a(t)/Z + b   （DepthCrafter は affine-invariant）
-    //   Z_other / Z_skeleton = (disp_skeleton − b) / (disp_other − b)
-    //
-    // a(t) は比を取ると相殺されるので、b さえ分かれば実距離の比が求まる。
-    // keypoints も実距離の逆算も要らない。
-    private bool TryResolveMetricDepthRatio(MetaObj skeleton, MetaObj other, out float ratio)
-    {
-        ratio = 1f;
-        if (!TryResolveDepthAffineB(out float b))
-        {
-            return false;
-        }
-
-        // anchorZ は配置深度（大きいほど奥）なので、disparity へ戻す。
-        // NormalizeAnchorZ01 / Z01ToNearness と同じ向きの量を使う。
-        float dSkeleton = Z01ToNearness(NormalizeAnchorZ01(Mathf.Clamp01(skeleton.anchorZ01)));
-        float dOther = Z01ToNearness(NormalizeAnchorZ01(Mathf.Clamp01(other.anchorZ01)));
-
-        float numerator = dSkeleton - b;
-        float denominator = dOther - b;
-        if (Mathf.Abs(denominator) < 0.0001f || numerator <= 0f || denominator <= 0f)
-        {
-            return false;   // b の外側に出たフレームは信用しない
-        }
-
-        ratio = numerator / denominator;
-
-        if (logDepthAffineFit && metricRatioDiagCount < 5)
-        {
-            metricRatioDiagCount++;
-            Debug.Log(
-                $"[RATIO] b={b:F4} dSkel={dSkeleton:F4} dOther={dOther:F4} " +
-                $"z01Skel={skeleton.anchorZ01:F4} z01Other={other.anchorZ01:F4} ratio={ratio:F4}");
-        }
-
-        // 極端な比は推定の破綻とみなす（実測では 0.5〜2.0 に収まる）。
-        if (ratio < MinMetricDepthRatio || ratio > MaxMetricDepthRatio)
-        {
-            return false;
-        }
-
-        return true;
-    }
-
-    // `disparity = a/Z + b` の b。Inspector で指定されていればそれを使い、
-    // 未指定なら shot 先頭で keypoints3d から実距離を逆算して最小二乗で解く。
-    private bool TryResolveDepthAffineB(out float b)
-    {
-        b = depthAffineB;
-        if (b > 0f)
-        {
-            return true;
-        }
-
-        if (depthAffineBResolved)
-        {
-            b = resolvedDepthAffineB;
-            return resolvedDepthAffineB > 0f;
-        }
-
-        depthAffineBResolved = true;
-        resolvedDepthAffineB = EstimateDepthAffineB();
-        b = resolvedDepthAffineB;
-        return resolvedDepthAffineB > 0f;
-    }
-
-    // meta.bin を間引いて読み、keypoints3d を持つ track の実距離と disparity から
-    // `disparity = a/Z + b` を最小二乗で解く。b だけ使う。
-    private float EstimateDepthAffineB()
-    {
-        if (manifest == null || manifest.eye_h <= 0 || manifest.fy_norm <= 0f)
-        {
-            return 0f;
-        }
-
-        float focalPixels = manifest.fy_norm * manifest.eye_h * 0.5f;
-        List<MetaObj> buffer = new List<MetaObj>(16);
-        List<float> invZ = new List<float>(128);
-        List<float> disp = new List<float>(128);
-        int total = (int)metaHeader.numFrames;
-        int step = Mathf.Max(1, total / DepthAffineSampleCount);
-        for (int frame = 0; frame < total; frame += step)
-        {
-            if (!TryReadFrameObjects(frame, buffer))
-            {
-                continue;
-            }
-
-            for (int i = 0; i < buffer.Count; i++)
-            {
-                MetaObj obj = buffer[i];
-                if (!obj.hasSkeleton || obj.jointsCam == null || obj.bboxH <= 0f)
-                {
-                    continue;
-                }
-
-                float distance = EstimateDistanceFromJoints(obj, focalPixels);
-                if (distance <= 0.1f)
-                {
-                    continue;
-                }
-
-                invZ.Add(1f / distance);
-                disp.Add(Z01ToNearness(NormalizeAnchorZ01(Mathf.Clamp01(obj.anchorZ01))));
-            }
-        }
-
-        // 較正のために読んだフレームの SMPL/SMAL は再生に使わないので捨てる。
-        humanSmplPosesMetaBin.Clear();
-        animalSmalPosesMetaBin.Clear();
-
-        if (invZ.Count < 16)
-        {
-            return 0f;
-        }
-
-        float meanX = 0f;
-        float meanY = 0f;
-        for (int i = 0; i < invZ.Count; i++)
-        {
-            meanX += invZ[i];
-            meanY += disp[i];
-        }
-
-        meanX /= invZ.Count;
-        meanY /= invZ.Count;
-
-        float sxy = 0f;
-        float sxx = 0f;
-        for (int i = 0; i < invZ.Count; i++)
-        {
-            float dx = invZ[i] - meanX;
-            sxy += dx * (disp[i] - meanY);
-            sxx += dx * dx;
-        }
-
-        if (sxx < 1e-9f)
-        {
-            return 0f;
-        }
-
-        float a = sxy / sxx;
-        float b = meanY - a * meanX;
-        if (logDepthAffineFit)
-        {
-            Debug.Log($"[AFFINE] samples={invZ.Count} a={a:F4} b={b:F4}");
-        }
-
-        return b > 0f && b < 1f ? b : 0f;
-    }
-
-    // keypoints を距離 Z で透視投影したときの投影高が bboxH に一致する Z を返す。
-    // 厳密解は二分探索だが、Z >> 各点の前後差 なので一次近似で十分（実測で誤差 3% 程度、
-    // かつ比を取る用途では系統誤差が相殺される）。
-    private float EstimateDistanceFromJoints(MetaObj obj, float focalPixels)
-    {
-        Vector3[] joints = obj.jointsCam;
-        if (joints == null || joints.Length == 0 || obj.bboxH <= 0f)
-        {
-            return 0f;
-        }
-
-        float minY = float.MaxValue;
-        float maxY = float.MinValue;
-        for (int i = 0; i < joints.Length; i++)
-        {
-            float y = joints[i].y;
-            if (y < minY) { minY = y; }
-            if (y > maxY) { maxY = y; }
-        }
-
-        float span = maxY - minY;
-        if (span <= 0.0001f)
-        {
-            return 0f;
-        }
-
-        return span * focalPixels / obj.bboxH;
-    }
-
-    // 骨格 track と Else の深度差を時間平滑化する。⑧ の比率平滑化と同じ形式で、
-    // 係数は時定数から毎フレーム求めるためフレームレートに依存しない。
-    // shot 境界では `otherDepthGapByTrack` をクリアして前 shot の値を引きずらせない。
-    // ⑨ が「人がいる深度」として使う点を返す。camRotation はビュー方向を取るためだけに使う。
-    private Vector3 ResolveHumanDepthReferencePoint(GameObject instance, Quaternion camRotation)
-    {
-        if (instance == null || otherDepthSkeletonReference == HumanDepthReferenceMode.Root)
-        {
-            return instance != null ? instance.transform.position : Vector3.zero;
-        }
-
-        if (otherDepthSkeletonReference == HumanDepthReferenceMode.Hips)
-        {
-            Animator animator = instance.GetComponentInChildren<Animator>();
-            if (animator != null && animator.isHuman)
-            {
-                Transform hips = animator.GetBoneTransform(HumanBodyBones.Hips);
-                if (hips != null) { return hips.position; }
-            }
-
-            return instance.transform.position;
-        }
-
-        SkinnedMeshRenderer[] renderers = instance.GetComponentsInChildren<SkinnedMeshRenderer>();
-        bool has = false;
-        Bounds bounds = new Bounds();
-        for (int i = 0; i < renderers.Length; i++)
-        {
-            if (renderers[i] == null) { continue; }
-            if (has) { bounds.Encapsulate(renderers[i].bounds); }
-            else { bounds = renderers[i].bounds; has = true; }
-        }
-
-        if (!has) { return instance.transform.position; }
-        if (otherDepthSkeletonReference == HumanDepthReferenceMode.MeshCenter) { return bounds.center; }
-
-        // MeshFront: bounds のカメラ側の面。bundle の anchor_z が可視表面の depth を
-        // サンプルした値なので、対応する点はここになる。
-        Vector3 forward = camRotation * Vector3.forward;
-        float half =
-            Mathf.Abs(forward.x) * bounds.extents.x +
-            Mathf.Abs(forward.y) * bounds.extents.y +
-            Mathf.Abs(forward.z) * bounds.extents.z;
-        return bounds.center - forward * half;
-    }
-
-    private float SmoothOtherDepthGap(uint trackId, float gap)
-    {
-        float tau = Mathf.Max(0f, otherDepthGapSmoothingSeconds);
-        if (tau <= 0.0001f)
-        {
-            otherDepthGapByTrack[trackId] = gap;
-            return gap;
-        }
-
-        if (!otherDepthGapByTrack.TryGetValue(trackId, out float previous))
-        {
-            otherDepthGapByTrack[trackId] = gap;
-            return gap;
-        }
-
-        // 1 メタフレームにつき約 31 回走るが、Time.deltaTime の合計が 1 メタフレーム
-        // ぶんになるので総進行量は tau どおり（2026-08-25 検証、tick ごとに +0.1mm ずつ
-        // 進み 1 フレームで約 3.3mm = α 0.027 相当）。
-        float deltaTime = Mathf.Max(0f, Time.deltaTime);
-        float alpha = deltaTime <= 0f ? 1f : 1f - Mathf.Exp(-deltaTime / tau);
-        float smoothed = previous + Mathf.Clamp01(alpha) * (gap - previous);
-        otherDepthGapByTrack[trackId] = smoothed;
-        return smoothed;
-    }
-
-    private bool TryFindNearestSkeletonTrack(MetaObj other, out MetaObj skeleton, out GameObject instance)
-    {
-        skeleton = default;
-        instance = null;
-        float bestDistSq = float.MaxValue;
-        for (int i = 0; i < metaFrameObjects.Count; i++)
-        {
-            MetaObj candidate = metaFrameObjects[i];
-            if (!IsCategoryPerson(candidate.categoryId) && !IsCategoryAnimal(candidate.categoryId))
-            {
-                continue;
-            }
-
-            if (!trackInstances.TryGetValue(candidate.trackId, out GameObject candidateInstance) ||
-                candidateInstance == null ||
-                !candidateInstance.activeInHierarchy)
-            {
-                continue;
-            }
-
-            float du = candidate.anchorU - other.anchorU;
-            float dv = candidate.anchorV - other.anchorV;
-            float distSq = du * du + dv * dv;
-            if (distSq < bestDistSq)
-            {
-                bestDistSq = distSq;
-                skeleton = candidate;
-                instance = candidateInstance;
-            }
-        }
-
-        return instance != null;
-    }
 
     // ⑧ の補正が、同じフレームの Else との前後関係を反転させないよう ratio を丸める。
     // ⑧ は人の深度だけを bbox から決めるため、Else（anchor_z 由来のまま）との相対関係が
@@ -1577,6 +818,32 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return true;
     }
 
+    // ⑧ が深度を解くときの「体の位置」。
+    //
+    // Humanoid の Hips を使う。[DEPTH9]（Else を人の骨格基準で置く段）も ref=Hips なので
+    // 基準を揃えている。Hips が取れないモデル・カテゴリは root をそのまま返す（従来動作）。
+    private Vector3 ResolveDepthReferenceWorld(GameObject instance)
+    {
+        if (instance == null)
+        {
+            return Vector3.zero;
+        }
+
+        Animator animator = instance.GetComponentInChildren<Animator>(true);
+        if (animator != null && animator.isHuman)
+        {
+            HumanoidRigCache cache = GetOrBuildHumanoidCache(animator);
+            if (cache != null && cache.ready &&
+                cache.bones.TryGetValue(HumanBodyBones.Hips, out Transform hips) && hips != null)
+            {
+                return hips.position;
+            }
+        }
+
+        return instance.transform.position;
+    }
+
+
     private bool RefineDepthFromProjectedBones(
         GameObject instance,
         MetaObj obj,
@@ -1634,7 +901,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        Vector3 camLocal = Quaternion.Inverse(camRotation) * (instance.transform.position - camOrigin);
+        // **深度は root ではなく体の代表点で解く。**
+        //
+        // Person では ④ AlignModelBodyToAnchorDepthIfEnabled が「hips を anchorZ へ持ってくる」
+        // ために root を体の手前へ置き去りにする。置き去りの量は anchorZ × lossyScale で、
+        // **どちらも screenDist に比例するので screenDist の 2 乗で増える**
+        // （2026-09-05 実測: 1.0m で 0.222m、3.0m で 2.451m）。
+        //
+        // root を「モデルの深度」として扱うと、順序クランプが root の深度（3.0m 設定で 0.408m）
+        // を Else の配置深度（2.72m）と比べて「人が手前すぎる」と誤判定し、倍率を 6.4 まで
+        // 押し上げていた。生の比のガード上限は 3.0 なので、この値は投影からは出ない。
+        // 結果、剛体でぶら下がっている体が 2.86m → 5.30m へ押し出され、boneRatio が
+        // 0.54 まで落ちていた（2.86 / 5.30 = 0.540 と一致）。
+        //
+        // 体の基準点が取れないケース（Animal は Generic リグで、そもそも ④ を通らないので
+        // root と体がずれない）は従来どおり root で解く。
+        Vector3 bodyWorld = ResolveDepthReferenceWorld(instance);
+        Vector3 camLocal = Quaternion.Inverse(camRotation) * (bodyWorld - camOrigin);
         if (camLocal.z <= 0.0001f)
         {
             return false;
@@ -1649,6 +932,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float beforeZ = camLocal.z;
         float ratioZ = camLocal.z * ratio * Mathf.Max(0.1f, projectedDepthScaleK);
         float screenDist = Mathf.Max(0.001f, screenDistanceMeters);
+        // スクリーンより手前に収める制約も**体**に掛ける。root に掛けると root が
+        // screenDist で止まるだけで、体はそのぶん奥（3.0m 設定で 5.45m）に残る。
         float targetZ = Mathf.Clamp(
             ratioZ,
             Mathf.Max(0.001f, MinDistanceFromHeadMeters),
@@ -1656,10 +941,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (logDepthRefineStages)
         {
+            float rootZ = (Quaternion.Inverse(camRotation) * (instance.transform.position - camOrigin)).z;
             Debug.Log(
                 $"[DEPTH8] track={obj.trackId} anchorZ={obj.anchorZ:F4} before={beforeZ:F4} " +
                 $"ratio={ratio:F4} afterRatio={ratioZ:F4} final={targetZ:F4} " +
-                $"screenMoved={(targetZ - ratioZ) * 1000f:F1}mm");
+                $"screenMoved={(targetZ - ratioZ) * 1000f:F1}mm " +
+                $"rootZ={rootZ:F4} bodyMinusRoot={(beforeZ - rootZ) * 1000f:+0.0;-0.0}mm");
         }
 
         if (Mathf.Abs(targetZ - camLocal.z) <= 0.0001f)
@@ -1667,11 +954,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        Vector3 moved = camLocal * (targetZ / camLocal.z);
+        // **位置ベクトルを倍率で伸ばすのではなく、体の移動量ぶんだけ root を平行移動する。**
+        // 伸ばす形が正しいのは「その位置に実体がある」ときだけで、体から離れた root に
+        // 掛けると横方向にも飛ぶ。
+        Vector3 bodyTarget = camLocal * (targetZ / camLocal.z);
+        Vector3 deltaWorld = camRotation * (bodyTarget - camLocal);
         TrackPlacementWriter.Apply(
             instance.transform,
             TrackPlacementCommand.PositionOnly(
-                camOrigin + camRotation * moved,
+                instance.transform.position + deltaWorld,
                 instance.transform.rotation,
                 instance.transform.localScale));
         return true;
@@ -1974,292 +1265,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         return IsCategoryPerson(obj.categoryId) &&
                ShouldUseHumanSmplRootPlacementPolicy(true, false);
-    }
-
-    // Animal 版の [BONEKP]。実ボーンと meta.bin の keypoints3d の投影位置の差を測る。
-    //
-    // human の LogBoneVsKeypointIfEnabled と同じ狙い: 「姿勢が正しく適用されているか」を
-    // 数値で見る。human は Humanoid リグなので Unity が対応を保証するが、**Animal は
-    // Generic リグでモデルごとにボーン名が違い、AnimalRigCache が名前で解決している**。
-    // 対応が外れていても静かに動き続けるので、измерение が無いと気付けない。
-    //
-    // ボーンと keypoint の対応は AnimalPoseJointChains と ApplyAnimalHeadPose の実装に
-    // 合わせている。ここを実装と食い違わせると、また「試算と実装の前提ずれ」を起こす。
-    private void LogAnimalBoneVsKeypointIfEnabled(MetaObj obj, GameObject instance, Transform screen, int frame)
-    {
-        if (!logAnimalBoneVsKeypoint || instance == null || manifest == null || manifest.eye_h <= 0)
-        {
-            return;
-        }
-
-        if (!IsCategoryAnimal(obj.categoryId) ||
-            frame % Mathf.Max(1, logBoneVsKeypointEveryNFrames) != 0)
-        {
-            return;
-        }
-
-        if (!obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
-        {
-            return;
-        }
-
-        if (!TryGetProjectionIntrinsics(out float fx, out float fy, out _, out _) ||
-            !TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
-        {
-            return;
-        }
-
-        AnimalRigCache cache = animalPoseApplier.PeekAnimalRigCache(instance);
-        if (cache == null || !cache.ready)
-        {
-            return;
-        }
-
-        // 適用側は **回転だけ** を書いている（ApplyAnimalBoneFromPoints は
-        // TransformWriter.ApplyWorldRotation のみで、位置は動かさない）。したがって
-        // 「ボーンの位置と keypoint の位置の差」を測っても意味がない。最初それをやって
-        // Neck 378% という数字を出したが、測っている対象が違った（2026-08-27）。
-        //
-        // 正しくは **方向（角度）の差**。ボーンが向いている向きと、keypoint のペアが
-        // 示す向きの角度差を測る。四肢は AnimalPoseJointChains そのままで、
-        // upper は chain[0]→chain[1]、lower は chain[1]→chain[2]、paw は chain[2]→chain[3]。
-        //
-        // ボーン側は現行 bundle では **SMAL FK が出した姿勢**（AnimalSmalFkApplier）。
-        // つまりこの指標は「SMAL FK の結果 対 AniMer keypoints3d」という**別ソース同士の
-        // 比較**で、「適用がターゲットに収束しているか」ではない。最優先目標が
-        // keypoints3d への一致なので指標としては有効だが、読み違えないこと。
-        // paw / toe / head は SMAL 側で body_pose を受け取らず親追従なので、
-        // 値が小さくても「合っている」ではない（Docs/smpl-retargeting.md の駆動範囲の表）。
-        // from / to が両方 non-null のときは **2 点間の向き**（to.position - from.position）を
-        // 測る。null のときは従来どおりボーン自身の向き（aim child への方向）。
-        //
-        // 後肢 Upper で 2 点間版が要る理由:
-        //   ボーン方向は「股関節 → 膝」だが、目標の kp7 は Tail1（尾の付け根）であって
-        //   股関節ではない。この起点の違いだけで **22 度の下駄**が乗る（実測。前肢は
-        //   kp12/13 が LLeg1/RLeg1 そのものなので下駄はちょうど 0.0 度）。
-        //   Unity リグには tail_base があるので、両辺を「尾の付け根 → 膝」に揃えられる。
-        // 回転ベース（LRUp）と点間ベース（LRUpTB）を両方出して差を見る。
-        // **意味が違うので平均に混ぜないこと。**
-        (Transform bone, Transform from, Transform to, int kpA, int kpB, string label)[] pairs =
-        {
-            // 2026-08-28: D-007 の対応表で全面的に訂正した。旧ペアは前肢の起点が
-            // kp18（「き甲」だと思っていたが実際は**頭**）で、しかも**前肢・後肢とも
-            // 左右が逆**だった。ここで測った角度を 3 セッション読んでいたが、
-            // 対応づけ自体が誤っていたので過去の数値とは比較しないこと。
-            //
-            // 首は 26 関節に対応する点が無いので、Neck は診断から外す。
-            // 代わりに head を「頭→鼻先端」で測る。
-            (cache.head, null, null, AnimalHeadKeypoints.Head, AnimalHeadKeypoints.Nose, "Head"),
-            (cache.leftFrontUpper,  null, null, 12,  8, "LFUp"),
-            (cache.leftFrontLower,  null, null,  8, 14, "LFLo"),
-            (cache.leftFrontPaw,    null, null, 14,  3, "LFPaw"),
-            (cache.rightFrontUpper, null, null, 13,  9, "RFUp"),
-            (cache.rightFrontLower, null, null,  9, 15, "RFLo"),
-            (cache.rightFrontPaw,   null, null, 15,  4, "RFPaw"),
-            (cache.leftRearUpper,   null, null,  7, 10, "LRUp"),
-            (cache.leftRearLower,   null, null, 10, 16, "LRLo"),
-            (cache.leftRearPaw,     null, null, 16,  5, "LRPaw"),
-            (cache.rightRearUpper,  null, null,  7, 11, "RRUp"),
-            (cache.rightRearLower,  null, null, 11, 17, "RRLo"),
-            (cache.rightRearPaw,    null, null, 17,  6, "RRPaw"),
-
-            // 下駄を除いた後肢 Upper。両辺とも「尾の付け根 → 膝」。
-            (cache.leftRearLower,  cache.tailBase, cache.leftRearLower,   7, 10, "LRUpTB"),
-            (cache.rightRearLower, cache.tailBase, cache.rightRearLower,  7, 11, "RRUpTB"),
-        };
-
-        System.Text.StringBuilder sb = new System.Text.StringBuilder();
-        sb.Append($"[ANIMALKP] f={frame} track={obj.trackId}");
-        int resolved = 0;
-        for (int i = 0; i < pairs.Length; i++)
-        {
-            (Transform bone, Transform from, Transform to, int kpA, int kpB, string label) = pairs[i];
-            bool usePoints = from != null && to != null;
-            if (bone == null || (usePoints && (from == null || to == null)))
-            {
-                sb.Append($" {label}=null");
-                continue;
-            }
-
-            resolved++;
-            if (kpA >= obj.jointsVis.Length || kpB >= obj.jointsVis.Length ||
-                obj.jointsVis[kpA] == 0 || obj.jointsVis[kpB] == 0)
-            {
-                sb.Append($" {label}=novis");
-                continue;
-            }
-
-            // jointsCam は anchor 基準の相対座標。差を取るので anchor は打ち消えるが、
-            // camRotation で world 系に合わせる必要がある。
-            Vector3 targetDir = camRotation * (obj.jointsCam[kpB] - obj.jointsCam[kpA]);
-            Vector3 boneDir;
-            if (usePoints)
-            {
-                boneDir = to.position - from.position;
-                if (boneDir.sqrMagnitude < 0.000001f)
-                {
-                    sb.Append($" {label}=nodir");
-                    continue;
-                }
-
-                boneDir.Normalize();
-            }
-            else if (!animalPoseApplier.TryGetBoneDirectionForDiag(cache, bone, out boneDir))
-            {
-                sb.Append($" {label}=nodir");
-                continue;
-            }
-
-            if (targetDir.sqrMagnitude < 0.000001f)
-            {
-                sb.Append($" {label}=nodir");
-                continue;
-            }
-
-            sb.Append($" {label}={Vector3.Angle(boneDir, targetDir.normalized):F0}");
-        }
-
-        sb.Append($" resolvedBones={resolved}/{pairs.Length}");
-
-        // リグの関節内角（肘・膝の曲がり角）。**keypoint とは無関係**で、
-        // 「SMAL の body_pose が Unity のボーンをどれだけ曲げたか」だけを測る。
-        //
-        // 測定 B（曲げ有無）で [ANIMALKP] がほとんど変わらなかったので、
-        //   transport が曲げを失っているのか / SMAL の姿勢が元々 rest に近いのか
-        // を分けるために入れた（2026-08-28）。
-        //
-        // SMAL 側の同じ内角は rest から次のぶん動いている（meta.bin から実測済み）:
-        //   肘 rest 5.4° → 犬 24.3 / 18.1°（+18.9 / +12.7）
-        //   膝 rest 32.6° → 犬 54.1 / 46.9°（+21.5 / +14.4）
-        // Unity 側も同程度動けば transport の**大きさ**は合っている（残差は向き＝ロール）。
-        // ほとんど動かなければ transport が曲げを失っている。
-        System.Text.StringBuilder ab = new System.Text.StringBuilder();
-        ab.Append($"[ANIMALANG] f={frame} track={obj.trackId}");
-        foreach ((Transform up, Transform lo, Transform paw, string label) in new[]
-        {
-            (cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw, "LFel"),
-            (cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw, "RFel"),
-            (cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, "LRkn"),
-            (cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, "RRkn"),
-        })
-        {
-            if (up == null || lo == null || paw == null)
-            {
-                ab.Append($" {label}=null");
-                continue;
-            }
-
-            Vector3 a = lo.position - up.position;
-            Vector3 b = paw.position - lo.position;
-            if (a.sqrMagnitude < 0.000001f || b.sqrMagnitude < 0.000001f)
-            {
-                ab.Append($" {label}=deg");
-                continue;
-            }
-
-            ab.Append($" {label}={Vector3.Angle(a, b):F0}");
-        }
-
-        Debug.Log(ab.ToString());
-
-        if (!loggedAnimalRigBoneNames)
-        {
-            loggedAnimalRigBoneNames = true;
-            System.Text.StringBuilder nb = new System.Text.StringBuilder();
-            nb.Append($"[ANIMALRIG] track={obj.trackId} instance={instance.name}");
-            for (int i = 0; i < pairs.Length; i++)
-            {
-                (Transform bone, Transform _from, Transform _to, int kpA, int kpB, string label) = pairs[i];
-                if (bone == null)
-                {
-                    nb.Append($" {label}=null");
-                    continue;
-                }
-
-                // 子 Transform の数と最初の子の名前。head が本当に末端かを確かめる。
-                string firstChild = bone.childCount > 0 ? bone.GetChild(0).name : "-";
-                bool hasDir = animalPoseApplier.TryGetBoneDirectionForDiag(cache, bone, out _);
-                nb.Append($" {label}={bone.name}(children={bone.childCount},first={firstChild},dir={(hasDir ? 1 : 0)})");
-            }
-
-            // 末端ボーンが他にもあるか。tailTip / toe も同じ状態のはず。
-            foreach ((Transform t, string n) in new[]
-            {
-                (cache.spine, "spine"), (cache.tailBase, "tailBase"),
-                (cache.tailMid, "tailMid"), (cache.tailTip, "tailTip"),
-                (cache.leftRearToe, "lRearToe"), (cache.rightRearToe, "rRearToe"),
-            })
-            {
-                if (t == null)
-                {
-                    nb.Append($" {n}=null");
-                    continue;
-                }
-
-                bool hasDir = animalPoseApplier.TryGetBoneDirectionForDiag(cache, t, out _);
-                nb.Append($" {n}={t.name}(children={t.childCount},dir={(hasDir ? 1 : 0)})");
-            }
-
-            Debug.Log(nb.ToString());
-        }
-
-        Debug.Log(sb.ToString());
-    }
-
-    // 横方向の実測用。メッシュの投影 U 範囲と bbox の U 範囲を出す。
-    // ⑦ は縦しか動かしていない（AlignProjectedModelBottomToBBox は camY のみ）ので、
-    // 横位置は ① の anchorU で決まる。ずれているかどうかを測るためだけの診断。
-    private void LogHorizontalPlacementIfEnabled(MetaObj obj, GameObject instance, Transform screen, int frame)
-    {
-        if (!logHorizontalPlacement || instance == null || manifest == null || manifest.eye_w <= 0)
-        {
-            return;
-        }
-
-        if (frame % Mathf.Max(1, logPlacementMeasurementEveryNFrames) != 0)
-        {
-            return;
-        }
-
-        if (!TryGetProjectionIntrinsics(out float fx, out float fy, out _, out _) ||
-            !TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation) ||
-            !TryGetRendererWorldBounds(instance, out Bounds bounds))
-        {
-            return;
-        }
-
-        Quaternion worldToCam = Quaternion.Inverse(camRotation);
-        float minU = float.MaxValue;
-        float maxU = float.MinValue;
-        Vector3 e = bounds.extents;
-        for (int i = 0; i < 8; i++)
-        {
-            Vector3 corner = bounds.center + new Vector3(
-                ((i & 1) == 0 ? -e.x : e.x),
-                ((i & 2) == 0 ? -e.y : e.y),
-                ((i & 4) == 0 ? -e.z : e.z));
-            Vector3 cam = worldToCam * (corner - camOrigin);
-            if (!PinholePlacementSpace.TryProjectCamLocalToEyePixel(manifest, cam, fx, fy, out Vector2 px))
-            {
-                continue;
-            }
-
-            if (px.x < minU) { minU = px.x; }
-            if (px.x > maxU) { maxU = px.x; }
-        }
-
-        if (minU > maxU)
-        {
-            return;
-        }
-
-        float bl = obj.bboxX;
-        float br = obj.bboxX + obj.bboxW;
-        Debug.Log(
-            $"[HPOS] f={frame} track={obj.trackId} projL={minU:F1} projR={maxU:F1} projC={(minU + maxU) * 0.5f:F1} " +
-            $"bboxL={bl:F0} bboxR={br:F0} bboxC={(bl + br) * 0.5f:F1} anchorU={obj.anchorU} " +
-            $"dL={(minU - bl):F1} dR={(maxU - br):F1} dC={((minU + maxU) * 0.5f - (bl + br) * 0.5f):F1} " +
-            $"clipL={(obj.bboxX <= 0 ? 1 : 0)} clipR={(obj.bboxX + obj.bboxW >= manifest.eye_w ? 1 : 0)}");
     }
 
     private bool TryProjectRendererBoundsToEyeHeight(GameObject instance, Transform screen, out float topV, out float bottomV, out float heightPixels, out float depthMeters)

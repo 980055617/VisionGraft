@@ -112,18 +112,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                byTrack.TryGetValue(trackId, out pose);
     }
 
-    private bool TryGetHumanSmplRootRotation(Transform screen, HumanSmplPose pose, out Quaternion rootRotation)
-    {
-        rootRotation = Quaternion.identity;
-        if (!EnableHumanSmplMotion || !pose.hasGlobalOrient || !IsFinite(pose.globalOrient))
-        {
-            return false;
-        }
-
-        Quaternion basis = GetPinholeBasisRotation(screen);
-        return TryBuildHumanSmplUprightRootRotation(basis, pose.globalOrient, basis * Vector3.up, out rootRotation);
-    }
-
     public static bool TryBuildHumanSmplUprightRootRotation(
         Quaternion cameraBasis,
         Quaternion smplGlobalOrient,
@@ -857,21 +845,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         Vector3 up = screenUp.sqrMagnitude > 0.000001f ? screenUp.normalized : Vector3.up;
         return currentPosition + up * Vector3.Dot(referencePosition - currentPosition, up);
-    }
-
-    private static bool TryGetSmplJointForHumanBone(HumanBodyBones boneId, out int smplJoint)
-    {
-        foreach (KeyValuePair<int, HumanBodyBones> kv in SmplJointToHumanBone)
-        {
-            if (kv.Value == boneId)
-            {
-                smplJoint = kv.Key;
-                return true;
-            }
-        }
-
-        smplJoint = -1;
-        return false;
     }
 
     private static bool IsTerminalHumanSmplHandBone(HumanBodyBones boneId)

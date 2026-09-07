@@ -987,4 +987,450 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         heightPixels = maxV - minV;
         return heightPixels > 0.0001f;
     }
+
+
+    // ---- 以下は Playback.partial.cs から移設（2026-09-06）----
+    // 配置の本筋と診断が同じファイルに混ざって 2,482 行になっていた。
+    // 同じ partial クラスなので参照関係・シリアライズは変わらない。
+
+    // FK 適用後の骨格投影が bbox 高さに一致するよう、ロック済みスケールを一度だけ測り直す。
+    //
+    // ② ResolveDesiredLocalScale が使う bboxWorldH は「被写体が anchorZ という 1 枚の面に
+    // ある」前提の式で、前後に広がった姿勢では必ず過小評価になる（2026-08-18 実測: 立位 7% /
+    // 深い前傾 76% 過大。keypoints3d を同じスケールで投影しても同じ比なので式の前提の問題）。
+    // ここで FK 適用後の実測値から逆算し、基準フレームでの誤差を消す。
+    //
+    // 投影高さは scale に厳密には比例しない（scale を変えると各ボーンの深度も動く）が、
+    // root 深度 0.75 m に対して体の前後の広がりは 0.1 m 程度なので誤差は 2 次に留まる。
+    // 1 回の補正で十分収束するため反復はしない。
+    //
+    // 呼ぶのは ⑦ FitDisplayedModelToBBox の後。スケールを変えると下端が動くので、
+    // 補正後に下端合わせをやり直す。
+    // 診断: モデルの実ボーンの投影位置と、meta.bin の keypoints3d の投影位置を突き合わせる。
+    // 「試算（keypoints ベース）は合うのに実装（実ボーン）は効かない」原因の切り分け用。
+    private void LogBoneVsKeypointIfEnabled(MetaObj obj, GameObject instance, Transform screen, int frame)
+    {
+        if (!logBoneVsKeypoint || instance == null || !obj.hasSkeleton || obj.jointsCam == null)
+        {
+            return;
+        }
+
+        if (logBoneVsKeypointEveryNFrames > 0 && (frame % logBoneVsKeypointEveryNFrames) != 0)
+        {
+            return;
+        }
+
+        Animator animator = instance.GetComponentInChildren<Animator>(true);
+        if (animator == null || !animator.isHuman)
+        {
+            return;
+        }
+
+        HumanoidRigCache cache = GetOrBuildHumanoidCache(animator);
+        if (cache == null || !cache.ready)
+        {
+            return;
+        }
+
+        if (!TryGetProjectionIntrinsics(out float fx, out float fy, out _, out _) ||
+            !TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
+        {
+            return;
+        }
+
+
+        // keypoints を bbox 高さに合わせて投影する（試算と同じ手順）。
+        Vector3[] joints = obj.jointsCam;
+        const int PelvisIndex = 39;
+        if (joints.Length <= PelvisIndex || obj.bboxH <= 0f)
+        {
+            return;
+        }
+
+        float minY = float.MaxValue;
+        float maxY = float.MinValue;
+        for (int i = 0; i < joints.Length; i++)
+        {
+            float y = joints[i].y - joints[PelvisIndex].y;
+            if (y < minY) { minY = y; }
+            if (y > maxY) { maxY = y; }
+        }
+
+        float span = maxY - minY;
+        if (span <= 0.0001f)
+        {
+            return;
+        }
+
+        float pixelsPerMeter = obj.bboxH / span;
+
+        // 比べる部位: OpenPose25 の index → Humanoid ボーン
+        (int kp, HumanBodyBones bone, string label)[] pairs =
+        {
+            (1, HumanBodyBones.Neck, "Neck"),
+            (2, HumanBodyBones.RightUpperArm, "RSho"),
+            (3, HumanBodyBones.RightLowerArm, "RElb"),
+            (4, HumanBodyBones.RightHand, "RWri"),
+            (5, HumanBodyBones.LeftUpperArm, "LSho"),
+            (6, HumanBodyBones.LeftLowerArm, "LElb"),
+            (7, HumanBodyBones.LeftHand, "LWri"),
+            (9, HumanBodyBones.RightUpperLeg, "RHip"),
+            (10, HumanBodyBones.RightLowerLeg, "RKnee"),
+            (24, HumanBodyBones.RightFoot, "RFoot"),
+            (12, HumanBodyBones.LeftUpperLeg, "LHip"),
+            (13, HumanBodyBones.LeftLowerLeg, "LKnee"),
+            (21, HumanBodyBones.LeftFoot, "LFoot"),
+            // 足首の基準点ずれを切り分けるための追加ペア。
+            // Foot ボーンが Ankle と Toe のどちらに近いか、Toes ボーンが BigToe と合うかを見る。
+            (22, HumanBodyBones.RightFoot, "RFoot_vsToe"),
+            (19, HumanBodyBones.LeftFoot, "LFoot_vsToe"),
+            (22, HumanBodyBones.RightToes, "RToes"),
+            (19, HumanBodyBones.LeftToes, "LToes"),
+            (24, HumanBodyBones.RightFoot, "RFoot_vsHeel"),
+            (21, HumanBodyBones.LeftFoot, "LFoot_vsHeel"),
+        };
+
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
+        sb.Append($"[BONEKP] f={frame} track={obj.trackId} bboxH={obj.bboxH:F0}");
+        Quaternion worldToCam = Quaternion.Inverse(camRotation);
+
+        for (int i = 0; i < pairs.Length; i++)
+        {
+            (int kpIndex, HumanBodyBones boneId, string label) = pairs[i];
+            if (kpIndex >= joints.Length || !cache.bones.TryGetValue(boneId, out Transform bone) || bone == null)
+            {
+                continue;
+            }
+
+            // keypoint の投影位置（骨盤 anchor 基準）
+            float ku = obj.anchorU + (joints[kpIndex].x - joints[PelvisIndex].x) * pixelsPerMeter;
+            float kv = obj.anchorV - (joints[kpIndex].y - joints[PelvisIndex].y) * pixelsPerMeter;
+
+            // 実ボーンの投影位置
+            Vector3 cam = worldToCam * (bone.position - camOrigin);
+            if (cam.z <= 0.0001f)
+            {
+                continue;
+            }
+
+            float bu = (0.5f + (cam.x / cam.z) * fx * 0.5f) * manifest.eye_w;
+            float bv = (0.5f - (cam.y / cam.z) * fy * 0.5f) * manifest.eye_h;
+
+            sb.Append($" {label}=({bu - ku:F0},{bv - kv:F0})");
+        }
+
+        Debug.Log(sb.ToString());
+    }
+
+    // root と体（Hips）の深度を段ごとに出す。**root が体からいつ離れるか**を特定するため。
+    // 2026-09-05 時点では ⑧ に入る時点で 3.0m 設定で 2.451m 離れており、その発生段が
+    // 未特定（localHips.z が anchorZ のメートル値と一致するところまでは判っている）。
+    private void LogHipStageIfEnabled(string stage, GameObject instance, MetaObj obj, Transform screen)
+    {
+        if (!logDepthRefineStages || instance == null || !IsCategoryPerson(obj.categoryId))
+        {
+            return;
+        }
+
+        if (!TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
+        {
+            return;
+        }
+
+        Quaternion worldToCam = Quaternion.Inverse(camRotation);
+        float rootZ = (worldToCam * (instance.transform.position - camOrigin)).z;
+        Vector3 body = ResolveDepthReferenceWorld(instance);
+        float bodyZ = (worldToCam * (body - camOrigin)).z;
+        Debug.Log(
+            $"[HIPSTAGE] f={GetCurrentPlaybackFrame()} track={obj.trackId} stage={stage} " +
+            $"rootZ={rootZ:F4} bodyZ={bodyZ:F4} gap={(bodyZ - rootZ) * 1000f:+0.0;-0.0}mm " +
+            $"anchorZ={obj.anchorZ:F4} scale={instance.transform.lossyScale.y:F4}");
+    }
+
+    // Animal 版の [BONEKP]。実ボーンと meta.bin の keypoints3d の投影位置の差を測る。
+    //
+    // human の LogBoneVsKeypointIfEnabled と同じ狙い: 「姿勢が正しく適用されているか」を
+    // 数値で見る。human は Humanoid リグなので Unity が対応を保証するが、**Animal は
+    // Generic リグでモデルごとにボーン名が違い、AnimalRigCache が名前で解決している**。
+    // 対応が外れていても静かに動き続けるので、измерение が無いと気付けない。
+    //
+    // ボーンと keypoint の対応は AnimalPoseJointChains と ApplyAnimalHeadPose の実装に
+    // 合わせている。ここを実装と食い違わせると、また「試算と実装の前提ずれ」を起こす。
+    private void LogAnimalBoneVsKeypointIfEnabled(MetaObj obj, GameObject instance, Transform screen, int frame)
+    {
+        if (!logAnimalBoneVsKeypoint || instance == null || manifest == null || manifest.eye_h <= 0)
+        {
+            return;
+        }
+
+        if (!IsCategoryAnimal(obj.categoryId) ||
+            frame % Mathf.Max(1, logBoneVsKeypointEveryNFrames) != 0)
+        {
+            return;
+        }
+
+        if (!obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
+        {
+            return;
+        }
+
+        if (!TryGetProjectionIntrinsics(out float fx, out float fy, out _, out _) ||
+            !TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
+        {
+            return;
+        }
+
+        AnimalRigCache cache = animalPoseApplier.PeekAnimalRigCache(instance);
+        if (cache == null || !cache.ready)
+        {
+            return;
+        }
+
+        // 適用側は **回転だけ** を書いている（ApplyAnimalBoneFromPoints は
+        // TransformWriter.ApplyWorldRotation のみで、位置は動かさない）。したがって
+        // 「ボーンの位置と keypoint の位置の差」を測っても意味がない。最初それをやって
+        // Neck 378% という数字を出したが、測っている対象が違った（2026-08-27）。
+        //
+        // 正しくは **方向（角度）の差**。ボーンが向いている向きと、keypoint のペアが
+        // 示す向きの角度差を測る。四肢は AnimalPoseJointChains そのままで、
+        // upper は chain[0]→chain[1]、lower は chain[1]→chain[2]、paw は chain[2]→chain[3]。
+        //
+        // ボーン側は現行 bundle では **SMAL FK が出した姿勢**（AnimalSmalFkApplier）。
+        // つまりこの指標は「SMAL FK の結果 対 AniMer keypoints3d」という**別ソース同士の
+        // 比較**で、「適用がターゲットに収束しているか」ではない。最優先目標が
+        // keypoints3d への一致なので指標としては有効だが、読み違えないこと。
+        // paw / toe / head は SMAL 側で body_pose を受け取らず親追従なので、
+        // 値が小さくても「合っている」ではない（Docs/smpl-retargeting.md の駆動範囲の表）。
+        // from / to が両方 non-null のときは **2 点間の向き**（to.position - from.position）を
+        // 測る。null のときは従来どおりボーン自身の向き（aim child への方向）。
+        //
+        // 後肢 Upper で 2 点間版が要る理由:
+        //   ボーン方向は「股関節 → 膝」だが、目標の kp7 は Tail1（尾の付け根）であって
+        //   股関節ではない。この起点の違いだけで **22 度の下駄**が乗る（実測。前肢は
+        //   kp12/13 が LLeg1/RLeg1 そのものなので下駄はちょうど 0.0 度）。
+        //   Unity リグには tail_base があるので、両辺を「尾の付け根 → 膝」に揃えられる。
+        // 回転ベース（LRUp）と点間ベース（LRUpTB）を両方出して差を見る。
+        // **意味が違うので平均に混ぜないこと。**
+        (Transform bone, Transform from, Transform to, int kpA, int kpB, string label)[] pairs =
+        {
+            // 2026-08-28: D-007 の対応表で全面的に訂正した。旧ペアは前肢の起点が
+            // kp18（「き甲」だと思っていたが実際は**頭**）で、しかも**前肢・後肢とも
+            // 左右が逆**だった。ここで測った角度を 3 セッション読んでいたが、
+            // 対応づけ自体が誤っていたので過去の数値とは比較しないこと。
+            //
+            // 首は 26 関節に対応する点が無いので、Neck は診断から外す。
+            // 代わりに head を「頭→鼻先端」で測る。
+            (cache.head, null, null, AnimalHeadKeypoints.Head, AnimalHeadKeypoints.Nose, "Head"),
+            (cache.leftFrontUpper,  null, null, 12,  8, "LFUp"),
+            (cache.leftFrontLower,  null, null,  8, 14, "LFLo"),
+            (cache.leftFrontPaw,    null, null, 14,  3, "LFPaw"),
+            (cache.rightFrontUpper, null, null, 13,  9, "RFUp"),
+            (cache.rightFrontLower, null, null,  9, 15, "RFLo"),
+            (cache.rightFrontPaw,   null, null, 15,  4, "RFPaw"),
+            (cache.leftRearUpper,   null, null,  7, 10, "LRUp"),
+            (cache.leftRearLower,   null, null, 10, 16, "LRLo"),
+            (cache.leftRearPaw,     null, null, 16,  5, "LRPaw"),
+            (cache.rightRearUpper,  null, null,  7, 11, "RRUp"),
+            (cache.rightRearLower,  null, null, 11, 17, "RRLo"),
+            (cache.rightRearPaw,    null, null, 17,  6, "RRPaw"),
+
+            // 下駄を除いた後肢 Upper。両辺とも「尾の付け根 → 膝」。
+            (cache.leftRearLower,  cache.tailBase, cache.leftRearLower,   7, 10, "LRUpTB"),
+            (cache.rightRearLower, cache.tailBase, cache.rightRearLower,  7, 11, "RRUpTB"),
+        };
+
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
+        sb.Append($"[ANIMALKP] f={frame} track={obj.trackId}");
+        int resolved = 0;
+        for (int i = 0; i < pairs.Length; i++)
+        {
+            (Transform bone, Transform from, Transform to, int kpA, int kpB, string label) = pairs[i];
+            bool usePoints = from != null && to != null;
+            if (bone == null || (usePoints && (from == null || to == null)))
+            {
+                sb.Append($" {label}=null");
+                continue;
+            }
+
+            resolved++;
+            if (kpA >= obj.jointsVis.Length || kpB >= obj.jointsVis.Length ||
+                obj.jointsVis[kpA] == 0 || obj.jointsVis[kpB] == 0)
+            {
+                sb.Append($" {label}=novis");
+                continue;
+            }
+
+            // jointsCam は anchor 基準の相対座標。差を取るので anchor は打ち消えるが、
+            // camRotation で world 系に合わせる必要がある。
+            Vector3 targetDir = camRotation * (obj.jointsCam[kpB] - obj.jointsCam[kpA]);
+            Vector3 boneDir;
+            if (usePoints)
+            {
+                boneDir = to.position - from.position;
+                if (boneDir.sqrMagnitude < 0.000001f)
+                {
+                    sb.Append($" {label}=nodir");
+                    continue;
+                }
+
+                boneDir.Normalize();
+            }
+            else if (!animalPoseApplier.TryGetBoneDirectionForDiag(cache, bone, out boneDir))
+            {
+                sb.Append($" {label}=nodir");
+                continue;
+            }
+
+            if (targetDir.sqrMagnitude < 0.000001f)
+            {
+                sb.Append($" {label}=nodir");
+                continue;
+            }
+
+            sb.Append($" {label}={Vector3.Angle(boneDir, targetDir.normalized):F0}");
+        }
+
+        sb.Append($" resolvedBones={resolved}/{pairs.Length}");
+
+        // リグの関節内角（肘・膝の曲がり角）。**keypoint とは無関係**で、
+        // 「SMAL の body_pose が Unity のボーンをどれだけ曲げたか」だけを測る。
+        //
+        // 測定 B（曲げ有無）で [ANIMALKP] がほとんど変わらなかったので、
+        //   transport が曲げを失っているのか / SMAL の姿勢が元々 rest に近いのか
+        // を分けるために入れた（2026-08-28）。
+        //
+        // SMAL 側の同じ内角は rest から次のぶん動いている（meta.bin から実測済み）:
+        //   肘 rest 5.4° → 犬 24.3 / 18.1°（+18.9 / +12.7）
+        //   膝 rest 32.6° → 犬 54.1 / 46.9°（+21.5 / +14.4）
+        // Unity 側も同程度動けば transport の**大きさ**は合っている（残差は向き＝ロール）。
+        // ほとんど動かなければ transport が曲げを失っている。
+        System.Text.StringBuilder ab = new System.Text.StringBuilder();
+        ab.Append($"[ANIMALANG] f={frame} track={obj.trackId}");
+        foreach ((Transform up, Transform lo, Transform paw, string label) in new[]
+        {
+            (cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw, "LFel"),
+            (cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw, "RFel"),
+            (cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, "LRkn"),
+            (cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, "RRkn"),
+        })
+        {
+            if (up == null || lo == null || paw == null)
+            {
+                ab.Append($" {label}=null");
+                continue;
+            }
+
+            Vector3 a = lo.position - up.position;
+            Vector3 b = paw.position - lo.position;
+            if (a.sqrMagnitude < 0.000001f || b.sqrMagnitude < 0.000001f)
+            {
+                ab.Append($" {label}=deg");
+                continue;
+            }
+
+            ab.Append($" {label}={Vector3.Angle(a, b):F0}");
+        }
+
+        Debug.Log(ab.ToString());
+
+        if (!loggedAnimalRigBoneNames)
+        {
+            loggedAnimalRigBoneNames = true;
+            System.Text.StringBuilder nb = new System.Text.StringBuilder();
+            nb.Append($"[ANIMALRIG] track={obj.trackId} instance={instance.name}");
+            for (int i = 0; i < pairs.Length; i++)
+            {
+                (Transform bone, Transform _from, Transform _to, int kpA, int kpB, string label) = pairs[i];
+                if (bone == null)
+                {
+                    nb.Append($" {label}=null");
+                    continue;
+                }
+
+                // 子 Transform の数と最初の子の名前。head が本当に末端かを確かめる。
+                string firstChild = bone.childCount > 0 ? bone.GetChild(0).name : "-";
+                bool hasDir = animalPoseApplier.TryGetBoneDirectionForDiag(cache, bone, out _);
+                nb.Append($" {label}={bone.name}(children={bone.childCount},first={firstChild},dir={(hasDir ? 1 : 0)})");
+            }
+
+            // 末端ボーンが他にもあるか。tailTip / toe も同じ状態のはず。
+            foreach ((Transform t, string n) in new[]
+            {
+                (cache.spine, "spine"), (cache.tailBase, "tailBase"),
+                (cache.tailMid, "tailMid"), (cache.tailTip, "tailTip"),
+                (cache.leftRearToe, "lRearToe"), (cache.rightRearToe, "rRearToe"),
+            })
+            {
+                if (t == null)
+                {
+                    nb.Append($" {n}=null");
+                    continue;
+                }
+
+                bool hasDir = animalPoseApplier.TryGetBoneDirectionForDiag(cache, t, out _);
+                nb.Append($" {n}={t.name}(children={t.childCount},dir={(hasDir ? 1 : 0)})");
+            }
+
+            Debug.Log(nb.ToString());
+        }
+
+        Debug.Log(sb.ToString());
+    }
+
+    // 横方向の実測用。メッシュの投影 U 範囲と bbox の U 範囲を出す。
+    // ⑦ は縦しか動かしていない（AlignProjectedModelBottomToBBox は camY のみ）ので、
+    // 横位置は ① の anchorU で決まる。ずれているかどうかを測るためだけの診断。
+    private void LogHorizontalPlacementIfEnabled(MetaObj obj, GameObject instance, Transform screen, int frame)
+    {
+        if (!logHorizontalPlacement || instance == null || manifest == null || manifest.eye_w <= 0)
+        {
+            return;
+        }
+
+        if (frame % Mathf.Max(1, logPlacementMeasurementEveryNFrames) != 0)
+        {
+            return;
+        }
+
+        if (!TryGetProjectionIntrinsics(out float fx, out float fy, out _, out _) ||
+            !TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation) ||
+            !TryGetRendererWorldBounds(instance, out Bounds bounds))
+        {
+            return;
+        }
+
+        float minU = float.MaxValue;
+        float maxU = float.MinValue;
+        Vector3 e = bounds.extents;
+        Quaternion worldToCam = Quaternion.Inverse(camRotation);
+
+        for (int i = 0; i < 8; i++)
+        {
+            Vector3 corner = bounds.center + new Vector3(
+                ((i & 1) == 0 ? -e.x : e.x),
+                ((i & 2) == 0 ? -e.y : e.y),
+                ((i & 4) == 0 ? -e.z : e.z));
+            Vector3 cam = worldToCam * (corner - camOrigin);
+            if (!PinholePlacementSpace.TryProjectCamLocalToEyePixel(manifest, cam, fx, fy, out Vector2 px))
+            {
+                continue;
+            }
+
+            if (px.x < minU) { minU = px.x; }
+            if (px.x > maxU) { maxU = px.x; }
+        }
+
+        if (minU > maxU)
+        {
+            return;
+        }
+
+        float bl = obj.bboxX;
+        float br = obj.bboxX + obj.bboxW;
+        Debug.Log(
+            $"[HPOS] f={frame} track={obj.trackId} projL={minU:F1} projR={maxU:F1} projC={(minU + maxU) * 0.5f:F1} " +
+            $"bboxL={bl:F0} bboxR={br:F0} bboxC={(bl + br) * 0.5f:F1} anchorU={obj.anchorU} " +
+            $"dL={(minU - bl):F1} dR={(maxU - br):F1} dC={((minU + maxU) * 0.5f - (bl + br) * 0.5f):F1} " +
+            $"clipL={(obj.bboxX <= 0 ? 1 : 0)} clipR={(obj.bboxX + obj.bboxW >= manifest.eye_w ? 1 : 0)}");
+    }
 }

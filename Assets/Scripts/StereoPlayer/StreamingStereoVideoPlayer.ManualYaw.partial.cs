@@ -124,47 +124,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private bool StepSelectedManualRotationTrack(int direction)
-    {
-        List<uint> ids = GetAvailableTrackIdsForManualRotation();
-        if (ids.Count <= 0)
-        {
-            selectedManualRotationTrackId = -1;
-            return false;
-        }
-
-        if (direction == 0)
-        {
-            selectedManualRotationTrackId = (int)ids[0];
-            runtimeModelPickerTrackId = selectedManualRotationTrackId;
-            return true;
-        }
-
-        int current = selectedManualRotationTrackId;
-        int index = ids.FindIndex(id => id == (uint)current);
-        if (index < 0)
-        {
-            selectedManualRotationTrackId = (int)ids[0];
-            return true;
-        }
-
-        int next = index + (direction > 0 ? 1 : -1);
-        if (next < 0)
-        {
-            next = ids.Count - 1;
-        }
-        else if (next >= ids.Count)
-        {
-            next = 0;
-        }
-
-        selectedManualRotationTrackId = (int)ids[next];
-        runtimeModelPickerTrackId = selectedManualRotationTrackId;
-        runtimeModelPickerPreferredTrackId = selectedManualRotationTrackId;
-        return true;
-    }
-
-
     // 触れる track の一覧。
     //
     // **生きているインスタンスだけを見てはいけない。** モデルを変更すると
@@ -203,25 +162,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         ids.Sort();
         return ids;
-    }
-
-
-    private float GetManualYawOffsetDegForTrack(uint trackId)
-    {
-        return EvaluateManualYawOffsetDegForFrame(trackId, GetCurrentPlaybackFrame());
-    }
-
-
-    private void SetManualYawOffsetDegForTrack(uint trackId, float yawDeg)
-    {
-        int frame = GetCurrentPlaybackFrame();
-        if (!manualYawKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> keys) || keys == null)
-        {
-            keys = new SortedDictionary<int, float>();
-            manualYawKeyframesByTrack[trackId] = keys;
-        }
-
-        keys[frame] = Mathf.Clamp(yawDeg, -180f, 180f);
     }
 
 

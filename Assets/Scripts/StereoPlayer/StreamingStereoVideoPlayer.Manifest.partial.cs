@@ -2,15 +2,6 @@ using UnityEngine;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
-    // Depends on: manifest/metaHeader fields in Core.cs and Meta partial
-    // Provides: manifest-driven crop helpers and intrinsics/fov accessors
-
-    private bool IsManifestJointsSpaceRootRelative()
-    {
-        return manifest != null && manifest.joints_space == "camera_xyz_root_relative";
-    }
-
-
     private int GetFullWidth()
     {
         if (manifest != null && manifest.width > 0)

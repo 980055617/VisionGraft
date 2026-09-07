@@ -18,36 +18,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private bool TryGetHeadTarget(Vector3[] jointsWorld, byte[] vis, Vector3 shouldersMid, SkeletonIndices idx, out Vector3 headTarget)
-    {
-        headTarget = Vector3.zero;
-
-        bool hasNose = TrackedJointPoints.TryGet(jointsWorld, vis, idx.nose, out Vector3 nose);
-        bool hasEyes = TryGetMidPoint(jointsWorld, vis, idx.leftEye, idx.rightEye, out Vector3 eyesMid);
-        if (hasNose && hasEyes)
-        {
-            headTarget = (nose + eyesMid) * 0.5f;
-            return true;
-        }
-
-        if (hasNose)
-        {
-            headTarget = nose;
-            return true;
-        }
-
-        if (hasEyes)
-        {
-            headTarget = eyesMid;
-            return true;
-        }
-
-        // Final fallback when face points are missing.
-        headTarget = shouldersMid + Vector3.up * 0.12f;
-        return true;
-    }
-
-
     private void SmoothJointsWorld(uint trackId, Vector3[] jointsWorld, byte[] vis, float alphaOverride = -1f)
     {
         if (jointsWorld == null || vis == null || jointsWorld.Length == 0)

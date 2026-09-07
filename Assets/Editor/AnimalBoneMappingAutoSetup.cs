@@ -66,6 +66,13 @@ public static class AnimalBoneMappingAutoSetup
 
         AssetDatabase.SaveAssets();
         Debug.Log($"[BoneMappingAutoSetup] 完了. updated={updated}, skipped={skipped}");
+        if (Application.isBatchMode)
+        {
+            // batchmode では DisplayDialog が返らない。ここで終える。
+            EditorApplication.Exit(0);
+            return;
+        }
+
         EditorUtility.DisplayDialog("Bone Mapping Setup (All)",
             $"完了\n更新: {updated}\nスキップ: {skipped}", "OK");
     }
@@ -135,12 +142,71 @@ public static class AnimalBoneMappingAutoSetup
     {
         MappingResult r;
 
+        r = TryKangarooPattern(names); if (r != null) return r;
+        r = TryBirdPattern(names);    if (r != null) return r;
         r = TryWolfPattern(names);    if (r != null) return r;
         r = TryBearRigPattern(names); if (r != null) return r;
         r = TryDonkeyPattern(names);  if (r != null) return r;
         r = TryGenericPattern(names); if (r != null) return r;
 
         return null;
+    }
+
+    // カンガルー系（ヒューマノイド風の命名）: Hips / Spine / Neck01 / Head,
+    // 腕 LeftArm-LeftForeArm-LeftHand, 脚 LeftUpLeg-LeftLeg-LeftFoot。
+    //
+    // **腕を前脚に対応づける。** カンガルーは二足だが、SMAL は四足の姿勢しか持たない。
+    // 対応づけないと前脚の body_pose が捨てられ、姿勢追従が半分しか効かない。
+    // 「四つん這いの姿勢が当たる」ことは承知のうえ（映像の動物に合わせるのが目的）。
+    static MappingResult TryKangarooPattern(HashSet<string> n)
+    {
+        if (!n.Contains("LeftUpLeg") || !n.Contains("LeftForeArm") || !n.Contains("Neck01"))
+        {
+            return null;
+        }
+
+        return new MappingResult
+        {
+            patternName = "Kangaroo(Humanoid風)",
+            spine = "Spine", neck = "Neck01", head = "Head",
+            tailBase = n.Contains("Tail1") ? "Tail1" : null,
+            tailMid = n.Contains("Tail3") ? "Tail3" : null,
+            tailTip = n.Contains("Tail5") ? "Tail5" : null,
+            frontLUpper = "LeftArm", frontLLower = "LeftForeArm", frontLPaw = "LeftHand",
+            frontRUpper = "RightArm", frontRLower = "RightForeArm", frontRPaw = "RightHand",
+            rearLUpper = "LeftUpLeg", rearLLower = "LeftLeg", rearLPaw = "LeftFoot",
+            rearLToe = n.Contains("LeftToeBase") ? "LeftToeBase" : null,
+            rearRUpper = "RightUpLeg", rearRLower = "RightLeg", rearRPaw = "RightFoot",
+            rearRToe = n.Contains("RightToeBase") ? "RightToeBase" : null,
+        };
+    }
+
+    // 鳥系（Goose / Pheasant / Guineafowl）: Pelvis / Spine / Chest / Neck1 / Head,
+    // 脚 LegL1-LegL2-LegL3-LegLAnkle。
+    //
+    // **前脚は対応づけない。** ArmL1-3 は翼であって前脚ではない。
+    // 四足の前脚の姿勢を翼に当てると「翼で歩く」ことになる。
+    // 対応づけない joint は bind pose のまま親に追従するので、
+    // 胴・首・頭・後脚だけが映像に追従する。
+    static MappingResult TryBirdPattern(HashSet<string> n)
+    {
+        if (!n.Contains("LegL1") || !n.Contains("LegLAnkle") || !n.Contains("Neck1"))
+        {
+            return null;
+        }
+
+        return new MappingResult
+        {
+            patternName = "Bird(翼は前脚に当てない)",
+            spine = "Spine", neck = "Neck1", head = "Head",
+            tailBase = n.Contains("Tail1") ? "Tail1" : null,
+            frontLUpper = null, frontLLower = null, frontLPaw = null,
+            frontRUpper = null, frontRLower = null, frontRPaw = null,
+            rearLUpper = "LegL1", rearLLower = "LegL2", rearLPaw = "LegL3",
+            rearLToe = "LegLAnkle",
+            rearRUpper = "LegR1", rearRLower = "LegR2", rearRPaw = "LegR3",
+            rearRToe = "LegRAnkle",
+        };
     }
 
     // Wolf 系: LegFL1, LegFL2, LegFLAnkle / LegFR... / LegBL... / LegBR...

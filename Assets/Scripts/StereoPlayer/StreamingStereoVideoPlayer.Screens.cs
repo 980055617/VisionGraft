@@ -284,14 +284,63 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
+    // 画面を置く基準。**向きだけをヘッドセットのトラッキング原点（Reset View で決まる正面）から取る。**
+    //
+    // トラッキング原点は VR 機器が位置を測る基準で、ユーザーが再センタリングしたときの
+    // 向きが「正面」として記録されている。頭の向きに依らないので、視線を動かしても
+    // 画面が飛ばない。
+    //
+    // **位置は最初の目の位置で固定する。**
+    //
+    // 以前は毎回そのときの頭の位置にしていたので、Screen Dist のスライダーを
+    // 動かすたびに画面（と pinhole 基準、つまりモデル全部）が現在の頭へスナップし直し、
+    // 首を振ってから動かすとその分だけ横へ寄った
+    // （2026-09-07 実機「決まったあの場所から左右は動いたらダメでしょ」）。
+    //
+    // **画面の基準点と pinhole の基準点は同じ 1 点でなければならない。**映像はその点から
+    // 撮られたことになっていて、画面はその点から manifest の FOV を張るように置かれ、
+    // モデルはその点から画面の画素へ向かう光線上に置かれる。1 点を固定すれば
+    // 画面もモデルも動かず、頭を動かすと固定されたシーンを別の角度から見る形になる。
+    //
+    // **床の原点にしてはいけない。**目より 1.6m 下から投影することになり、実機で
+    // 「human の体勢が変わった」と言われた（2026-09-07）。固定するのは**最初の目の位置**。
+    //
+    // 取り直すのは Reset View のときだけ（`ResetScreenAnchorLock`）。
+    private Vector3 lockedScreenAnchorPosition;
+    private bool hasLockedScreenAnchor;
+
+    private void ResetScreenAnchorLock()
+    {
+        hasLockedScreenAnchor = false;
+    }
+
+    private void ResolveScreenAnchor(Transform head, out Vector3 anchorPosition, out Quaternion viewRotation)
+    {
+        if (lockScreenAnchorPosition && head != null && !hasLockedScreenAnchor)
+        {
+            lockedScreenAnchorPosition = head.position;
+            hasLockedScreenAnchor = true;
+        }
+
+        anchorPosition = lockScreenAnchorPosition && hasLockedScreenAnchor
+            ? lockedScreenAnchorPosition
+            : (head != null ? head.position : Vector3.zero);
+
+        Transform origin = useTrackingOriginForScreenFacing && head != null ? head.parent : null;
+        viewRotation = ResolveYawOnlyViewRotation(
+            origin != null
+                ? origin.rotation
+                : (head != null ? head.rotation : Quaternion.identity));
+    }
+
     private void PlaceScreens()
     {
         Camera viewCam = GetViewCamera();
         Transform head = viewCam != null ? viewCam.transform : GetHeadTransform();
-        Quaternion viewRotation = ResolveYawOnlyViewRotation(head.rotation);
-        LockPinholeBasis(head.position, viewRotation);
+        ResolveScreenAnchor(head, out Vector3 anchorPosition, out Quaternion viewRotation);
+        LockPinholeBasis(anchorPosition, viewRotation);
         StereoScreenPlacement.Placement placement = StereoScreenPlacement.ResolvePlacement(
-            head.position,
+            anchorPosition,
             viewRotation,
             screenDistanceMeters,
             screenOffsetMeters,

@@ -485,3 +485,246 @@ Else は球 6 個だけ）。`TrackInstanceFactory.AddGrabCollider` が mesh の
 パネル操作のトリガーで対象が回ってしまうため。
 
 診断は `[GRAB] 掴んだ / 離した`。実機でしか動かないので、効かないときはこれで切り分ける。
+
+## 画面と UI の配置（2026-09-07 調査）
+
+実機で挙がった 3 点の指摘の原因。いずれも**同じ設計に起因する**。
+
+### 指摘 1: Screen Dist を動かすと UI も小さく／大きくなる
+
+UI は**画面を基準に配置されている**。`UpdateRuntimeControlsPlacement` は
+`basis = leftScreen / rightScreen` を起点に `RuntimeControlsPlacement.ResolveBarPose` を呼び、
+設定パネル（`UpdateRuntimeSettingsPlacement`）とモデルピッカーも同じ基準を使う。
+
+canvas の localScale 自体は `ControlsBarSizeMeters` の固定値で距離に依らない。
+**小さく見えるのは遠近によるもの**で、画面が遠ざかると UI も一緒に遠ざかる。
+
+### 指摘 2: 画面が設定パネルに被って戻れなくなる
+
+`PlaceScreens` は `head.position` と `ResolveYawOnlyViewRotation(head.rotation)` を使い、
+**その時の頭の位置・向きの正面**に画面を置く。
+
+さらに毎フレームの監視があり、頭が **0.35m 動くか 35° 回る**と
+`RecenterScreensToCurrentFacing()` が走って画面が新しい正面へ飛ぶ
+（`StreamingStereoVideoPlayer.Core.partial.cs` の 575〜590 行付近）。
+
+スライダーを操作するために視線を動かすと閾値を越え、画面が飛んだ先が設定パネルの位置と
+重なる。設定パネル側は `runtimeSettingsPlacementLockDepth`（`PlaceScreensWithoutMovingSettings`）で
+その場に固定されるので、画面だけが動いて被る。
+
+### 指摘 3 の下調べ: 機械内蔵の正面は読める
+
+シーンのリグは **OVRCameraRig**。`XRInputSubsystem` は既に扱っており
+（`TryApplyPreferredTrackingOriginMode`、`trackingOriginUpdated` を購読済み）、
+ユーザーの Reset View が設定する**トラッキング原点**がそのまま「機械が持っている正面」。
+
+原点は頭カメラの親（OVRCameraRig の TrackingSpace）なので、
+`head.parent` の姿勢を使えば live の頭向きに依らない固定の正面が得られる。
+
+### 対処（2026-09-07）
+
+| 指摘 | 対処 | 状態 |
+|---|---|---|
+| 画面が設定に被って戻れない | 頭の動きによる自動再センタリングを廃止（`autoRecenterScreensOnHeadMove` 既定 OFF）| **実機で確認済み** |
+| 画面を VR の正面に | トラッキング原点の**向きだけ**を使う（`useTrackingOriginForScreenFacing`）| **実機で Reset View 追従を確認** |
+| UI が小さい | 視点から 1.2m に固定し、視点へ正対（`pinRuntimeUiDistance`）| **実機で大きさ OK** |
+| Screen Dist で UI が上下する | 画面からの「隙間」を距離に比例させる（`ScaleUiOffsetForDistance`）| バッチで確認、実機は未 |
+
+### NG: トラッキング原点の「位置」まで使うこと
+
+最初の実装で `LockPinholeBasis` の**位置**を原点（床の中心）にしたところ、
+実機で「human の体勢が変わった」と指摘された。
+
+**pinhole の位置は必ず目の位置**でなければいけない。モデルはそこから画面のピクセルへ
+向かう光線上に置かれるので、目でない点を基準にすると、原点から離れて立つほど
+見え方がずれる。**原点から取ってよいのは向きだけ。**
+
+### NG: UI の位置を直すのに「画面のサイズ」を換算すること
+
+「Screen Dist で UI が上下する」を直すとき、最初は UI 配置に渡す画面サイズを
+既定距離のものに換算した。**逆に動いた。**
+
+画面は `fitScreenToFov` で距離に比例して大きくなるので、**角度としては既に一定で正しい**。
+動く原因は「画面の端からの隙間」と「バーの大きさ」が**固定値**であること。
+遠いほどそれらの角度が小さくなり、UI が画面に寄っていく。
+**距離に比例させるのは隙間の側。**
+
+### コントローラのレイが 2 本出る・始点がずれる（2026-09-07 実機報告）
+
+**まだ確定していない。**以下は「コードから分かったこと」と「推測」を分けて書く。
+
+#### 確定していること
+
+- **自前のレイは 1 本しか作られない。**プロジェクト内の `LineRenderer` は
+  `RuntimePointerRayFactory` の 1 箇所だけ。二重に出ているのではない
+- **リグが二重になってもいない。**ISDK リグ（`Assets/InteractionSDK/ComprehensiveInteraction.prefab`
+  = Meta の `OVRComprehensiveInteractors.prefab` の variant）を持つのは
+  HomeScene / ExperimentScene / TestScene の 3 つ。`LoadSceneMode.Additive` で重ねる
+  `TrialScene`（`ExperimentController.cs:294`）は**持たない**
+- **今回の画面・UI の変更が原因ではない。**レイに関わる 3 ファイルは `fd42e97` 以降変更していない
+- **ISDK リグはレイ interactor を 2 種類積んでいる。**
+  `OVRComprehensiveInteractors` → `BaseInteractors` の中に
+  `Ray/ControllerRayInteractor.prefab` と `Ray/HandRayInteractor.prefab` の**両方**がある。
+  さらに `SyntheticHandData` / `SyntheticControllerData` /
+  `ControllerInHandVisibilityActiveState` があり、シーンにも
+  `LeftControllerInHandAnchor` / `RightHandOnControllerAnchor` が置かれている
+  = **コントローラを握った手を合成するモード**
+
+#### 有力な推測
+
+**ISDK 側だけで 2 本出ている**可能性がある。コントローラのレイ（実機のコントローラ位置から）と、
+合成した手のレイ（手の位置から）は**始点が違う**。
+これが「手元が違う始点になってる」に一番よく合う。
+
+自前 1 本 + ISDK 1 本、という組み合わせもありうる。**絵を見ないと決められない。**
+
+#### 今回の変更で「新しく見えるようになった」かもしれない筋
+
+自前のレイを消すのは「パネルが開いているとき」ではなく
+**「パネルを指しているとき」**（`GrabRotate.partial.cs:105`）。
+UI を視点から 1.2m に固定したことで world canvas がコントローラの振り幅の中に入り、
+ISDK 側のレイが反応する場面が増えた可能性がある。
+
+#### 否定した筋
+
+- **握り位置へのフォールバックではない（実機で確定）。**
+  `RuntimeXrRayPickReader.TryReadAimPose` は `PointerPosition` が取れないと
+  `devicePosition`（握り）へ落ちるが、実機のログは
+  `[RAY] コントローラ姿勢の出どころ=aim`（2026-09-07 18:16）。
+  **自前のレイは指し棒の姿勢を使えている。**残る 1 本は ISDK 側
+- **view camera の取り違えでもない。**`ViewCameraSelection.Select` は
+  `MainCamera` タグの最初のカメラを返し、`OVRCameraRig` では
+  `CenterEyeAnchor` と `LeftEyeAnchor` の**両方**が `MainCamera` タグを持つ。
+  ただし `LeftEyeAnchor` / `RightEyeAnchor` の Camera は `m_Enabled: 0` で、
+  シーン側の override も無い。`IsUsable` が弾くので **CenterEyeAnchor が返る**。
+  `centerEyePosition` と対応が取れており、ここにずれは無い
+
+#### 次にやること
+
+実機で「2 本のうち片方を消したら何本になるか」を見る。ユーザーに
+**この 2 本が今回のビルドより前から出ていたか**を確認してから触る。
+
+### Screen Dist を動かすと画面が左右に付いてくる（2026-09-07 実機報告・原因特定）
+
+#### 症状
+
+Screen Dist を調整しているときに左右を見ると、画面がその方向に付いてくる。
+**「決まったあの場所から左右は動いたらダメ」**（ユーザー）。
+
+#### 原因: スライダーを動かすたびに「そのときの頭の位置」へ置き直している
+
+`OnRuntimeScreenDistanceSliderChanged`（`UI.Settings.partial.cs:335`）は
+値が変わるたび `PlaceScreensWithoutMovingSettings` → `PlaceScreens` を呼ぶ。
+`PlaceScreens` は `ResolveScreenAnchor` から基準点を取るが、そこが
+
+```csharp
+anchorPosition = head != null ? head.position : Vector3.zero;   // ← 生きている頭の位置
+```
+
+**向きだけをトラッキング原点から取り、位置は毎回そのときの頭にしていた。**
+だからスライダーを触るたびに、画面（と pinhole 基準、つまりモデル全部）が
+現在の頭の位置へスナップし直す。首を振ってから動かすと、その分だけ横へ寄る。
+
+常時追従ではなく**スライダーを動かした瞬間だけ**動くのが、この経路の指紋。
+`PlaceScreensWithoutMovingSettings` の呼び出し元は 2 箇所だけで、
+どちらもスライダーの `onValueChanged`（Screen Dist と FOVx）。毎フレームの経路は無い。
+`LateUpdate` の毎フレーム追従（`ForceScreensInFrontOfViewCamera`）は `false` で無効、
+頭の動きによる再センタリング（`autoRecenterScreensOnHeadMove`）も既定 `false`。
+新しく足したフィールドはシーンに serialize されておらず、コード既定値で動いている
+（`TestScene` / `TrialScene` を grep して確認）。
+
+#### 設計として正しい形
+
+**画面の基準点と pinhole の基準点は同じ 1 点でなければならない。**
+映像はその点から撮られたことになっていて、画面はその点から manifest の FOV を
+張るように置かれ、モデルはその点から画面の画素へ向かう光線上に置かれる。
+2 つを別の点にすると、映像とモデルが食い違う。
+
+いまはその 1 点が「毎回の頭の位置」なので、シーン全体（画面 + モデル）が
+頭と一緒に平行移動する。**この 1 点を最初に 1 回決めて固定すれば**、
+画面もモデルも動かなくなり、頭を動かすと固定されたシーンを別の角度から見る形になる。
+
+再取得するのは Reset View（`trackingOriginUpdated`）のときだけでよい。
+
+#### 過去の失敗（繰り返さないこと）
+
+この基準点を**トラッキング原点の位置**（床の中心）にしたら、実機で
+「human の体勢が変わった」と言われた。原点は目より 1.6m 下にあり、
+目でない点から投影することになるため。**固定するのは「最初の目の位置」で、
+床の原点ではない。**
+
+#### 対処と検証（2026-09-07）
+
+`ResolveScreenAnchor` の基準点を**最初の目の位置で固定**した（`lockScreenAnchorPosition`、既定 ON）。
+取り直すのは Reset View（`RecenterScreensToCurrentFacing`）と再生開始（`OnPrepared`）だけ。
+
+バッチに `-anchorLock` と `-headShift` を足して A/B を撮った
+（`BatchShiftViewerAndReplaceScreens` が「首を振ってから Screen Dist を触る」を再現する）。
+`bundle_human.svb` の f150 で、視点を右へ 0.35m 動かしてからスライダーと同じ経路で置き直す:
+
+| | スクリーンの中心 x | 幅 |
+|---|---:|---:|
+| 基準（視点を動かさない）| 959.5 px | 757 px |
+| **修正前**（固定しない）| **959.5 px（±0.0）** | 757 px |
+| **修正後**（固定する）| **864.5 px（−95.0）** | 757 px |
+
+**修正前は視点を 0.35m 動かしても画面が 1 画素も動かない。**
+つまり画面が完全に付いてきていた。修正後は世界に残るので、右へ動いた分だけ
+左に見える（正しい視差）。幅は両方 757px で変わらず、**平行移動だけで
+大きさは動いていない**ことも確認できる。
+
+比較画像: `docs/tmp/anchor_lock_ab.png`。
+
+**画像全体の差は 1.248% あるが、これはスクリーンではなくモデルの差。**
+±0.0px と矛盾して見えるので注記しておく。差が出ている画素の**外接矩形は
+x 741..1048 / y 507..720 で、100% がスクリーンの内側**（スクリーンは
+x 581..1338 / y 351..835）。人物が写っている場所そのもの。
+`BatchShiftViewerAndReplaceScreens` は視点を動かして `PlaceScreens` を呼ぶが、
+モデルの配置はそのフレームの Update で既に済んでいるため、
+**スクリーンだけ動いてモデルが 1 フレーム遅れる**。バッチ再現の副作用であって、
+実機の挙動ではない。
+
+#### 代償
+
+基準点を固定すると、そこから頭を大きく動かしたとき、左右の目に出る絵が
+本来の視点からずれるので**立体感が歪む**（`StereoScreenEyeSeparationMeters` は
+基準点から見て正しくなるように置いてあるため）。
+「決まった場所から動くな」という要求とはトレードオフで、要求どおりにしてある。
+
+**UI も画面と一緒に world に残る。**UI は画面からの隙間で置いているので、
+画面が固定されれば UI も固定される。頭を振ると UI が横に見えることになり、
+これは「設定に被って戻れない」と同じ種類の不満になりうる。
+**UI だけ頭に追従させる選択肢もある**（2026-09-07 時点でユーザーの判断待ち）。
+
+### 2 本の内訳が確定（2026-09-07 実機）
+
+**青が自前、白が ISDK。**ユーザーが実機で「青と白」と確認した。
+自前のレイの色はコードで `Color(0.35f, 0.8f, 1f)` = 水色なので一致する。
+
+#### 対処: 自前の線は描かない（`showPointerRay` 既定 OFF）
+
+ユーザーの判断は「白だけでいい、青は見せなくていい。判定にだけ使えば」。
+`UpdatePointerRay` の描画を飛ばすだけで、**掴む判定は今までどおり自前の姿勢**
+（OpenXR aim pose）を使う。操作は変わらない。
+
+#### 解決（2026-09-07 実機）
+
+「線が白 1 本になり、今までどおり掴める」を確認。**この項目は閉じた。**
+
+#### NG: ISDK の線を `LineRenderer` として測ろうとしたこと
+
+「青と白が同じ方向を指している」という前提を数値で確かめようとして、
+シーン内の `LineRenderer` を自前のものと比べるログを書いた。**空振りだった。**
+
+```
+[RAY] 線を描く候補 0 個
+```
+
+**ISDK は `LineRenderer` で線を描いていない**（tube 状のメッシュを使う）。
+書いた比較は永久に何も出ないコードだったので削除した。
+
+前提を通したのは**実機で掴めたこと**。狙って掴めるなら、見えている線と
+判定に使う方向は実用上一致している。**測れないときに測ったふりをしない。**
+
+なお `[RAY] 線を描く候補` の棚卸し自体は残してある（自前の線が二重に
+作られていないかの確認に使える）。

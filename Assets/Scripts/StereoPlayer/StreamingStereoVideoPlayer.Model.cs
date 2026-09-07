@@ -3,7 +3,6 @@ using UnityEngine;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
-    private const int TestModelLockFrames = 30;
     private int lastAutoTrackId = int.MinValue;
     private readonly Dictionary<uint, GameObject> trackInstances = new Dictionary<uint, GameObject>();
     private readonly Dictionary<uint, GameObject> trackPrefabSources = new Dictionary<uint, GameObject>();
@@ -92,6 +91,45 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public void SetTwoAxisJointFrameMap(bool enabled)
     {
         useTwoAxisJointFrameMap = enabled;
+    }
+
+    // 頭の body_pose 適用を切り替える入口（A/B 用）。
+    public void SetAnimalHeadPose(bool enabled)
+    {
+        enableAnimalHeadPose = enabled;
+    }
+
+    // UI の距離固定・正対を切り替える入口（A/B 用）。
+    public void SetPinRuntimeUiDistance(bool enabled)
+    {
+        pinRuntimeUiDistance = enabled;
+    }
+
+    // 画面をトラッキング原点の正面に置くかを切り替える入口（A/B 用）。
+    public void SetUseTrackingOriginForScreenFacing(bool enabled)
+    {
+        useTrackingOriginForScreenFacing = enabled;
+    }
+
+    // 画面と pinhole の基準点を固定するかを切り替える入口（A/B 用）。
+    public void SetLockScreenAnchorPosition(bool enabled)
+    {
+        lockScreenAnchorPosition = enabled;
+        ResetScreenAnchorLock();
+    }
+
+    // **バッチの A/B 専用。**「首を振ってから Screen Dist を触る」を再現する。
+    // 視点を動かしてから、スライダーと同じ経路（PlaceScreens）で置き直す。
+    // 固定していなければ画面とモデルが視点に付いてきて、固定していれば残る。
+    public void BatchShiftViewerAndReplaceScreens(Vector3 worldShift)
+    {
+        Transform head = GetViewOrHeadTransform();
+        if (head != null)
+        {
+            head.position += worldShift;
+        }
+
+        PlaceScreens();
     }
 
     // Animal の keypoint AimAt を切り替える入口（A/B 用）。

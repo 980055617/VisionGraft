@@ -31,6 +31,45 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public GameObject rightScreenPrefab;
 
     [Header("Placement")]
+
+    // 画面をヘッドセットのトラッキング原点（機械が持っている正面）に置く。
+    //
+    // **向きだけを原点から取る。位置は頭（目）のまま。**
+    // 位置まで原点にしたら「human の体勢が変わった」（2026-09-07 実機）。
+    // 詳細は Screens.cs の ResolveScreenAnchor。
+    public bool useTrackingOriginForScreenFacing = true;
+
+    // 画面と pinhole の基準点を「最初の目の位置」で固定する。**既定 ON。**
+    // OFF にすると毎回そのときの頭の位置になり、Screen Dist を動かすたびに
+    // 画面とモデルが頭へ寄ってくる（2026-09-07 実機指摘の挙動）。
+    // 詳細は Screens.cs の ResolveScreenAnchor。
+    public bool lockScreenAnchorPosition = true;
+
+    // 自前のポインタの線を描くか。**既定 OFF。**
+    // ISDK の白い線と 2 本出て始点も違うので紛らわしい（2026-09-07 実機指摘）。
+    // OFF でも掴む判定はこの線と同じ姿勢で行うので、操作は変わらない。
+    public bool showPointerRay;
+
+    // 頭が大きく動いたときに画面を追従させる。**既定 OFF。**
+    // 詳細は StreamingStereoVideoPlayer.Core.partial.cs の該当箇所。
+    public bool autoRecenterScreensOnHeadMove;
+
+    private const float AutoRecenterHeadMoveMeters = 0.35f;
+    private const float AutoRecenterHeadTurnDegrees = 35f;
+
+    // UI の見かけの大きさを Screen Dist に依らせない。
+    // 詳細は StreamingStereoVideoPlayer.UI.Settings.partial.cs の PinRuntimeUiDistance。
+    public bool pinRuntimeUiDistance = true;
+
+    // 2.0m（画面の既定距離と同じ）にしたら「1 でも 3 でも小さい」と言われた。
+    // 距離を固定しただけでは足りず、**近づけないと使える大きさにならない**。
+    // 手が届く範囲より少し先の 1.2m にする（2026-09-07）。
+    [Min(0.25f)] public float runtimeUiDistanceMeters = 1.2f;
+
+    // UI の配置計算で基準にする画面距離。既定の screenDistanceMeters と同じ値。
+    // 詳細は UI.Settings.partial.cs の NormalizeScreenSizeForUi。
+    private const float RuntimeUiReferenceScreenDistanceMeters = 2f;
+
     public Transform headTransform;
     public float screenDistanceMeters = 2.0f;
     public Vector3 screenOffsetMeters = Vector3.zero;
@@ -191,6 +230,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // jointFrameMap のロールを「同じ肢のもう 1 本」で拘束する 2 軸版を使う（2026-08-28）。
     // 既定 false（従来の FromToRotation）。A/B で効果を確認してから既定を決める。
     public bool useTwoAxisJointFrameMap;
+
+    // 頭（SMAL joint 16）に body_pose を当てるか。既定 ON。
+    // 詳細は AnimalSmalFkApplier.enableAnimalHeadPose。
+    public bool enableAnimalHeadPose = true;
 
     // VR で選んだモデルと手動 yaw を動画ごと・track ごとに覚える。
     //
@@ -604,7 +647,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 小数第3位まで一切変わらなかった。ShouldUseSmplOnlyPose() 経路では姿勢の深さに
     // 効いていないので、姿勢の再現精度を調べる際にここを触っても無駄。
     private const float HumanSmplRotationAlpha = 0.65f;
-    private static readonly bool HumanSmplFlipY = true;
     private static readonly bool EnableYawDepthDisambiguation = true;
     private const float YawDepthOffsetMeters = 0.045f;
     private const float YawDepthBlend = 1f;

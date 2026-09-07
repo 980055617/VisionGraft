@@ -38,11 +38,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             head != null,
             head != null ? head.position : Vector3.zero,
             screenHeightMeters,
-            ControlsBarSizeMeters,
-            ControlsBarGapMeters,
-            ControlsBarOffsetMeters,
+            ScaleUiOffsetForDistance(ControlsBarSizeMeters),
+            ScaleUiOffsetForDistance(ControlsBarGapMeters),
+            ScaleUiOffsetForDistance(ControlsBarOffsetMeters),
             ControlsBarForwardOffsetMeters);
-        TransformWriter.ApplyPose(runtimeControlsRoot.transform, pose.position, pose.rotation);
+        Vector3 barPos = PinRuntimeUiDistance(pose.position);
+        TransformWriter.ApplyPose(
+            runtimeControlsRoot.transform, barPos, FaceRuntimeUiToView(barPos, pose.rotation));
         ApplyRuntimeControlsSizing();
 
         Canvas canvas = GetRuntimeControlsCanvas();
@@ -96,12 +98,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             head != null,
             head != null ? head.position : Vector3.zero,
             basisWidth,
-            SettingsPanelSizeMeters,
-            SettingsPanelGapMeters,
-            SettingsPanelOffsetMeters,
+            ScaleUiOffsetForDistance(SettingsPanelSizeMeters),
+            ScaleUiOffsetForDistance(SettingsPanelGapMeters),
+            ScaleUiOffsetForDistance(SettingsPanelOffsetMeters),
             SettingsPanelForwardOffsetMeters);
+        Vector3 settingsPos = ApplyRuntimePanelDistanceOffset(PinRuntimeUiDistance(pose.position));
         TransformWriter.ApplyPose(
-            runtimeSettingsRoot.transform, ApplyRuntimePanelDistanceOffset(pose.position), pose.rotation);
+            runtimeSettingsRoot.transform, settingsPos, FaceRuntimeUiToView(settingsPos, pose.rotation));
 
         Canvas canvas = runtimeSettingsRoot.GetComponent<Canvas>();
         if (canvas != null)

@@ -113,6 +113,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             TransformWriter.ApplyLocalScale(rightScreen, screenScale);
         }
 
+        // 再生を始める時点の目の位置を基準にする。bundle を変えると見る場所も変わる。
+        ResetScreenAnchorLock();
         PlaceScreens();
         EnsureRuntimeControls();
 
@@ -577,11 +579,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        float deltaPos = Vector3.Distance(lastHeadPos, head.position);
-        float deltaRotDeg = Quaternion.Angle(lastHeadRot, head.rotation);
-        if (deltaPos > 0.35f || deltaRotDeg > 35f)
+        // **既定では頭の動きで再センタリングしない。**
+        //
+        // 以前は 0.35m / 35° を越えると画面が新しい正面へ飛んでいたが、
+        // 設定を操作するために視線を動かすとこれが発動し、画面が設定パネルに被って
+        // 戻れなくなっていた（2026-09-07 実機指摘）。
+        // 画面はトラッキング原点の正面に固定するので追従は要らない。
+        // 原点自体はユーザーの Reset View で動き、それは
+        // trackingOriginUpdated → RecenterScreensToCurrentFacing で拾っている。
+        if (autoRecenterScreensOnHeadMove)
         {
-            RecenterScreensToCurrentFacing();
+            float deltaPos = Vector3.Distance(lastHeadPos, head.position);
+            float deltaRotDeg = Quaternion.Angle(lastHeadRot, head.rotation);
+            if (deltaPos > AutoRecenterHeadMoveMeters || deltaRotDeg > AutoRecenterHeadTurnDegrees)
+            {
+                RecenterScreensToCurrentFacing();
+            }
         }
 
         lastHeadPos = head.position;
@@ -601,6 +614,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // Reset View は「いまの場所・いまの向きを正面にする」操作なので、
+        // 固定していた基準点もここで取り直す。これ以外では動かさない。
+        ResetScreenAnchorLock();
         PlaceScreens();
     }
 

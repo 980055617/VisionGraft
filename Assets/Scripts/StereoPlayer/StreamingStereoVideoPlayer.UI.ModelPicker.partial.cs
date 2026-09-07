@@ -413,32 +413,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return ids;
     }
 
-
-    private void StepRuntimeModelPickerTarget()
-    {
-        PauseForManualRotationEdit();
-
-        List<uint> ids = GetAvailableTrackIdsForManualRotation();
-        if (ids == null || ids.Count == 0)
-        {
-            Debug.LogWarning("[ModelPicker] 切り替えられる track がありません。");
-            return;
-        }
-
-        int current = ids.IndexOf((uint)Mathf.Max(0, runtimeModelPickerTrackId));
-        int next = ids.Count > 0 ? (current + 1) % ids.Count : 0;
-        runtimeModelPickerTrackId = (int)ids[next];
-        runtimeModelPickerPreferredTrackId = runtimeModelPickerTrackId;
-        runtimeModelPickerPageIndex = 0;
-
-        // 回転の対象も合わせておく。別々だと「どれを触っているか」が分からなくなる。
-        selectedManualRotationTrackId = runtimeModelPickerTrackId;
-
-        Debug.Log($"[ModelPicker] target -> track={runtimeModelPickerTrackId} ({next + 1}/{ids.Count})");
-        UpdateRuntimeModelPickerUiState();
-    }
-
-
     private void ToggleRuntimeModelPickerPanel()
     {
         if (runtimeModelPickerOpen)
@@ -537,12 +511,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             head != null,
             head != null ? head.position : Vector3.zero,
             basisWidth,
-            RuntimeModelPickerSizeMeters,
-            SettingsPanelGapMeters,
-            SettingsPanelOffsetMeters,
+            ScaleUiOffsetForDistance(RuntimeModelPickerSizeMeters),
+            ScaleUiOffsetForDistance(SettingsPanelGapMeters),
+            ScaleUiOffsetForDistance(SettingsPanelOffsetMeters),
             SettingsPanelForwardOffsetMeters);
+        Vector3 pickerPos = ApplyRuntimePanelDistanceOffset(PinRuntimeUiDistance(pose.position));
         TransformWriter.ApplyPose(
-            runtimeModelPickerRoot.transform, ApplyRuntimePanelDistanceOffset(pose.position), pose.rotation);
+            runtimeModelPickerRoot.transform, pickerPos,
+            FaceRuntimeUiToView(pickerPos, pose.rotation));
 
         RectTransform rect = runtimeModelPickerRoot.GetComponent<RectTransform>();
         if (rect != null)

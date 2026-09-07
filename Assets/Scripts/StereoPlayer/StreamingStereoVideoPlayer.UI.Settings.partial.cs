@@ -173,21 +173,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
 
 
-    private Text CreateWideLabel(Transform parent, string name, string initialText, float anchorX, float anchorY, int fontSize, TextAnchor anchor)
-    {
-        RectTransform rect = RuntimeUiElementFactory.CreateRectChild(name, parent, out GameObject obj);
-        Vector2 anchorPoint = new Vector2(anchorX, anchorY);
-        TransformWriter.ApplyAnchoredRect(rect, anchorPoint, anchorPoint, Vector2.zero, new Vector2(760f, 64f));
-
-        Text text = RuntimeUiElementFactory.AddText(obj);
-        UiComponentWriter.ApplyTextStyle(text, GetRuntimeUiFont(), fontSize, anchor, Color.white);
-        UiComponentWriter.ApplyTextOverflow(text, HorizontalWrapMode.Wrap, VerticalWrapMode.Truncate);
-        UiComponentWriter.ApplyTextContent(text, initialText);
-        return text;
-    }
-
-
-
     // y は行の**ピクセル座標**（中心原点）。以前は 0..1 の割合で、幅 520 を中央に置いていたので
     // 左のラベルと右の値の両方に食い込んでいた。操作列の内側に収める。
     private Slider CreateSlider(Transform parent, string name, float y)
@@ -308,20 +293,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float min = Mathf.Min(RuntimeScreenDistanceMinMeters, RuntimeScreenDistanceMaxMeters);
         float max = Mathf.Max(RuntimeScreenDistanceMinMeters, RuntimeScreenDistanceMaxMeters);
         return Mathf.Clamp(value, min, max);
-    }
-
-
-
-    private void UpdateFovxSliderRange()
-    {
-        if (runtimeFovxSlider == null)
-        {
-            return;
-        }
-
-        float min = Mathf.Min(RuntimeFovxMinDeg, RuntimeFovxMaxDeg);
-        float max = Mathf.Max(RuntimeFovxMinDeg, RuntimeFovxMaxDeg);
-        UiComponentWriter.ApplySliderRange(runtimeFovxSlider, min, max);
     }
 
 
@@ -486,6 +457,95 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         UiComponentWriter.ApplyTextContent(runtimeSettingsButtonText, "Settings");
     }
 
+
+
+    // **UI の見かけの大きさを Screen Dist に依らせない。**
+    //
+    // UI は画面を基準に配置されている（操作バーは画面の下端、設定とピッカーは右側）。
+    // そのため Screen Dist を上げると UI も一緒に遠ざかり、遠近で小さくなって
+    // 操作しづらくなっていた（2026-09-07 実機指摘）。
+    //
+    // 角度上の位置はそのままに、視点からの距離だけを固定する。
+    // 既定 2.0m は screenDistanceMeters の既定と同じなので、既定の見え方は変わらない。
+    private Vector3 PinRuntimeUiDistance(Vector3 position)
+    {
+        if (!pinRuntimeUiDistance)
+        {
+            return position;
+        }
+
+        Transform head = GetViewOrHeadTransform();
+        if (head == null)
+        {
+            return position;
+        }
+
+        Vector3 away = position - head.position;
+        if (away.sqrMagnitude < 0.0001f)
+        {
+            return position;
+        }
+
+        return head.position + away.normalized * Mathf.Max(0.25f, runtimeUiDistanceMeters);
+    }
+
+
+    // **UI の「画面からの隙間」を距離に比例させる。**
+    //
+    // UI は画面の端から一定の**物理距離**だけ離して置かれる（操作バーは下端の下、
+    // 設定は右端の右）。画面自体は fitScreenToFov で距離に比例して大きくなるので
+    // 角度としては一定だが、**隙間とバーの大きさは固定値**なので、
+    // 遠いほど角度が小さくなって UI が画面に寄っていく
+    // （2026-09-07 実機「screendist 調整すると上下する」）。
+    //
+    // 隙間側を距離に比例させれば、角度上の位置が距離に依らず一定になる。
+    // 既定 2.0m のときは倍率 1.0 なので、既定の見え方は変わらない。
+    //
+    // **画面サイズの方を換算してはいけない。**画面は既に距離に比例していて正しい。
+    // 一度そちらを換算して逆に動かした（同日）。
+    private float ScaleUiOffsetForDistance(float meters)
+    {
+        if (!pinRuntimeUiDistance)
+        {
+            return meters;
+        }
+
+        return meters * (Mathf.Max(0.01f, screenDistanceMeters) / RuntimeUiReferenceScreenDistanceMeters);
+    }
+
+    private Vector2 ScaleUiOffsetForDistance(Vector2 meters)
+    {
+        return new Vector2(ScaleUiOffsetForDistance(meters.x), ScaleUiOffsetForDistance(meters.y));
+    }
+
+
+    // **UI を視点に正対させる。**
+    //
+    // UI は画面の回転を受け継いでいた。Screen Dist を変えると画面の物理サイズが変わり、
+    // それに合わせて UI の横位置も変わるので、視線に対して斜めになって縮んで見えていた。
+    // 距離を固定しただけでは残るので、向きも視点基準にする（2026-09-07 実機指摘）。
+    private Quaternion FaceRuntimeUiToView(Vector3 uiPosition, Quaternion fallback)
+    {
+        if (!pinRuntimeUiDistance)
+        {
+            return fallback;
+        }
+
+        Transform head = GetViewOrHeadTransform();
+        if (head == null)
+        {
+            return fallback;
+        }
+
+        Vector3 toView = uiPosition - head.position;
+        if (toView.sqrMagnitude < 0.0001f)
+        {
+            return fallback;
+        }
+
+        // 上は world 基準に揃える。頭を傾けたときに UI まで傾くと読みづらい。
+        return Quaternion.LookRotation(toView.normalized, Vector3.up);
+    }
 
 
     // パネル位置を、頭から見て前後にずらす。回転は頭を向いたままでよいので触らない

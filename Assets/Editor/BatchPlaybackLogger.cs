@@ -19,6 +19,7 @@ public static class BatchPlaybackLogger
     private const string KeyDeadline = "BatchPlaybackLogger.Deadline";
     private const string KeyStarted = "BatchPlaybackLogger.Started";
     private const string KeyCaptureFrames = "BatchPlaybackLogger.CaptureFrames";
+    private const string KeyHeadShift = "BatchPlaybackLogger.HeadShift";
     private const string KeyCaptureDir = "BatchPlaybackLogger.CaptureDir";
     private const string KeyCaptureWidth = "BatchPlaybackLogger.CaptureWidth";
 
@@ -65,6 +66,11 @@ public static class BatchPlaybackLogger
         bool? noBend = null;
         bool? twoAxis = null;
         bool? animAim = null;
+        bool? headPose = null;
+        bool? pinUi = null;
+        bool? originFacing = null;
+        bool? anchorLock = null;
+        string headShift = null;
         bool? remember = null;
         string bundleName = null;
         string manualYaw = null;
@@ -110,6 +116,11 @@ public static class BatchPlaybackLogger
             if (args[i] == "-remember" && bool.TryParse(args[i + 1], out bool vRm)) remember = vRm;
             if (args[i] == "-animAim" && bool.TryParse(args[i + 1], out bool vAa)) animAim = vAa;
             if (args[i] == "-twoAxis" && bool.TryParse(args[i + 1], out bool vTa)) twoAxis = vTa;
+            if (args[i] == "-headPose" && bool.TryParse(args[i + 1], out bool vHp)) headPose = vHp;
+            if (args[i] == "-pinUi" && bool.TryParse(args[i + 1], out bool vPu)) pinUi = vPu;
+            if (args[i] == "-originFacing" && bool.TryParse(args[i + 1], out bool vOf)) originFacing = vOf;
+            if (args[i] == "-anchorLock" && bool.TryParse(args[i + 1], out bool vAl)) anchorLock = vAl;
+            if (args[i] == "-headShift") headShift = args[i + 1];
             if (args[i] == "-noBend" && bool.TryParse(args[i + 1], out bool vNb)) noBend = vNb;
             if (args[i] == "-alignTop" && bool.TryParse(args[i + 1], out bool vAt)) alignTop = vAt;
             if (args[i] == "-bundle") bundleName = args[i + 1];
@@ -239,6 +250,10 @@ public static class BatchPlaybackLogger
                 if (alignTop.HasValue) { p.alignTopWhenBottomClipped = alignTop.Value; }
                 if (noBend.HasValue) { p.SetSmalBendDisabledForDiag(noBend.Value); }
                 if (twoAxis.HasValue) { p.SetTwoAxisJointFrameMap(twoAxis.Value); }
+                if (headPose.HasValue) { p.SetAnimalHeadPose(headPose.Value); }
+                if (pinUi.HasValue) { p.SetPinRuntimeUiDistance(pinUi.Value); }
+                if (originFacing.HasValue) { p.SetUseTrackingOriginForScreenFacing(originFacing.Value); }
+                if (anchorLock.HasValue) { p.SetLockScreenAnchorPosition(anchorLock.Value); }
                 if (animAim.HasValue) { p.SetAnimalKeypointAimAt(animAim.Value); }
                 // バッチは測定環境なので、明示的に -remember true と言われない限り OFF。
                 // persistentDataPath に保存済みの選択が残っていると A/B が静かに汚れる。
@@ -354,6 +369,10 @@ public static class BatchPlaybackLogger
                     p.logOtherDepthFollowEveryNFrames = every;
                     p.logBoneVsKeypoint = true;
                     p.logBoneVsKeypointEveryNFrames = every;
+                    // [POSE] = 表示中のモデルの骨を投影して元映像の keypoint と比べる。
+                    // 左右が入れ替わっていないかは、これの dx の符号で判る。
+                    p.logHumanPoseError = true;
+                    p.logHumanPoseErrorEveryNFrames = every;
                 }
                 EditorUtility.SetDirty(p);
                 n++;
@@ -362,6 +381,7 @@ public static class BatchPlaybackLogger
         }
 
         SessionState.SetString(KeyCaptureFrames, captureFrames ?? string.Empty);
+        SessionState.SetString(KeyHeadShift, headShift ?? string.Empty);
         SessionState.SetString(KeyCaptureDir, captureDir ?? string.Empty);
         SessionState.SetInt(KeyCaptureWidth, captureWidth);
         SessionState.SetBool(KeyRunning, true);
@@ -386,6 +406,7 @@ public static class BatchPlaybackLogger
 
     private static readonly HashSet<long> captured = new HashSet<long>();
     private static int captureDiagTicks;
+    private static bool headShiftApplied;
 
     // VideoPlayer.frame を監視し、指定フレームに達したらカメラの絵を PNG で保存する。
     // -nographics を付けていないので通常どおりレンダリングでき、目視比較に使える。
@@ -448,6 +469,32 @@ public static class BatchPlaybackLogger
         {
             if (captureDiagTicks % 120 == 1) { Debug.Log($"[CAPDIAG] no match for cur={cur}"); }
             return;
+        }
+
+        // -headShift: 「首を振ってから Screen Dist を触る」を再現してから撮る。
+        // スライダーと同じ経路で置き直すので、基準点を固定していなければ
+        // 画面とモデルが視点に付いてきて、固定していれば残る。
+        if (!headShiftApplied)
+        {
+            string shiftSpec = SessionState.GetString(KeyHeadShift, string.Empty);
+            string[] xyz = string.IsNullOrEmpty(shiftSpec) ? null : shiftSpec.Split(',');
+            if (xyz != null && xyz.Length == 3 &&
+                float.TryParse(xyz[0], out float sx) &&
+                float.TryParse(xyz[1], out float sy) &&
+                float.TryParse(xyz[2], out float sz))
+            {
+                var shifted = UnityEngine.Object.FindFirstObjectByType<StreamingStereoVideoPlayer>();
+                if (shifted != null)
+                {
+                    shifted.BatchShiftViewerAndReplaceScreens(new Vector3(sx, sy, sz));
+                    headShiftApplied = true;
+                    Debug.Log($"[CAPDIAG] headShift 適用 ({sx},{sy},{sz}) at frame={want}");
+                }
+            }
+            else
+            {
+                headShiftApplied = true;
+            }
         }
 
         {

@@ -57,6 +57,9 @@ bundle 内の検出オブジェクト（Human / Animal / Else）を、対応す�
 | [docs/smpl-retargeting.md](docs/smpl-retargeting.md) | Human SMPL / Animal SMAL FK・座標変換・調査ログ（発表用まとめ付き） |
 | [docs/interactive-motion-events.md](docs/interactive-motion-events.md) | インタラクティブモーションイベント（発表用まとめ付き） |
 | [docs/experiment-flow.md](docs/experiment-flow.md) | 被験者実験フロー・シーン構成・ログ仕様（発表用まとめ付き） |
+| [docs/model-materials.md](docs/model-materials.md) | モデルのマテリアル（毛・ヒゲのカードの透け等）。棚卸しは `ModelMaterialAudit` |
+| [docs/animal-model-consistency.md](docs/animal-model-consistency.md) | Animal をモデル差し替えしたときの大きさ・姿勢の揃い方。棚卸しは `AnimalModelGeometryAudit` |
+| [docs/refactoring.md](docs/refactoring.md) | リファクタリングの手順（安全網の取り方・NG パターン）と実施記録 |
 | [docs/DogMetaBoneMapping.md](docs/DogMetaBoneMapping.md) | 犬モデルのボーンマッピング・スケール調査 |
 | [docs/human-animation-test-scene.md](docs/human-animation-test-scene.md) | Human アニメーションテストシーンの使い方 |
 | [docs/presentations/weekly/](docs/presentations/weekly/) | 週次進捗ファイル（`YYYY-MM-DD.md`、金曜日の日付） |
@@ -64,6 +67,16 @@ bundle 内の検出オブジェクト（Human / Animal / Else）を、対応す�
 ## 作業方針
 
 - **作業前に関連 docs を参照**する
+- **見た目に関わる修正は必ず画像を見せる。採否はユーザーが決める。**
+  - バッチでキャプチャを撮り、**`docs/tmp/` に PNG を置いて markdown リンクで渡す**
+    （`docs/tmp/` は gitignore 済み。チャットへの添付は届かないことがある）
+  - **修正前・修正後を同じフレームで並べる。**変わらなかったものではなく**変わったもの**を見せる
+  - **数値が良くなったことを成功と読まない。**過去に、膝角のモデル間の差が 103°→0° に揃ったのに
+    絵ではモデルが破綻していた例がある（実体は「曲げが失われて rest に潰れた」状態）
+  - こちらが絵を見て「破綻している」と判断して**勝手に revert しない**。見立ては述べてよいが、
+    採否の実行はユーザーの返事を待つ（2026-09-05・09-06 に 2 回指摘された）
+  - 画像に日本語ラベルを描くときは**フォントを明示する**（`C:/Windows/Fonts/meiryo.ttc`）。
+    PIL の既定フォントは日本語を持たず全部四角になる
 - **記録は聞かずに必ず行う**。調査・実測・判断の結果が出たら、**対処方針の議論に入る前に** docs へ書く。「記録しますか」と確認しない（記録 → その後に方針、の順を固定する）
 - **作業中・作業後にドキュメントを更新**する（新しい知見・NG パターン・調査結果）
 - **実装後に `Docs/presentations/` を更新**する（対応する機能ファイルの内容を現状に合わせ、`presentations/weekly/YYYY-MM-DD.md` に今週の差分を追記する）

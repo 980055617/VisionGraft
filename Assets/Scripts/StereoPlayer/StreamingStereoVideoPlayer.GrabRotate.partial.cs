@@ -138,6 +138,21 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void UpdatePointerRay(Vector3 origin, Vector3 direction, bool pressed)
     {
+        LogRayInventoryOnce();
+
+        // **自前の線は既定で描かない。**ISDK の白い線と 2 本出て、しかも始点が違うので
+        // 紛らわしい（2026-09-07 実機指摘）。判定にはこの origin / direction を
+        // 使い続けるので、掴む動作は変わらない。
+        //
+        // 前提は「白い線と同じ場所を指していること」。**ISDK の線は LineRenderer では
+        // 描かれていない**ので（`[RAY] 線を描く候補 0 個`）、線どうしを数値で
+        // 比べる手は使えなかった。2026-09-07 実機で「掴める」ことを確認して前提を通した。
+        if (!showPointerRay)
+        {
+            SetPointerRayVisible(false);
+            return;
+        }
+
         if (pointerRayRoot == null)
         {
             RuntimePointerRayFactory.Ray created = RuntimePointerRayFactory.Create();
@@ -156,6 +171,44 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         pointerRayLine.SetPosition(0, origin);
         pointerRayLine.SetPosition(1, origin + direction.normalized * length);
         pointerRayLine.widthMultiplier = pressed ? 0.007f : 0.004f;
+    }
+
+
+    // **実機で「レイが 2 本出ている」と言われたので、何が線を描いているかを列挙する。**
+    // 自前の LineRenderer はプロジェクトに 1 つしか無いので、もう 1 本は
+    // ISDK 側（`ControllerRayInteractor` / `HandRayInteractor`）のはず。
+    // 推測で消すと必要な方を消しかねないので、まず名前を出す。
+    private bool loggedRayInventory;
+
+    private void LogRayInventoryOnce()
+    {
+        if (loggedRayInventory)
+        {
+            return;
+        }
+
+        loggedRayInventory = true;
+        LineRenderer[] lines = FindObjectsByType<LineRenderer>(
+            FindObjectsInactive.Include, FindObjectsSortMode.None);
+        Debug.Log($"[RAY] 線を描く候補 {lines.Length} 個");
+        for (int i = 0; i < lines.Length; i++)
+        {
+            LineRenderer line = lines[i];
+            if (line == null)
+            {
+                continue;
+            }
+
+            System.Text.StringBuilder path = new System.Text.StringBuilder(line.name);
+            for (Transform t = line.transform.parent; t != null; t = t.parent)
+            {
+                path.Insert(0, "/").Insert(0, t.name);
+            }
+
+            Debug.Log(
+                $"[RAY]   {path} enabled={line.enabled} " +
+                $"active={line.gameObject.activeInHierarchy} pts={line.positionCount}");
+        }
     }
 
 
@@ -516,29 +569,4 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private bool TryResolveTrackIdFromCollider(Collider collider, out uint trackId)
-    {
-        trackId = 0u;
-        if (collider == null)
-        {
-            return false;
-        }
-
-        Transform root = collider.transform;
-        while (root != null)
-        {
-            foreach (KeyValuePair<uint, GameObject> kv in trackInstances)
-            {
-                if (kv.Value != null && kv.Value.transform == root)
-                {
-                    trackId = kv.Key;
-                    return true;
-                }
-            }
-
-            root = root.parent;
-        }
-
-        return false;
-    }
 }

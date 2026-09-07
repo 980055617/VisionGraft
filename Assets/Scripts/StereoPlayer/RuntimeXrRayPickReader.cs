@@ -117,10 +117,34 @@ public static class RuntimeXrRayPickReader
         if (device.TryGetFeatureValue(PointerPosition, out position) &&
             device.TryGetFeatureValue(PointerRotation, out rotation))
         {
+            LogPoseSourceOnce("aim");
             return true;
         }
 
-        return device.TryGetFeatureValue(CommonUsages.devicePosition, out position) &&
-               device.TryGetFeatureValue(CommonUsages.deviceRotation, out rotation);
+        bool grip = device.TryGetFeatureValue(CommonUsages.devicePosition, out position) &&
+                    device.TryGetFeatureValue(CommonUsages.deviceRotation, out rotation);
+        if (grip)
+        {
+            // **握り位置は指し棒の向きと数十度ずれる。**ここへ落ちていると、
+            // 自前のレイだけが ISDK のレイと違う始点・違う向きで出る
+            // （2026-09-07 実機で「レイ 2 本・手元が違う始点」の報告）。
+            LogPoseSourceOnce("grip(フォールバック)");
+        }
+
+        return grip;
+    }
+
+    // どちらの姿勢を読んでいるかは実機でしか分からないので、変わったときだけ 1 行出す。
+    private static string loggedPoseSource;
+
+    private static void LogPoseSourceOnce(string source)
+    {
+        if (loggedPoseSource == source)
+        {
+            return;
+        }
+
+        loggedPoseSource = source;
+        Debug.Log($"[RAY] コントローラ姿勢の出どころ={source}");
     }
 }

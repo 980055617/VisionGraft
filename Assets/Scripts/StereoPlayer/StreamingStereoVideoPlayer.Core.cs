@@ -215,6 +215,21 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public float depthRefineFastTrackLow = 0.15f;
     public float depthRefineFastTrackHigh = 0.60f;
 
+    // ⑧ の平滑化を tick ではなく**動画フレーム**で刻む。**既定 ON。**
+    //
+    // OFF（従来）だと表示レートで結果が変わる。実測（2026-09-09）:
+    // バッチ 15.5 tick/フレームでは収束するのに、実機 72Hz の 2.4 tick/フレームでは
+    // 追いつかず `ratio` が 1.17 前後で固定される（モデルが常に 17% 大きい）。
+    // コマ落ちすればさらに変わるので、被験者実験の交絡要因になる
+    // （Docs/experiment-flow.md）。
+    // 詳細は Playback.partial.cs の SmoothProjectedDepthRatio。
+    public bool smoothDepthPerVideoFrame = true;
+
+    // Human の姿勢・root 深度の平滑化も動画フレームで刻む。**既定 ON。**
+    // ⑧ だけ直しても、姿勢が tick 依存だと投影スパンが変わって ⑧ の入力が揺れる。
+    // 詳細は HumanSmpl.partial.cs の ResolveSmoothingSeconds。
+    public bool smoothPerVideoFrame = true;
+
     // 下端が画面外に切れているフレームで、⑦ の基準を bbox 下端から bbox 上端に切り替えるか。
     // 切れた下端に合わせると下半身を画面内へ持ち上げてしまうため。上下とも切れている
     // フレームは従来どおり下端合わせにフォールバックする。

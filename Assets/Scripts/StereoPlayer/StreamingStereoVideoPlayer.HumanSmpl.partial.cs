@@ -173,11 +173,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // 2026-08-06 検証済み: 0f（平滑化なし）にしても [PLACE] の sizeRatio は
             // median 1.169→1.174 とほぼ変わらない。姿勢の再現の浅さは平滑化が原因ではない。
             const float SmplSmoothHalfLifeSec = 0.05f; // 50ms: smooth enough to cut jitter, fast enough to track motion
-            float dt = Time.deltaTime;
+            // **刻みは動画フレーム。**tick で刻むと 1 動画フレームあたりの tick 数
+            // （バッチ 15.5 / 実機 2.4）で到達度が変わり、表示レートで姿勢が変わる。
+            float dt = ResolveSmoothingSeconds(state, Time.deltaTime);
             // alpha: fraction of the way toward the new value this frame (frame-rate independent)
-            float smoothAlpha = SmplSmoothHalfLifeSec > 0f
-                ? 1f - Mathf.Exp(-dt * 0.693147f / SmplSmoothHalfLifeSec)
-                : 1f;
+            float smoothAlpha = dt <= 0f
+                ? 0f
+                : (SmplSmoothHalfLifeSec > 0f
+                    ? 1f - Mathf.Exp(-dt * 0.693147f / SmplSmoothHalfLifeSec)
+                    : 1f);
 
             Quaternion[] fk = state.smplFk;
             fk[0] = Quaternion.identity;
@@ -475,11 +479,59 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     //
     // Fix: smooth only the scalar depth Z, reconstruct along the same stable ray:
     //   smoothed = camOrigin + (target - camOrigin) * (smoothedZ / rawZ)
+    // 平滑化を tick ではなく**動画フレーム**で刻むための刻み幅。
+    //
+    // 指数平滑化は「時間あたり」では fps 非依存だが、**1 動画フレームの間に何 tick
+    // 走るか**で到達度が変わる。入力（その動画フレームの姿勢）は tick 間で変わらないので、
+    // tick が多いほど目標に近づいてしまう。実測（2026-09-09）: バッチ 15.5 tick/フレーム
+    // と実機 2.4 tick/フレームで結果が変わり、表示レートで見え方が変わっていた。
+    //
+    // 進んだ動画フレーム数を返す。同じフレーム内の 2 回目以降は 0 を返すので、
+    // 呼び出し側は前回の結果をそのまま使う。
+    private readonly Dictionary<object, int> smoothingVideoFrameByKey = new Dictionary<object, int>();
+
+    private int AdvanceSmoothingVideoFrames(object key)
+    {
+        int frame = GetCurrentPlaybackFrame();
+        if (!smoothingVideoFrameByKey.TryGetValue(key, out int last))
+        {
+            smoothingVideoFrameByKey[key] = frame;
+            return 1;
+        }
+
+        int advanced = frame - last;
+        if (advanced <= 0)
+        {
+            return 0;
+        }
+
+        smoothingVideoFrameByKey[key] = frame;
+        return advanced;
+    }
+
+    private float ResolveSmoothingSeconds(object key, float fallbackDeltaTime)
+    {
+        if (!smoothPerVideoFrame)
+        {
+            return fallbackDeltaTime;
+        }
+
+        int advanced = AdvanceSmoothingVideoFrames(key);
+        if (advanced <= 0)
+        {
+            return 0f;   // 進んでいない = 平滑化も進めない
+        }
+
+        float videoFps = manifest != null && manifest.fps > 0.01f ? (float)manifest.fps : 30f;
+        return advanced / videoFps;
+    }
+
+
     private Vector3 GetSmoothedSmplRootWorld(HumanoidRigCache cache, Vector3 target, Vector3 camOrigin, Vector3 cameraForward)
     {
         const float HalfLifeSecDepth = 0.35f;
-        float dt = Time.deltaTime;
-        float alphaDepth = 1f - Mathf.Exp(-dt * 0.693147f / HalfLifeSecDepth);
+        float dt = ResolveSmoothingSeconds(cache, Time.deltaTime);
+        float alphaDepth = dt <= 0f ? 0f : 1f - Mathf.Exp(-dt * 0.693147f / HalfLifeSecDepth);
 
         Vector3 offset = target - camOrigin;
         float rawDepth = cameraForward.sqrMagnitude > 0.0001f

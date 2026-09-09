@@ -672,6 +672,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 素通しで深度に反映するとモデルが前後に暴れる。深度ではなく比率を平滑化することで、
     // 人の実際の移動（anchor_z 由来）は保ったままノイズだけを落とす。
     // 平滑化係数は時定数から毎フレーム求めるのでフレームレートに依存しない。
+    // 平滑化を最後に進めた動画フレーム。tick ではなく動画フレームで刻むため。
+    private readonly Dictionary<uint, int> smoothedDepthRatioFrameByTrack = new Dictionary<uint, int>();
+
     private float SmoothProjectedDepthRatio(uint trackId, float ratio)
     {
         float tau = Mathf.Max(0f, projectedDepthSmoothingSeconds);
@@ -685,7 +688,48 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             // shot 先頭・モデル変更直後は平滑化せず、その場の値から始める。
             smoothedProjectedDepthRatioByTrack[trackId] = ratio;
+            smoothedDepthRatioFrameByTrack[trackId] = GetCurrentPlaybackFrame();
             return ratio;
+        }
+
+        // **平滑化を動画フレームで刻む（fps 非依存にする）。**
+        //
+        // 元は毎 Update に `Time.deltaTime` で進めていた。深度そのものは
+        // `投影高 ∝ 1/z` が厳密なので `z × ratio` の 1 手で目標に届くが、
+        // **平滑化が tick 回数に依存する**ため結果が fps で変わっていた。
+        // 実測（2026-09-09）: バッチ 15.5 tick/フレームでは収束するのに、
+        // 実機 72Hz の 2.4 tick/フレームでは追いつかず、`ratio` が 1.17 前後で
+        // 固定される（= モデルが常に 17% 大きい）。
+        // 表示レートやコマ落ちで見え方が変わるのは、被験者実験では交絡要因になる
+        // （Docs/experiment-flow.md）。
+        //
+        // 同じ動画フレームの間は値を進めず、前回の結果をそのまま返す。
+        // 深度の適用は 1 手で厳密なので、同じ値を返せば何 tick 走っても同じ位置に落ちる。
+        if (smoothDepthPerVideoFrame)
+        {
+            int frame = GetCurrentPlaybackFrame();
+            if (!smoothedDepthRatioFrameByTrack.TryGetValue(trackId, out int lastFrame))
+            {
+                lastFrame = frame - 1;
+            }
+
+            int advanced = frame - lastFrame;
+            if (advanced <= 0)
+            {
+                return previous;
+            }
+
+            smoothedDepthRatioFrameByTrack[trackId] = frame;
+            float videoFps = manifest != null && manifest.fps > 0.01f ? (float)manifest.fps : 30f;
+            float dt = advanced / videoFps;
+            float a = 1f - Mathf.Exp(-dt / tau);
+            float relErr = Mathf.Abs(ratio - previous) / Mathf.Max(0.05f, Mathf.Abs(previous));
+            float loF = Mathf.Max(0f, depthRefineFastTrackLow);
+            float hiF = Mathf.Max(loF + 0.001f, depthRefineFastTrackHigh);
+            a = Mathf.Clamp01(a + (1f - a) * Mathf.Clamp01((relErr - loF) / (hiF - loF)));
+            float result = previous + a * (ratio - previous);
+            smoothedProjectedDepthRatioByTrack[trackId] = result;
+            return result;
         }
 
         // DisplayModelTick は毎 Update 呼ばれるので、この関数は 1 メタフレームにつき
@@ -943,7 +987,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             float rootZ = (Quaternion.Inverse(camRotation) * (instance.transform.position - camOrigin)).z;
             Debug.Log(
-                $"[DEPTH8] track={obj.trackId} anchorZ={obj.anchorZ:F4} before={beforeZ:F4} " +
+                $"[DEPTH8] track={obj.trackId} anchorRaw01={obj.anchorZ01:F4} " +
+                $"anchorZ={obj.anchorZ:F4} before={beforeZ:F4} " +
                 $"ratio={ratio:F4} afterRatio={ratioZ:F4} final={targetZ:F4} " +
                 $"screenMoved={(targetZ - ratioZ) * 1000f:F1}mm " +
                 $"rootZ={rootZ:F4} bodyMinusRoot={(beforeZ - rootZ) * 1000f:+0.0;-0.0}mm");

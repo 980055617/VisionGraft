@@ -112,6 +112,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
     // 画面と pinhole の基準点を固定するかを切り替える入口（A/B 用）。
+    // ⑧ の平滑化を動画フレーム基準にするかを切り替える入口（A/B 用）。
+    public void SetSmoothDepthPerVideoFrame(bool enabled)
+    {
+        smoothDepthPerVideoFrame = enabled;
+    }
+
     public void SetLockScreenAnchorPosition(bool enabled)
     {
         lockScreenAnchorPosition = enabled;

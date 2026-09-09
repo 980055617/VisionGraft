@@ -20,6 +20,7 @@ public static class BatchPlaybackLogger
     private const string KeyStarted = "BatchPlaybackLogger.Started";
     private const string KeyCaptureFrames = "BatchPlaybackLogger.CaptureFrames";
     private const string KeyHeadShift = "BatchPlaybackLogger.HeadShift";
+    private const string KeyTargetFps = "BatchPlaybackLogger.TargetFps";
     private const string KeyCaptureDir = "BatchPlaybackLogger.CaptureDir";
     private const string KeyCaptureWidth = "BatchPlaybackLogger.CaptureWidth";
 
@@ -70,7 +71,9 @@ public static class BatchPlaybackLogger
         bool? pinUi = null;
         bool? originFacing = null;
         bool? anchorLock = null;
+        bool? frameSmooth = null;
         string headShift = null;
+        int targetFps = 0;
         bool? remember = null;
         string bundleName = null;
         string manualYaw = null;
@@ -120,7 +123,9 @@ public static class BatchPlaybackLogger
             if (args[i] == "-pinUi" && bool.TryParse(args[i + 1], out bool vPu)) pinUi = vPu;
             if (args[i] == "-originFacing" && bool.TryParse(args[i + 1], out bool vOf)) originFacing = vOf;
             if (args[i] == "-anchorLock" && bool.TryParse(args[i + 1], out bool vAl)) anchorLock = vAl;
+            if (args[i] == "-frameSmooth" && bool.TryParse(args[i + 1], out bool vFs)) frameSmooth = vFs;
             if (args[i] == "-headShift") headShift = args[i + 1];
+            if (args[i] == "-targetFps") int.TryParse(args[i + 1], out targetFps);
             if (args[i] == "-noBend" && bool.TryParse(args[i + 1], out bool vNb)) noBend = vNb;
             if (args[i] == "-alignTop" && bool.TryParse(args[i + 1], out bool vAt)) alignTop = vAt;
             if (args[i] == "-bundle") bundleName = args[i + 1];
@@ -254,6 +259,7 @@ public static class BatchPlaybackLogger
                 if (pinUi.HasValue) { p.SetPinRuntimeUiDistance(pinUi.Value); }
                 if (originFacing.HasValue) { p.SetUseTrackingOriginForScreenFacing(originFacing.Value); }
                 if (anchorLock.HasValue) { p.SetLockScreenAnchorPosition(anchorLock.Value); }
+                if (frameSmooth.HasValue) { p.SetSmoothDepthPerVideoFrame(frameSmooth.Value); }
                 if (animAim.HasValue) { p.SetAnimalKeypointAimAt(animAim.Value); }
                 // バッチは測定環境なので、明示的に -remember true と言われない限り OFF。
                 // persistentDataPath に保存済みの選択が残っていると A/B が静かに汚れる。
@@ -382,6 +388,7 @@ public static class BatchPlaybackLogger
 
         SessionState.SetString(KeyCaptureFrames, captureFrames ?? string.Empty);
         SessionState.SetString(KeyHeadShift, headShift ?? string.Empty);
+        SessionState.SetInt(KeyTargetFps, targetFps);
         SessionState.SetString(KeyCaptureDir, captureDir ?? string.Empty);
         SessionState.SetInt(KeyCaptureWidth, captureWidth);
         SessionState.SetBool(KeyRunning, true);
@@ -410,6 +417,30 @@ public static class BatchPlaybackLogger
 
     // VideoPlayer.frame を監視し、指定フレームに達したらカメラの絵を PNG で保存する。
     // -nographics を付けていないので通常どおりレンダリングでき、目視比較に使える。
+    // **バッチの Update 回数を実機に合わせる。**
+    //
+    // ⑧ は毎 Update に「今の投影から ratio を再計算して深度を寄せる」不動点反復で、
+    // fast track の発火条件も **1 tick 前との相対誤差**で決まる。つまり
+    // **Update の回数が変われば挙動が変わる。**
+    // 実測（2026-09-09）: バッチは約 465fps（1 動画フレームあたり 15.5 tick）、
+    // 実機は 72Hz（同 2.4 tick）で **6 倍違った**。この差のせいで
+    // バッチで詰めた fastLo の調整が実機で効かなかった。
+    //
+    // `-targetFps 72` で実機に揃える。**揃ったかは必ずログの tick 数で検算すること。**
+    private static void ApplyTargetFrameRate()
+    {
+        int fps = SessionState.GetInt(KeyTargetFps, 0);
+        if (fps <= 0)
+        {
+            return;
+        }
+
+        QualitySettings.vSyncCount = 0;
+        Application.targetFrameRate = fps;
+        Debug.Log($"[BATCH] targetFrameRate={fps}（vSyncCount=0）");
+    }
+
+
     private static void TryCaptureFrames()
     {
         string spec = SessionState.GetString(KeyCaptureFrames, string.Empty);
@@ -575,6 +606,7 @@ public static class BatchPlaybackLogger
             // playmode に入るとランタイム側の AudioListener が作り直されるので掛け直す。
             AudioListener.volume = 0f;
             EditorUtility.audioMasterMute = true;
+            ApplyTargetFrameRate();
             startedAt = EditorApplication.timeSinceStartup;
             Debug.Log("[BATCH] playmode started at " + startedAt.ToString("F2"));
             return;

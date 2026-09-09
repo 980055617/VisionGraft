@@ -294,8 +294,88 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
+    // **実機で測るための一時的な仕掛け（2026-09-09）。**
+    //
+    // バッチは実機の 6 倍の fps で走るため、⑧ のように毎 Update 反復する処理は
+    // バッチで測っても実機を再現しない（1 動画フレームあたり 15.5 tick 対 2.4 tick）。
+    // 実機で実際に何が起きているかを見るために、診断ログを実機でも出す。
+    //
+    // **ログ自体が fps を下げると、測りたいもの（tick 数）が変わる。**
+    // なので毎秒 1 回、実測した fps と tick/フレームを [FPS] で出して検算できるようにする。
+    //
+    // **計測するときだけ true にする。**ログを毎フレーム出すので実機が重くなり、
+    // 測りたいもの（1 動画フレームあたりの tick 数）自体が変わりうる。
+    // 2026-09-09 の計測では 71.0〜72.1fps を維持できていたので影響は無かったが、
+    // 常用するものではない。
+    public bool logDeviceDiagnostics;
+
+    private bool deviceDiagnosticsApplied;
+    private float deviceDiagLoggedAt;
+    private int deviceDiagUpdateCount;
+
+    private float loggedScreenDistance = float.NaN;
+    private float loggedFovx = float.NaN;
+
+    private void LogPlacementSettingsSnapshot(string reason)
+    {
+        loggedScreenDistance = screenDistanceMeters;
+        loggedFovx = runtimeFovxDeg;
+        Debug.Log(
+            $"[SET] {reason} screenDist={screenDistanceMeters:F3}m fovx={runtimeFovxDeg:F1}deg " +
+            $"fovxOverride={useRuntimeFovxOverride} fitToFov={fitScreenToFov} " +
+            $"lockAnchor={lockScreenAnchorPosition} originFacing={useTrackingOriginForScreenFacing} " +
+            $"refineDepth={refineDepthFromProjectedBones} fastLo={depthRefineFastTrackLow:F2} " +
+            $"fastHi={depthRefineFastTrackHigh:F2} smoothSec={projectedDepthSmoothingSeconds:F2}");
+    }
+
+
+    private void ApplyDeviceDiagnosticsIfEnabled()
+    {
+        if (!logDeviceDiagnostics)
+        {
+            return;
+        }
+
+        if (!deviceDiagnosticsApplied)
+        {
+            deviceDiagnosticsApplied = true;
+            logPlacementMeasurement = true;
+            logPlacementMeasurementEveryNFrames = 1;
+            logDepthRefineStages = true;
+            Debug.Log("[FPS] 実機診断ログを有効化した（計測後に logDeviceDiagnostics を false へ）");
+            LogPlacementSettingsSnapshot("起動時");
+        }
+
+        // **設定値は推測せずログに出す。**
+        // 2026-09-09、実機とバッチで深度が 1.8 倍違った原因を Screen Dist だと推測したが、
+        // ログに出していなかったので確かめられなかった。ユーザー指摘
+        // 「疑うなら調べればいいのでは、ログあるなら」。**変わったら必ず出す。**
+        if (!Mathf.Approximately(loggedScreenDistance, screenDistanceMeters) ||
+            !Mathf.Approximately(loggedFovx, runtimeFovxDeg))
+        {
+            LogPlacementSettingsSnapshot("変更");
+        }
+
+        deviceDiagUpdateCount++;
+        float now = Time.unscaledTime;
+        if (now - deviceDiagLoggedAt < 1f)
+        {
+            return;
+        }
+
+        float elapsed = Mathf.Max(0.0001f, now - deviceDiagLoggedAt);
+        float fps = deviceDiagUpdateCount / elapsed;
+        deviceDiagLoggedAt = now;
+        deviceDiagUpdateCount = 0;
+        Debug.Log(
+            $"[FPS] update={fps:F1}/s  動画30fpsなら {fps / 30f:F2} tick/フレーム" +
+            $"  vp.frame={(vp != null ? vp.frame : -1)}");
+    }
+
+
     private void Update()
     {
+        ApplyDeviceDiagnosticsIfEnabled();
         FlushTrackCustomizationSaveIfDue();
 
         // 対象を掴んで回す。パネルの掴み代と同じく毎フレーム走らせる必要がある。

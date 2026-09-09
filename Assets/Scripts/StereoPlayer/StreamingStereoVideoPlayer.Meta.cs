@@ -33,6 +33,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public ushort anchorV;
         // camera-space depth in meters, larger = farther。bundle 世代ごとの向きの違いは
         // DecodeAnchorDepthMetersFromBundle が吸収済みなので、ここは常に larger = farther。
+        // **これは meta.bin の `anchor_z` ではなく「配置深度」。**
+        // NormalizeAnchorZ01 → Z01ToNearness → popout を経て
+        // `screenDist − eps − popout` にした値で、screenDist が入っている。
+        // 2026-09-09、この 2 つを取り違えて bundle 側へ報告し
+        // 「どのビルドとも一致しない」と照会を受けた（D-004）。
+        // **生成側と数字を突き合わせるときは下の anchorZ01 を使うこと。**
         public float anchorZ;
         // bundle の正規化深度そのもの。向きは bundle 世代に依存する（depth_policy あり =
         // larger:farther / なし = larger:nearer）ため、比較に使うときは

@@ -95,3 +95,5 @@ Assets/AssetStoreTools*
 
 # 共有フォルダはそのまま相手に渡すので、生成物を混ぜない
 Docs/bundle-shared/__pycache__/
+# 解析スクリプトを走らせると Docs 配下にも出る。共有物に混ぜない。
+Docs/**/__pycache__/

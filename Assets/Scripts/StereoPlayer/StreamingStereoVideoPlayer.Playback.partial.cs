@@ -714,7 +714,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
 
             int advanced = frame - lastFrame;
-            if (advanced <= 0)
+
+            // **巻き戻りを必ず拾う。**ループ（2166 → 0）やシークで負になる。
+            // ここを「進んでいない」と同じ扱いにすると記録が更新されず、
+            // 以後ずっと負のままになって平滑化が凍結する（2026-09-10 実機で発覚）。
+            // 巻き戻ったら履歴は無意味なので、その場の比をそのまま採用する。
+            if (advanced < 0)
+            {
+                smoothedDepthRatioFrameByTrack[trackId] = frame;
+                smoothedProjectedDepthRatioByTrack[trackId] = ratio;
+                return ratio;
+            }
+
+            if (advanced == 0)
             {
                 return previous;
             }

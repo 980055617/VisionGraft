@@ -490,6 +490,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 呼び出し側は前回の結果をそのまま使う。
     private readonly Dictionary<object, int> smoothingVideoFrameByKey = new Dictionary<object, int>();
 
+    // 巻き戻りを表す戻り値。ループ・シークでフレーム番号が戻ったときに返す。
+    private const int SmoothingRewound = -1;
+
     private int AdvanceSmoothingVideoFrames(object key)
     {
         int frame = GetCurrentPlaybackFrame();
@@ -500,7 +503,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         int advanced = frame - last;
-        if (advanced <= 0)
+
+        // **巻き戻りを必ず拾う。**動画は最後まで行くと先頭へ戻る（isLooping = true）。
+        // 2166 → 0 では advanced が大きな負になる。ここを「進んでいない」と同じ扱いに
+        // すると **記録が更新されず、以後 advanced が永久に負のままになり平滑化が凍結する**。
+        // 実機で「ループしたあと最初から体勢が変」という症状になった（2026-09-10）。
+        // 巻き戻ったら平滑化の履歴は無意味なので、その場の値へ飛ばす。
+        if (advanced < 0)
+        {
+            smoothingVideoFrameByKey[key] = frame;
+            return SmoothingRewound;
+        }
+
+        if (advanced == 0)
         {
             return 0;
         }
@@ -517,6 +532,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         int advanced = AdvanceSmoothingVideoFrames(key);
+        if (advanced == SmoothingRewound)
+        {
+            // 巻き戻り: alpha が 1 になる大きな dt を返して、その場の値へ飛ばす。
+            return 1000f;
+        }
+
         if (advanced <= 0)
         {
             return 0f;   // 進んでいない = 平滑化も進めない

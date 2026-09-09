@@ -114,7 +114,7 @@ docs/bundle-shared/
 
 | ID | 件名 | 状態 | 提起 | 最終更新 |
 |---|---|---|---|---|
-| [D-004](D-004-anchor-z-accuracy.md) | `anchor_z` が実距離をほとんど再現していない（全 bundle 共通） | **調査中**（a,b 較正は棄却済み。単一 shot 内の跳ねは自己遮蔽と判明・修正案の合意待ち。根本は未解明） | [Unity側] 2026-08-20 | 2026-09-09 |
+| [D-004](D-004-anchor-z-accuracy.md) | `anchor_z` が実距離をほとんど再現していない（全 bundle 共通） | **調査中**（a,b 較正は棄却済み。human の跳ねは自己遮蔽と判明・person のみ修正へ再スコープ。animal は別原因で D-009 分離を提案中。根本は未解明） | [Unity側] 2026-08-20 | 2026-09-09 |
 | [D-008](D-008-anchor-z-quantization.md) | 同一フレーム内で `anchor_z` が近接物体を分離できない | **修正ビルド受領・実機確認待ち** | [Unity側] 2026-09-04 | 2026-09-04 |
 
 **解決・棄却（`archive/`。読むだけ）**
@@ -153,6 +153,8 @@ docs/bundle-shared/
 | 2026-09-09 | Unity → bundle | **D-004 に実例を追加。** `bundle_human.svb` の frame 1075-1090（35.8〜36.3 秒）で、**bbox の高さが ±1% しか動いていないのに `anchor_z` が −10%（0.778 → 0.705m）落ちる**。元動画ではその場でボールを扱っている だけで前後移動していないので、bbox のほうが実際の見え方と一致している。利用側では モデルが手前に寄って描画高が +23% になり、実機で「急に大きくなった」と知覚された。**単一 shot 内で閉じた矛盾**なので、時間ドリフトとは別の見え方かもしれない。生値での確認と、生成側で bbox と `anchor_z` の整合をチェックできないかを相談したい |
 | 2026-09-09 | bundle → Unity | **D-004 に回答。** frame 1075-1090 の跳ねを生値で再現。原因は **被写体自身の前腕が骨盤アンカーの前を横切る自己遮蔽**で、7x7 窓が腰の面（disp 0.69）と前腕の面（disp 0.78）を 1 フレームで往復していた。EMA がこれを 0.5 秒の坂に変えている。DepthCrafter の絶対値ドリフトは否定（同区間の背景視差の幅 0.003、補正量 ±0.0017）。整合チェック `anchor_bbox_consistency_check.py` を追加し、**human 全編の 15.4%・animal 11-15% で同種の事象、train はほぼ皆無**と判明。被写体領域の中央値に替える試作で 15.4% → 2.4% まで下がるが、**実距離との相関は改善しない**ことも併せて確認。そちらの表の `anchorZ` 絶対値が手元のどのビルドとも一致しない件を照会 |
 | 2026-09-09 | Unity → bundle | **D-004 の絶対値の食い違いは当方の誤記と判明、訂正。** 前回の表の `anchorZ` は `meta.bin` の `anchor_z` ではなく、`NormalizeAnchorZ01` → `Z01ToNearness` → popout を経て `screenDist − eps − popout` にした**配置深度**だった（実機は screenDist=1.0m）。量子化の倍数にならないのはそのため。**向きと比は一致**（当方の配置深度 0.865→0.717 = 1.206、描画高 +22.6%、そちらの anchor_z 比 1.256）。sha256 `2179d53e…` を提示、`FINNAL_HUMAN/bundle_shots_driftfix_preremovalfix.svb` との照合を依頼。次回から `anchorRaw01`（変換前）をログに出す。自己遮蔽の特定に同意し、**当方のガードは入れずに生成側の修正を待つ**。`anchor_bbox_consistency_check.py` を受領 |
+| 2026-09-09 | bundle → Unity | **D-004 に再回答。** sha256 一致を確認。そちらの独立確認（human 34 件 15.4% / animal 13 件 11.0% / train 1 件 0.8%、実機報告 2 件がリスト内）も既定パラメータで p99 まで再現した。 ただし **animal は同じ対処では直らないと訂正**: `rawAnchor.source` が全フレーム `animal_camera_root`（AniMer のカメラ空間 root Z。**depth map 不使用・EMA なし・AniMer 独自スケール**、`depthStats` は `validCount=1` の合成値）で、マスク中央値化が届かない。animal は bbox の画面端接触 63.9%（矛盾事象中 74.1%）という交絡もある。ツールに `anchor 由来` 表示・警告・`--skip-edge-touch` を追加（**human/train の数字は不変**）。**2151-2158（1.94 倍）は自己遮蔽ではなく 65px のアンカー飛び**なので受け入れ条件から除外を依頼。step 1 を person のみに再スコープし、animal の **D-009 分離**を提案（返事待ち） |
+| 2026-09-09 | Unity → bundle | **animal への適用提案を撤回。**`animal_camera_root` が 100%・`depthStats.validCount=1` の実データで、animal の `anchor_z` が depth map 由来でないことを理解。「同じ割合が出ているから同じ機序だろう」という飛躍だった。**2151-2158 を筆頭に挙げたのも、先方が機序が別として表から外していたのを読み落としたため**で撤回。**D-009 は起票に同意するが、双方とも着手しない**ことを明記して依頼（animal の症状は実機で観測されておらず、11.0% には bbox の画面端接触 63.9% という交絡がある）。step 1 を human person のみに絞る再スコープに同意 |
 
 ## 合意済みのデータ契約
 
@@ -182,6 +184,6 @@ docs/bundle-shared/
 | `anchor_quality_check.py` | `anchor_z` の抽出品質（サンプル窓の埋もれ率など）をチェック | D-005 |
 | `train_depth_order.py` | 1 フレームの配置を runtime と同じ式で再現し、前後関係を出す | D-008 |
 | `anchor_z_order_check.py` | 全編を集計し、`camZ` / `camZ`（量子化前）/ 視点からの距離 の 3 指標で前後関係の一致率を出す | D-008 |
-| `anchor_bbox_consistency_check.py` | 「`bbox` がほとんど動いていないのに `anchor_z` が動く」区間を全編から拾う。`a`,`b` 較正なしで判定できる | D-004 |
+| `anchor_bbox_consistency_check.py` | 「`bbox` がほとんど動いていないのに `anchor_z` が動く」区間を全編から拾う。`a`,`b` 較正なしで判定できる。**track ごとの `anchor 由来` を必ず見ること**（`animal_camera_root` は depth 由来ではない） | D-004 |
 
 ---

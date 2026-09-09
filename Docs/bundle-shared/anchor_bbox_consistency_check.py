@@ -29,6 +29,19 @@
         [--track 0]         track を絞る
         [--used]            EMA 後（meta.bin に載る値）で判定する
 
+**`anchor_z` の中身は track によって別物なので注意**（2026-09-09 に判明）:
+
+  - `keypoint_depth_sample` / `mask_centroid_depth_sample` … depth map を 7x7 窓で
+    サンプルした正規化 disparity。上のアフィンの理屈がそのまま成り立つ
+  - `animal_camera_root` … **depth map を一切見ていない。** AniMer のカメラ空間 root Z
+    （`animer_joint_scale` そのまま = AniMer 独自スケール。メートルではない）。
+    EMA も通っていない。**「disp」という呼び方も、`s` に対してアフィンという前提も
+    成り立たない。**「`anchor_z` が動いたのに `bbox` が動かない」という検出自体は
+    有効（`anchor_z` は両経路とも「大きいほど遠い」）だが、原因は depth サンプリングでは
+    ないので、depth 側の対処では直らない
+
+track ごとの由来は出力の `anchor 由来:` 行に出る。
+
 **この検出は「bbox のほうが正しい」を前提にしていない。** 片方が動いて片方が
 動かない、という不一致を数えるだけ。どちらが原因かは個別に depth を見る必要がある
 （2026-09-09 の frame 1075-1101 は「腕が骨盤アンカーの前を横切る」自己遮蔽だった）。
@@ -71,14 +84,17 @@ def load_series(path, use_used):
                 if z_val is None:
                     continue
                 bw, bh = float(o["bbox"][2]), float(o["bbox"][3])
-                series.setdefault(o["trackId"], {})[fi] = (1.0 - float(z_val), bh, (bw * bh) ** 0.5)
+                series.setdefault(o["trackId"], {})[fi] = (
+                    1.0 - float(z_val), bh, (bw * bh) ** 0.5,
+                    str((o.get("rawAnchor") or {}).get("source") or "?"),
+                    bool(o.get("edgeTouch")))
     else:
         source = "meta.bin / anchor_z（量子化済み）"
         for fi, objs in enumerate(b["frames"]):
             for o in objs:
                 z_val = o["anchorZq"] * b["qpos"]
                 bw, bh = float(o["bboxW"]), float(o["bboxH"])
-                series.setdefault(o["trackId"], {})[fi] = (1.0 - z_val, bh, (bw * bh) ** 0.5)
+                series.setdefault(o["trackId"], {})[fi] = (1.0 - z_val, bh, (bw * bh) ** 0.5, "?", False)
     return series, fps, source, b
 
 
@@ -129,6 +145,10 @@ def main():
     p.add_argument("--top", type=int, default=15)
     p.add_argument("--track", type=int, default=None)
     p.add_argument("--used", action="store_true")
+    p.add_argument("--skip-edge-touch", action="store_true",
+                   help="bbox が画面端に接するフレームを除く。bbox が切れていると "
+                        "「大きさが変わらない」の前提が崩れるため。**11.0% 等の既定値とは "
+                        "比較できない別の数字**なので、診断用に分けて見ること")
     a = p.parse_args()
     metric_idx = 1 if a.metric == "height" else 2
 
@@ -142,24 +162,35 @@ def main():
             if a.track is not None and tid != a.track:
                 continue
             frames = series[tid]
+            if a.skip_edge_touch:
+                frames = {k: v for k, v in frames.items() if not v[4]}
             if len(frames) < a.window + 2:
                 continue
             keys = sorted(frames)
+            srcs = {}
+            for k in keys:
+                srcs[frames[k][3]] = srcs.get(frames[k][3], 0) + 1
             disp = [frames[k][0] for k in keys]
             step = [abs(disp[i + 1] - disp[i]) for i in range(len(disp) - 1)]
             evts = merge(events(frames, a.window, a.disp_jump, a.bbox_tol, metric_idx), a.window)
             covered = sum(e[1] - e[0] for e in evts)
             print()
-            print("  track %d: %d フレーム / disp レンジ %.3f-%.3f / 隣接フレーム差の中央値 %.4f・p99 %.4f"
+            print("  track %d: %d フレーム / 1-anchor_z のレンジ %.3f-%.3f / 隣接フレーム差の中央値 %.4f・p99 %.4f"
                   % (tid, len(keys), min(disp), max(disp), st.median(step),
                      sorted(step)[int(len(step) * 0.99)] if step else 0.0))
+            print("    anchor 由来: %s"
+                  % ", ".join("%s %d 件" % (k, v) for k, v in sorted(srcs.items(), key=lambda kv: -kv[1])))
+            if "animal_camera_root" in srcs:
+                print("    ※ animal_camera_root は depth map 由来ではない（AniMer のカメラ空間 root Z）。"
+                      "検出は有効だが depth 側の対処では直らない")
             print("    矛盾事象 %d 件 / 対象フレームの %.1f%% を覆う"
                   % (len(evts), 100.0 * covered / max(1, len(keys))))
             if not evts:
                 continue
             print("    %-13s %-13s %-13s %8s %8s %8s %9s"
-                  % ("事象の区間", "代表窓", "代表窓の秒", "Δdisp", "Δbbox", "Δz/z", "描画高"))
-            print("    （Δ 列は代表窓の値。事象の区間の端どうしを引いた値ではない）")
+                  % ("事象の区間", "代表窓", "代表窓の秒", "Δ手前", "Δbbox", "Δz/z", "描画高"))
+            print("    （Δ 列は代表窓の値。事象の区間の端どうしを引いた値ではない。"
+                  "Δ手前 = −Δanchor_z で、正なら手前に寄った）")
             for s0, s1, f, g, dd, ds in sorted(evts, key=lambda e: -abs(e[4]))[:a.top]:
                 z0, z1 = 1.0 - frames[f][0], 1.0 - frames[g][0]
                 dz = (z1 - z0) / z0 if z0 else float("nan")

@@ -3482,3 +3482,46 @@ TryReadRotationMatrixFromBin(br, flipCameraY: false, out pose.bodyPose[i]);   //
 **黄の骨格は座位を正確になぞっている**（頭が上がり、胴が立ち、前肢が伸び、後肢が畳まれている）。
 **`body_pose` は座位を持っており、モデルがそれを再現できていない**という結論はそのまま。
 むしろ、向きを直したことで**より明確に見える**ようになった。
+
+### keypoints3d と body_pose の関係（2026-09-10、実データで確認）
+
+**同じ 1 回の AniMer 推論の、別々の表し方。**独立した 2 つの推定ではない。
+
+`source/animer_from_sam2.json`（1 フレーム 1 オブジェクトの中身）:
+
+| フィールド | 中身 | `meta.bin` での持ち方 |
+|---|---|---|
+| `pred_keypoints_3d` | 26×3 の**点の位置**。注記は "AniMer SMAL joint coordinates" | skeleton block（flags `0x1`）。`quant_joint_scale`=0.002 で量子化 |
+| `pred_smal_params` | `model=SMAL`、`parameterization=rotation_matrix`、`globalOrient` 1 個・`pose` 34 個・`betas` 41 個。**回転と体型** | SMAL block（flags `0x4`）|
+
+**位置は回転から出る。**`pose`（+ rest skeleton + `betas`）を運動連鎖に通せば
+`pred_keypoints_3d` が得られる関係で、**同じ当てはめの 2 通りの表現**。
+
+#### `meta.bin` の joints は `pred_keypoints_3d` に Y 反転だけを掛けたもの
+
+候補を総当たりで突き合わせた（重心を合わせてから比較）:
+
+| 変換 | f0 の差（中央）| f573 の差（中央）|
+|---|---:|---:|
+| **Y 反転のみ** | **0.00099** | **0.00347** |
+| そのまま | 0.40836 | 0.81118 |
+| `globalOrient` を掛ける | 0.81388 | 0.44131 |
+
+**Y 反転だけで量子化幅（0.002）の範囲に収まる。**
+`globalOrient` を掛けると悪化するので、**`pred_keypoints_3d` には既に大域の向きが入っている**
+（＝カメラ空間）。一方 `pose` は正準空間なので、骨格を組むときは `globalOrient` が要る。
+`animal_three_panel.py` の実装はこの前提。
+
+#### 利用側での使われ方
+
+| | 使う場所 |
+|---|---|
+| SMAL block（`body_pose`）| **モデルの駆動。**`AnimalSmalFkApplier` の唯一の入力 |
+| keypoints3d | **診断のみ**（`[ANIMALKP]`）。keypoint 経路は SMAL block がある bundle では走らない |
+
+#### 訂正
+
+2026-09-10 に「**独立な 2 つのデータが一致するので裏付けになる**」と書いたが、
+**独立ではない。**同じ当てはめの 2 表現なので、一致は
+**こちらの座標変換が正しいことの確認**にしかならない。姿勢データの正しさの裏付けにはならない。
+（姿勢が正しいことは**元動画と重なること**で見ている。そちらは有効。）

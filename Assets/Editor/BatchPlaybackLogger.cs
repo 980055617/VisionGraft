@@ -67,6 +67,7 @@ public static class BatchPlaybackLogger
         bool? noBend = null;
         bool? accumBend = null;
         int? rootYaw = null;
+        bool? headChain = null;
         bool? twoAxis = null;
         bool? animAim = null;
         bool? headPose = null;
@@ -131,6 +132,7 @@ public static class BatchPlaybackLogger
             if (args[i] == "-noBend" && bool.TryParse(args[i + 1], out bool vNb)) noBend = vNb;
             if (args[i] == "-accumBend" && bool.TryParse(args[i + 1], out bool vAb)) accumBend = vAb;
             if (args[i] == "-rootYaw" && int.TryParse(args[i + 1], out int vRy)) rootYaw = vRy;
+            if (args[i] == "-headChain" && bool.TryParse(args[i + 1], out bool vHc)) headChain = vHc;
             if (args[i] == "-alignTop" && bool.TryParse(args[i + 1], out bool vAt)) alignTop = vAt;
             if (args[i] == "-bundle") bundleName = args[i + 1];
             if (args[i] == "-manualYaw") manualYaw = args[i + 1];
@@ -260,6 +262,7 @@ public static class BatchPlaybackLogger
                 if (noBend.HasValue) { p.SetSmalBendDisabledForDiag(noBend.Value); }
                 if (accumBend.HasValue) { p.SetAccumulateSmalParentBend(accumBend.Value); }
                 if (rootYaw.HasValue) { p.SetForceRootYawFix(rootYaw.Value); }
+                if (headChain.HasValue) { p.SetExcludeHeadFromChain(!headChain.Value); }
                 if (twoAxis.HasValue) { p.SetTwoAxisJointFrameMap(twoAxis.Value); }
                 if (headPose.HasValue) { p.SetAnimalHeadPose(headPose.Value); }
                 if (pinUi.HasValue) { p.SetPinRuntimeUiDistance(pinUi.Value); }

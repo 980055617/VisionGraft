@@ -82,6 +82,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     // 測定 B（2026-08-28）: SMAL の曲げを切って bind pose + globalOrient だけにする。
     // 診断専用。docs/smpl-retargeting.md「測定 B」参照。
+    // 頭を連鎖から外すかの入口（A/B 用）。
+    public void SetExcludeHeadFromChain(bool enabled)
+    {
+        excludeHeadFromChain = enabled;
+    }
+
     // 向きの 0/180 判定を外から固定する入口（切り分け用）。
     public void SetForceRootYawFix(int mode)
     {

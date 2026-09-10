@@ -68,6 +68,17 @@ public sealed partial class AnimalPoseApplier
     // その判定が正しいかを外から確かめる口が無かった。
     public int forceRootYawFix;
 
+    // 頭（joint 16）を連鎖から外すか。既定 true。
+    //
+    // 頭だけ Unity 側の rest 方向が **aim child ではなくメッシュ重心へのフォールバック**
+    // （AnimalSmalFkApplier.SmalRestDirByJoint の 16 のコメント）。frame map が他より
+    // 不確かなので、連鎖で入力を大きくすると誤差もそのぶん増える。実測（2026-09-10、
+    // [ANIMALKP] の Head 中央値）:
+    //   従来 39度 / 2軸のみ 41度 / 連鎖+2軸 53度（全編）
+    //   27-30秒では 105度 / 97度 / 135度
+    // 四肢の改善は 2 軸だけで出ており、連鎖は頭にだけ効いて悪化させていた。
+    public bool excludeHeadFromChain = true;
+
     // jointFrameMap をロールまで拘束した 2 軸版で作る（2026-08-28）。
     // 詳細は jointFrameMap を組んでいるところのコメント。
     public bool useTwoAxisJointFrameMap = true;
@@ -457,7 +468,8 @@ public sealed partial class AnimalPoseApplier
                 // 従来（smalLocal）は**親の曲げを全部無視**していたので、
                 // 各ボーンが bind pose から自分のぶんだけずれた向きにしかならず、
                 // 座る・伏せるのように連鎖して成立する姿勢が作れなかった。
-                Quaternion smalPose = accumulateSmalParentBend ? smalAccum[joint] : smalLocal;
+                bool useChain = accumulateSmalParentBend && !(excludeHeadFromChain && joint == 16);
+                Quaternion smalPose = useChain ? smalAccum[joint] : smalLocal;
                 Vector3 smalPosedDir = (smalPose * smalRestDir).normalized;
                 Quaternion bendSmal = Quaternion.FromToRotation(smalRestDir, smalPosedDir);
 

@@ -249,6 +249,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 向きの切り分け用。詳細は AnimalSmalFkApplier.forceRootYawFix。
     public int forceRootYawFix;
 
+    // 頭を連鎖から外す。詳細は AnimalSmalFkApplier.excludeHeadFromChain。
+    public bool excludeHeadFromChain = true;
+
     // jointFrameMap のロールを「同じ肢のもう 1 本」で拘束する 2 軸版を使う（2026-08-28）。
     // 既定 false（従来の FromToRotation）。A/B で効果を確認してから既定を決める。
     public bool useTwoAxisJointFrameMap = true;

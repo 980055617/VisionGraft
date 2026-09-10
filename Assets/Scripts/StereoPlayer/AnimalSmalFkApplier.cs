@@ -92,7 +92,8 @@ public sealed partial class AnimalPoseApplier
     //   Unity 側 = worldFk0 * modelForwardLocal
     //              （コード内の証明 visual_forward = rawWorldFk0 * modelFwdLocal と同じ）
     // 副軸は前肢（7）にする。首（15）は +X と 6.6 度しか離れておらず縮退するため。
-    public bool headAimFromModelForward = true;
+    // **既定 false。**ON にすると悪化する（2026-09-11 実測、[HEADAIM] で直接計測）。
+    public bool headAimFromModelForward;
 
     // jointFrameMap をロールまで拘束した 2 軸版で作る（2026-08-28）。
     // 詳細は jointFrameMap を組んでいるところのコメント。
@@ -610,6 +611,17 @@ public sealed partial class AnimalPoseApplier
             Vector3 bendDirBefore = bendChild != null ? (bendChild.position - bone.position).normalized : Vector3.zero;
 
             TransformWriter.ApplyWorldRotation(bone, tw[joint]);
+
+            // 頭が実際にどちらを向いたかを直接出す（2026-09-11）。
+            // 指標 [ANIMALKP] はメッシュ重心方向を測っており、照準に使う軸とは別物。
+            // ここでは適用後のボーンの照準そのものを出す。
+            if (joint == 16 && debugLog && cache.bindDirLocal.TryGetValue(bone, out Vector3 hd))
+            {
+                Vector3 aimW = (bone.rotation * hd).normalized;
+                Debug.Log("[HEADAIM] headAimWorld=" + aimW.ToString("F3") +
+                    " bindDirLocal=" + hd.ToString("F3") +
+                    " boneFwd=" + bone.forward.ToString("F3"));
+            }
 
             if (bendChild != null)
             {

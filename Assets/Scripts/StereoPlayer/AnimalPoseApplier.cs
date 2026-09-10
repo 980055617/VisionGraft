@@ -954,6 +954,21 @@ public sealed partial class AnimalPoseApplier
             bindDirLocal = bone.InverseTransformDirection(bindDirWorld);
         }
         cache.bindDirLocal[bone] = bindDirLocal == Vector3.zero ? Vector3.forward : bindDirLocal.normalized;
+
+        // どの向きを「そのボーンの照準」として採ったのかを 1 度だけ出す（2026-09-11）。
+        // 頭は aim child が登録されておらず、子ボーンも Renderer も無ければ
+        // **既定の Vector3.forward（ローカル +Z）が黙って使われる**。
+        // モデルの前方が -Z なら真逆を向く。
+        {
+            bool reg = cache.aimChildByBone.TryGetValue(bone, out Transform regChild) && regChild != null;
+            Transform resolved = ResolveAnimalAimChild(cache, bone);
+            bool got = TryGetBoneCenterDirectionWorld(cache, bone, out Vector3 dbgDir);
+            string regName = reg ? regChild.name : "none";
+            string resName = resolved != null ? resolved.name : "none";
+            Debug.Log("[AIMBIND] bone=" + bone.name + " registered=" + regName +
+                " resolved=" + resName + " children=" + bone.childCount +
+                " gotDir=" + got + " bindDirLocal=" + cache.bindDirLocal[bone].ToString("F3"));
+        }
     }
 
     private void PrimeAnimalBinds(AnimalRigCache cache, params Transform[] bones)

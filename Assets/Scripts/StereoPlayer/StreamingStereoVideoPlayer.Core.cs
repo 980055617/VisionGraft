@@ -253,7 +253,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool excludeHeadFromChain = true;
 
     // 頭の照準をモデルの前方に揃える。詳細は AnimalSmalFkApplier.headAimFromModelForward。
-    public bool headAimFromModelForward = true;
+    // 既定 false。実測で悪化した。
+    public bool headAimFromModelForward;
 
     // jointFrameMap のロールを「同じ肢のもう 1 本」で拘束する 2 軸版を使う（2026-08-28）。
     // 既定 false（従来の FromToRotation）。A/B で効果を確認してから既定を決める。

@@ -63,6 +63,11 @@ public sealed partial class AnimalPoseApplier
     // 詳細は Docs/smpl-retargeting.md「Animal の FK は親の姿勢を積んでいない」。
     public bool accumulateSmalParentBend = true;
 
+    // 向きの切り分け用（2026-09-10）。0 = 自動判定、1 = 常に 180 度、-1 = 常に 0 度。
+    // rootYawFix は kpForward との内積で 0/180 を一度だけ決めて固定するので、
+    // その判定が正しいかを外から確かめる口が無かった。
+    public int forceRootYawFix;
+
     // jointFrameMap をロールまで拘束した 2 軸版で作る（2026-08-28）。
     // 詳細は jointFrameMap を組んでいるところのコメント。
     public bool useTwoAxisJointFrameMap = true;
@@ -291,7 +296,9 @@ public sealed partial class AnimalPoseApplier
                 float dot0 = Vector3.Dot(candidate0 * cache.spineToNeckBindDirWorld, kpForward);
                 float dot180 = Vector3.Dot(candidate180 * cache.spineToNeckBindDirWorld, kpForward);
                 const float kRootYawFlipMinMargin = 0.3f;
-                state.rootYawFix = (dot180 - dot0 > kRootYawFlipMinMargin) ? Quaternion.Euler(0f, 180f, 0f) : Quaternion.identity;
+                state.rootYawFix = forceRootYawFix > 0 ? Quaternion.Euler(0f, 180f, 0f)
+                    : forceRootYawFix < 0 ? Quaternion.identity
+                    : ((dot180 - dot0 > kRootYawFlipMinMargin) ? Quaternion.Euler(0f, 180f, 0f) : Quaternion.identity);
                 state.rootYawFixDecided = true;
                 Debug.Log($"[SMAL-FK-DBG] MODEL rootYawFix decided: dot0={dot0:F3} dot180={dot180:F3} chose180={state.rootYawFix != Quaternion.identity} kpForward={kpForward:F3} spineToNeckBindDirWorld={cache.spineToNeckBindDirWorld:F3} modelFwd={thisModelFwd:F3} modelOrientFix={modelOrientFix.eulerAngles:F1}");
             }

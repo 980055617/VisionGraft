@@ -3603,3 +3603,48 @@ TryReadRotationMatrixFromBin(br, flipCameraY: false, out pose.bodyPose[i]);   //
   `rootYawFix` の判定がこれに乗っているので、規約がずれていれば誤った側を選び続ける
 
 **どちらか決まるまで向きには手を入れない。**
+
+### 向きの切り分け（2026-09-10 続き）— 180 度反転は答えではない
+
+実機でも「27〜30 秒でモデルと実際の向きが違う」と確認された（ユーザー報告）。
+
+`forceRootYawFix`（`-rootYaw 1` で常に 180 度 / `-1` で常に 0 度）を足して確かめた。
+`Docs/tmp/animal_yaw_ab.png`。
+
+| | 結果 |
+|---|---|
+| 現行（自動判定 = 0 度）| データが「手前向き」(Z=-0.90) の f714/f774 で**モデルは背面** |
+| **180 度に強制** | **逆さまになる。**頭が下を向き姿勢が崩れる。**明確に悪化** |
+
+**したがって残っている向きのずれは 180 度のヨーではない。**自動判定（dot0=0.913 / dot180=-0.769）
+が 0 度を選んでいるのは妥当。
+
+#### 次の仮説
+
+`rootYawFix` の**挿入位置**が疑わしい。
+
+```csharp
+rawWorldFk0 = instanceRootYaw * camRotation * globalOrient * SmalDataAxisCorrection
+              * state.rootYawFix * modelOrientFix;
+```
+
+`SmalDataAxisCorrection = Euler(0, 90, 90)` の**後ろ**に入っているので、
+`Euler(0,180,0)` が回る軸は**もはや鉛直ではない。**180 度を強制すると
+「向きが変わる」ではなく「逆さまになる」のはこれで説明がつく。
+
+つまり **`rootYawFix` は世界座標のヨーとして意図されているのに、
+SMAL 補正後のローカル軸まわりの回転になっている。**
+判定（`candidate0` / `candidate180`）も同じ位置で組んでいるので、
+**判定と適用は一貫しているが、どちらも意図した軸ではない**可能性がある。
+
+次に試すこと: ヨーを**前置**（`instanceRootYaw * rootYawFix * camRotation * ...`）にして、
+世界の鉛直まわりの回転にしたうえで 0/180 を比べる。**まだ実装していない。**
+
+#### 補足: モデルの前方向の導出は正しい
+
+`ResolveAnimalModelBasis` は `frontCenter - rearCenter`（前脚中心 − 後脚中心）を使う。
+実行ログの `[SMAL-SKIN-CHECK] BASIS` は
+`frontCenter z=0.668 / rearCenter z=0.859`、`head z=0.606 / tailBase z=0.907` で、
+**頭側が -Z、尾側が +Z と一貫**している。`modelForwardLocal=(0,0,-1)` は正しい。
+`bindSpineW` も単位回転なので、ログの `nose(=-spine.fwd)` は本当に鼻先方向。
+**ここは容疑から外れる。**

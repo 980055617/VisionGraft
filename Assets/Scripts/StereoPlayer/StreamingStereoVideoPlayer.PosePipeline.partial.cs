@@ -232,6 +232,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // シリアライズされている値を毎フレーム渡す。play mode に持ち越されない罠を避ける。
         animalPoseApplier.disableSmalBendForDiag = disableSmalBendForDiag;
         animalPoseApplier.accumulateSmalParentBend = accumulateSmalParentBend;
+        animalPoseApplier.forceRootYawFix = forceRootYawFix;
         animalPoseApplier.useTwoAxisJointFrameMap = useTwoAxisJointFrameMap;
         animalPoseApplier.enableAnimalHeadPose = enableAnimalHeadPose;
         animalPoseApplier.enableAnimalKeypointAimAt = enableAnimalKeypointAimAt;

@@ -1,0 +1,161 @@
+{
+  "schema": "master_project.recommended_bundles.v1",
+  "updatedAt": "2026-09-10",
+  "meaning": [
+    "Which .svb is the current recommended file for each clip. Machine-readable on purpose:",
+    "before 2026-09-05 the answer lived only in prose inside the issue log, and a build was",
+    "derived from a superseded file four times (D-002, D-006 animal, the human preremovalfix,",
+    "and bundle_shots_depthscale_test) -- each time silently dropping a fix that was already in.",
+    "Any new bundle must be derived from the file named in `recommended` for its clip.",
+    "scripts/replace_bundle_sidecar.py enforces this and refuses a superseded base.",
+    "After delivering a new recommended build, update this file in the same commit.",
+    "2026-09-09: manifest.anchor_z_policy now records which quantity anchor_z holds per category; rawAnchor.source in the sidecar stays authoritative per frame.",
+    "2026-09-10: buildParams records the flags a rebuild of each clip must use. run_sam2_to_bundle.py reads this and applies them for registry directories, because the orchestrator's own defaults do not match them (--bundle-quant-pos-scale defaults to None, i.e. the builder's 0.0002, which would silently revert D-008 on train)."
+  ],
+  "notes": {
+    "paths": "`dir` is the job directory basename under shared_volume/sam2_bundle_jobs/ on the generating side. The consuming side keeps its own layout; match on `file` + `sha256`.",
+    "sha256": "Of the whole .svb. Both sides can verify they hold the same file without trusting a name."
+  },
+  "clips": {
+    "animal": {
+      "dir": "FINNAL_ANIMAL",
+      "recommended": "bundle_shots_depthdriftfix_shotsfix_preremovalfix.svb",
+      "bytes": 111633123,
+      "sha256": "b9a9d5fe9b054ec037a1b208ac9da568350763dbd67af6d32744759d4e40489b",
+      "generated_at": "2026-08-27T00:00:53.195154Z",
+      "since": "2026-09-05",
+      "derivedFrom": "bundle_shots_depthdriftfix_shotsfix.svb",
+      "carries": [
+        "D-001 fixed depth (20260805-animal-depth-chunkfix)",
+        "D-006 shot re-detection (28 shots)",
+        "D-006 pre_removal_stereo_video.mp4 rebuilt from the fixed depth"
+      ],
+      "supersedes": [
+        {
+          "file": "bundle_shots_depthdriftfix_shotsfix.svb",
+          "why": "pre_removal_stereo_video.mp4 still came from the pre-D-001 depth"
+        },
+        {
+          "file": "bundle_shots_h264fix.svb",
+          "why": "derived from the pre-D-001 depth lineage (D-006)"
+        },
+        {
+          "file": "bundle_shots_depthfix.svb",
+          "why": "missing source/* sidecars (D-002 class)"
+        },
+        {
+          "file": "bundle_shots.svb",
+          "why": "pre-D-001 depth"
+        },
+        {
+          "file": "bundle.svb",
+          "why": "no shot metadata"
+        }
+      ],
+      "buildParams": {
+        "quant_pos_scale": 0.0002,
+        "background_drift_correction": 0,
+        "person_anchor_mask_median": 0,
+        "why": "animal has no person track; background drift correction measured unnecessary (D-006). quant_pos_scale stays at the builder default because animal_camera_root anchors are camera-space Z and need the int16 headroom (D-008)."
+      }
+    },
+    "human": {
+      "dir": "FINNAL_HUMAN",
+      "recommended": "bundle_shots_driftfix_preremovalfix_maskanchor.svb",
+      "bytes": 129291495,
+      "sha256": "3957928e194e55aeb4fb768d18d1cf0436d010d8ebedfe3327a34d1276d1540b",
+      "generated_at": "2026-09-09T09:25:00Z",
+      "since": "2026-09-09",
+      "derivedFrom": "bundle_shots_driftfix_preremovalfix.svb",
+      "carries": [
+        "D-001 fixed depth (20260805-human-depth-chunkfix)",
+        "D-002 inpainted video.mp4 + pre_removal sidecar",
+        "D-005 background drift correction (--background_drift_correction 1), adopted 2026-08-21",
+        "D-006 pre_removal_stereo_video.mp4 rebuilt from the fixed depth",
+        "D-004 person anchor_z = median over the SAM2 mask (--person_anchor_mask_median 1), 2026-09-09"
+      ],
+      "supersedes": [
+        {
+          "file": "bundle_shots_driftfix_preremovalfix.svb",
+          "why": "person anchor_z was still the 7x7 pelvis point sample (D-004 self-occlusion)"
+        },
+        {
+          "file": "bundle_shots_driftfix.svb",
+          "why": "pre_removal_stereo_video.mp4 still came from the pre-D-001 depth"
+        },
+        {
+          "file": "bundle_shots_inpaintfix_preremovalfix.svb",
+          "why": "DO NOT USE -- derived from bundle_shots_inpaintfix.svb, which loses the adopted background drift correction (2026-09-05, D-006)"
+        },
+        {
+          "file": "bundle_shots_inpaintfix.svb",
+          "why": "superseded by driftfix on 2026-08-21; no background drift correction"
+        },
+        {
+          "file": "bundle_shots_depthscale_test.svb",
+          "why": "built on the pre-driftfix base (D-005)"
+        },
+        {
+          "file": "bundle_shots_driftfix_test.svb",
+          "why": "same content as driftfix, kept only as the trial build"
+        },
+        {
+          "file": "bundle_shots_h264fix.svb",
+          "why": "pre-D-001 lineage"
+        }
+      ],
+      "buildParams": {
+        "quant_pos_scale": 0.002,
+        "background_drift_correction": 1,
+        "person_anchor_mask_median": 1,
+        "why": "background drift correction adopted 2026-08-21 (D-005); person anchor is the SAM2 mask median since 2026-09-09 (D-004)."
+      }
+    },
+    "train": {
+      "dir": "FINNAL_TRAIN",
+      "recommended": "bundle_shots_inpaintfix_zquantfix_preremovalfix.svb",
+      "bytes": 113056433,
+      "sha256": "58a08f441e7f28d96645427a6718993437f81e443f5f039feb24806a41007b93",
+      "generated_at": "2026-08-19T06:06:43.701467Z",
+      "since": "2026-09-05",
+      "derivedFrom": "bundle_shots_inpaintfix_zquantfix.svb",
+      "carries": [
+        "D-001 fixed depth (20260805-train-depth-chunkfix)",
+        "D-002 inpainted video.mp4 + pre_removal sidecar",
+        "D-008 quant_pos_scale = 0.0001",
+        "D-006 pre_removal_stereo_video.mp4 rebuilt from the fixed depth"
+      ],
+      "notOnThisClip": [
+        "background drift correction -- measured worse on train (D-004), deliberately not applied"
+      ],
+      "supersedes": [
+        {
+          "file": "bundle_shots_inpaintfix_zquantfix.svb",
+          "why": "pre_removal_stereo_video.mp4 still came from the pre-D-001 depth"
+        },
+        {
+          "file": "bundle_shots_inpaintfix.svb",
+          "why": "quant_pos_scale still 0.002 (D-008)"
+        },
+        {
+          "file": "bundle_shots_maskanchorfix.svb",
+          "why": "D-002 -- video.mp4 was the pre-inpaint video"
+        },
+        {
+          "file": "bundle_shots.svb",
+          "why": "pre-D-001 depth"
+        },
+        {
+          "file": "bundle.svb",
+          "why": "no shot metadata"
+        }
+      ],
+      "buildParams": {
+        "quant_pos_scale": 0.0001,
+        "background_drift_correction": 0,
+        "person_anchor_mask_median": 0,
+        "why": "no animal track, so anchor_z fits int16 at the finer step -- 0.0001 is the D-008 fix and MUST be passed explicitly (the builder default is 0.0002). background drift correction measured worse on train (D-004)."
+      }
+    }
+  }
+}

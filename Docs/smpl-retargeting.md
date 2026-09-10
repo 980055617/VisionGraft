@@ -4396,3 +4396,61 @@ tw[16] = worldFk0 * S^-1 * smalAccum[16] * S * boneBindWorld
 | `excludeHeadFromChain` | true |
 | `headAimFromModelForward` | false |
 | `headUseBodyFrameMap` | false |
+
+### 頭の照準とロールをクリップ全体から当てはめた（2026-09-11）
+
+診断（「自由度はロール、体レベル写像でも決まらない」）を受けて、
+**モデルごとに照準（2 自由度）とロール θ（1 自由度）を、クリップ全体から当てはめる。**
+
+#### 当てはめの原理
+
+診断の途中で、式が 1 行にまとまることが分かった。
+
+```
+bendUnity * unityRestDirWorld = M * bendSmal * M^-1 * unityRestDirWorld
+                              = M * bendSmal * smalRestDir        (M^-1 * unityRest = smalRest)
+                              = M * (Aacc * smalRestDir)
+```
+
+**つまり予測される頭の向きは `M * posed` だけで決まる。**
+`M = FromToRotation(smalRestDir, unityRestDirWorld) * Rot(smalRestDir, θ)` として、
+`unityRestDirWorld = restWorldRot * bindDirLocal` の `bindDirLocal` と `θ` を動かし、
+目標（`keypoints3d` の kp18 → kp24）との角度の中央値を最小化する。
+
+`restWorldRot` をログに出せば（`[HEADFIT]`）、**Unity を回さずにオフラインで探索できる。**
+`Docs/log-analysis` ではなく scratchpad の `headfit.py` に実装（球面の粗い格子 + 近傍細分）。
+
+#### 当てはめ結果（オフライン）
+
+| | 現行 | 当てはめ後 | bindDirLocal | θ |
+|---|---:|---:|---|---:|
+| 00_Dog | 42.1° | **19.1°** | (+0.058, +0.339, -0.939) | +111.4° |
+| 36_LabradorDog | 113.6° | **17.9°** | (-0.024, +0.974, -0.224) | +124.3° |
+
+**別々の rig が同じ 18〜19° に収束する。**偶然ではなく、当てはめが効いている。
+
+#### Unity で確認
+
+`Assets/Resources/animal_head_fit.json` に焼き、runtime が prefab 名で引く。
+
+| | 修正前 | **当てはめ後** | 27〜30 秒 |
+|---|---:|---:|---|
+| 00_Dog | 45.4° | **30.6°** | 95.9° → 65.1° |
+| **36_LabradorDog** | 106.9° | **33.5°** | 90.6° → 98.8° |
+
+オフラインの予測（19°）より悪いのは、平滑化と実装の差によるもの。
+**Labrador の 106.9° → 33.5% は大きい。**
+
+絵: `Docs/tmp/animal_head_fit.png`。**絵の差は数値ほど大きく見えない。採否はユーザー判断。**
+
+#### 実装
+
+| | |
+|---|---|
+| `Assets/Resources/animal_head_fit.json` | モデルごとの `aim` と `rollDeg`。キーは prefab 名 |
+| `AnimalPoseApplier.PrimeAnimalBind` | 表があれば頭の `bindDirLocal` を差し替える |
+| `AnimalSmalFkApplier` | 頭のときだけ `jointFrameMap *= AngleAxis(roll, smalRestDir)` |
+| `headAimFromModelForward` | このパスの入口。**既定 false のまま** |
+| `[HEADFIT]` ログ | 当てはめの材料（`restWorldRot`）。他モデルを足すときに使う |
+
+**2 体しか当てはめていない。**他のモデルは表に無いので従来どおり。

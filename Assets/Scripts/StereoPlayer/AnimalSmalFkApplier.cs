@@ -554,6 +554,16 @@ public sealed partial class AnimalPoseApplier
                 Quaternion restWorldRot = worldFk0 * boneBindWorld;
                 Vector3 unityRestDirWorld = (restWorldRot * boneBindDirLocal).normalized;
 
+                // 頭の照準とロールをオフラインで当てはめるための材料（2026-09-11）。
+                // restWorldRot があれば、bindDirLocal を変えたときの unityRestDirWorld を
+                // ログだけから再計算できるので、Unity を回さずに探索できる。
+                if (joint == 16 && debugLog)
+                {
+                    Debug.Log("[HEADFIT] restWorldRot=" + restWorldRot.eulerAngles.ToString("F3") +
+                        " bindDirLocal=" + boneBindDirLocal.ToString("F4") +
+                        " unityRestDirWorld=" + unityRestDirWorld.ToString("F4"));
+                }
+
                 // 2 軸版（既定 OFF）。ロールを同じ肢のもう 1 本で拘束する。
                 // 従来の FromToRotation は smalRestDir -> unityRestDirWorld しか拘束せず、
                 // jointFrameMap * R(smalRestDir, θ) はどの θ でも同じ条件を満たす。
@@ -585,6 +595,18 @@ public sealed partial class AnimalPoseApplier
                     // 主軸の対応は FromToRotation と同じ（smalRestDir -> unityRestDirWorld）で、
                     // 加えてロールも決まる。
                     jointFrameMap = unityBasis * Quaternion.Inverse(smalBasis);
+                }
+                // 頭は当てはめたロールを掛ける（2026-09-11）。
+                // M = FromToRotation(smalRestDir, unityRestDirWorld) は方向 1 本しか拘束せず
+                // ロールが任意。クリップ全体から θ を当てはめて埋める。
+                // 照準（bindDirLocal）も同じ当てはめで決めている（PrimeAnimalBind）。
+                if (joint == 16 && headAimFromModelForward)
+                {
+                    float roll = GetBakedHeadRoll(cache);
+                    if (Mathf.Abs(roll) > 0.001f)
+                    {
+                        jointFrameMap = jointFrameMap * Quaternion.AngleAxis(roll, smalRestDir);
+                    }
                 }
                 Quaternion bendUnity = jointFrameMap * bendSmal * Quaternion.Inverse(jointFrameMap);
 

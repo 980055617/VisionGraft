@@ -1289,6 +1289,17 @@ public sealed partial class AnimalPoseApplier
     // Resources/animal_head_aim.json（AnimalHeadAimBaker が焼いたもの）。
     // キーは Animator の transform 名 = AnimalRigCache.root.name。
     private static Dictionary<string, Vector3> bakedHeadAim;
+    private static Dictionary<string, float> bakedHeadRoll;
+
+    // 当てはめたロール（度）。表に無ければ 0。
+    internal static float GetBakedHeadRoll(AnimalRigCache cache)
+    {
+        if (cache == null || cache.root == null || bakedHeadRoll == null) { return 0f; }
+        ReplaceableModel rm = cache.root.GetComponentInParent<ReplaceableModel>();
+        string key = rm != null && !string.IsNullOrEmpty(rm.sourcePrefabName)
+            ? rm.sourcePrefabName : cache.root.name;
+        return bakedHeadRoll.TryGetValue(key, out float v) ? v : 0f;
+    }
 
     private static bool TryGetBakedHeadAim(AnimalRigCache cache, out Vector3 aimLocal)
     {
@@ -1297,23 +1308,26 @@ public sealed partial class AnimalPoseApplier
         if (bakedHeadAim == null)
         {
             bakedHeadAim = new Dictionary<string, Vector3>();
-            TextAsset ta = Resources.Load<TextAsset>("animal_head_aim");
+            bakedHeadRoll = new Dictionary<string, float>();
+            TextAsset ta = Resources.Load<TextAsset>("animal_head_fit");
             if (ta != null)
             {
-                // 形式: { "dog": [x, y, z], ... }。小さい表なので手で読む。
+                // 形式: { "00_Dog": { "aim": [x,y,z], "rollDeg": d }, ... }
                 foreach (Match m in Regex.Matches(ta.text,
-                    @"""([^""]+)""\s*:\s*\[\s*(-?[\d.eE+-]+)\s*,\s*(-?[\d.eE+-]+)\s*,\s*(-?[\d.eE+-]+)\s*\]"))
+                    @"""([^""_][^""]*)""\s*:\s*\{\s*""aim""\s*:\s*\[\s*(-?[\d.eE+-]+)\s*,\s*(-?[\d.eE+-]+)\s*,\s*(-?[\d.eE+-]+)\s*\]\s*,\s*""rollDeg""\s*:\s*(-?[\d.eE+-]+)"))
                 {
                     if (float.TryParse(m.Groups[2].Value, out float x) &&
                         float.TryParse(m.Groups[3].Value, out float y) &&
-                        float.TryParse(m.Groups[4].Value, out float z))
+                        float.TryParse(m.Groups[4].Value, out float z) &&
+                        float.TryParse(m.Groups[5].Value, out float roll))
                     {
                         bakedHeadAim[m.Groups[1].Value] = new Vector3(x, y, z);
+                        bakedHeadRoll[m.Groups[1].Value] = roll;
                     }
                 }
                 Debug.Log("[HEADAIMBAKE] 読み込んだ " + bakedHeadAim.Count + " 件");
             }
-            else { Debug.Log("[HEADAIMBAKE] animal_head_aim.json が無い"); }
+            else { Debug.Log("[HEADAIMBAKE] animal_head_fit.json が無い"); }
         }
         // **キーは prefab 名。**インスタンスは Track_<id> にリネームされ、
         // Animator の transform 名もモデルによって違う（00_Dog は "dog"、

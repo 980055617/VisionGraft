@@ -6,6 +6,11 @@ public class ReplaceableModel : MonoBehaviour
     // よって Humanoid の Head ボーン〜足首の距離は身長の約 0.89 倍。
     private const float SkeletonSpanToHeightRatio = 0.89f;
 
+    // 元になった prefab の名前。**インスタンスは Track_<id> にリネームされる**ので、
+    // どのモデルかを後から知る手段がこれしかない
+    // （AnimalHeadAimBaker が焼いた表を引くのに使う。2026-09-11）。
+    public string sourcePrefabName;
+
     public Transform anchor;
     public float referenceHeightMeters = 0f;
     public float userScale = 1f;

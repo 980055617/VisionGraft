@@ -68,7 +68,10 @@ public static class AnimalHeadAimBaker
             if (TryBakeOne(targets[i], out Vector3 aimLocal, out string note))
             {
                 if (ok > 0) { json.Append(",\n"); }
-                json.Append("  \"").Append(Path.GetFileNameWithoutExtension(targets[i])).Append("\": [")
+                // **キーは runtime 側の cache.root.name に合わせる。**
+                // cache.root は Animator の transform（00_Dog.prefab なら "dog"）で、
+                // prefab のファイル名とは違う。ファイル名で引くと当たらない。
+                json.Append("  \"").Append(KeyFor(targets[i])).Append("\": [")
                     .Append(aimLocal.x.ToString("F6")).Append(", ")
                     .Append(aimLocal.y.ToString("F6")).Append(", ")
                     .Append(aimLocal.z.ToString("F6")).Append("]");
@@ -93,13 +96,27 @@ public static class AnimalHeadAimBaker
         Transform head = FindHead(prefab.transform);
         if (head == null) { note = "head ボーンが見つからない"; return false; }
 
-        // 頭の配下（頭自身も含む）にあるメッシュを集める。
+        // 2 通りある:
+        //   (a) 剛体パーツ（00_Dog）… 頭の配下に MeshFilter がぶら下がる
+        //   (b) skinned（多数派）… 1 つの SkinnedMeshRenderer に全身が入り、
+        //       頭に属する頂点は boneWeights で決まる
         List<MeshFilter> filters = new List<MeshFilter>(head.GetComponentsInChildren<MeshFilter>(true));
-        if (filters.Count == 0) { note = "頭の配下にメッシュが無い"; return false; }
-
-        // 耳は別パーツで、鼻先より遠いことがある。名前で除く。
         filters.RemoveAll(f => f == null || f.sharedMesh == null || IsEar(f.transform));
-        if (filters.Count == 0) { note = "耳を除くとメッシュが残らない"; return false; }
+        SkinnedMeshRenderer skinned = null;
+        int headBoneIndex = -1;
+        if (filters.Count == 0)
+        {
+            foreach (SkinnedMeshRenderer cand in prefab.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                if (cand == null || cand.sharedMesh == null || cand.bones == null) { continue; }
+                for (int bi = 0; bi < cand.bones.Length; bi++)
+                {
+                    if (cand.bones[bi] == head) { skinned = cand; headBoneIndex = bi; break; }
+                }
+                if (skinned != null) { break; }
+            }
+            if (skinned == null) { note = "頭に対応するメッシュが無い（MeshFilter も skinned も）"; return false; }
+        }
 
         HashSet<string> reimported = new HashSet<string>();
         // **.meta のバイト列ごと退避する。**
@@ -110,9 +127,12 @@ public static class AnimalHeadAimBaker
         Dictionary<string, byte[]> metaBackup = new Dictionary<string, byte[]>();
         try
         {
-            foreach (MeshFilter f in filters)
+            List<Mesh> meshes = new List<Mesh>();
+            foreach (MeshFilter f in filters) { meshes.Add(f.sharedMesh); }
+            if (skinned != null) { meshes.Add(skinned.sharedMesh); }
+            foreach (Mesh mesh0 in meshes)
             {
-                string src = AssetDatabase.GetAssetPath(f.sharedMesh);
+                string src = AssetDatabase.GetAssetPath(mesh0);
                 if (string.IsNullOrEmpty(src) || reimported.Contains(src)) { continue; }
                 ModelImporter mi = AssetImporter.GetAtPath(src) as ModelImporter;
                 if (mi == null || mi.isReadable) { reimported.Add(src); continue; }
@@ -128,6 +148,19 @@ public static class AnimalHeadAimBaker
             head = FindHead(prefab.transform);
             filters = new List<MeshFilter>(head.GetComponentsInChildren<MeshFilter>(true));
             filters.RemoveAll(f => f == null || f.sharedMesh == null || IsEar(f.transform));
+            if (skinned != null)
+            {
+                skinned = null; headBoneIndex = -1;
+                foreach (SkinnedMeshRenderer cand in prefab.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+                {
+                    if (cand == null || cand.sharedMesh == null || cand.bones == null) { continue; }
+                    for (int bi = 0; bi < cand.bones.Length; bi++)
+                    {
+                        if (cand.bones[bi] == head) { skinned = cand; headBoneIndex = bi; break; }
+                    }
+                    if (skinned != null) { break; }
+                }
+            }
 
             float best = -1f;
             Vector3 bestLocal = Vector3.zero;
@@ -146,7 +179,25 @@ public static class AnimalHeadAimBaker
                 }
             }
 
-            if (total == 0 || best <= 0f) { note = "頂点を読めなかった（Read/Write を戻した）"; return false; }
+            if (skinned != null && headBoneIndex >= 0)
+            {
+                // skinned は頭に強く結びついた頂点だけを見る（重み 0.5 超）。
+                // 耳も同じメッシュに入っているが別ボーンなので、この条件で自然に除かれる。
+                Mesh mesh = skinned.sharedMesh;
+                BoneWeight[] bw = mesh.boneWeights;
+                Vector3[] vs = mesh.vertices;
+                Transform mt = skinned.transform;
+                for (int vi = 0; vi < vs.Length && vi < bw.Length; vi++)
+                {
+                    if (bw[vi].boneIndex0 != headBoneIndex || bw[vi].weight0 <= 0.5f) { continue; }
+                    Vector3 inHead = head.InverseTransformPoint(mt.TransformPoint(vs[vi]));
+                    total++;
+                    float d = inHead.sqrMagnitude;
+                    if (d > best) { best = d; bestLocal = inHead; }
+                }
+            }
+
+            if (total == 0 || best <= 0f) { note = "頂点を読めなかった（Read/Write は戻した）"; return false; }
 
             aimLocal = bestLocal.normalized;
             note = "頂点 " + total + " 個  鼻先(headローカル)=" + aimLocal.ToString("F4") +
@@ -162,6 +213,14 @@ public static class AnimalHeadAimBaker
                 AssetDatabase.ImportAsset(kv.Key, ImportAssetOptions.ForceSynchronousImport);
             }
         }
+    }
+
+    // キーは **prefab 名**。runtime は ReplaceableModel.sourcePrefabName に同じ値を持つ。
+    // インスタンスは Track_<id> にリネームされ、Animator の transform 名も
+    // モデルによって違うので、名前からは引けない。
+    private static string KeyFor(string prefabPath)
+    {
+        return Path.GetFileNameWithoutExtension(prefabPath);
     }
 
     private static bool IsEar(Transform t)

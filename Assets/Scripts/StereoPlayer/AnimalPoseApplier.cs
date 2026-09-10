@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using UnityEngine;
 
 public sealed partial class AnimalPoseApplier
@@ -967,10 +968,15 @@ public sealed partial class AnimalPoseApplier
         // 頭と首で別の向きを使う不整合が出る。
         if (headAimFromModelForward && bone == cache.head)
         {
-            // AnimalHeadAimBaker が頭メッシュの頂点から実測した鼻先方向（head ローカル）。
-            // 00_Dog: (0.0073, 0.4704, -0.8824)。既定の照準（bounds 中心）とは 15 度しか違わない。
-            // **+Y は 62 度も外れており誤りだった**（2026-09-11）。
-            cache.bindDirLocal[bone] = new Vector3(0.0073f, 0.4704f, -0.8824f).normalized;
+            // AnimalHeadAimBaker がモデルの頭メッシュの頂点から実測した鼻先方向
+            // （head ローカル）を Resources/animal_head_aim.json から引く。
+            // **リグごとにローカル軸が違う**ので決め打ちにはできない。実測値:
+            //   00_Dog (0.007, 0.470, -0.882) / 27_GermanShepherd (0.000, -0.219, +0.976)
+            //   36_LabradorDog (0.279, 0.804, -0.526)
+            if (TryGetBakedHeadAim(cache, out Vector3 baked))
+            {
+                cache.bindDirLocal[bone] = baked;
+            }
         }
 
         // どの向きを「そのボーンの照準」として採ったのかを 1 度だけ出す（2026-09-11）。
@@ -1277,6 +1283,49 @@ public sealed partial class AnimalPoseApplier
         }
 
         dirWorld = rawDir.normalized;
+        return true;
+    }
+
+    // Resources/animal_head_aim.json（AnimalHeadAimBaker が焼いたもの）。
+    // キーは Animator の transform 名 = AnimalRigCache.root.name。
+    private static Dictionary<string, Vector3> bakedHeadAim;
+
+    private static bool TryGetBakedHeadAim(AnimalRigCache cache, out Vector3 aimLocal)
+    {
+        aimLocal = Vector3.zero;
+        if (cache == null || cache.root == null) { return false; }
+        if (bakedHeadAim == null)
+        {
+            bakedHeadAim = new Dictionary<string, Vector3>();
+            TextAsset ta = Resources.Load<TextAsset>("animal_head_aim");
+            if (ta != null)
+            {
+                // 形式: { "dog": [x, y, z], ... }。小さい表なので手で読む。
+                foreach (Match m in Regex.Matches(ta.text,
+                    @"""([^""]+)""\s*:\s*\[\s*(-?[\d.eE+-]+)\s*,\s*(-?[\d.eE+-]+)\s*,\s*(-?[\d.eE+-]+)\s*\]"))
+                {
+                    if (float.TryParse(m.Groups[2].Value, out float x) &&
+                        float.TryParse(m.Groups[3].Value, out float y) &&
+                        float.TryParse(m.Groups[4].Value, out float z))
+                    {
+                        bakedHeadAim[m.Groups[1].Value] = new Vector3(x, y, z);
+                    }
+                }
+                Debug.Log("[HEADAIMBAKE] 読み込んだ " + bakedHeadAim.Count + " 件");
+            }
+            else { Debug.Log("[HEADAIMBAKE] animal_head_aim.json が無い"); }
+        }
+        // **キーは prefab 名。**インスタンスは Track_<id> にリネームされ、
+        // Animator の transform 名もモデルによって違う（00_Dog は "dog"、
+        // 36_LabradorDog は root 自身）ので、名前からは引けない。
+        ReplaceableModel rm = cache.root.GetComponentInParent<ReplaceableModel>();
+        string key = rm != null && !string.IsNullOrEmpty(rm.sourcePrefabName)
+            ? rm.sourcePrefabName : cache.root.name;
+        if (!bakedHeadAim.TryGetValue(key, out Vector3 v) || v.sqrMagnitude < 0.000001f)
+        {
+            return false;
+        }
+        aimLocal = v.normalized;
         return true;
     }
 

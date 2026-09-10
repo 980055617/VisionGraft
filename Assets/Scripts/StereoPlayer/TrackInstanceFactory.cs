@@ -17,10 +17,13 @@ public static class TrackInstanceFactory
         // 位置は配置側が毎フレーム上書きするので原点のままでよい。
         GameObject instance = Object.Instantiate(prefab, Vector3.zero, prefab.transform.localRotation);
         instance.name = $"Track_{trackId}";
-        if (instance.GetComponent<ReplaceableModel>() == null)
+        ReplaceableModel rm = instance.GetComponent<ReplaceableModel>();
+        if (rm == null)
         {
-            instance.AddComponent<ReplaceableModel>();
+            rm = instance.AddComponent<ReplaceableModel>();
         }
+        // リネーム前の prefab 名を残す。どのモデルかを後から引くため。
+        rm.sourcePrefabName = prefab.name;
 
         EnableSkinnedBoundsPoseTracking(instance);
         ForceHighestLod(instance);

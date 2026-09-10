@@ -77,7 +77,10 @@ public sealed partial class AnimalPoseApplier
     //   従来 39度 / 2軸のみ 41度 / 連鎖+2軸 53度（全編）
     //   27-30秒では 105度 / 97度 / 135度
     // 四肢の改善は 2 軸だけで出ており、連鎖は頭にだけ効いて悪化させていた。
-    public bool excludeHeadFromChain = true;
+    // **2026-09-11: 既定 false に変更。**頭の照準を +Y に揃えたうえで連鎖に入れると、
+    // 頭の追従が corr 0.365 → 0.746、27-30 秒の誤差が 99.9 度 → 48.5 度になる。
+    // 照準を直さずに連鎖だけ入れると悪化する（両方セットでないと意味がない）。
+    public bool excludeHeadFromChain;
 
     // 頭の照準を「モデルが rest で向いている方向」に揃えるか。既定 true。
     //
@@ -92,8 +95,7 @@ public sealed partial class AnimalPoseApplier
     //   Unity 側 = worldFk0 * modelForwardLocal
     //              （コード内の証明 visual_forward = rawWorldFk0 * modelFwdLocal と同じ）
     // 副軸は前肢（7）にする。首（15）は +X と 6.6 度しか離れておらず縮退するため。
-    // **既定 false。**ON にすると悪化する（2026-09-11 実測、[HEADAIM] で直接計測）。
-    public bool headAimFromModelForward;
+    public bool headAimFromModelForward = true;
 
     // jointFrameMap をロールまで拘束した 2 軸版で作る（2026-08-28）。
     // 詳細は jointFrameMap を組んでいるところのコメント。
@@ -465,12 +467,20 @@ public sealed partial class AnimalPoseApplier
                 cache.bindRotWorld.TryGetValue(bone, out Quaternion boneBindWorld) &&
                 cache.bindDirLocal.TryGetValue(bone, out Vector3 boneBindDirLocal))
             {
-                // 頭だけ照準の定義を差し替える（headAimFromModelForward）。
-                bool headAim = headAimFromModelForward && joint == 16 &&
-                    cache.modelForwardLocal.sqrMagnitude > 0.000001f;
+                // 頭だけ Unity 側の照準を作り直す（headAimFromModelForward）。
+                //
+                // このリグは**全ボーンが自分のローカル +Y を照準にしている**
+                // （[AIMBIND] 実測: neck / 四肢 / 尾はすべて bindDirLocal=(0,1,0)）。
+                // 頭だけ aim child が登録されておらず、first child の head.001（頭のメッシュ）の
+                // **bounds 中心**へ向く経路に落ちていて、bindDirLocal=(0.017, 0.681, -0.732) と
+                // +Y から 43 度ずれていた。head.001 の bounds は extents=(0.0113, 0.0175, 0.0118) で
+                // **ローカル +Y が最長**なので、鼻先も +Y 側にある。
+                //
+                // ON のときは頭も +Y を照準にして、リグの流儀に揃える。
+                bool headAim = headAimFromModelForward && joint == 16;
                 if (headAim)
                 {
-                    smalRestDir = Vector3.right;   // SMAL の +X = 尾から頭
+                    boneBindDirLocal = Vector3.up;
                 }
 
                 // Geometry-grounded per-joint correction (2026-06-18): instead of reusing the
@@ -514,9 +524,7 @@ public sealed partial class AnimalPoseApplier
                 // multi-bone spine chain, which would silently compose bindLoc relative to the
                 // wrong frame.
                 Quaternion restWorldRot = worldFk0 * boneBindWorld;
-                Vector3 unityRestDirWorld = headAim
-                    ? (worldFk0 * cache.modelForwardLocal).normalized
-                    : (restWorldRot * boneBindDirLocal).normalized;
+                Vector3 unityRestDirWorld = (restWorldRot * boneBindDirLocal).normalized;
 
                 // 2 軸版（既定 OFF）。ロールを同じ肢のもう 1 本で拘束する。
                 // 従来の FromToRotation は smalRestDir -> unityRestDirWorld しか拘束せず、
@@ -524,9 +532,8 @@ public sealed partial class AnimalPoseApplier
                 // bendUnity は曲げの回転軸 n を jointFrameMap * n に写すので、ロールが
                 // ずれると**屈曲が伸展に化ける**。SmalRollRefJoint のコメント参照。
                 Quaternion jointFrameMap;
-                // 頭の照準を +X にしたときは、首（15）だと +X と 6.6 度しか離れず縮退する。
-                // 前肢（7）なら 87 度あり条件が良い。
-                if (headAim) { SmalRollRefOverrideJoint = 7; } else { SmalRollRefOverrideJoint = -1; }
+                // smalRestDir は Head→Mouth のままなので、副軸は従来どおり首（30.3 度）でよい。
+                SmalRollRefOverrideJoint = -1;
                 if (!useTwoAxisJointFrameMap
                     || !TryGetRollRef(joint, out int rollRefJoint)
                     || !SmalRestDirByJoint.TryGetValue(rollRefJoint, out Vector3 smalRollRefDir)

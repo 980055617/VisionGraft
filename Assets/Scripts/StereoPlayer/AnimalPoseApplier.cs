@@ -965,6 +965,153 @@ public sealed partial class AnimalPoseApplier
             bool got = TryGetBoneCenterDirectionWorld(cache, bone, out Vector3 dbgDir);
             string regName = reg ? regChild.name : "none";
             string resName = resolved != null ? resolved.name : "none";
+
+            // 頭だけ照準の出所が違うので、子ボーンが何をどこに持っているかを出す。
+            // 向きは **root ローカル**で出す（modelForwardLocal と同じ座標系で比べるため）。
+            // このモデルはスキンではなく**剛体パーツの集合**（head.001 が頭のメッシュ、
+            // er.L / er.R が耳、body が胴）。頭のメッシュ頂点から鼻先を実測する。
+            // 口・鼻のボーンが無いので、頭ボーン原点から最も遠い頂点を鼻先とみなす。
+            if (bone == cache.head && cache.root != null && bone.childCount > 0)
+            {
+                MeshFilter mf = bone.GetChild(0).GetComponent<MeshFilter>();
+                if (mf != null && mf.sharedMesh != null)
+                {
+                    Transform mt = mf.transform;
+                    // メッシュは Read/Write が無効で vertices が空になる。bounds を使う。
+                    Vector3[] vs = mf.sharedMesh.vertices;
+                    if (vs == null || vs.Length == 0)
+                    {
+                        Bounds bb = mf.sharedMesh.bounds;
+                        float bestC = -1f; Vector3 bestCorner = Vector3.zero;
+                        for (int sx = -1; sx <= 1; sx += 2)
+                        for (int sy = -1; sy <= 1; sy += 2)
+                        for (int sz = -1; sz <= 1; sz += 2)
+                        {
+                            Vector3 c = mt.TransformPoint(bb.center + Vector3.Scale(bb.extents,
+                                new Vector3(sx, sy, sz)));
+                            float dd = (c - bone.position).sqrMagnitude;
+                            if (dd > bestC) { bestC = dd; bestCorner = c; }
+                        }
+                        Vector3 farD = cache.root.InverseTransformDirection((bestCorner - bone.position).normalized);
+                        Vector3 cenD = cache.root.InverseTransformDirection(
+                            (mt.TransformPoint(bb.center) - bone.position).normalized);
+                        Debug.Log("[HEADMESH] bounds center(rootLocal)=" + cenD.ToString("F3") +
+                            " 最遠コーナー(rootLocal)=" + farD.ToString("F3") +
+                            " extents=" + bb.extents.ToString("F4") +
+                            " centerLocal=" + bb.center.ToString("F4"));
+                    }
+                    float best = -1f; Vector3 bestW = Vector3.zero; Vector3 sum = Vector3.zero;
+                    for (int vi = 0; vi < vs.Length; vi++)
+                    {
+                        Vector3 w = mt.TransformPoint(vs[vi]);
+                        sum += w;
+                        float dd = (w - bone.position).sqrMagnitude;
+                        if (dd > best) { best = dd; bestW = w; }
+                    }
+                    if (vs.Length > 0)
+                    {
+                        Vector3 farDir = cache.root.InverseTransformDirection((bestW - bone.position).normalized);
+                        Vector3 cenDir = cache.root.InverseTransformDirection(((sum / vs.Length) - bone.position).normalized);
+                        Debug.Log("[HEADMESH] mesh=" + mf.name + " 頂点数=" + vs.Length +
+                            " 最遠点方向(rootLocal)=" + farDir.ToString("F3") +
+                            " 頂点重心方向(rootLocal)=" + cenDir.ToString("F3") +
+                            " 最遠距離=" + Mathf.Sqrt(best).ToString("F4"));
+                    }
+                }
+                else { Debug.Log("[HEADMESH] head の子に MeshFilter が無い"); }
+            }
+
+            if (bone == cache.head && cache.root != null)
+            {
+                // cache.root は Animator の transform で、メッシュはその外にいることがある。
+                // 階層の最上位から探し、頭ボーンを bones に持つものを選ぶ。
+                SkinnedMeshRenderer smr = null;
+                foreach (SkinnedMeshRenderer cand in bone.root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+                {
+                    if (cand == null || cand.bones == null) { continue; }
+                    for (int bi = 0; bi < cand.bones.Length; bi++)
+                    {
+                        if (cand.bones[bi] == bone) { smr = cand; break; }
+                    }
+                    if (smr != null) { break; }
+                }
+                if (smr != null && smr.sharedMesh != null && smr.bones != null)
+                {
+                    int headIdx = -1;
+                    for (int bi = 0; bi < smr.bones.Length; bi++)
+                    {
+                        if (smr.bones[bi] == bone) { headIdx = bi; break; }
+                    }
+                    if (headIdx >= 0)
+                    {
+                        Mesh mesh = smr.sharedMesh;
+                        BoneWeight[] bw = mesh.boneWeights;
+                        Vector3[] vs = mesh.vertices;
+                        Transform mt = smr.transform;
+                        float best = -1f; Vector3 bestW = Vector3.zero; int n = 0;
+                        Vector3 sum = Vector3.zero;
+                        for (int vi = 0; vi < vs.Length && vi < bw.Length; vi++)
+                        {
+                            bool onHead = (bw[vi].boneIndex0 == headIdx && bw[vi].weight0 > 0.5f);
+                            if (!onHead) { continue; }
+                            Vector3 w = mt.TransformPoint(vs[vi]);
+                            n++; sum += w;
+                            float dd = (w - bone.position).sqrMagnitude;
+                            if (dd > best) { best = dd; bestW = w; }
+                        }
+                        if (n > 0)
+                        {
+                            Vector3 farDir = cache.root.InverseTransformDirection((bestW - bone.position).normalized);
+                            Vector3 cenDir = cache.root.InverseTransformDirection(((sum / n) - bone.position).normalized);
+                            Debug.Log("[HEADMESH] 頭の頂点数=" + n +
+                                " 最遠点方向(rootLocal)=" + farDir.ToString("F3") +
+                                " 重心方向(rootLocal)=" + cenDir.ToString("F3") +
+                                " 距離=" + Mathf.Sqrt(best).ToString("F4"));
+                        }
+                        else { Debug.Log("[HEADMESH] 頭に skin された頂点が見つからない"); }
+                    }
+                    else { Debug.Log("[HEADMESH] SkinnedMeshRenderer の bones に頭が無い"); }
+                }
+                else
+                {
+                    Debug.Log("[HEADMESH] 頭を bones に持つ SkinnedMeshRenderer が無い。階層の中身を出す:");
+                    foreach (SkinnedMeshRenderer cand in bone.root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+                    {
+                        Debug.Log("[HEADMESH]   SMR name=" + cand.name + " bones=" +
+                            (cand.bones != null ? cand.bones.Length : 0) +
+                            " rootBone=" + (cand.rootBone != null ? cand.rootBone.name : "none"));
+                    }
+                    foreach (Renderer r in bone.root.GetComponentsInChildren<Renderer>(true))
+                    {
+                        if (r is SkinnedMeshRenderer) { continue; }
+                        Debug.Log("[HEADMESH]   Renderer name=" + r.name + " type=" + r.GetType().Name);
+                    }
+                    Transform h1 = bone.childCount > 0 ? bone.GetChild(0) : null;
+                    if (h1 != null)
+                    {
+                        Debug.Log("[HEADMESH]   head.001 の Renderer=" +
+                            (h1.GetComponent<Renderer>() != null ? h1.GetComponent<Renderer>().GetType().Name : "none") +
+                            " MeshFilter=" + (h1.GetComponent<MeshFilter>() != null));
+                    }
+                }
+            }
+
+            if (bone == cache.head && cache.root != null)
+            {
+                for (int ci = 0; ci < bone.childCount; ci++)
+                {
+                    Transform ch = bone.GetChild(ci);
+                    Vector3 dirRoot = cache.root.InverseTransformDirection(
+                        (ch.position - bone.position).normalized);
+                    Debug.Log("[HEADCHILD] " + ci + " name=" + ch.name +
+                        " dirRootLocal=" + dirRoot.ToString("F3") +
+                        " dist=" + (ch.position - bone.position).magnitude.ToString("F4"));
+                }
+                Debug.Log("[HEADCHILD] modelForwardLocal=" + cache.modelForwardLocal.ToString("F3") +
+                    " modelUpLocal=" + cache.modelUpLocal.ToString("F3") +
+                    " headBindDirRootLocal=" + cache.root.InverseTransformDirection(
+                        bone.TransformDirection(cache.bindDirLocal[bone])).ToString("F3"));
+            }
             Debug.Log("[AIMBIND] bone=" + bone.name + " registered=" + regName +
                 " resolved=" + resName + " children=" + bone.childCount +
                 " gotDir=" + got + " bindDirLocal=" + cache.bindDirLocal[bone].ToString("F3"));

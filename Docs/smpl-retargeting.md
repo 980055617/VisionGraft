@@ -3450,3 +3450,35 @@ Unity 側もそれに合わせる。`ApplyWorldRotation` のみ・IK 禁止の�
 #### 既定値
 
 **既定 OFF のまま。**採否はユーザーが絵を見て決める。
+
+### 可視化の訂正（2026-09-10）— `global_orient` の Y 反転を写し忘れていた
+
+ユーザー指摘:「body_pose で組んだ骨格おかしいと思う、向きが違う」。**そのとおりだった。**
+
+`animal_three_panel.py` の `smal_fk_points` が `rots[0]`（`global_orient`）を
+**そのまま**使っていた。実装は
+
+```csharp
+TryReadRotationMatrixFromBin(br, flipCameraY: true,  out pose.globalOrient);  // 行列の 2 行目を符号反転
+TryReadRotationMatrixFromBin(br, flipCameraY: false, out pose.bodyPose[i]);   // body_pose はそのまま
+```
+
+で、**`meta.bin` は Y 下向きのカメラ規約**なので `global_orient` だけ
+左から `diag(1,-1,1)` を掛ける決まりだった。写し忘れて骨格が上下反転していた。
+
+**「実装を読んでから移植する」を守ったつもりで、`smal_read.py`（読み取り）は写したのに
+`AnimalSmal.partial.cs` の変換のほうを見ていなかった。**
+
+#### 検証
+
+修正後、**`keypoints3d`（緑）と `body_pose` から組んだ骨格（黄）を同じ絵に重ねると
+ほぼ一致する**（`Docs/tmp/animal_kp_vs_smal.png`）。
+独立な 2 つのデータが一致するので、**変換が正しいことの裏付けになる。**
+反転したままでは一致しなかった。
+
+#### 結論は変わらない
+
+`Docs/tmp/animal_4panel_full.png` と `animal_chain_ab.png` を作り直した。
+**黄の骨格は座位を正確になぞっている**（頭が上がり、胴が立ち、前肢が伸び、後肢が畳まれている）。
+**`body_pose` は座位を持っており、モデルがそれを再現できていない**という結論はそのまま。
+むしろ、向きを直したことで**より明確に見える**ようになった。

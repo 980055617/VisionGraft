@@ -136,7 +136,16 @@ def smal_fk_points(rots):
     n = len(SMAL_J)
     R = [None] * n
     T = [None] * n
-    R[0] = rots[0]
+    # **global_orient は Y 反転を通す。**meta.bin は Y 下向きのカメラ規約で入っており、
+    # StreamingStereoVideoPlayer の TryReadRotationMatrixFromBin が
+    # flipCameraY:true（行列の 2 行目の符号反転 = 左から diag(1,-1,1)）を掛けている。
+    # body_pose 側は flipCameraY:false なのでそのまま。
+    # 2026-09-10: これを写し忘れて骨格の向きが上下反転していた（ユーザー指摘）。
+    go = list(rots[0])
+    go[3] = -go[3]
+    go[4] = -go[4]
+    go[5] = -go[5]
+    R[0] = go
     T[0] = (0.0, 0.0, 0.0)
     for j in range(1, n):
         p = SMAL_PARENT[j]

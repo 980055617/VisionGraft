@@ -231,10 +231,11 @@ public sealed partial class AnimalPoseApplier
 
         Quaternion[] tw = state.tw;
 
-        // 各関節の「rest からのずれ」。accumulateSmalParentBend のときだけ使う。
-        // tw と違って bind pose 成分を含まないので、そのまま子へ引き継げる。
-        Quaternion[] devFromRest = new Quaternion[tw.Length];
-        for (int i = 0; i < devFromRest.Length; i++) devFromRest[i] = Quaternion.identity;
+        // SMAL の運動連鎖を root から積んだ回転。smalAccum[j] = smalAccum[parent] * local[j]。
+        // **ボーンの向きを決めるのはこれ**（標準形 R[j] = R[parent] * local[j] そのもの）。
+        // globalOrient は worldFk0 が持っているので、ここには入れない。
+        Quaternion[] smalAccum = new Quaternion[tw.Length];
+        for (int i = 0; i < smalAccum.Length; i++) smalAccum[i] = Quaternion.identity;
 
         // Joint 0 (root) orientation. 2026-06-18: reverted to the simple, DogRoot-validated
         // form after two failed attempts at a "smarter" per-model derivation (FromToRotation
@@ -384,6 +385,10 @@ public sealed partial class AnimalPoseApplier
                 : rawLocal;
             state.smoothedLocal[joint] = smalLocal;
 
+            // **仮想 spine（1-6）も必ず通す。**胴の曲げはここに乗るので、
+            // 飛ばすと座位・伏せの主成分がそのまま落ちる（2026-09-10）。
+            smalAccum[joint] = smalAccum[parentJoint] * smalLocal;
+
             Transform bone = GetSmalBoneForJoint(cache, joint);
 
             if (bone == null)
@@ -391,7 +396,6 @@ public sealed partial class AnimalPoseApplier
                 // BONE MISSING (virtual spine chain joints 1-6): no real bone, so there's no
                 // bind-pose-specific local frame to re-express into - just accumulate in world
                 // frame directly (reverted 2026-06-18 along with joint 0, see ADR-0002).
-                devFromRest[joint] = devFromRest[parentJoint];
                 tw[joint] = parentTW * smalLocal;
                 continue;
             }
@@ -406,7 +410,6 @@ public sealed partial class AnimalPoseApplier
                 // parent's current world rotation (applied earlier in this same topological
                 // walk), so parentTW * bindLoc is the world-space equivalent of setting
                 // bone.localRotation = bindLoc under that parent.
-                devFromRest[joint] = devFromRest[parentJoint];
                 tw[joint] = parentTW * bindLoc;
                 TransformWriter.ApplyWorldRotation(bone, tw[joint]);
                 continue;
@@ -442,7 +445,13 @@ public sealed partial class AnimalPoseApplier
                 // SmalSmoothHalfLifeSec の宣言コメントの意図が、駆動される 12 関節に
                 // 届いていなかった。meta.bin 実測でも 27-30 秒で単発 40-43 度の飛びがある
                 // （中央は 0.2-0.4 度）。Docs/smpl-retargeting.md「Animal の棚卸し」参照。
-                Vector3 smalPosedDir = (smalLocal * smalRestDir).normalized;
+                // 標準の運動連鎖では、ボーンの世界方向は R[j] * rest方向。
+                // R[j] は root から積んだ回転（smalAccum）で、ローカル回転単体ではない。
+                // 従来（smalLocal）は**親の曲げを全部無視**していたので、
+                // 各ボーンが bind pose から自分のぶんだけずれた向きにしかならず、
+                // 座る・伏せるのように連鎖して成立する姿勢が作れなかった。
+                Quaternion smalPose = accumulateSmalParentBend ? smalAccum[joint] : smalLocal;
+                Vector3 smalPosedDir = (smalPose * smalRestDir).normalized;
                 Quaternion bendSmal = Quaternion.FromToRotation(smalRestDir, smalPosedDir);
 
                 // worldFk0 * boneBindWorld (not parentTW * bindLoc): see the comment above the
@@ -511,16 +520,7 @@ public sealed partial class AnimalPoseApplier
                     Debug.Log($"[SMAL-FK-DBG] REST-CHECK model={cache.root?.name} joint={joint} smalRestDir={smalRestDir:F3} unityRestDirWorld={unityRestDirWorld:F3} restDirAngleDeg={restDirAngleDeg:F1} (150+=FromToRotation軸不定の疑いあり)");
                 }
 
-                if (accumulateSmalParentBend)
-                {
-                    Quaternion parentDev = devFromRest[parentJoint];
-                    devFromRest[joint] = parentDev * bendUnity;
-                    tw[joint] = devFromRest[joint] * restWorldRot;
-                }
-                else
-                {
-                    tw[joint] = bendUnity * restWorldRot;
-                }
+                tw[joint] = bendUnity * restWorldRot;
             }
             else
             {
@@ -529,7 +529,6 @@ public sealed partial class AnimalPoseApplier
                 // direction from, see ADR-0001/0002). Rather than guess with an unvalidated
                 // correction, just carry the rest pose through (no body_pose contribution) -
                 // these bones still follow their parent's sway via parentTW * bindLoc.
-                devFromRest[joint] = devFromRest[parentJoint];
                 tw[joint] = parentTW * bindLoc;
             }
 

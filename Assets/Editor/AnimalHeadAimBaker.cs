@@ -102,7 +102,12 @@ public static class AnimalHeadAimBaker
         if (filters.Count == 0) { note = "耳を除くとメッシュが残らない"; return false; }
 
         HashSet<string> reimported = new HashSet<string>();
-        Dictionary<string, bool> restore = new Dictionary<string, bool>();
+        // **.meta のバイト列ごと退避する。**
+        // `isReadable` を変えて再インポートすると Unity が .meta を書き直し、
+        // 触っていないフィールドまで既定値に正規化されることがある
+        // （2026-09-11: dog.fbx.meta の globalScale が 0.01 -> 1 に化けた）。
+        // importer のフィールドを戻すだけでは不十分なので、ファイルごと戻す。
+        Dictionary<string, byte[]> metaBackup = new Dictionary<string, byte[]>();
         try
         {
             foreach (MeshFilter f in filters)
@@ -111,7 +116,8 @@ public static class AnimalHeadAimBaker
                 if (string.IsNullOrEmpty(src) || reimported.Contains(src)) { continue; }
                 ModelImporter mi = AssetImporter.GetAtPath(src) as ModelImporter;
                 if (mi == null || mi.isReadable) { reimported.Add(src); continue; }
-                restore[src] = mi.isReadable;
+                string meta = src + ".meta";
+                if (File.Exists(meta)) { metaBackup[src] = File.ReadAllBytes(meta); }
                 mi.isReadable = true;
                 AssetDatabase.ImportAsset(src, ImportAssetOptions.ForceSynchronousImport);
                 reimported.Add(src);
@@ -149,14 +155,11 @@ public static class AnimalHeadAimBaker
         }
         finally
         {
-            foreach (KeyValuePair<string, bool> kv in restore)
+            foreach (KeyValuePair<string, byte[]> kv in metaBackup)
             {
-                ModelImporter mi = AssetImporter.GetAtPath(kv.Key) as ModelImporter;
-                if (mi != null)
-                {
-                    mi.isReadable = kv.Value;
-                    AssetDatabase.ImportAsset(kv.Key, ImportAssetOptions.ForceSynchronousImport);
-                }
+                string meta = kv.Key + ".meta";
+                File.WriteAllBytes(meta, kv.Value);
+                AssetDatabase.ImportAsset(kv.Key, ImportAssetOptions.ForceSynchronousImport);
             }
         }
     }

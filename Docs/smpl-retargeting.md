@@ -4189,3 +4189,17 @@ importer を一時的に読み書き可にして読み、`finally` で必ず元�
   （ベイカーは引数なしで `Assets/Resources/Models/Animal` を全部処理する作りにしてある）
 - 既定は OFF のまま（`headAimFromModelForward = false`）
 - 座位（f582/f630）の頭は変わっていない。27〜30 秒だけの改善
+
+#### ベイカーで踏んだ罠（2026-09-11）
+
+`isReadable` を立てて `ImportAsset(ForceSynchronousImport)` すると、
+**Unity が `.meta` を書き直し、触っていないフィールドまで既定値に正規化する。**
+
+実害: `Assets/Models/dog.fbx.meta` の **`globalScale` が 0.01 → 1** に化けた。
+モデルの大きさが 100 倍になる変更で、コミットに紛れ込んでいた（`git diff` で気づいて差し戻し）。
+
+**importer のフィールドを元の値に戻すだけでは足りない。**
+ベイカーは `.meta` を**バイト列ごと退避して `finally` で書き戻す**ようにした。
+実行前後の sha256 が一致することを確認済み。
+
+**アセットの importer を触るツールを書くときは、必ず `.meta` の差分を確認すること。**

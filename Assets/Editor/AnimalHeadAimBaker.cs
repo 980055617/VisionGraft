@@ -187,10 +187,30 @@ public static class AnimalHeadAimBaker
                 BoneWeight[] bw = mesh.boneWeights;
                 Vector3[] vs = mesh.vertices;
                 Transform mt = skinned.transform;
+                // **頭ボーンだけでなく子孫も対象にする。**
+                // 36_LabradorDog は頭の子が 36 個あり、**口・鼻は子ボーンに skin されている**。
+                // 頭ボーン単体だと最遠でも 2.2mm しか取れず、鼻先にならなかった（2026-09-11）。
+                HashSet<int> headSet = new HashSet<int>();
+                for (int bi = 0; bi < skinned.bones.Length; bi++)
+                {
+                    Transform t = skinned.bones[bi];
+                    if (t == null) { continue; }
+                    if (t == head || t.IsChildOf(head)) { headSet.Add(bi); }
+                }
+                // **skinned の頂点は bind 空間にある。**renderer の transform で変換しては駄目
+                // （2026-09-11: それで距離が 2.2mm にしかならず鼻先が取れなかった）。
+                // mesh.bindposes[head] は「メッシュ空間 -> 頭ボーンのローカル」なので、
+                // これを掛ければ頂点の bind 時の位置が頭ローカルで直接出る。
+                Matrix4x4[] binds = mesh.bindposes;
+                if (binds == null || headBoneIndex >= binds.Length)
+                {
+                    note = "bindposes を読めない"; return false;
+                }
+                Matrix4x4 toHead = binds[headBoneIndex];
                 for (int vi = 0; vi < vs.Length && vi < bw.Length; vi++)
                 {
-                    if (bw[vi].boneIndex0 != headBoneIndex || bw[vi].weight0 <= 0.5f) { continue; }
-                    Vector3 inHead = head.InverseTransformPoint(mt.TransformPoint(vs[vi]));
+                    if (!headSet.Contains(bw[vi].boneIndex0) || bw[vi].weight0 <= 0.5f) { continue; }
+                    Vector3 inHead = toHead.MultiplyPoint3x4(vs[vi]);
                     total++;
                     float d = inHead.sqrMagnitude;
                     if (d > best) { best = d; bestLocal = inHead; }

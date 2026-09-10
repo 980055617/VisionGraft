@@ -103,8 +103,13 @@ public sealed partial class AnimalPoseApplier
         // 頭は首を副軸にする。頭単体では「どちらが上か」が決まらず、
         // 首振りが頷きに化けうる（FromToRotation はロールを拘束しない）。
         { 16, 15 },
-        // joint 15（neck）は対になる rest 方向を持つ joint が無いので従来どおり
-        // FromToRotation にフォールバックする。
+        // **首（15）にも副軸を入れる。**（2026-09-10）
+        // 「対になる rest 方向を持つ joint が無い」として FromToRotation に落としていたが、
+        // 頭（16）の rest 方向とは 30.3 度あり、副軸として十分に条件が良い。
+        // 首はロールが決まらないと**上体と頭をつなぐ向きが捻れる**（実機で指摘、
+        // 座位 f582/f630 で首がまっすぐにならない）。頭は首を副軸にしているので、
+        // 首が捻れると頭もそのまま連れていかれる。
+        { 15, 16 },
     };
 
     private static readonly Dictionary<int, Vector3> SmalRestDirByJoint = new Dictionary<int, Vector3>

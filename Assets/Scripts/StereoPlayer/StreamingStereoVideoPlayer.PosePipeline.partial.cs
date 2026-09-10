@@ -234,6 +234,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         animalPoseApplier.accumulateSmalParentBend = accumulateSmalParentBend;
         animalPoseApplier.forceRootYawFix = forceRootYawFix;
         animalPoseApplier.excludeHeadFromChain = excludeHeadFromChain;
+        animalPoseApplier.headAimFromModelForward = headAimFromModelForward;
         animalPoseApplier.useTwoAxisJointFrameMap = useTwoAxisJointFrameMap;
         animalPoseApplier.enableAnimalHeadPose = enableAnimalHeadPose;
         animalPoseApplier.enableAnimalKeypointAimAt = enableAnimalKeypointAimAt;

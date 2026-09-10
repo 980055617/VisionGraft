@@ -79,6 +79,21 @@ public sealed partial class AnimalPoseApplier
     // 四肢の改善は 2 軸だけで出ており、連鎖は頭にだけ効いて悪化させていた。
     public bool excludeHeadFromChain = true;
 
+    // 頭の照準を「モデルが rest で向いている方向」に揃えるか。既定 true。
+    //
+    // 従来は SMAL 側が「頭 → 口」（joint 16 → 32）、Unity 側が
+    // 「頭ボーン → 頭メッシュの重心」（aim child が無いためのフォールバック）で、
+    // **別のものを対応づけていた**。jointFrameMap はこのずれを rest では吸収するが、
+    // 曲げの平面がずれるので**振れ幅に比例して誤差が出る**。実測で 27-30 秒の頭は
+    // rest から 66.5 度振れており、そこで誤差が最大になっていた。
+    //
+    // ON のときは両側を「体の前方」で揃える:
+    //   SMAL 側  = +X（rest skeleton の軸: +X が尾から頭へ）
+    //   Unity 側 = worldFk0 * modelForwardLocal
+    //              （コード内の証明 visual_forward = rawWorldFk0 * modelFwdLocal と同じ）
+    // 副軸は前肢（7）にする。首（15）は +X と 6.6 度しか離れておらず縮退するため。
+    public bool headAimFromModelForward = true;
+
     // jointFrameMap をロールまで拘束した 2 軸版で作る（2026-08-28）。
     // 詳細は jointFrameMap を組んでいるところのコメント。
     public bool useTwoAxisJointFrameMap = true;
@@ -449,6 +464,14 @@ public sealed partial class AnimalPoseApplier
                 cache.bindRotWorld.TryGetValue(bone, out Quaternion boneBindWorld) &&
                 cache.bindDirLocal.TryGetValue(bone, out Vector3 boneBindDirLocal))
             {
+                // 頭だけ照準の定義を差し替える（headAimFromModelForward）。
+                bool headAim = headAimFromModelForward && joint == 16 &&
+                    cache.modelForwardLocal.sqrMagnitude > 0.000001f;
+                if (headAim)
+                {
+                    smalRestDir = Vector3.right;   // SMAL の +X = 尾から頭
+                }
+
                 // Geometry-grounded per-joint correction (2026-06-18): instead of reusing the
                 // single global canonicalCorrection (whose roll/twist was only ever constrained
                 // by a one-off nose-direction check, and produced near-invisible "twist instead
@@ -490,7 +513,9 @@ public sealed partial class AnimalPoseApplier
                 // multi-bone spine chain, which would silently compose bindLoc relative to the
                 // wrong frame.
                 Quaternion restWorldRot = worldFk0 * boneBindWorld;
-                Vector3 unityRestDirWorld = (restWorldRot * boneBindDirLocal).normalized;
+                Vector3 unityRestDirWorld = headAim
+                    ? (worldFk0 * cache.modelForwardLocal).normalized
+                    : (restWorldRot * boneBindDirLocal).normalized;
 
                 // 2 軸版（既定 OFF）。ロールを同じ肢のもう 1 本で拘束する。
                 // 従来の FromToRotation は smalRestDir -> unityRestDirWorld しか拘束せず、
@@ -498,8 +523,11 @@ public sealed partial class AnimalPoseApplier
                 // bendUnity は曲げの回転軸 n を jointFrameMap * n に写すので、ロールが
                 // ずれると**屈曲が伸展に化ける**。SmalRollRefJoint のコメント参照。
                 Quaternion jointFrameMap;
+                // 頭の照準を +X にしたときは、首（15）だと +X と 6.6 度しか離れず縮退する。
+                // 前肢（7）なら 87 度あり条件が良い。
+                if (headAim) { SmalRollRefOverrideJoint = 7; } else { SmalRollRefOverrideJoint = -1; }
                 if (!useTwoAxisJointFrameMap
-                    || !SmalRollRefJoint.TryGetValue(joint, out int rollRefJoint)
+                    || !TryGetRollRef(joint, out int rollRefJoint)
                     || !SmalRestDirByJoint.TryGetValue(rollRefJoint, out Vector3 smalRollRefDir)
                     || !TryGetUnityRestDirWorld(cache, worldFk0, rollRefJoint, out Vector3 unityRollRefDir)
                     || !TryBuildDirectionBasis(smalRestDir, smalRollRefDir, out Quaternion smalBasis)
@@ -714,6 +742,19 @@ public sealed partial class AnimalPoseApplier
 
         dirWorld = d.normalized;
         return true;
+    }
+
+    // 副軸の一時上書き（頭の照準を差し替えたときだけ使う）。
+    private int SmalRollRefOverrideJoint = -1;
+
+    private bool TryGetRollRef(int joint, out int rollRefJoint)
+    {
+        if (SmalRollRefOverrideJoint >= 0)
+        {
+            rollRefJoint = SmalRollRefOverrideJoint;
+            return true;
+        }
+        return SmalRollRefJoint.TryGetValue(joint, out rollRefJoint);
     }
 
     private static Transform GetSmalBoneForJoint(AnimalRigCache cache, int joint)

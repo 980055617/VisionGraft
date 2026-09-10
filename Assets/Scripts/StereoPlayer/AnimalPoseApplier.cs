@@ -955,6 +955,21 @@ public sealed partial class AnimalPoseApplier
         }
         cache.bindDirLocal[bone] = bindDirLocal == Vector3.zero ? Vector3.forward : bindDirLocal.normalized;
 
+        // **頭だけ照準を上書きする。**（2026-09-11）
+        // 実測（[AIMBIND]）: neck / 四肢 / 尾は**すべてローカル +Y** を照準にしているのに、
+        // 頭だけ aim child が登録されておらず（RegisterAnimalAimPairs に head → ? が無い）、
+        // first child の head.001（頭のメッシュ）の bounds 中心へ向く経路に落ちて
+        // (0.017, 0.681, -0.732) と +Y から 43 度ずれていた。
+        // head.001 の bounds は extents=(0.0113, 0.0175, 0.0118) で +Y が最長なので鼻先も +Y 側。
+        //
+        // **キャッシュを直す**のが要点。FK の中だけで上書きすると、
+        // 首の副軸が TryGetUnityRestDirWorld 経由でこのキャッシュを読むため、
+        // 頭と首で別の向きを使う不整合が出る。
+        if (headAimFromModelForward && bone == cache.head)
+        {
+            cache.bindDirLocal[bone] = Vector3.up;
+        }
+
         // どの向きを「そのボーンの照準」として採ったのかを 1 度だけ出す（2026-09-11）。
         // 頭は aim child が登録されておらず、子ボーンも Renderer も無ければ
         // **既定の Vector3.forward（ローカル +Z）が黙って使われる**。

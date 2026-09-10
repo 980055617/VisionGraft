@@ -77,10 +77,9 @@ public sealed partial class AnimalPoseApplier
     //   従来 39度 / 2軸のみ 41度 / 連鎖+2軸 53度（全編）
     //   27-30秒では 105度 / 97度 / 135度
     // 四肢の改善は 2 軸だけで出ており、連鎖は頭にだけ効いて悪化させていた。
-    // **2026-09-11: 既定 false に変更。**頭の照準を +Y に揃えたうえで連鎖に入れると、
-    // 頭の追従が corr 0.365 → 0.746、27-30 秒の誤差が 99.9 度 → 48.5 度になる。
-    // 照準を直さずに連鎖だけ入れると悪化する（両方セットでないと意味がない）。
-    public bool excludeHeadFromChain;
+    // **既定 true に差し戻し（2026-09-11）。**頭を連鎖に入れるのは、
+    // 照準の修正とセットでないと悪化する。その照準の修正を採用しなかったので戻す。
+    public bool excludeHeadFromChain = true;
 
     // 頭の照準を「モデルが rest で向いている方向」に揃えるか。既定 true。
     //
@@ -95,7 +94,10 @@ public sealed partial class AnimalPoseApplier
     //   Unity 側 = worldFk0 * modelForwardLocal
     //              （コード内の証明 visual_forward = rawWorldFk0 * modelFwdLocal と同じ）
     // 副軸は前肢（7）にする。首（15）は +X と 6.6 度しか離れておらず縮退するため。
-    public bool headAimFromModelForward = true;
+    // **既定 false（2026-09-11 に差し戻し）。**実機で「首がぐちゃぐちゃ」と指摘され、
+    // こちらの計測でも絶対差 78 度と大きい。相関は 0.365 → 0.718 に上がるが、
+    // 向きそのものが合っていないので採用しない。詳細は Docs/smpl-retargeting.md。
+    public bool headAimFromModelForward;
 
     // jointFrameMap をロールまで拘束した 2 軸版で作る（2026-08-28）。
     // 詳細は jointFrameMap を組んでいるところのコメント。
@@ -121,13 +123,11 @@ public sealed partial class AnimalPoseApplier
         // 頭は首を副軸にする。頭単体では「どちらが上か」が決まらず、
         // 首振りが頷きに化けうる（FromToRotation はロールを拘束しない）。
         { 16, 15 },
-        // **首（15）にも副軸を入れる。**（2026-09-10）
-        // 「対になる rest 方向を持つ joint が無い」として FromToRotation に落としていたが、
-        // 頭（16）の rest 方向とは 30.3 度あり、副軸として十分に条件が良い。
-        // 首はロールが決まらないと**上体と頭をつなぐ向きが捻れる**（実機で指摘、
-        // 座位 f582/f630 で首がまっすぐにならない）。頭は首を副軸にしているので、
-        // 首が捻れると頭もそのまま連れていかれる。
-        { 15, 16 },
+        // **首（15）に副軸は入れない。**（2026-09-11 に撤回）
+        // 2026-09-10 に `{ 15, 16 }` を入れたが、当時から数値も絵も変化が無く、
+        // 頭の照準を +Y に直したあとは**むしろ悪化した**（頭の絶対差 42.3 度 → 79.3 度）。
+        // 首の副軸は Unity 側で頭の照準を読むので、頭を変えると首まで動いてしまう。
+        // 首は従来どおり FromToRotation にフォールバックする。
     };
 
     private static readonly Dictionary<int, Vector3> SmalRestDirByJoint = new Dictionary<int, Vector3>
@@ -467,20 +467,29 @@ public sealed partial class AnimalPoseApplier
                 cache.bindRotWorld.TryGetValue(bone, out Quaternion boneBindWorld) &&
                 cache.bindDirLocal.TryGetValue(bone, out Vector3 boneBindDirLocal))
             {
-                // 頭だけ Unity 側の照準を作り直す（headAimFromModelForward）。
+                // 頭だけ Unity 側の照準と副軸を作り直す（headAimFromModelForward）。
                 //
-                // このリグは**全ボーンが自分のローカル +Y を照準にしている**
-                // （[AIMBIND] 実測: neck / 四肢 / 尾はすべて bindDirLocal=(0,1,0)）。
-                // 頭だけ aim child が登録されておらず、first child の head.001（頭のメッシュ）の
-                // **bounds 中心**へ向く経路に落ちていて、bindDirLocal=(0.017, 0.681, -0.732) と
-                // +Y から 43 度ずれていた。head.001 の bounds は extents=(0.0113, 0.0175, 0.0118) で
-                // **ローカル +Y が最長**なので、鼻先も +Y 側にある。
+                // 実測（[AIMBIND] / [HEADCHILD] / [HEADMESH]）で分かったこと:
+                //   - このリグは剛体パーツの集合。頭の子は head.001（頭のメッシュ）と左右の耳の 3 つ
+                //   - **口・鼻のボーンが無い**ので、既定は head.001 の bounds 中心へ向いていた
+                //   - neck / 四肢 / 尾は**すべてローカル +Y** を照準にしている。頭だけ 43 度ずれていた
+                //   - head.001 の bounds は +Y が最長。鼻先も +Y 側
                 //
-                // ON のときは頭も +Y を照準にして、リグの流儀に揃える。
-                bool headAim = headAimFromModelForward && joint == 16;
+                // 照準は +Y。副軸は**耳の軸**にする。SMAL 側の LEar-REar は
+                // 頭→口 とちょうど 90 度で条件が良く、Unity 側も耳ボーンが 2 つあるので
+                // **両側で実体のある対応**が取れる（首を副軸にすると Unity 側でほぼ平行になり縮退する）。
+                bool headAim = headAimFromModelForward && joint == 16 && bone.childCount >= 3;
+                Vector3 headEarAxisLocal = Vector3.zero;
                 if (headAim)
                 {
-                    boneBindDirLocal = Vector3.up;
+                    Transform earL = bone.GetChild(1);
+                    Transform earR = bone.GetChild(2);
+                    Vector3 axisW = earL.position - earR.position;
+                    if (axisW.sqrMagnitude > 1e-8f)
+                    {
+                        headEarAxisLocal = bone.InverseTransformDirection(axisW).normalized;
+                    }
+                    else { headAim = false; }
                 }
 
                 // Geometry-grounded per-joint correction (2026-06-18): instead of reusing the
@@ -531,10 +540,18 @@ public sealed partial class AnimalPoseApplier
                 // jointFrameMap * R(smalRestDir, θ) はどの θ でも同じ条件を満たす。
                 // bendUnity は曲げの回転軸 n を jointFrameMap * n に写すので、ロールが
                 // ずれると**屈曲が伸展に化ける**。SmalRollRefJoint のコメント参照。
-                Quaternion jointFrameMap;
-                // smalRestDir は Head→Mouth のままなので、副軸は従来どおり首（30.3 度）でよい。
                 SmalRollRefOverrideJoint = -1;
-                if (!useTwoAxisJointFrameMap
+                // 頭は耳の軸で 2 軸基底を作る（SMAL の LEar-REar = (0,1,0) と対応）。
+                Quaternion jointFrameMap;
+                if (headAim && useTwoAxisJointFrameMap &&
+                    headEarAxisLocal.sqrMagnitude > 1e-8f &&
+                    TryBuildDirectionBasis(smalRestDir, Vector3.up, out Quaternion smalBasisH) &&
+                    TryBuildDirectionBasis(unityRestDirWorld,
+                        (restWorldRot * headEarAxisLocal).normalized, out Quaternion unityBasisH))
+                {
+                    jointFrameMap = unityBasisH * Quaternion.Inverse(smalBasisH);
+                }
+                else if (!useTwoAxisJointFrameMap
                     || !TryGetRollRef(joint, out int rollRefJoint)
                     || !SmalRestDirByJoint.TryGetValue(rollRefJoint, out Vector3 smalRollRefDir)
                     || !TryGetUnityRestDirWorld(cache, worldFk0, rollRefJoint, out Vector3 unityRollRefDir)

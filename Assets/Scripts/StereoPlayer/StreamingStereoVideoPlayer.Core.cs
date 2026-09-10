@@ -250,11 +250,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public int forceRootYawFix;
 
     // 頭を連鎖から外す。詳細は AnimalSmalFkApplier.excludeHeadFromChain。
-    // 既定 false。詳細は AnimalSmalFkApplier.excludeHeadFromChain。
-    public bool excludeHeadFromChain;
+    // 既定 true に差し戻し（2026-09-11）。
+    public bool excludeHeadFromChain = true;
 
     // 頭の照準をモデルの前方に揃える。詳細は AnimalSmalFkApplier.headAimFromModelForward。
-    public bool headAimFromModelForward = true;
+    // 既定 false に差し戻し（2026-09-11）。
+    public bool headAimFromModelForward;
 
     // jointFrameMap のロールを「同じ肢のもう 1 本」で拘束する 2 軸版を使う（2026-08-28）。
     // 既定 false（従来の FromToRotation）。A/B で効果を確認してから既定を決める。

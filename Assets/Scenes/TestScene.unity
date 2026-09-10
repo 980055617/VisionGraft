@@ -1069,7 +1069,7 @@ MonoBehaviour:
   depthRefineFastTrackHigh: 0.6
   alignTopWhenBottomClipped: 1
   disableSmalBendForDiag: 0
-  useTwoAxisJointFrameMap: 0
+  useTwoAxisJointFrameMap: 1
   rememberTrackCustomization: 1
   batchManualYawSpec: 
   batchManualScaleSpec: 

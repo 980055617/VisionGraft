@@ -244,11 +244,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     // 親の曲げを子へ積む。既定 OFF。
     // 詳細は AnimalSmalFkApplier.accumulateSmalParentBend。
-    public bool accumulateSmalParentBend;
+    public bool accumulateSmalParentBend = true;
 
     // jointFrameMap のロールを「同じ肢のもう 1 本」で拘束する 2 軸版を使う（2026-08-28）。
     // 既定 false（従来の FromToRotation）。A/B で効果を確認してから既定を決める。
-    public bool useTwoAxisJointFrameMap;
+    public bool useTwoAxisJointFrameMap = true;
 
     // 頭（SMAL joint 16）に body_pose を当てるか。既定 ON。
     // 詳細は AnimalSmalFkApplier.enableAnimalHeadPose。

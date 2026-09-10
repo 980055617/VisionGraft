@@ -61,11 +61,11 @@ public sealed partial class AnimalPoseApplier
     // ON: 「rest からのずれ」を親から積む。restWorldRot 自体は変えないので、
     // ADR-0002 が避けた「仮想 SMAL 親と実 Unity 親の食い違い」は再導入しない。
     // 詳細は Docs/smpl-retargeting.md「Animal の FK は親の姿勢を積んでいない」。
-    public bool accumulateSmalParentBend;
+    public bool accumulateSmalParentBend = true;
 
     // jointFrameMap をロールまで拘束した 2 軸版で作る（2026-08-28）。
     // 詳細は jointFrameMap を組んでいるところのコメント。
-    public bool useTwoAxisJointFrameMap;
+    public bool useTwoAxisJointFrameMap = true;
 
     // 頭（SMAL joint 16）に body_pose を当てるか。**既定 ON。**
     // false にすると 2026-09-06 以前の挙動（頭は首に付いて動くだけ）に戻る。A/B 用。

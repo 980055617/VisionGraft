@@ -3525,3 +3525,48 @@ TryReadRotationMatrixFromBin(br, flipCameraY: false, out pose.bodyPose[i]);   //
 **独立ではない。**同じ当てはめの 2 表現なので、一致は
 **こちらの座標変換が正しいことの確認**にしかならない。姿勢データの正しさの裏付けにはならない。
 （姿勢が正しいことは**元動画と重なること**で見ている。そちらは有効。）
+
+### 座位が出るようになった（2026-09-10）— 連鎖 ＋ 2 軸 jointFrameMap の両方が要る
+
+「連鎖を積んでも絵が座位にならない」の続き。**残りは曲げの『量』ではなく『向き』だった。**
+
+`jointFrameMap = Quaternion.FromToRotation(smalRestDir, unityRestDirWorld)` は
+**rest 方向どうししか拘束しない。**その軸まわりのロールは任意なので、
+曲げの回転軸 `n` を `M·n` に写すときに平面がずれる——**屈曲が横倒しに化ける。**
+量（連鎖）を直しても、向きが決まっていなければ姿勢にならない。
+
+対策は既にコードにあった: `useTwoAxisJointFrameMap`（同じ肢のもう 1 本を副軸にして
+ロールを拘束する、`SmalRollRefJoint`）。**既定 OFF のまま使われていなかった。**
+
+#### 結果（`[ANIMALKP]` 全ボーンの中央値の平均）
+
+| 区間 | 従来 | 連鎖のみ | **連鎖 + 2 軸** |
+|---|---:|---:|---:|
+| 全編（0〜40 秒）| 31.1° | 30.9° | **30.1°** |
+| **座位 f534-648** | 36.4° | 31.1° | **28.0°** |
+| 立ち f258-337 | 27.7° | 26.0° | **25.4°** |
+| **f0-300** | 43.4° | **50.7°** | **32.8°** |
+
+**どの区間でも悪化しない。**そして **f0-300 は連鎖だけだと 43.4 → 50.7 と悪化する**ので、
+**2 軸はおまけではなく必須。**片方だけ入れてはいけない。
+
+絵（`Docs/tmp/animal_chain_twoaxis.png`、元動画 / body_pose の骨格 / 従来 / 連鎖のみ / 連鎖+2軸）で
+**連鎖+2軸の列だけが座位になっている。**
+
+#### 既定値を ON にした
+
+| | 場所 |
+|---|---|
+| `accumulateSmalParentBend` | `AnimalSmalFkApplier` / `StreamingStereoVideoPlayer.Core` のコード既定を `true` |
+| `useTwoAxisJointFrameMap` | 同上 **＋ `TestScene.unity` / `TrialScene.unity` の serialize 値を `0` → `1`** |
+
+**シーンに `useTwoAxisJointFrameMap: 0` が serialize されていた。**
+コード既定だけ変えても効かない（シーン値が勝つ）。バッチは `-twoAxis` で上書きしていたので
+気づきにくかった。**フラグ無しで走らせて `[SMAL-FK-DBG] useTwoAxisJointFrameMap=true` が
+出ること、数値が明示指定と一致すること（全編 30.1° 対 30.3°、座位 28.0° 対 27.9°）を検算済み。**
+
+#### 残っている問題
+
+- **モデルの向きが元動画と違う**（犬は左向き、モデルは奥向き）。`globalOrient` / `modelOrientFix` の系統
+- しっぽ先（27〜31）・耳（33,34）・口（32）は依然として駆動対象外
+- track 1（38.2〜70.6 秒）は未測定

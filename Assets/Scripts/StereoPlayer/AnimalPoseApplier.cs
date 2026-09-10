@@ -967,7 +967,10 @@ public sealed partial class AnimalPoseApplier
         // 頭と首で別の向きを使う不整合が出る。
         if (headAimFromModelForward && bone == cache.head)
         {
-            cache.bindDirLocal[bone] = Vector3.up;
+            // AnimalHeadAimBaker が頭メッシュの頂点から実測した鼻先方向（head ローカル）。
+            // 00_Dog: (0.0073, 0.4704, -0.8824)。既定の照準（bounds 中心）とは 15 度しか違わない。
+            // **+Y は 62 度も外れており誤りだった**（2026-09-11）。
+            cache.bindDirLocal[bone] = new Vector3(0.0073f, 0.4704f, -0.8824f).normalized;
         }
 
         // どの向きを「そのボーンの照準」として採ったのかを 1 度だけ出す（2026-09-11）。

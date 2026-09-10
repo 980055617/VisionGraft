@@ -56,6 +56,15 @@ def load_kp(path):
     return last
 
 
+def has_model_side(name):
+    """`[KP2D]` の末尾に付く `*Src`（RHeelSrc / LHeelSrc）は**元映像だけ**の値で、
+    モデル側は `0.0,0.0` の詰め物（C# 側のコメントに明記されている）。
+
+    これを座標として扱うと、骨も枠も必ず原点 (0,0) を巻き込む。
+    2026-09-10、枠が毎フレームほぼ全画面になっていたのがこれ。"""
+    return not name.endswith("Src")
+
+
 def draw_skeleton(im, parts, idx, color, radius=5, width=4):
     """idx=0 なら元映像の keypoint、idx=2 ならモデルの投影を描く。"""
     d = ImageDraw.Draw(im)
@@ -64,6 +73,8 @@ def draw_skeleton(im, parts, idx, color, radius=5, width=4):
             d.line([(parts[a][idx], parts[a][idx + 1]),
                     (parts[b][idx], parts[b][idx + 1])], fill=color, width=width)
     for name, v in parts.items():
+        if idx != 0 and not has_model_side(name):
+            continue
         x, y = v[idx], v[idx + 1]
         d.ellipse([x - radius, y - radius, x + radius, y + radius],
                   fill=color, outline=(255, 255, 255))
@@ -89,9 +100,12 @@ def person_box(parts, margin=0.22):
     if not parts:
         return (0, 0, EYE_W, EYE_H)
     xs, ys = [], []
-    for v in parts.values():
-        xs += [v[0], v[2]]
-        ys += [v[1], v[3]]
+    for name, v in parts.items():
+        xs.append(v[0])
+        ys.append(v[1])
+        if has_model_side(name):
+            xs.append(v[2])
+            ys.append(v[3])
     x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
     m = max(x1 - x0, y1 - y0) * margin
     x0, x1, y0, y1 = x0 - m, x1 + m, y0 - m, y1 + m

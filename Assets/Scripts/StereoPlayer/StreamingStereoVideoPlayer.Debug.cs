@@ -233,6 +233,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         new HumanPoseErrorProbe(7, HumanBodyBones.LeftHand, "LHand")
     };
 
+    private static void AppendSourceKeypoint(
+        System.Text.StringBuilder sb, HumanSourcePose2D pose, int index, string label)
+    {
+        if (pose?.keypoints == null || index < 0 || index >= pose.keypoints.Length)
+        {
+            return;
+        }
+
+        sb.Append(' ').Append(label).Append('=')
+          .Append(pose.keypoints[index].x.ToString("F1")).Append(',')
+          .Append(pose.keypoints[index].y.ToString("F1")).Append(",0.0,0.0");
+    }
+
+
     private void LogHumanPoseErrorIfEnabled(
         MetaObj obj,
         GameObject instance,
@@ -269,6 +283,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         Quaternion worldToCam = Quaternion.Inverse(camRotation);
         System.Text.StringBuilder detail = new System.Text.StringBuilder();
+        System.Text.StringBuilder abs2d = new System.Text.StringBuilder();
         float sum = 0f;
         int count = 0;
         float worst = -1f;
@@ -314,6 +329,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             detail.Append(' ').Append(probe.label).Append('=')
                   .Append(delta.x.ToString("F1")).Append(',')
                   .Append(delta.y.ToString("F1"));
+
+            // **絶対座標も出す。**差分だけだと骨格を描けないので、
+            // 「元動画 / キーポイント可視化 / モデル配置」の 3 枚が作れない
+            // （2026-09-08 ユーザー要望）。src が meta.bin 由来、mdl が表示中のモデル。
+            abs2d.Append(' ').Append(probe.label).Append('=')
+                 .Append(sourcePose.keypoints[probe.sourceIndex].x.ToString("F1")).Append(',')
+                 .Append(sourcePose.keypoints[probe.sourceIndex].y.ToString("F1")).Append(',')
+                 .Append(displayedPixel.x.ToString("F1")).Append(',')
+                 .Append(displayedPixel.y.ToString("F1"));
         }
 
         if (count == 0)
@@ -322,6 +346,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         float mean = sum / count;
+
+        // **踵も出す。**probe の RFoot は元映像側が足首(11)、モデル側は Foot ボーン
+        // （= 踵の位置、2026-08-21 実測）で、**別の区間を比べている**。
+        // すねの長さを測るには元映像側も踵(24/21)を使わないと系統的にずれる
+        // （2026-09-08、これで「shinFactor が逆」と誤判定した）。
+        AppendSourceKeypoint(abs2d, sourcePose, HumanSourceKeypointRightHeel, "RHeelSrc");
+        AppendSourceKeypoint(abs2d, sourcePose, HumanSourceKeypointLeftHeel, "LHeelSrc");
+
+        // 部位=srcU,srcV,mdlU,mdlV。左目の画素座標（uv_origin=top_left）。
+        // 末尾の *Src は元映像だけ（srcU,srcV,0,0）。
+        Debug.Log($"[KP2D] f={frame} track={obj.trackId} bboxH={obj.bboxH}" + abs2d);
         Debug.Log(
             $"[POSE] f={frame} track={obj.trackId} bboxH={obj.bboxH} n={count} " +
             $"mean={mean:F1}px({100f * mean / obj.bboxH:F1}%) " +

@@ -257,6 +257,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 既定 false に差し戻し（2026-09-11）。
     public bool headAimFromModelForward;
 
+    // 頭を体レベルのフレーム写像で解く。詳細は AnimalSmalFkApplier.headUseBodyFrameMap。
+    // 既定 false。実測で悪化した。
+    public bool headUseBodyFrameMap;
+
     // jointFrameMap のロールを「同じ肢のもう 1 本」で拘束する 2 軸版を使う（2026-08-28）。
     // 既定 false（従来の FromToRotation）。A/B で効果を確認してから既定を決める。
     public bool useTwoAxisJointFrameMap = true;

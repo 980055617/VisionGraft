@@ -82,6 +82,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     // 測定 B（2026-08-28）: SMAL の曲げを切って bind pose + globalOrient だけにする。
     // 診断専用。docs/smpl-retargeting.md「測定 B」参照。
+    // 頭を体レベルのフレーム写像で解くかの入口（A/B 用）。
+    public void SetHeadUseBodyFrameMap(bool enabled)
+    {
+        headUseBodyFrameMap = enabled;
+    }
+
     // 頭の照準をモデルの前方に揃えるかの入口（A/B 用）。
     public void SetHeadAimFromModelForward(bool enabled)
     {

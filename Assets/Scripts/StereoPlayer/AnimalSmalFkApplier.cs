@@ -99,6 +99,25 @@ public sealed partial class AnimalPoseApplier
     // 向きそのものが合っていないので採用しない。詳細は Docs/smpl-retargeting.md。
     public bool headAimFromModelForward;
 
+    // 頭だけ per-joint の FromToRotation をやめ、**体レベルのフレーム写像**で解く。
+    // 既定 true（2026-09-11）。
+    //
+    // 理由: `M = FromToRotation(smalRestDir, unityRestDirWorld)` は方向 1 本しか拘束せず、
+    // **その軸まわりのロールが任意**。`bendUnity = M * bendSmal * M^-1` は曲げの回転軸を
+    // `M * n` に写すので、ロールがずれると**曲げる平面が回る**。四肢は隣の骨で
+    // 副軸を作れる（2 軸版）が、**頭には Unity 側に信頼できる副軸が無い**
+    // （耳を試しても変化なし。Labrador は主軸すら gotDir=false のフォールバック）。
+    //
+    // worldFk0 = G * S（S = rootYawFix * modelOrientFix、G = instanceRootYaw * camRot *
+    // globalOrient * SmalDataAxisCorrection）なので、SMAL の体フレームから world への
+    // 写像は G = worldFk0 * S^-1。累積回転 A を world へ共役すると
+    //     tw = (G * A * G^-1) * (worldFk0 * boneBindWorld) = worldFk0 * S^-1 * A * S * boneBindWorld
+    // **この式にロールの自由度は無い。**A = identity のとき restWorldRot に一致する。
+    // **既定 false（2026-09-11 実測で悪化）。**相関が +0.365 -> -0.158（00_Dog）、
+    // +0.169 -> -0.113（Labrador）。つまり**頭ボーンの rest 軸は SMAL の頭関節の軸と
+    // 体レベルの写像では対応しない**。診断としては重要な否定的結果。
+    public bool headUseBodyFrameMap;
+
     // jointFrameMap をロールまで拘束した 2 軸版で作る（2026-08-28）。
     // 詳細は jointFrameMap を組んでいるところのコメント。
     public bool useTwoAxisJointFrameMap = true;
@@ -603,7 +622,17 @@ public sealed partial class AnimalPoseApplier
                     Debug.Log($"[SMAL-FK-DBG] REST-CHECK model={cache.root?.name} joint={joint} smalRestDir={smalRestDir:F3} unityRestDirWorld={unityRestDirWorld:F3} restDirAngleDeg={restDirAngleDeg:F1} (150+=FromToRotation軸不定の疑いあり)");
                 }
 
-                tw[joint] = bendUnity * restWorldRot;
+                if (headUseBodyFrameMap && joint == 16)
+                {
+                    // 頭は体レベルの写像で解く（ロールの自由度が無い）。
+                    // 連鎖を積んだ回転をそのまま使うので、首の振りも入る。
+                    Quaternion sMap = state.rootYawFix * modelOrientFix;
+                    tw[joint] = worldFk0 * Quaternion.Inverse(sMap) * smalAccum[joint] * sMap * boneBindWorld;
+                }
+                else
+                {
+                    tw[joint] = bendUnity * restWorldRot;
+                }
             }
             else
             {

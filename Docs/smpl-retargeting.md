@@ -4308,3 +4308,91 @@ Labrador の頭は `[AIMBIND]` で **`gotDir=False`**——
 | `useTwoAxisJointFrameMap` | **true**（シーン値も 1）| 採用（前肢の副軸＝首と合わせて全区間改善）|
 | `excludeHeadFromChain` | true | 頭は連鎖に入れない（入れると悪化）|
 | `headAimFromModelForward` | **false** | **不採用** |
+
+### 頭がなぜ合わないのか（2026-09-11）— 診断が固まった
+
+5 通り試して全部外したが、**そのおかげで原因が消去法で確定した。**
+
+#### 機構
+
+駆動される関節はこう解いている。
+
+```
+bendSmal  = FromToRotation(smalRestDir, smalPose * smalRestDir)   // swing だけ
+M         = FromToRotation(smalRestDir, unityRestDirWorld)        // 方向 1 本しか拘束しない
+bendUnity = M * bendSmal * M^-1
+tw        = bendUnity * restWorldRot
+```
+
+`M` は**方向 1 本**から作るので、その軸まわりの**ロールが任意**。
+`bendUnity` は曲げの回転軸 `n` を `M * n` に写すので、
+**M のロールが θ ずれると曲げる平面が θ 回る。**
+
+四肢はこれを**隣の骨**で拘束できる（2 軸版）。前肢が 86° → 31° になったのはこれ。
+**頭には Unity 側に信頼できる副軸が無い。**
+
+そして**連鎖に入れると `bendSmal` が大きくなる**（rest から最大 66°）ので、
+**ロール誤差がそのぶん増幅される。**「連鎖 ON で頭が悪化」はこれで説明がつく。
+
+#### 決定的な否定的結果: 体レベルの写像でも駄目
+
+ロールの自由度を消すため、頭だけ per-joint の写像をやめて体レベルで解いた。
+
+```
+worldFk0 = G * S   (S = rootYawFix * modelOrientFix)
+tw[16] = worldFk0 * S^-1 * smalAccum[16] * S * boneBindWorld
+```
+
+**この式にロールの自由度は無い**（A = identity で restWorldRot に一致することも確認）。
+それでも:
+
+| | 相関 | 27〜30 秒 |
+|---|---:|---:|
+| 00_Dog 修正前 | +0.365 | 99.9° |
+| 00_Dog 体フレーム写像 | **−0.158** | 108.8° |
+| Labrador 修正前 | +0.169 | 104.1° |
+| Labrador 体フレーム写像 | **−0.113** | 157.2° |
+
+**相関が負になる。**つまり
+**頭ボーンの rest 軸は、体レベルの写像では SMAL の頭関節の軸と対応しない。**
+
+#### したがって
+
+**頭の SMAL→モデル対応は、3 自由度の自由な回転で、今あるどのデータからも決まらない。**
+
+- 方向 1 本（照準）では 2 自由度しか決まらない → ロールが残る
+- 体の規約（`modelOrientFix`）では決まらない → 上の否定的結果
+- 耳などの副軸では決まらない → 試して変化なし
+
+**軸をどう選び直しても直らない。**私が 5 回試して外したのは、
+**どれも「主軸の選び方」の話で、残る自由度に触れていなかった**ため。
+
+#### 残る筋: データから当てはめる（未着手）
+
+**モデルごとに 1 つの回転 Q を、クリップ全体から最小二乗で求める。**
+
+各フレームで
+- SMAL 側の頭の向き（`smalAccum[16] * smalRestDir` を体フレームで）
+- 目標（`keypoints3d` の kp18 → kp24、カメラ空間）
+
+が分かるので、**両者を最もよく一致させる Q を Procrustes で解ける。**
+人手の較正ではなく**自動**で、モデルごとに 1 回だけ走らせればよい。
+ベイカー（`AnimalHeadAimBaker`）と同じ枠組みに載る。
+
+**これが次に試す価値のある唯一の筋**だと考えている。
+
+#### 併せて分かったこと: Labrador は頭以外も悪い
+
+`[ANIMALKP]` の Paw 除く平均が **00_Dog 23.6° に対し Labrador 38.0°**。
+**頭だけの問題ではなく、この rig 全体の対応づけが悪い。**
+実験に使うモデルを選ぶときの材料になる。
+
+#### いまの既定（変更なし）
+
+| フラグ | 既定 |
+|---|---|
+| `accumulateSmalParentBend` | true（採用）|
+| `useTwoAxisJointFrameMap` | true（採用）|
+| `excludeHeadFromChain` | true |
+| `headAimFromModelForward` | false |
+| `headUseBodyFrameMap` | false |

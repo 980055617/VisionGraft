@@ -12,9 +12,10 @@
 シーンの serialize 値（TrialScene.unity / TestScene.unity）を既定にしてある。
 既定値ではなくシーンの値を使うこと（CLAUDE.md）。
 """
+import os
 import sys
 
-sys.path.insert(0, r"C:\Users\y9800\Unity_project\VisionGraft\Docs\bundle-shared")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from train_depth_order import _load_full  # noqa: E402
 
 EPSILON_M = 0.02          # EpsilonMeters

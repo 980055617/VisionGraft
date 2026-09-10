@@ -23,7 +23,8 @@ docs/bundle-shared/
 ├─ anchor_quality_check.py          ← anchor_z の抽出品質チェック（D-005 の裏付けを再現）
 ├─ anchor_z_order_check.py          ← 同一フレーム内の前後関係の集計（D-008）
 ├─ anchor_bbox_consistency_check.py ← bbox と `anchor_z` が食い違う区間の検出（D-004）
-└─ train_depth_order.py             ← 1 フレームの配置を runtime と同じ式で再現（D-008）
+├─ train_depth_order.py             ← 1 フレームの配置を runtime と同じ式で再現（D-008）
+└─ placement_depth.py               ← `anchor_z` → 配置深度（m）の移植（D-008 / D-004）
 ```
 
 1. **両方のリポジトリの同じ場所に、フォルダごと同じ内容で置く**（Unity 側: `docs/bundle-shared/`）
@@ -156,7 +157,7 @@ docs/bundle-shared/
 | 2026-09-09 | bundle → Unity | **D-004 に再回答。** sha256 一致を確認。そちらの独立確認（human 34 件 15.4% / animal 13 件 11.0% / train 1 件 0.8%、実機報告 2 件がリスト内）も既定パラメータで p99 まで再現した。 ただし **animal は同じ対処では直らないと訂正**: `rawAnchor.source` が全フレーム `animal_camera_root`（AniMer のカメラ空間 root Z。**depth map 不使用・EMA なし・AniMer 独自スケール**、`depthStats` は `validCount=1` の合成値）で、マスク中央値化が届かない。animal は bbox の画面端接触 63.9%（矛盾事象中 74.1%）という交絡もある。ツールに `anchor 由来` 表示・警告・`--skip-edge-touch` を追加（**human/train の数字は不変**）。**2151-2158（1.94 倍）は自己遮蔽ではなく 65px のアンカー飛び**なので受け入れ条件から除外を依頼。step 1 を person のみに再スコープし、animal の **D-009 分離**を提案（返事待ち） |
 | 2026-09-09 | Unity → bundle | **animal への適用提案を撤回。**`animal_camera_root` が 100%・`depthStats.validCount=1` の実データで、animal の `anchor_z` が depth map 由来でないことを理解。「同じ割合が出ているから同じ機序だろう」という飛躍だった。**2151-2158 を筆頭に挙げたのも、先方が機序が別として表から外していたのを読み落としたため**で撤回。**D-009 は起票に同意するが、双方とも着手しない**ことを明記して依頼（animal の症状は実機で観測されておらず、11.0% には bbox の画面端接触 63.9% という交絡がある）。step 1 を human person のみに絞る再スコープに同意 |
 | 2026-09-10 | Unity → bundle | **`bundle_shots_driftfix_preremovalfix_maskanchor.svb` を実機で確認、受け入れ。** 実機で報告していた 26.7 秒（0.81 倍）と 35.9 秒（1.29 倍）が**どちらも消えた**。独立測定でも 34 → 5 件・15.4% → 1.8%・p99 0.0715 → 0.0117 とそちらの報告と完全一致。残る 5 件のうち 71.43 秒は受け入れ条件から外した 2151-2158 の近傍で想定どおり。sha256 `3957928e…`。相関 0.560 → 0.665 の訂正も確認（D-004 本体にも前進）。申し送りの「person↔ボールの前後関係が広がる点」は実機未確認、次の通し視聴で見る |
-| 2026-09-10 | Unity → bundle | **D-008 の修正ビルドを実機確認、量子化の修正は効いたが症状は残る。** `bboxH` を独立の真値にして測り直した（track 番号順の仮定に依存しない）。**正しく前後がつく組 69.5% → 85.4%、同値 25.0% → 2.7%。**逆順が 5.5% → 11.9% に増えたのは悪化ではなく、同値に潰れていた 22.3pt が分離し 71% が正解した結果。**残りは量子化の分解能ではない**: f0-300（0〜10 秒）では列車全体が `anchor_z` の幅 0.0088 に収まり、車両間の差の中央値 0.0008 は量子化 1 段の 8 倍ある。**配置深度に直すと車両間 2.85mm ＝ Quest 3 で 0.30 画素の視差**（1 画素に 9.6mm 必要）で、順序が正しくても立体視では区別できない。移植コードは `Docs/log-analysis/placement_depth.py`。`quant_pos_scale` のこれ以上の細分化は依頼しない。**D-004 への合流**と、f0-300 の `rawAnchor.z` 生値での確認を依頼 |
+| 2026-09-10 | Unity → bundle | **D-008 の修正ビルドを実機確認、量子化の修正は効いたが症状は残る。** `bboxH` を独立の真値にして測り直した（track 番号順の仮定に依存しない）。**正しく前後がつく組 69.5% → 85.4%、同値 25.0% → 2.7%。**逆順が 5.5% → 11.9% に増えたのは悪化ではなく、同値に潰れていた 22.3pt が分離し 71% が正解した結果。**残りは量子化の分解能ではない**: f0-300（0〜10 秒）では列車全体が `anchor_z` の幅 0.0088 に収まり、車両間の差の中央値 0.0008 は量子化 1 段の 8 倍ある。**配置深度に直すと車両間 2.85mm＝約 43 秒角**で、Quest 3 の 1 画素（144 秒角）の 0.3 倍（知覚の断定はしない。遠方の深度差が近傍の 1/25〜1/30 まで落ちているという事実のみ）。**最も目立つのは最初の数秒ではなく f367-471（12.2〜15.7 秒）の 105 フレーム連続の逆順**で、track 2/3/4 の `anchor_z` が 0.0035 に固まる一方 `bboxH` は 1.8 倍ちがう。移植コードを `placement_depth.py` として共有フォルダに追加。`quant_pos_scale` のこれ以上の細分化は依頼しない。**D-004 への合流**と、f0-300 の `rawAnchor.z` 生値での確認を依頼 |
 | 2026-09-10 | Unity → bundle | **D-004 の根本（`anchor_z` と実距離の相関の低さ）の調査継続を依頼。** 自己遮蔽の分は `..._maskanchor.svb` で解決・実機確認済み。当方で測れることは出し切っており、残りは生成側の信号そのものの問題。D-008 の f0-300 も同じ根の別角度と見ている |
 
 ## 合意済みのデータ契約
@@ -188,5 +189,6 @@ docs/bundle-shared/
 | `train_depth_order.py` | 1 フレームの配置を runtime と同じ式で再現し、前後関係を出す | D-008 |
 | `anchor_z_order_check.py` | 全編を集計し、`camZ` / `camZ`（量子化前）/ 視点からの距離 の 3 指標で前後関係の一致率を出す | D-008 |
 | `anchor_bbox_consistency_check.py` | 「`bbox` がほとんど動いていないのに `anchor_z` が動く」区間を全編から拾う。`a`,`b` 較正なしで判定できる。**track ごとの `anchor 由来` を必ず見ること**（`animal_camera_root` は depth 由来ではない） | D-004 |
+| `placement_depth.py` | `anchor_z` を Unity の**配置深度（m）**へ直す。`CalibrateAnchorDepthRange` / `ResolvePopoutFraction` / `DecodeAnchorDepthMetersFromBundle` の移植。**そちらの `anchor_z` と当方のログの `anchorZ` を突き合わせるときはこれを通すこと**（両者は別物） | D-008 / D-004 |
 
 ---

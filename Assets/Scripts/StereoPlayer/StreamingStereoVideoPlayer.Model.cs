@@ -82,6 +82,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     // 測定 B（2026-08-28）: SMAL の曲げを切って bind pose + globalOrient だけにする。
     // 診断専用。docs/smpl-retargeting.md「測定 B」参照。
+    // 親の曲げを積む経路の入口（A/B 用）。
+    public void SetAccumulateSmalParentBend(bool enabled)
+    {
+        accumulateSmalParentBend = enabled;
+    }
+
     public void SetSmalBendDisabledForDiag(bool disabled)
     {
         disableSmalBendForDiag = disabled;

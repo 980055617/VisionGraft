@@ -231,6 +231,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 測定 B の診断フラグは実行時オブジェクト（animalPoseApplier）側にあるので、
         // シリアライズされている値を毎フレーム渡す。play mode に持ち越されない罠を避ける。
         animalPoseApplier.disableSmalBendForDiag = disableSmalBendForDiag;
+        animalPoseApplier.accumulateSmalParentBend = accumulateSmalParentBend;
         animalPoseApplier.useTwoAxisJointFrameMap = useTwoAxisJointFrameMap;
         animalPoseApplier.enableAnimalHeadPose = enableAnimalHeadPose;
         animalPoseApplier.enableAnimalKeypointAimAt = enableAnimalKeypointAimAt;

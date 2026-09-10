@@ -242,6 +242,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // フィールドに書くと play mode に持ち越されないため**（過去に同じ罠を踏んだ）。
     public bool disableSmalBendForDiag;
 
+    // 親の曲げを子へ積む。既定 OFF。
+    // 詳細は AnimalSmalFkApplier.accumulateSmalParentBend。
+    public bool accumulateSmalParentBend;
+
     // jointFrameMap のロールを「同じ肢のもう 1 本」で拘束する 2 軸版を使う（2026-08-28）。
     // 既定 false（従来の FromToRotation）。A/B で効果を確認してから既定を決める。
     public bool useTwoAxisJointFrameMap;

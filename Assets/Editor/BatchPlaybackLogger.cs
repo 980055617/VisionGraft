@@ -65,6 +65,7 @@ public static class BatchPlaybackLogger
         float fastHi = -1f;
         bool? alignTop = null;
         bool? noBend = null;
+        bool? accumBend = null;
         bool? twoAxis = null;
         bool? animAim = null;
         bool? headPose = null;
@@ -127,6 +128,7 @@ public static class BatchPlaybackLogger
             if (args[i] == "-headShift") headShift = args[i + 1];
             if (args[i] == "-targetFps") int.TryParse(args[i + 1], out targetFps);
             if (args[i] == "-noBend" && bool.TryParse(args[i + 1], out bool vNb)) noBend = vNb;
+            if (args[i] == "-accumBend" && bool.TryParse(args[i + 1], out bool vAb)) accumBend = vAb;
             if (args[i] == "-alignTop" && bool.TryParse(args[i + 1], out bool vAt)) alignTop = vAt;
             if (args[i] == "-bundle") bundleName = args[i + 1];
             if (args[i] == "-manualYaw") manualYaw = args[i + 1];
@@ -254,6 +256,7 @@ public static class BatchPlaybackLogger
                 if (fastHi >= 0f) { p.depthRefineFastTrackHigh = fastHi; }
                 if (alignTop.HasValue) { p.alignTopWhenBottomClipped = alignTop.Value; }
                 if (noBend.HasValue) { p.SetSmalBendDisabledForDiag(noBend.Value); }
+                if (accumBend.HasValue) { p.SetAccumulateSmalParentBend(accumBend.Value); }
                 if (twoAxis.HasValue) { p.SetTwoAxisJointFrameMap(twoAxis.Value); }
                 if (headPose.HasValue) { p.SetAnimalHeadPose(headPose.Value); }
                 if (pinUi.HasValue) { p.SetPinRuntimeUiDistance(pinUi.Value); }

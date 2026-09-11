@@ -92,6 +92,7 @@ public static class BatchPlaybackLogger
         bool dumpLayout = false;
         string displayTracks = null;
         string swapModel = null;
+        bool? elseChain = null;
         string captureFrames = null;
         string captureDir = null;
         int captureWidth = 3840;
@@ -152,6 +153,7 @@ public static class BatchPlaybackLogger
             // "all" で全 track 表示（displayTrackIds を空にする）。"0,1" のように ID 列も可。
             if (args[i] == "-displayTracks") displayTracks = args[i + 1];
             if (args[i] == "-swapModel") swapModel = args[i + 1];
+            if (args[i] == "-elseChain" && bool.TryParse(args[i + 1], out bool vEc)) elseChain = vEc;
             if (args[i] == "-captureFrames") captureFrames = args[i + 1];
             if (args[i] == "-captureDir") captureDir = args[i + 1];
             if (args[i] == "-captureWidth") int.TryParse(args[i + 1], out captureWidth);
@@ -279,6 +281,7 @@ public static class BatchPlaybackLogger
                 if (anchorLock.HasValue) { p.SetLockScreenAnchorPosition(anchorLock.Value); }
                 if (frameSmooth.HasValue) { p.SetSmoothDepthPerVideoFrame(frameSmooth.Value); }
                 if (animAim.HasValue) { p.SetAnimalKeypointAimAt(animAim.Value); }
+                if (elseChain.HasValue) { p.enableElseChainPlacement = elseChain.Value; }
                 // バッチは測定環境なので、明示的に -remember true と言われない限り OFF。
                 // persistentDataPath に保存済みの選択が残っていると A/B が静かに汚れる。
                 p.rememberTrackCustomization = remember.HasValue && remember.Value;
@@ -295,7 +298,7 @@ public static class BatchPlaybackLogger
                 + " otherScale=" + (otherScale.HasValue ? otherScale.Value.ToString() : "scene")
                 + " bodyAlign=" + (bodyAlign.HasValue ? bodyAlign.Value.ToString() : "scene")
                 + " genericBones=" + (genericBones.HasValue ? genericBones.Value.ToString() : "scene")
-                + " extendH=" + (extendH.HasValue ? extendH.Value.ToString() : "scene") + " maxExtrap=" + maxExtrap + " minRatio=" + minRatio + " fastLo=" + fastLo + " fastHi=" + fastHi + " alignTop=" + (alignTop.HasValue ? alignTop.Value.ToString() : "scene") + " noBend=" + (noBend.HasValue ? noBend.Value.ToString() : "scene") + " twoAxis=" + (twoAxis.HasValue ? twoAxis.Value.ToString() : "scene") + " animAim=" + (animAim.HasValue ? animAim.Value.ToString() : "scene") + " remember=" + (remember.HasValue ? remember.Value.ToString() : "False(batch既定)"));
+                + " extendH=" + (extendH.HasValue ? extendH.Value.ToString() : "scene") + " maxExtrap=" + maxExtrap + " minRatio=" + minRatio + " fastLo=" + fastLo + " fastHi=" + fastHi + " alignTop=" + (alignTop.HasValue ? alignTop.Value.ToString() : "scene") + " noBend=" + (noBend.HasValue ? noBend.Value.ToString() : "scene") + " twoAxis=" + (twoAxis.HasValue ? twoAxis.Value.ToString() : "scene") + " animAim=" + (animAim.HasValue ? animAim.Value.ToString() : "scene") + " elseChain=" + (elseChain.HasValue ? elseChain.Value.ToString() : "scene") + " remember=" + (remember.HasValue ? remember.Value.ToString() : "False(batch既定)"));
         }
 
         // 検証用 bundle を差し替える（シーンには保存しない）。
@@ -389,6 +392,7 @@ public static class BatchPlaybackLogger
                     p.logOtherDepthFollow = true;
                     p.logBodyAnchorAlign = true;
                     p.logHorizontalPlacement = true;
+                    p.logElseChainPlacement = true;
                     p.logAnimalBoneVsKeypoint = true;
                     p.logOtherDepthFollowEveryNFrames = every;
                     p.logBoneVsKeypoint = true;

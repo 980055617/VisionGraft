@@ -39,6 +39,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             ApplyOtherDepthFollowForFrame();
             ApplyOtherPenetrationResolveForFrame();
+            ApplyElseChainPlacementForFrame(frame);
             ApplyHumanOtherContactCorrectionForFrame();
             LogHumanOtherGapIfEnabled(frame);
             LogBallHeadIfEnabled(frame);
@@ -55,6 +56,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         ApplyMetaTarget(target, frame);
         ApplyOtherDepthFollowForFrame();
         ApplyOtherPenetrationResolveForFrame();
+        ApplyElseChainPlacementForFrame(frame);
         ApplyHumanOtherContactCorrectionForFrame();
         LogHumanOtherGapIfEnabled(frame);
         LogBallHeadIfEnabled(frame);

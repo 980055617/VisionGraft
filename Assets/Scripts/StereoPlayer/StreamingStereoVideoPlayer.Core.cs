@@ -402,6 +402,29 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 再挑戦するなら、太さの実測値ではなく SkinnedMeshRenderer の実形状を見る必要がある。
     public bool resolveOtherPenetration = false;
 
+    // Else の連結配置（B + C、2026-09-11）。遠方で隣り合う Else モデルどうしが 3D で刺さる
+    // 問題への対処。popout は約 1/800 のジオラマだが、モデルは「その深度で bbox の見かけに
+    // なる大きさ」で置くのでジオラマ縮尺の約 7 倍あり、bundle の深度差（遠方で数 mm）では
+    // 車体（全長 80〜140 mm）を端と端で接して置けない。深度信号を良くしても届かない
+    // （理想でも 10〜24 mm。docs/bundle-placement.md「bundle_train 遠方で 1 両目と 2 両目の
+    // 前後が出ない」）。
+    //
+    // B: 奥の Else を自分の視線に沿って、手前の Else と中心間距離が (全長の和)/2 になる所まで
+    //    奥へ動かす。scale を深度に比例させるので絵の位置・大きさは変わらず、立体視と遮蔽だけが変わる。
+    // C: 連結した Else の向きを、隣との中心を結ぶ方向（進行方向）に合わせる。
+    //    連結中とその後は手動回転（yaw/pitch/roll キー）を使わない。
+    // 前後の順は配置深度で決め、差が elseChainDepthTieMeters 以内なら bbox 高（大きい＝手前）で
+    // 決めた順を track ペアごとに記憶して以後は変えない（車両は追い越さない）。
+    public bool enableElseChainPlacement = true;
+    [Min(0f)] public float elseChainDepthTieMeters = 0.02f;
+    // 隣と見なす中心間距離の上限（接触距離の何倍か）。これより離れていれば向きも触らない。
+    [Min(1f)] public float elseChainNeighborFactor = 2f;
+    // 連結で決めた向きに足す角度。モデルのどちらの端が先頭かは prefab 次第で、
+    // 06_DieselLocomotive はキャブ（先頭）が +Z 端（実機で確認、2026-09-11: 通過時に先頭が
+    // 進行方向の反対を向いていた）。0 なら −Z 端が先頭の扱いになる。
+    public float elseChainHeadingOffsetDeg = 180f;
+    public bool logElseChainPlacement = false;
+
     // ⑩ で「画面上で重なっている」と判定する余裕（px）。Else の投影半径にこれを足した
     // 距離より近ければ重なりとみなす。
     [Min(0f)] public float penetrationOverlapMarginPixels = 8f;

@@ -37,6 +37,9 @@ public class ReplaceableModel : MonoBehaviour
     // うえ、映像の bbox 幅は被写体の yaw で体長〜体幅の間を動くので、両者を比べても
     // 意味のある比率にならない（TrackModelPlacement.ResolveDesiredLocalScale のコメント参照）。
     public Vector2 baseBoundsSize;
+    // AABB の 3 軸サイズ（prefab の向き補正を掛けた状態、scale=1）。Else の連結配置が
+    // 水平方向の最長辺（車体の全長）を取るのに使う。06_DieselLocomotive は (3.593, 5.259, 18.507)。
+    public Vector3 baseBoundsSize3;
     public float baseBottomOffsetLocal;
 
     private void Awake()
@@ -73,6 +76,8 @@ public class ReplaceableModel : MonoBehaviour
         float lossyX = lossy.x;
         float baseW = lossyX > 0f ? bounds.size.x / lossyX : bounds.size.x;
         baseBoundsSize = new Vector2(baseW, baseHeightMeters);
+        float lossyZ = lossy.z;
+        baseBoundsSize3 = new Vector3(baseW, baseHeightMeters, lossyZ > 0f ? bounds.size.z / lossyZ : bounds.size.z);
         baseBottomOffsetLocal = lossyY > 0f ? (transform.position.y - bounds.min.y) / lossyY : 0f;
     }
 

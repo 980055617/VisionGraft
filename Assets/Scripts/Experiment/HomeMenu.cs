@@ -62,18 +62,21 @@ public sealed class HomeMenu : MonoBehaviour
     {
         panel.Show(
             "VisionGraft",
-            "どちらを開きますか。\n\n" +
+            "どれを開きますか。\n\n" +
             "・自由に見る … bundle を選んで再生します\n" +
-            "・被験者実験 … 参加者 ID と群を設定して開始します",
+            "・被験者実験 … 参加者 ID と群を設定して開始します\n" +
+            "・チュートリアル … 操作の練習だけを行います（ログは残しません）",
             new List<ExperimentPanel.ButtonSpec>
             {
-                ExperimentPanel.ButtonSpec.Create("自由に見る", () => Load(viewerSceneName)),
-                ExperimentPanel.ButtonSpec.Create("被験者実験", () => Load(experimentSceneName)),
+                ExperimentPanel.ButtonSpec.Create("自由に見る", () => Load(viewerSceneName, false)),
+                ExperimentPanel.ButtonSpec.Create("被験者実験", () => Load(experimentSceneName, false)),
+                ExperimentPanel.ButtonSpec.Create("チュートリアル", () => Load(experimentSceneName, true)),
             });
     }
 
 
-    private void Load(string sceneName)
+    // tutorialOnly: ExperimentScene をチュートリアル専用で開く（セッションもログも作らない）。
+    private void Load(string sceneName, bool tutorialOnly)
     {
         if (loading || string.IsNullOrEmpty(sceneName))
         {
@@ -95,22 +98,36 @@ public sealed class HomeMenu : MonoBehaviour
             HomeLaunchHandoff.RequestBundlePicker();
         }
 
-        Debug.Log($"[Home] load scene: {sceneName}");
-        StartCoroutine(LoadSceneRoutine(sceneName));
+        if (tutorialOnly)
+        {
+            HomeLaunchHandoff.RequestTutorialOnly();
+        }
+
+        Debug.Log($"[Home] load scene: {sceneName} tutorialOnly={tutorialOnly}");
+        StartCoroutine(LoadSceneRoutine(sceneName, tutorialOnly));
     }
 
 
     // **同期 LoadScene は使わない。** 押した瞬間にフレームが止まり、画面が固まったまま
     // 数秒待たされる（実機で「押しても反応しない」と報告された 2026-08-31）。
     // 先に「読み込み中」を出して 1 フレーム描かせてから、非同期で読み込む。
-    private IEnumerator LoadSceneRoutine(string sceneName)
+    private IEnumerator LoadSceneRoutine(string sceneName, bool tutorialOnly)
     {
-        panel.Show(
-            "読み込み中",
-            sceneName == viewerSceneName
-                ? "bundle ピッカーを準備しています…"
-                : "実験シーンを準備しています…",
-            new List<ExperimentPanel.ButtonSpec>());
+        string loadingBody;
+        if (tutorialOnly)
+        {
+            loadingBody = "チュートリアルを準備しています…";
+        }
+        else if (sceneName == viewerSceneName)
+        {
+            loadingBody = "bundle ピッカーを準備しています…";
+        }
+        else
+        {
+            loadingBody = "実験シーンを準備しています…";
+        }
+
+        panel.Show("読み込み中", loadingBody, new List<ExperimentPanel.ButtonSpec>());
 
         // Show した内容が実際に 1 枚描かれるまで待つ。1 フレームだと
         // Canvas の再構築が間に合わないことがあるので 2 フレーム置く。

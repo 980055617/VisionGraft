@@ -8,6 +8,22 @@ public enum ExperimentVideo
     Human,
     Animal,
     Train,
+
+    // 操作チュートリアル用。実験の 3 本とは別のクリップを使う（2026-09-11）。
+    // ExperimentPlan の試行には含まれない。
+    Tutorial,
+}
+
+// 操作チュートリアルをいつ挟むか（ExperimentController.tutorialTiming）。
+public enum ExperimentTutorialTiming
+{
+    None,
+
+    // 最初の試行の前に 1 回（既定）。
+    BeforeFirstTrial,
+
+    // 各条件ブロックの先頭で 1 回ずつ（計 2 回）。
+    BeforeEachBlock,
 }
 
 // 表示条件。被験者はこの条件を自分で切り替えられない（mode ボタンを生成しない）。

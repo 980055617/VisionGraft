@@ -6,6 +6,28 @@
 
 コードを動かす前に **2 つのベースライン**を取る。片方だけでは足りない。
 
+### 0. コンパイル確認（Editor を開いたままできる。2026-09-11）
+
+バッチモードと違い Editor を閉じてもらう必要が無い。Unity が書き出す応答ファイルを
+出力先だけ変えて、同梱の Roslyn に渡す。
+
+```
+# runtime（Assembly-CSharp）
+cp Library/Bee/artifacts/<hash>.dag/Assembly-CSharp.rsp <scratch>/Assembly-CSharp.rsp
+#   -out: / -refout: を <scratch> の Windows 形式パス（C:/...）に置換。
+#   /c/... は C:\c\... に化けるので使わない。新規ファイルは "Assets/.../X.cs" の行を末尾に足す
+"C:/Program Files/Unity/Hub/Editor/6000.0.60f1/Editor/Data/NetCoreRuntime/dotnet.exe" \
+  "C:/Program Files/Unity/Hub/Editor/6000.0.60f1/Editor/Data/DotNetSdkRoslyn/csc.dll" @<scratch>/Assembly-CSharp.rsp
+
+# Editor + テスト（Assembly-CSharp-Editor）
+#   同様に -out: / -refout: を変え、-r:"Library/Bee/.../Assembly-CSharp.ref.dll" を
+#   上で出した ref.dll に差し替える
+```
+
+プロジェクトルートを cwd にして実行する（rsp のパスは相対）。exit 0 なら通っている。
+元からある警告は 3 件（CS0162 ×2、CS0414 ×1）。**テストの実行まではできない**
+（NUnit ランナーが無い）。テストは下の 1 で回す。
+
 ### 1. EditMode テスト
 
 ```

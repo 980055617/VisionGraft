@@ -54,10 +54,16 @@ public sealed class ExperimentPanel
     public Vector2 OffsetMeters = Vector2.zero;
     public bool FlipHorizontal = true;
 
-    public void Show(string title, string body, IList<ButtonSpec> buttonSpecs)
+    // keepPlacement: 表示中のパネルの位置を保ったまま中身だけ差し替える
+    // （チュートリアルの段階送り。段階ごとに置き直すと読んでいる最中に飛ぶ）。
+    public void Show(string title, string body, IList<ButtonSpec> buttonSpecs, bool keepPlacement = false)
     {
+        bool wasVisible = IsVisible;
         EnsureRoot();
-        placementLocked = false;
+        if (!(keepPlacement && wasVisible))
+        {
+            placementLocked = false;
+        }
 
         // SizeMeters は局面ごとに変わる（セットアップは大きく、試行中は小さく）ので、
         // ルート生成時ではなく表示のたびに反映する。

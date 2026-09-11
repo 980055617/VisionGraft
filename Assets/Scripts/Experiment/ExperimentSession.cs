@@ -15,6 +15,8 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
     private string currentBundleFileName;
     private int currentLoopCount;
     private bool trialInProgress;
+    private bool tutorialInProgress;
+    private int tutorialBeforeBlock;
 
     public ExperimentSession(
         string participantId,
@@ -46,6 +48,18 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
     public bool TrialInProgress
     {
         get { return trialInProgress; }
+    }
+
+    public bool TutorialInProgress
+    {
+        get { return tutorialInProgress; }
+    }
+
+    // operations.csv / interactions.csv の trial_index 列。チュートリアル中は試行ではないので -1
+    // （後半ブロックの前のチュートリアルでも、直前の試行番号を書かない）。
+    private int TrialIndexForLog
+    {
+        get { return tutorialInProgress ? -1 : CurrentTrialIndex; }
     }
 
     public bool HasNextTrial
@@ -115,9 +129,45 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
         writer?.Flush();
     }
 
+    // 操作チュートリアルの開始。試行ではないので trials.csv には書かず、operations.csv に
+    // tutorial_begin / tutorial_end を残す。sink は ExperimentController が ExperimentTutorial
+    // （段階検出）を挟んで設定するので、ここでは触らない。
+    public void BeginTutorial(string bundleFileName, int beforeBlockIndex)
+    {
+        currentBundleFileName = bundleFileName;
+        currentLoopCount = 0;
+        trialStartedAt = DateTime.Now;
+        trialStartRealtime = Time.realtimeSinceStartup;
+        tutorialInProgress = true;
+        tutorialBeforeBlock = beforeBlockIndex;
+
+        RecordOperation("tutorial_begin", $"bundle={bundleFileName} before_block={beforeBlockIndex}");
+    }
+
+    // result は ExperimentTutorial.DescribeResult() か "load_failed" / "aborted"。
+    public void EndTutorial(string result)
+    {
+        if (!tutorialInProgress)
+        {
+            return;
+        }
+
+        RecordOperation(
+            "tutorial_end",
+            $"{result} duration_sec={ExperimentCsv.Format(TrialElapsedSeconds)} before_block={tutorialBeforeBlock}");
+        tutorialInProgress = false;
+        writer?.Flush();
+    }
+
+    // 試行中はその試行の、チュートリアル中はチュートリアルの開始からの経過秒。
     public float TrialElapsedSeconds
     {
-        get { return trialInProgress ? Time.realtimeSinceStartup - trialStartRealtime : 0f; }
+        get
+        {
+            return trialInProgress || tutorialInProgress
+                ? Time.realtimeSinceStartup - trialStartRealtime
+                : 0f;
+        }
     }
 
     private double CurrentVideoTimeSeconds
@@ -145,7 +195,7 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
         writer?.AppendRow(
             ExperimentLogWriter.OperationsFileName,
             ParticipantId,
-            ExperimentCsv.Format(CurrentTrialIndex),
+            ExperimentCsv.Format(TrialIndexForLog),
             ExperimentCsv.FormatTimestamp(DateTime.Now),
             ExperimentCsv.Format(TrialElapsedSeconds),
             ExperimentCsv.Format(CurrentVideoTimeSeconds),
@@ -158,7 +208,7 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
         writer?.AppendRow(
             ExperimentLogWriter.InteractionsFileName,
             ParticipantId,
-            ExperimentCsv.Format(CurrentTrialIndex),
+            ExperimentCsv.Format(TrialIndexForLog),
             ExperimentCsv.FormatTimestamp(DateTime.Now),
             ExperimentCsv.Format(TrialElapsedSeconds),
             ExperimentCsv.Format(CurrentVideoTimeSeconds),

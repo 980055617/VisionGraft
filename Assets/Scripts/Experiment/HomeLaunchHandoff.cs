@@ -11,6 +11,10 @@ public static class HomeLaunchHandoff
 {
     public static bool PendingShowBundlePicker { get; private set; }
 
+    // Home の「チュートリアル」。ExperimentScene をセッション無しで開き、
+    // チュートリアルだけ回して Home に戻る（ExperimentController が Start() で読む）。
+    public static bool PendingTutorialOnly { get; private set; }
+
     public static void RequestBundlePicker()
     {
         PendingShowBundlePicker = true;
@@ -23,8 +27,21 @@ public static class HomeLaunchHandoff
         return value;
     }
 
+    public static void RequestTutorialOnly()
+    {
+        PendingTutorialOnly = true;
+    }
+
+    public static bool ConsumeTutorialOnly()
+    {
+        bool value = PendingTutorialOnly;
+        PendingTutorialOnly = false;
+        return value;
+    }
+
     public static void Clear()
     {
         PendingShowBundlePicker = false;
+        PendingTutorialOnly = false;
     }
 }

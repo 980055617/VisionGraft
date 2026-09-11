@@ -14,6 +14,12 @@ using UnityEngine.SceneManagement;
 //     次の試行に前の試行のモデルが残る
 //   - TrialScene に XR リグを置かないこと。プレイヤーは ViewCameraSelection で
 //     シーンをまたいでカメラを探すため、ベースシーンのリグがそのまま使われる
+//
+// 操作チュートリアル（2026-09-11）:
+//   - 試行と同じ仕組み（TrialScene を Additive ロード）で、実験の 3 本とは別の bundle を
+//     置換ありモードで再生し、ExperimentTutorial が段階を進める
+//   - tutorialTiming で「最初の試行の前に 1 回」「各ブロックの前に 1 回ずつ」を選ぶ
+//   - Home の「チュートリアル」からはセッション無し（ログ無し）で同じものを回す
 [DisallowMultipleComponent]
 public sealed class ExperimentController : MonoBehaviour
 {
@@ -23,11 +29,14 @@ public sealed class ExperimentController : MonoBehaviour
         Waiting,
         Loading,
         Trial,
+        Tutorial,
         Finished,
     }
 
     [Header("Scene")]
     public string trialSceneName = "TrialScene";
+    // Home からチュートリアルだけ実行したときの戻り先。
+    public string homeSceneName = "HomeScene";
 
     [Header("Participant")]
     public string participantIdPrefix = "P";
@@ -38,6 +47,17 @@ public sealed class ExperimentController : MonoBehaviour
 
     [Header("Bundles")]
     public ExperimentBundleCatalog bundleCatalog = new ExperimentBundleCatalog();
+
+    [Header("Tutorial")]
+    // 操作チュートリアルをいつ挟むか。既定は最初の試行の前に 1 回。
+    public ExperimentTutorialTiming tutorialTiming = ExperimentTutorialTiming.BeforeFirstTrial;
+    // 説明パネルの大きさと位置。映像とコントロールバー（画面下中央）を隠さないよう右下に置く。
+    // 縦横比は ExperimentPanel の canvas（1200×900）に合わせた 4:3 にして文字を潰さない。
+    public Vector2 tutorialPanelSizeMeters = new Vector2(0.64f, 0.48f);
+    public Vector2 tutorialPanelOffsetMeters = new Vector2(0.8f, -0.45f);
+    // bundle が無い・デコードできないときにここで諦める。試行と違いチュートリアルは
+    // 無くても実験は成立するので、待ち続けずに先へ進める。
+    [Min(10f)] public float tutorialLoadTimeoutSeconds = 120f;
 
     [Header("UI")]
     // StreamingStereoVideoPlayer の runtimeControlsPrefab / bundlePickerCanvasWithInteractionRayPrefab
@@ -61,6 +81,15 @@ public sealed class ExperimentController : MonoBehaviour
     private float nextLogFlushTime;
     private bool trialEndRequested;
 
+    private ExperimentTutorial tutorial;
+    private bool tutorialEndRequested;
+    private bool tutorialPanelDirty;
+    // 済ませた（飛ばしたものも含む）チュートリアルの数。BeforeEachBlock の判定に使う。
+    private int tutorialsCompleted;
+    // Home の「チュートリアル」で開いた。セッションもログも作らず、終わったら Home へ戻る。
+    private bool tutorialOnly;
+
+    private static readonly Vector2 FullPanelSizeMeters = new Vector2(1.05f, 0.82f);
     private const float LogFlushIntervalSeconds = 10f;
 
     private void Awake()
@@ -74,12 +103,26 @@ public sealed class ExperimentController : MonoBehaviour
 
     private void Start()
     {
+        if (HomeLaunchHandoff.ConsumeTutorialOnly())
+        {
+            tutorialOnly = true;
+            // 練習中のモデル変更を研究者の基準ファイル（model_selection.json）へ書かせない。
+            ExperimentSessionOverrides.BeginSession();
+            ShowTutorialWaitingPanel();
+            return;
+        }
+
         ShowSetupPanel();
     }
 
     private void OnDestroy()
     {
         FinishSessionIfRunning(true);
+        if (tutorialOnly)
+        {
+            ExperimentSessionOverrides.EndSession();
+        }
+
         panel?.Destroy();
     }
 
@@ -111,6 +154,11 @@ public sealed class ExperimentController : MonoBehaviour
             session.EndTrial(aborted);
         }
 
+        if (session.TutorialInProgress)
+        {
+            session.EndTutorial("aborted");
+        }
+
         ExperimentLog.Sink = null;
         session.Dispose();
         session = null;
@@ -127,6 +175,11 @@ public sealed class ExperimentController : MonoBehaviour
         if (phase == Phase.Trial)
         {
             SampleHeadPoseIfDue();
+            FlushLogsIfDue();
+        }
+        else if (phase == Phase.Tutorial)
+        {
+            RefreshTutorialPanelIfDirty();
             FlushLogsIfDue();
         }
     }
@@ -156,7 +209,7 @@ public sealed class ExperimentController : MonoBehaviour
     private void ShowSetupPanel()
     {
         phase = Phase.Setup;
-        panel.SizeMeters = new Vector2(1.05f, 0.82f);
+        panel.SizeMeters = FullPanelSizeMeters;
         panel.OffsetMeters = Vector2.zero;
 
         List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
@@ -177,8 +230,21 @@ public sealed class ExperimentController : MonoBehaviour
         return
             $"参加者 ID: {ParticipantId}\n" +
             $"{ExperimentPlan.DescribeAssignment(group, videoOrderPattern)}\n\n" +
-            $"全 {ExperimentPlan.TrialCount} 試行\n" +
+            $"全 {ExperimentPlan.TrialCount} 試行 / チュートリアル: {DescribeTutorialTiming()}\n" +
             "割り付け表と一致していることを確認してから開始してください。";
+    }
+
+    private string DescribeTutorialTiming()
+    {
+        switch (tutorialTiming)
+        {
+            case ExperimentTutorialTiming.BeforeFirstTrial:
+                return "最初の試行の前に 1 回";
+            case ExperimentTutorialTiming.BeforeEachBlock:
+                return "各ブロックの前に 1 回ずつ";
+            default:
+                return "なし";
+        }
     }
 
     private void AdjustParticipantNumber(int delta)
@@ -226,8 +292,9 @@ public sealed class ExperimentController : MonoBehaviour
         // 参加者が変わるのでモデル・向きのセッション上書きを捨てる。
         // 研究者が仕込んだ基準（model_selection.json）はそのまま読み込まれる。
         ExperimentSessionOverrides.BeginSession();
+        tutorialsCompleted = 0;
 
-        Debug.Log($"[Experiment] セッション開始: {ParticipantId} / 群 {group} / 動画順 {videoOrderPattern}");
+        Debug.Log($"[Experiment] セッション開始: {ParticipantId} / 群 {group} / 動画順 {videoOrderPattern} / チュートリアル {tutorialTiming}");
         Debug.Log($"[Experiment] ログ出力先: {sessionDir}");
 
         ShowWaitingPanel();
@@ -236,7 +303,7 @@ public sealed class ExperimentController : MonoBehaviour
     private void ShowWaitingPanel()
     {
         phase = Phase.Waiting;
-        panel.SizeMeters = new Vector2(1.05f, 0.82f);
+        panel.SizeMeters = FullPanelSizeMeters;
         panel.OffsetMeters = Vector2.zero;
 
         if (!session.HasNextTrial)
@@ -246,6 +313,12 @@ public sealed class ExperimentController : MonoBehaviour
         }
 
         ExperimentTrial next = session.NextTrial;
+        if (ShouldRunTutorialBefore(next))
+        {
+            ShowTutorialWaitingPanel();
+            return;
+        }
+
         string body =
             $"参加者 ID: {session.ParticipantId}\n" +
             $"次の試行: {next.Describe(ExperimentPlan.TrialCount)}\n\n" +
@@ -317,7 +390,7 @@ public sealed class ExperimentController : MonoBehaviour
         session.BeginTrial(trial.trialIndex, bundleFileName);
 
         // bundle の展開と Prepare が終わって実際に再生が始まるまで待つ
-        // （bundle_human.svb は 155MB あり、実機では十数秒かかる）。
+        // （bundle_human.svb は 129MB あり、実機では十数秒かかる）。
         while (cachedPlayer != null && !cachedPlayer.IsVideoPlaying)
         {
             yield return null;
@@ -365,6 +438,13 @@ public sealed class ExperimentController : MonoBehaviour
     private IEnumerator EndTrialRoutine(bool aborted)
     {
         session.EndTrial(aborted);
+        yield return UnloadTrialSceneRoutine();
+        ShowWaitingPanel();
+    }
+
+    // 試行・チュートリアル共通。ベースシーンをアクティブへ戻してから TrialScene を捨てる。
+    private IEnumerator UnloadTrialSceneRoutine()
+    {
         cachedPlayer = null;
         cachedCamera = null;
 
@@ -387,14 +467,12 @@ public sealed class ExperimentController : MonoBehaviour
 
         // 動画・モデルのテクスチャが試行ごとに積み上がるので明示的に解放する。
         yield return Resources.UnloadUnusedAssets();
-
-        ShowWaitingPanel();
     }
 
     private void ShowFinishedPanel()
     {
         phase = Phase.Finished;
-        panel.SizeMeters = new Vector2(1.05f, 0.82f);
+        panel.SizeMeters = FullPanelSizeMeters;
         panel.OffsetMeters = Vector2.zero;
 
         string body =
@@ -407,6 +485,298 @@ public sealed class ExperimentController : MonoBehaviour
         Debug.Log($"[Experiment] セッション終了: {session.ParticipantId} / ログ: {session.LogDirectory}");
         // 以降ログは書かないので、ここでファイルを閉じる。
         session.Dispose();
+    }
+
+    // ── 操作チュートリアル ──────────────────────────────────────────────
+
+    // next がブロック先頭の試行で、そのブロックの前のチュートリアルがまだなら true。
+    private bool ShouldRunTutorialBefore(ExperimentTrial next)
+    {
+        if (next.indexInBlock != 0)
+        {
+            return false;
+        }
+
+        switch (tutorialTiming)
+        {
+            case ExperimentTutorialTiming.BeforeFirstTrial:
+                return next.blockIndex == 0 && tutorialsCompleted == 0;
+            case ExperimentTutorialTiming.BeforeEachBlock:
+                return tutorialsCompleted <= next.blockIndex;
+            default:
+                return false;
+        }
+    }
+
+    private void ShowTutorialWaitingPanel()
+    {
+        phase = Phase.Waiting;
+        panel.SizeMeters = FullPanelSizeMeters;
+        panel.OffsetMeters = Vector2.zero;
+
+        string bundleFileName = bundleCatalog.Resolve(ExperimentVideo.Tutorial);
+        List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
+        {
+            ExperimentPanel.ButtonSpec.Create("チュートリアルを開始", BeginTutorial),
+        };
+
+        string body;
+        if (tutorialOnly)
+        {
+            body =
+                "操作のチュートリアルだけを実行します（ログは残しません）。\n" +
+                $"bundle: {bundleFileName}\n\n" +
+                "内容: ボタンを押す / A ボタンで一時停止・再開 / Model ボタンでモデルを変える";
+            specs.Add(ExperimentPanel.ButtonSpec.Create("Home へ戻る", ReturnToHome));
+        }
+        else
+        {
+            body =
+                $"参加者 ID: {session.ParticipantId}\n" +
+                $"次: 操作のチュートリアル（{DescribeTutorialPosition()}）\n" +
+                "内容: ボタンを押す / A ボタンで一時停止・再開 / Model ボタンでモデルを変える\n\n" +
+                "教示が済んだら開始してください。\n\n" +
+                $"ログ: {session.LogDirectory}";
+            specs.Add(ExperimentPanel.ButtonSpec.Create("スキップ", SkipTutorialFromWaiting));
+        }
+
+        panel.Show("チュートリアル", body, specs);
+    }
+
+    private string DescribeTutorialPosition()
+    {
+        if (session == null || !session.HasNextTrial)
+        {
+            return string.Empty;
+        }
+
+        return session.NextTrial.blockIndex == 0 ? "最初の試行の前" : "後半ブロックの前";
+    }
+
+    private void BeginTutorial()
+    {
+        if (phase != Phase.Waiting)
+        {
+            return;
+        }
+
+        StartCoroutine(RunTutorialRoutine());
+    }
+
+    // 実験者が待機画面で飛ばす。何を飛ばしたかは operations.csv に残す。
+    private void SkipTutorialFromWaiting()
+    {
+        if (phase != Phase.Waiting || session == null)
+        {
+            return;
+        }
+
+        int beforeBlock = session.HasNextTrial ? session.NextTrial.blockIndex : -1;
+        session.RecordOperation("tutorial_skipped", $"before_block={beforeBlock}");
+        session.FlushLogs();
+        tutorialsCompleted++;
+        ShowWaitingPanel();
+    }
+
+    private IEnumerator RunTutorialRoutine()
+    {
+        phase = Phase.Loading;
+        tutorialEndRequested = false;
+        tutorialPanelDirty = false;
+
+        // ボタンのクリックハンドラから始まるので、パネルの作り直しはハンドラを抜けてから。
+        yield return null;
+
+        string bundleFileName = bundleCatalog.Resolve(ExperimentVideo.Tutorial);
+        int beforeBlock = session != null && session.HasNextTrial ? session.NextTrial.blockIndex : 0;
+        panel.Show(
+            "読み込み中",
+            $"チュートリアル\n{bundleFileName}\n\nそのままお待ちください。",
+            null);
+
+        // チュートリアルは常に置換ありモード（Model ボタンを教えるため）。
+        ExperimentTrialHandoff.SetPending(
+            new ExperimentTrialRequest(bundleFileName, ExperimentDisplayMode.ModelReplaced, -1, ExperimentVideo.Tutorial));
+
+        AsyncOperation load = SceneManager.LoadSceneAsync(trialSceneName, LoadSceneMode.Additive);
+        if (load == null)
+        {
+            Debug.LogError($"[Experiment] 試行シーンをロードできません: {trialSceneName}（Build Settings に追加済みか確認）");
+            ExperimentTrialHandoff.Clear();
+            OnTutorialFinished();
+            yield break;
+        }
+
+        while (!load.isDone)
+        {
+            yield return null;
+        }
+
+        Scene trialScene = SceneManager.GetSceneByName(trialSceneName);
+        if (trialScene.IsValid())
+        {
+            SceneManager.SetActiveScene(trialScene);
+        }
+
+        cachedPlayer = FindPlayerInScene(trialScene);
+        cachedCamera = null;
+
+        session?.BeginTutorial(bundleFileName, beforeBlock);
+        tutorial = new ExperimentTutorial(session);
+        tutorial.Changed += MarkTutorialPanelDirty;
+        // プレイヤーの操作ログを横取りして段階を進める。セッションへはそのまま転送される。
+        ExperimentLog.Sink = tutorial;
+
+        // 再生が始まるまで待つ。試行と違い、bundle が無ければ諦めて先へ進める。
+        float deadline = Time.realtimeSinceStartup + tutorialLoadTimeoutSeconds;
+        while (cachedPlayer != null && !cachedPlayer.IsVideoPlaying && Time.realtimeSinceStartup < deadline)
+        {
+            yield return null;
+        }
+
+        if (cachedPlayer == null || !cachedPlayer.IsVideoPlaying)
+        {
+            Debug.LogError(
+                $"[Experiment] チュートリアルの再生が {tutorialLoadTimeoutSeconds:F0} 秒以内に始まりませんでした: " +
+                $"{bundleFileName}（[Bundle] のエラーログを確認。共有ストレージか StreamingAssets に無いか、video.mp4 が H.264 でない）");
+            ExperimentLog.Sink = null;
+            session?.EndTutorial("load_failed");
+            yield return UnloadTrialSceneRoutine();
+            ShowTutorialLoadFailedPanel(bundleFileName);
+            yield break;
+        }
+
+        ShowTutorialPanel(false);
+        phase = Phase.Tutorial;
+        nextLogFlushTime = Time.realtimeSinceStartup + LogFlushIntervalSeconds;
+
+        while (!tutorialEndRequested)
+        {
+            yield return null;
+        }
+
+        ExperimentLog.Sink = null;
+        session?.EndTutorial(tutorial.DescribeResult());
+        yield return UnloadTrialSceneRoutine();
+        OnTutorialFinished();
+    }
+
+    private void ShowTutorialPanel(bool keepPlacement)
+    {
+        panel.SizeMeters = tutorialPanelSizeMeters;
+        panel.OffsetMeters = tutorialPanelOffsetMeters;
+
+        List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>();
+        switch (tutorial.CurrentStep)
+        {
+            case ExperimentTutorial.Step.PressButton:
+                // 押せたこと自体が 1 つ目の課題。
+                specs.Add(ExperimentPanel.ButtonSpec.Create("次へ", tutorial.CompleteCurrentStep));
+                break;
+            case ExperimentTutorial.Step.Done:
+                specs.Add(ExperimentPanel.ButtonSpec.Create("チュートリアルを終了", RequestTutorialEnd));
+                break;
+            default:
+                // 操作ができない参加者を詰まらせないための逃げ道。飛ばした段階はログに残る。
+                specs.Add(ExperimentPanel.ButtonSpec.Create("スキップ", tutorial.SkipCurrentStep));
+                break;
+        }
+
+        panel.Show(tutorial.Title, tutorial.Body, specs, keepPlacement);
+    }
+
+    private void MarkTutorialPanelDirty()
+    {
+        tutorialPanelDirty = true;
+    }
+
+    // 段階が進んだらパネルを作り直す。ボタンのクリックハンドラの中で作り直すと
+    // 押したボタン自身を壊すので、次の Update まで遅らせる。
+    private void RefreshTutorialPanelIfDirty()
+    {
+        if (!tutorialPanelDirty || tutorial == null)
+        {
+            return;
+        }
+
+        tutorialPanelDirty = false;
+        ShowTutorialPanel(true);
+    }
+
+    private void RequestTutorialEnd()
+    {
+        if (phase != Phase.Tutorial)
+        {
+            return;
+        }
+
+        ExperimentLog.Operation("tutorial_end_pressed");
+        tutorialEndRequested = true;
+    }
+
+    private void OnTutorialFinished()
+    {
+        if (tutorial != null)
+        {
+            tutorial.Changed -= MarkTutorialPanelDirty;
+            tutorial = null;
+        }
+
+        tutorialsCompleted++;
+
+        if (tutorialOnly)
+        {
+            ShowTutorialOnlyFinishedPanel();
+            return;
+        }
+
+        ShowWaitingPanel();
+    }
+
+    private void ShowTutorialLoadFailedPanel(string bundleFileName)
+    {
+        phase = Phase.Waiting;
+        panel.SizeMeters = FullPanelSizeMeters;
+        panel.OffsetMeters = Vector2.zero;
+
+        string body =
+            "チュートリアルの bundle を再生できませんでした。\n" +
+            $"{bundleFileName}\n\n" +
+            "共有ストレージか StreamingAssets に置いてあるか、video.mp4 が H.264 かを\n" +
+            "確認してください（詳細はログの [Bundle] / [Video]）。";
+
+        List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
+        {
+            ExperimentPanel.ButtonSpec.Create(
+                tutorialOnly ? "Home へ戻る" : "チュートリアル無しで続行",
+                tutorialOnly ? (System.Action)ReturnToHome : OnTutorialFinished),
+        };
+
+        panel.Show("チュートリアル読み込み失敗", body, specs);
+    }
+
+    private void ShowTutorialOnlyFinishedPanel()
+    {
+        phase = Phase.Finished;
+        panel.SizeMeters = FullPanelSizeMeters;
+        panel.OffsetMeters = Vector2.zero;
+
+        List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
+        {
+            ExperimentPanel.ButtonSpec.Create("もう一度", ShowTutorialWaitingPanel),
+            ExperimentPanel.ButtonSpec.Create("Home へ戻る", ReturnToHome),
+        };
+
+        panel.Show("チュートリアル終了", "操作のチュートリアルが終わりました。", specs);
+    }
+
+    private void ReturnToHome()
+    {
+        ExperimentSessionOverrides.EndSession();
+        ExperimentTrialHandoff.Clear();
+        HomeLaunchHandoff.Clear();
+        Debug.Log("[Experiment] return to HomeScene");
+        SceneManager.LoadScene(homeSceneName, LoadSceneMode.Single);
     }
 
     // ── 頭部姿勢ログ ────────────────────────────────────────────────────

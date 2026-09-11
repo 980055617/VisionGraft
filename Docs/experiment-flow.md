@@ -95,12 +95,14 @@ XR リグをベースシーンに置いたまま試行シーンだけを付け�
 
 Unity メニュー **VisionGraft → Experiment → Create Experiment Scenes**
 
-`SampleScene` をコピー元に `ExperimentScene.unity` と `TrialScene.unity` を生成し、Build Settings に登録する。コピー元にするのは OVRCameraRig / OVRInteractionComprehensive の prefab インスタンスとその override をそのまま引き継ぐため。
+`TestScene` をコピー元に（2026-08-06 に SampleScene から改名。コードの `SourceScenePath` は `Assets/Scenes/TestScene.unity`）`ExperimentScene.unity` と `TrialScene.unity` を生成し、Build Settings に登録する。コピー元にするのは OVRCameraRig / OVRInteractionComprehensive の prefab インスタンスとその override をそのまま引き継ぐため。
 
 ### 2. 起動シーンを切り替える
 
 - 実験する: **VisionGraft → Experiment → Set Experiment Scene As Startup**
-- 通常の単体再生に戻す: **VisionGraft → Experiment → Set Sample Scene As Startup**
+- 通常の単体再生に戻す: **VisionGraft → Experiment → Set Test Scene As Startup**
+
+**2026-08-28 以降はこの手順を使わない。** `HomeSceneBuilder` が Build Settings の先頭を `HomeScene` にしており、起動直後の Home メニューで「自由に見る」（TestScene）か「被験者実験」（ExperimentScene）を選ぶ。上のメニューを実行すると HomeScene が先頭でなくなり Home を経由しなくなる（下記「2026-09-11 実装棚卸し」）。
 
 ### 3. bundle を配置する
 
@@ -120,7 +122,7 @@ Unity メニュー **VisionGraft → Experiment → Create Experiment Scenes**
 |---|---|---|
 | **セットアップ** | 参加者 ID・群・動画順の設定 | 実験者が割り付け表どおりに設定し「セッション開始」 |
 | **待機** | 次の試行の内容を表示 | 実験者が「この試行を開始」 |
-| **読み込み** | bundle 展開中 | （待つだけ。`bundle_human.svb` は 155MB あり実機で十数秒） |
+| **読み込み** | bundle 展開中 | （待つだけ。`bundle_human.svb` は 129 MB（2026-09-09 版）あり実機で十数秒） |
 | **試行** | 動画再生。視界の下に小さなパネル | 被験者が満足したら「視聴を終了」 |
 | **待機** | 次の試行 | **ここでアンケートに回答してもらう**。終わったら実験者が次を開始 |
 | **終了** | ログ出力先を表示 | — |
@@ -273,7 +275,7 @@ StereoOnly 条件は `source/pre_removal_stereo_video.mp4` に依存する。入
 
 ### 読み込み時間
 
-`bundle_human.svb` は 155MB、`bundle_train.svb` は 117MB。試行ごとにキャッシュを消して展開し直すため、実機では読み込みに十数秒かかる。教示のタイミングをこれに合わせる。
+`bundle_human.svb` は 129 MB、`bundle_train.svb` は 113 MB、`bundle_animal.svb` は 112 MB（いずれも 2026-09-09 の推奨ビルド。旧記述の 155 / 117 MB は 2026-08 世代の値）。試行ごとにキャッシュを消して展開し直すため、実機では読み込みに十数秒かかる。教示のタイミングをこれに合わせる。
 
 ## 交絡要因: モデルの配置が表示レートに依存する（2026-09-09 判明・未解決）
 
@@ -321,3 +323,168 @@ StereoOnly 条件は `source/pre_removal_stereo_video.mp4` に依存する。入
 - 全端末の表示レートを揃える
 - 実行中の fps を記録する（`logDeviceDiagnostics` の `[FPS]` ログ）
 - コマ落ちした試行を除外できるようにする
+
+## 論文側の実験計画との食い違い（2026-09-10、質問回答時に判明）
+
+論文側（`Docs/修論やり取り用/questions/questions_2026-09-10.md`）は
+「単眼動画 / 空間動画 / 空間動画＋3Dモデル＋インタラクティブアニメーション」の **3 条件**を想定している。
+現行実装との差は 3 点。回答は `Docs/修論やり取り用/answers/answers_2026-09-10.md` の A-4。
+
+| 論文側の想定 | 現行実装 |
+|---|---|
+| 単眼動画条件 | **未実装**。片目映像を両目に出す経路が無い（シェーダの `_EyeMode` を固定するモードを足せば同じスクリーンで出せる） |
+| 空間動画＋モデル＋アニメーション | 「置換あり」条件の中で Motion トグルが ON/OFF できるだけ。**TrialScene の serialize 値は `enableInteractiveMotion: 0` で、実験では OFF で始まる**（コード既定は true だがシーン値が勝つ） |
+| 3 条件 | `ExperimentDisplayMode` は `StereoOnly` / `ModelReplaced` の **2 条件**。`ExperimentPlan` も 3 動画 × 2 条件 = 6 試行前提 |
+
+3 条件で回すなら、`ExperimentDisplayMode` の追加・`ExperimentPlan` の拡張・単眼提示モード・条件ごとの Motion 固定、の 4 点が要る。
+どちらに寄せるかは論文側と相談中（2026-09-10 時点）。
+
+## 2026-09-11 実装棚卸し（docs と実装・シーン値の差分）
+
+実験フロー全体をコード・シーンの serialize 値・Build Settings から読み直した。上の本文は 2026-08-05〜16 の実装時点の記述で、その後の変更（Home シーン、モデル選択の永続化、bundle 整理）が反映されていなかった箇所を以下に記録する。
+
+### 起動から試行までの実際の経路
+
+```
+アプリ起動
+ └ HomeScene（Build index 0、HomeMenu）
+     ├ 「自由に見る」  → TestScene を Single ロード。HomeLaunchHandoff で bundle ピッカーを出す
+     └ 「被験者実験」  → ExperimentScene を Single ロード
+          └ ExperimentController: Setup → Waiting → Loading → Trial → Waiting … → Finished
+               各 Trial: ExperimentTrialHandoff.SetPending → TrialScene を Additive ロード
+                         → SetActiveScene(TrialScene) → プレイヤーの Start() が Consume
+                         → IsVideoPlaying まで待つ → 試行パネル → 「視聴を終了」
+                         → SetActiveScene(base) → TrialScene アンロード → UnloadUnusedAssets
+```
+
+- HomeScene / ExperimentScene はどちらも OVRCameraRig + OVRInteractionComprehensive + EventSystem + Directional Light + Global Volume を持つ（`HomeSceneBuilder` が ExperimentScene から生成し、Controller を HomeMenu に差し替えたもの）。TrialScene は VideoPlayerRoot + Directional Light + Global Volume のみ
+- Build Settings の現行順: HomeScene → TestScene → ExperimentScene → TrialScene（全て有効）
+- **セッション終了画面にはボタンが無い**（`ShowFinishedPanel` は specs = null）。次の参加者に移るには**アプリを再起動して Home からやり直す**。Home へ戻る経路も ExperimentController には無い
+- ExperimentScene を Single ロードし直すたびに `participantNumber` は Inspector 値（1）に戻る。参加者 ID はセットアップ画面で「参加者 ＋」を押して合わせる
+- 試行中にアプリが落ちる／ヘッドセットを外す場合: `OnApplicationPause(true)` で Flush、`OnDestroy` / `OnApplicationQuit` で進行中の試行を `aborted=1` として trials.csv に書く。**実験者が手動で試行を中断するボタンは無い**
+
+### 本文の実装表に載っていないファイル
+
+| ファイル | 役割 | 追加日 |
+|---|---|---|
+| `Assets/Scripts/Experiment/HomeMenu.cs` | 起動直後の入口パネル（自由に見る / 被験者実験） | 2026-08-28 |
+| `Assets/Scripts/Experiment/HomeLaunchHandoff.cs` | Home →「自由に見る」で bundle ピッカーを出す 1 回限りの受け渡し | 2026-08-28 |
+| `Assets/Scripts/Experiment/ExperimentSessionOverrides.cs` | 被験者がセッション中に変えたモデル・回転・スケールをメモリだけで保持（試行をまたぐ、参加者で捨てる）。実験中は `persistentDataPath/model_selection.json` を**読むだけで書かない**（[model-selection-persistence.md](model-selection-persistence.md)） | 2026-08-28 |
+| `Assets/Editor/HomeSceneBuilder.cs` | HomeScene を ExperimentScene から生成し Build Settings の先頭に置く | 2026-08-28 |
+| `StreamingStereoVideoPlayer.Customization.partial.cs` | ① 基準ファイルに ② セッション上書きを重ねて復元。`ExperimentSessionOverrides.Active` の間は基準へ保存しない | 2026-08-28 |
+| `StreamingStereoVideoPlayer.GrabRotate.partial.cs` | 掴んで 3 軸回転。`change_rotation` を `op=grab yaw= pitch= roll=` で記録 | 2026-08-31 |
+
+### operations.csv に実際に出る action（コードから抽出）
+
+本文の表に無いものを含めた現行の全一覧。
+
+| action | detail | 出る場所 |
+|---|---|---|
+| `trial_begin` / `trial_end` / `trial_abort` | 試行の内容 / 空 | `ExperimentSession` |
+| `trial_end_pressed` | 空 | `ExperimentController.RequestTrialEnd` |
+| `pause` / `resume` | 空 | `UI.Runtime` |
+| `seek` | 0..1 の正規化位置 | `UI.Runtime` |
+| `seek_key` | `frame=`（モデル編集タブのキーフレーム送り） | `UI.ModelEdit` |
+| `video_loop` | 何周目か | `ExperimentSession.RecordVideoLoop` |
+| `change_model` | `track= category= index= prefab=`（非表示は prefab が `HiddenModelName`） | `UI.ModelPicker`（2 箇所） |
+| `change_rotation` | `track= op=grab yaw= pitch= roll= frame=` / `track= yaw=0 op=reset` / `track= op=delete_key frame= yaw= scale=` | `GrabRotate` / `UI.Runtime` |
+| `change_scale` | `track= scale= frame=` / `track= scale=1 op=reset` | `UI.Runtime` |
+| `model_panel_tab` | `edit` / `models` | `UI.ModelEdit` |
+
+interactions.csv の `kind`: `random_Static` / `random_Dynamic`（detail `subject=human|animal`）、`system_frameout`（detail `subject= frame=`）。
+
+### TrialScene と TestScene のプレイヤー設定差分（serialize 値、2026-09-11 実測）
+
+97 フィールド中、違うのは 4 つだけ。
+
+| フィールド | TestScene | TrialScene | 備考 |
+|---|---|---|---|
+| `bundleFileName` | `bundle_animal.svb` | `bundle_human.svb` | 実験では `ExperimentTrialHandoff` が上書きするので無関係 |
+| `headTransform` | リグ参照 | `{fileID: 0}` | 意図どおり（リグはベースシーン側） |
+| `enableNormalModeToggleButton` | 1 | 0 | 意図どおり（Display ボタンを出さない） |
+| **`enableHumanBoneLengthCorrection`** | **0** | **1** | **意図しない差。** TrialScene は 2026-08-16 の生成時の値のまま。TestScene は 2026-08-26（コード既定も 2026-08-21）に OFF へ変更された（[smpl-retargeting.md](smpl-retargeting.md) の「脚の骨長補正が足首のずれを作っていた」、[bundle-placement.md](bundle-placement.md) の「骨長補正 OFF で『ボールが離れて見える』原因」）。**実験シーンの Human だけ脚の骨長補正が効き、人の絶対深度が約 10 cm 違う状態**（同節の実測: ON 0.9175 m / OFF 1.0195 m） |
+
+`enableInteractiveMotion` は両シーンとも 0、`screenDistanceMeters` は両方 1.0、`rememberTrackCustomization` は両方 1、`enableRuntimeControls` は両方 1。
+
+`enableHumanBoneLengthCorrection` をどちらに揃えるかは未決（上の 2 つの docs で「姿勢一致 vs 絶対深度」のトレードオフとして保留中）。揃えないまま実験を回すと、開発中に TestScene で見ていた Human の見え方と実験で被験者が見る Human が違う。
+
+### テスト（EditMode、`Assets/Editor/Tests/`）
+
+`ExperimentPlanTests` 15 件、`ExperimentLoggingTests` 17 件、`ExperimentTrialHandoffTests` 11 件。試行順の生成・CSV 書式・受け渡しの 1 回性・StereoOnly のみ normal mode になること、を押さえている。シーン遷移（Additive ロード、アクティブシーン切り替え、アンロード後のリーク）を検証する自動テストは無く、実機での通し確認のみ（2026-08-31 / 09-01 / 09-05 / 09-07 / 09-09 / 09-10）。
+
+## 操作チュートリアル（2026-09-11 実装）
+
+被験者に 3 つの操作を教える練習パートを試行の前に挟む。**実験の 3 本とは別の動画**を使う（練習で実験刺激を先に見せない）。
+
+| 段階 | 教える操作 | 完了の検出 |
+|---|---|---|
+| 1/4 | コントローラのレイ + トリガーでボタンを押す | 説明パネルの「次へ」が押された |
+| 2/4 | A ボタン（左手は X）で動画を止める | プレイヤーの操作ログ `pause` |
+| 3/4 | もう一度 A ボタンで再開する | 操作ログ `resume`（`pause` の後のみ数える） |
+| 4/4 | コントロールバーの「Model」ボタンでモデルを変える | 操作ログ `change_model` |
+| 終了 | 自由に試して「チュートリアルを終了」を押す | ボタン |
+
+順番どおりでなくても済んだ操作は数える（先に Model を変えた参加者にもう一度やらせない）。各段階に「スキップ」があり、押した段階は `tutorial_step_skipped` として残る。
+
+### 仕組み
+
+- 試行と同じ経路: `ExperimentTrialHandoff` に **ModelReplaced** の指示（`ExperimentVideo.Tutorial`、`trialIndex = -1`）を置き、TrialScene を Additive ロードする。プレイヤー側の変更は無し
+- 段階の検出は [ExperimentTutorial.cs](../Assets/Scripts/Experiment/ExperimentTutorial.cs) が `ExperimentLog.Sink` を横取りして行う。受け取った操作はセッションへそのまま転送するので operations.csv にも残る
+- 説明パネルは `ExperimentPanel` を流用。段階が進んでもパネルの位置は動かさない（`Show(..., keepPlacement: true)`）。作り直しはボタンのクリックハンドラ内ではなく次の Update で行う（押したボタン自身を壊さないため）
+- チュートリアル用 bundle が無い・再生できないときは `tutorialLoadTimeoutSeconds`（既定 120 s）で諦め、「チュートリアル無しで続行」の画面を出す。**試行のほうは従来どおり待ち続ける**（試行は飛ばせないため）
+
+### いつ挟むか（`ExperimentController.tutorialTiming`）
+
+| 値 | 動作 |
+|---|---|
+| `BeforeFirstTrial`（既定） | セッション開始直後、1 試行目の前に 1 回 |
+| `BeforeEachBlock` | 各条件ブロックの先頭（1 試行目と 4 試行目の前）に 1 回ずつ |
+| `None` | 挟まない |
+
+待機画面の「スキップ」で実験者が飛ばせる（`tutorial_skipped` を記録）。
+
+**Home の「チュートリアル」**からは、セッションもログも作らずに同じチュートリアルだけを回して Home へ戻れる（実験者の動作確認用。`HomeLaunchHandoff.RequestTutorialOnly`）。この間もモデル変更は基準ファイル `model_selection.json` に書かない。
+
+### パネルの位置
+
+`tutorialPanelSizeMeters`（既定 0.64 × 0.48 m、canvas 1200×900 と同じ 4:3 で文字を潰さない）と `tutorialPanelOffsetMeters`（既定 x +0.8, y −0.45 m。視点 1.2 m 先の右下）。コントロールバーは画面下中央に出るので、それと重ならない位置にした。**実機での見え方は未確認**。重なる・読めないときは Inspector で動かす。
+
+### ログ
+
+operations.csv に次が増える。チュートリアル中の行は **`trial_index = -1`**（後半ブロック前のチュートリアルでも直前の試行番号は書かない）。
+
+| action | detail |
+|---|---|
+| `tutorial_begin` | `bundle=... before_block=0|1` |
+| `tutorial_step_skipped` | `PressButton` / `PausePlayback` / `ResumePlayback` / `ChangeModel` |
+| `tutorial_end_pressed` | 空 |
+| `tutorial_end` | `completed=0|1 skipped=N step=... duration_sec=... before_block=...`。読み込み失敗は `load_failed ...`、中断は `aborted ...` |
+| `tutorial_skipped` | 待機画面で実験者が飛ばした。`before_block=...` |
+
+チュートリアル中の `pause` / `resume` / `change_model` などもそのまま記録される。頭部姿勢は記録しない。trials.csv には行を書かない。
+
+### bundle
+
+`ExperimentBundleCatalog.tutorialBundleFileName`（既定 `bundle_tutorial.svb`）。解決順は他の 3 本と同じ（共有ストレージ → StreamingAssets）。条件は「人か動物が 1 体は写っている」「`video.mp4` が H.264」の 2 つ。
+
+**2026-09-11 の暫定版**: 旧 `bundle.svb`（2026-07-30、`01_dog` クリップ、289 フレーム ≈ 9.6 秒、Human + Animal 入り）は実験 3 本とは別クリップだが `video.mp4` が mp4v で Quest では黒画面になる（[ADR 0003](adr/0003-normal-mode-playback-video.md)）。そこで ffmpeg で H.264（libx264 crf 18、289 フレーム維持）に再エンコードし、`video.mp4` / `meta.bin` / `manifest.json` だけを無圧縮 ZIP に詰め直したものを `Assets/StreamingAssets/bundle_tutorial.svb`（6.5 MB、gitignore 対象）と `Docs/tmp/bundle_tutorial.svb` に置いた。sha256 `548ecc8e…`。`meta.bin` は旧世代（zlib 圧縮、`depth_policy` 無し、shots 無し）だが現行ランタイムは両方読める。**正式版は生成側に依頼中**（[bundle-shared/README.md](bundle-shared/README.md) 2026-09-11）。実機（Quest）で pushed した共有ストレージに無ければ APK 内のこのファイルが使われる。
+
+### 追加・変更したファイル
+
+| ファイル | 変更 |
+|---|---|
+| `Assets/Scripts/Experiment/ExperimentTutorial.cs` | 新規。段階の状態機械 + 操作ログの横取り |
+| `ExperimentController.cs` | `Phase.Tutorial`、`tutorialTiming` / パネル位置 / タイムアウトの Inspector 項目、`RunTutorialRoutine`、Home からのチュートリアル専用モード、`UnloadTrialSceneRoutine` に共通化 |
+| `ExperimentSession.cs` | `BeginTutorial` / `EndTutorial`、チュートリアル中は `trial_index = -1` |
+| `ExperimentDefinitions.cs` | `ExperimentVideo.Tutorial`、`ExperimentTutorialTiming` |
+| `ExperimentBundleCatalog.cs` | `tutorialBundleFileName` |
+| `ExperimentPanel.cs` | `Show(..., keepPlacement)` |
+| `HomeLaunchHandoff.cs` / `HomeMenu.cs` | Home に「チュートリアル」ボタン |
+| `Assets/Editor/Tests/ExperimentTutorialTests.cs` | 新規。段階送り・先回り・スキップ・転送・Home 受け渡し（15 件） |
+
+ExperimentScene の serialize 値には新しい項目（`tutorialTiming` 等）が無いので、コードの既定値（BeforeFirstTrial、右下配置、120 s）が使われる。シーンを保存すると書き込まれる。
+
+### 未確認
+
+- 実機での通し（パネルの位置・読みやすさ、A ボタン検出、Model ボタンの案内が実物のラベルと合っているか）。**実機で見て採否を決める**
+- 暫定 bundle が Quest で再生されること（H.264 化はしたが実機未確認）

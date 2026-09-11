@@ -4638,3 +4638,45 @@ applier 側の既定だけ変えて既定値のみのバッチを流したら `u
 同時に **27_GermanShepherd の 96.2° は「他のモデルはまだ直っていない」ことを示している。**
 
 `[HEADFIT]` に `fitted=` を足して、どちらの経路に入ったかログで分かるようにした。
+
+#### この当てはめで到達できる下限（2026-09-11）
+
+モデルの頭の向きは `body_pose` の剛体関数なので、**定数回転 1 つで表せるずれ**は
+当てはめ（照準 2 自由度 + ロール 1 自由度 = 回転 3 自由度）が吸収できる。
+残りがフレームごとに変わるぶん＝下限になる。
+
+```
+floor = min_Q  median_f  angle( Q * smal頭向き_f , kp鼻向き_f )
+```
+
+`smal頭向き` は `smal_fk_points` の T[32]-T[16]（globalOrient 込み、カメラ空間）、
+`kp鼻向き` は keypoints3d の 頭18 → 鼻24。scratchpad `head_floor.py` で SO(3) を走査。
+
+| | 下限 |
+|---|---:|
+| 全編 | **5.1°**（n=1146）|
+| 27〜30 秒 | **2.8°**（n=80）|
+| 参考: 定数回転なし（生の定義差）| 21.9° |
+
+**定義差 21.9° はほぼ定数で、回転 1 つでほぼ消える。**データはこの精度を持っている。
+
+一方、当てはめ後の実測は 27〜30 秒で 5〜14 度（下限 2.8° に近い）だが、
+**全編では 23〜26 度あり下限 5.1° から 20 度離れている。**
+
+理由は式の形。下限の式は「**globalOrient を含む連鎖に定数回転を 1 つ**」だが、
+runtime の頭は
+
+```
+headAim = M(frame) * (Aacc * smalRestDir)
+M       = FromToRotation(smalRestDir, restWorldRot * bindDirLocal) * Rot(smalRestDir, θ)
+```
+
+で、`restWorldRot` が globalOrient を含むため **M がフレームごとに変わる**。
+`FromToRotation` は同変ではない（`FromTo(a, G b) != G FromTo(a, b)`）ので、
+globalOrient が回るぶんだけ写像が揺れる。**頭を `tw[16] = (globalOrient を含む連鎖)
+× 定数` の形で直接置けば、この揺れは原理的に消える。**（`AnimalSmalFkApplier` には
+`worldFk0 * Inverse(sMap) * smalAccum * sMap * boneBindWorld` という絶対姿勢の枝が
+既にある。ただし以前これを**全関節**に当てたときは四肢が破綻した。頭だけに限る話。）
+
+**次の改善はここ。**ただし今回の当てはめは 27〜30 秒では下限に近いので、
+まずは当てはめを 52 体に広げるところまでを完了させる。

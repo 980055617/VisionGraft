@@ -496,34 +496,24 @@ public sealed partial class AnimalPoseApplier
                 cache.bindRotWorld.TryGetValue(bone, out Quaternion boneBindWorld) &&
                 cache.bindDirLocal.TryGetValue(bone, out Vector3 boneBindDirLocal))
             {
-                // 頭だけ Unity 側の照準と副軸を作り直す（headAimFromModelForward）。
+                // 頭だけ照準を当てはめ表から与える（headAimFromModelForward）。
                 //
                 // 実測（[AIMBIND] / [HEADCHILD] / [HEADMESH]）で分かったこと:
-                //   - このリグは剛体パーツの集合。頭の子は head.001（頭のメッシュ）と左右の耳の 3 つ
-                //   - **口・鼻のボーンが無い**ので、既定は head.001 の bounds 中心へ向いていた
-                //   - neck / 四肢 / 尾は**すべてローカル +Y** を照準にしている。頭だけ 43 度ずれていた
-                //   - head.001 の bounds は +Y が最長。鼻先も +Y 側
+                //   - **口・鼻のボーンが無い**リグが多く、既定の照準は頭メッシュの重心だった
+                //   - neck / 四肢 / 尾は概ねローカル +Y を照準にしている。頭だけ 43 度ずれていた
+                // そこで照準とロールをクリップ全体から当てはめて表に持つ。
                 //
-                // 照準は +Y。副軸は**耳の軸**にする。SMAL 側の LEar-REar は
-                // 頭→口 とちょうど 90 度で条件が良く、Unity 側も耳ボーンが 2 つあるので
-                // **両側で実体のある対応**が取れる（首を副軸にすると Unity 側でほぼ平行になり縮退する）。
                 // **当てはめ表に載っているモデルだけ新経路に入れる**（2026-09-11）。
                 // 表が無いと照準は頭メッシュの重心のまま・ロールは 0 で、
                 // FromToRotation 固定にするとロールが拘束されずむしろ悪くなる。
+                //
+                // **リグの形では条件を付けない。**以前は「頭の子が 3 つ以上」を条件にして
+                // 耳の軸で副軸を作っていたが、その `headEarAxisLocal` は**どこでも使われて
+                // いない死んだ計算**になっていた。条件だけが残ると、子が 2 つ以下のリグで
+                // 当てはめ（FromToRotation 前提）と runtime（2 軸基底）が食い違う。
+                // 52 体へ広げる前に外した（2026-09-11）。
                 bool headFitted = joint == 16 && HasBakedHeadFit(cache);
-                bool headAim = headAimFromModelForward && headFitted && bone.childCount >= 3;
-                Vector3 headEarAxisLocal = Vector3.zero;
-                if (headAim)
-                {
-                    Transform earL = bone.GetChild(1);
-                    Transform earR = bone.GetChild(2);
-                    Vector3 axisW = earL.position - earR.position;
-                    if (axisW.sqrMagnitude > 1e-8f)
-                    {
-                        headEarAxisLocal = bone.InverseTransformDirection(axisW).normalized;
-                    }
-                    else { headAim = false; }
-                }
+                bool headAim = headAimFromModelForward && headFitted;
 
                 // Geometry-grounded per-joint correction (2026-06-18): instead of reusing the
                 // single global canonicalCorrection (whose roll/twist was only ever constrained
@@ -664,7 +654,26 @@ public sealed partial class AnimalPoseApplier
                     Debug.Log($"[SMAL-FK-DBG] REST-CHECK model={cache.root?.name} joint={joint} smalRestDir={smalRestDir:F3} unityRestDirWorld={unityRestDirWorld:F3} restDirAngleDeg={restDirAngleDeg:F1} (150+=FromToRotation軸不定の疑いあり)");
                 }
 
-                if (headUseBodyFrameMap && joint == 16)
+                if (headFitted && TryGetBakedHeadRot(cache, out Quaternion headRotC))
+                {
+                    // **頭は「globalOrient を含む連鎖 × 定数」で直接置く**（2026-09-11）。
+                    //
+                    //   tw[16] = restWorldRot * C^-1 * smalAccum[16] * C
+                    //          = worldFk0 * boneBindWorld * C^-1 * Aacc * C
+                    //
+                    // 従来の `bendUnity * restWorldRot` は、写像
+                    // `M = FromToRotation(smalRestDir, restWorldRot * bindDirLocal)` が
+                    // restWorldRot 経由で globalOrient を含むため、**胴が回るたびに写像
+                    // 自体が揺れていた**（FromToRotation は同変でない:
+                    // FromTo(a, G b) != G FromTo(a, b)）。この式は G が左端に出るので揺れない。
+                    //
+                    // 実測（keypoints3d の 頭18 → 鼻24 との角度差、2 分割の交差検証）:
+                    //   従来の式 23〜26 度 / この式 5.7〜7.5 度 / データの下限 5.1 度
+                    // C はモデルごとに当てはめて animal_head_fit.json の "rot" に持つ。
+                    tw[joint] = restWorldRot * Quaternion.Inverse(headRotC)
+                        * smalAccum[joint] * headRotC;
+                }
+                else if (headUseBodyFrameMap && joint == 16)
                 {
                     // 頭は体レベルの写像で解く（ロールの自由度が無い）。
                     // 連鎖を積んだ回転をそのまま使うので、首の振りも入る。

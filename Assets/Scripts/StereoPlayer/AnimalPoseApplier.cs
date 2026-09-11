@@ -1291,6 +1291,50 @@ public sealed partial class AnimalPoseApplier
     private static Dictionary<string, Vector3> bakedHeadAim;
     private static Dictionary<string, float> bakedHeadRoll;
 
+    // JSON の 1 エントリの本体から "名前": [x, y, z] を読む。
+    private static bool TryReadVec3(string body, string key, out Vector3 v)
+    {
+        v = Vector3.zero;
+        Match m = Regex.Match(body, "\"" + key +
+            @"""\s*:\s*\[\s*(-?[\d.eE+-]+)\s*,\s*(-?[\d.eE+-]+)\s*,\s*(-?[\d.eE+-]+)\s*\]");
+        if (!m.Success) { return false; }
+        if (!float.TryParse(m.Groups[1].Value, out float x) ||
+            !float.TryParse(m.Groups[2].Value, out float y) ||
+            !float.TryParse(m.Groups[3].Value, out float z))
+        {
+            return false;
+        }
+        v = new Vector3(x, y, z);
+        return true;
+    }
+
+    // 当てはめた頭の定数回転 C（2026-09-11）。表に "rot" があるモデルだけ。
+    //
+    // 頭は `tw[16] = worldFk0 * boneBindWorld * C^-1 * smalAccum[16] * C` で直接置く。
+    // 従来の `bendUnity * restWorldRot` は写像 M が restWorldRot 経由で globalOrient を
+    // 含むため、胴が回るたびに写像自体が揺れていた（FromToRotation は同変ではない）。
+    // 実測（keypoints3d の 頭18 → 鼻24 との角度差・交差検証）:
+    //   従来の式 23〜26 度 / この式 5.7〜7.5 度 / データの下限 5.1 度
+    private static Dictionary<string, Quaternion> bakedHeadRot;
+
+    internal static bool TryGetBakedHeadRot(AnimalRigCache cache, out Quaternion rot)
+    {
+        rot = Quaternion.identity;
+        if (!TryGetBakedHeadAim(cache, out _)) { return false; }   // 表の読み込みを兼ねる
+        if (bakedHeadRot == null) { return false; }
+        return bakedHeadRot.TryGetValue(KeyFor(cache), out rot);
+    }
+
+    // 表を引くキー。**prefab 名**。インスタンスは Track_<id> にリネームされ、
+    // Animator の transform 名もモデルによって違うので、名前からは引けない。
+    private static string KeyFor(AnimalRigCache cache)
+    {
+        if (cache == null || cache.root == null) { return string.Empty; }
+        ReplaceableModel rm = cache.root.GetComponentInParent<ReplaceableModel>();
+        return rm != null && !string.IsNullOrEmpty(rm.sourcePrefabName)
+            ? rm.sourcePrefabName : cache.root.name;
+    }
+
     // このモデルが当てはめ表に載っているか。
     //
     // **載っていないモデルに頭の新経路を掛けてはいけない**（2026-09-11）。
@@ -1322,23 +1366,37 @@ public sealed partial class AnimalPoseApplier
         {
             bakedHeadAim = new Dictionary<string, Vector3>();
             bakedHeadRoll = new Dictionary<string, float>();
+            bakedHeadRot = new Dictionary<string, Quaternion>();
             TextAsset ta = Resources.Load<TextAsset>("animal_head_fit");
             if (ta != null)
             {
-                // 形式: { "00_Dog": { "aim": [x,y,z], "rollDeg": d }, ... }
+                // 形式: { "00_Dog": { "aim": [x,y,z], "rot": [ex,ey,ez] }, ... }
+                // 旧形式の "rollDeg" も読む（rot が無いモデルは従来の経路に落ちる）。
+                //
+                // **rot は Unity の eulerAngles（度）で持つ。**当てはめは Python 側で
+                // 3x3 行列として解いているが、行列 -> quaternion を右手系の公式で書くと
+                // 符号の取り違えが起きる。ログの eulerAngles を再現する式をそのまま
+                // 逆に解いた値を渡し、ここで Quaternion.Euler に食わせる。
                 foreach (Match m in Regex.Matches(ta.text,
-                    @"""([^""_][^""]*)""\s*:\s*\{\s*""aim""\s*:\s*\[\s*(-?[\d.eE+-]+)\s*,\s*(-?[\d.eE+-]+)\s*,\s*(-?[\d.eE+-]+)\s*\]\s*,\s*""rollDeg""\s*:\s*(-?[\d.eE+-]+)"))
+                    @"""([^""_][^""]*)""\s*:\s*\{([^}]*)\}"))
                 {
-                    if (float.TryParse(m.Groups[2].Value, out float x) &&
-                        float.TryParse(m.Groups[3].Value, out float y) &&
-                        float.TryParse(m.Groups[4].Value, out float z) &&
-                        float.TryParse(m.Groups[5].Value, out float roll))
+                    // このメソッドの後半に別の `key` があるので名前を分ける（CS0136）。
+                    string entryKey = m.Groups[1].Value;
+                    string body = m.Groups[2].Value;
+                    if (!TryReadVec3(body, "aim", out Vector3 aim)) { continue; }
+                    bakedHeadAim[entryKey] = aim;
+                    if (TryReadVec3(body, "rot", out Vector3 e))
                     {
-                        bakedHeadAim[m.Groups[1].Value] = new Vector3(x, y, z);
-                        bakedHeadRoll[m.Groups[1].Value] = roll;
+                        bakedHeadRot[entryKey] = Quaternion.Euler(e.x, e.y, e.z);
+                    }
+                    Match r = Regex.Match(body, @"""rollDeg""\s*:\s*(-?[\d.eE+-]+)");
+                    if (r.Success && float.TryParse(r.Groups[1].Value, out float roll))
+                    {
+                        bakedHeadRoll[entryKey] = roll;
                     }
                 }
-                Debug.Log("[HEADAIMBAKE] 読み込んだ " + bakedHeadAim.Count + " 件");
+                Debug.Log("[HEADAIMBAKE] 読み込んだ " + bakedHeadAim.Count + " 件 (rot あり "
+                    + bakedHeadRot.Count + " 件)");
             }
             else { Debug.Log("[HEADAIMBAKE] animal_head_fit.json が無い"); }
         }

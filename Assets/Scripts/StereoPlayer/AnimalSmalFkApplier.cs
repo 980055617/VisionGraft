@@ -77,9 +77,15 @@ public sealed partial class AnimalPoseApplier
     //   従来 39度 / 2軸のみ 41度 / 連鎖+2軸 53度（全編）
     //   27-30秒では 105度 / 97度 / 135度
     // 四肢の改善は 2 軸だけで出ており、連鎖は頭にだけ効いて悪化させていた。
-    // **既定 true に差し戻し（2026-09-11）。**頭を連鎖に入れるのは、
-    // 照準の修正とセットでないと悪化する。その照準の修正を採用しなかったので戻す。
-    public bool excludeHeadFromChain = true;
+    // **既定 false（2026-09-11 再変更）。**上の悪化は「照準が未当てはめ・2 軸基底（耳）併用」
+    // という別構成での話。照準とロールを当てはめた今は、外していると**むしろ致命的**:
+    // 頭の振り（体軸と鼻のなす角）は 27-30 秒で 68 度あり、これは首・背骨に乗っているので
+    // ローカル回転だけの頭には届かない。しかも当てはめ自体が連鎖（Aacc）を前提に解いてある。
+    // 実測（[HEADAIM] と keypoints3d の 頭18 → 鼻24 の角度差、27-30 秒の中央値）:
+    //   00_Dog        95.9度 → 44.3度（当てはめのみ）→ **11.3度**（当てはめ+連鎖）
+    //   36_Labrador   90.6度 → 45.1度（当てはめのみ）→ **6.5度**（当てはめ+連鎖）
+    // 四肢（[ANIMALKP] の Paw 除外平均）は 23.0→23.1 度・42.7→42.8 度で変化なし。
+    public bool excludeHeadFromChain;
 
     // 頭の照準を「モデルが rest で向いている方向」に揃えるか。既定 true。
     //
@@ -94,10 +100,14 @@ public sealed partial class AnimalPoseApplier
     //   Unity 側 = worldFk0 * modelForwardLocal
     //              （コード内の証明 visual_forward = rawWorldFk0 * modelFwdLocal と同じ）
     // 副軸は前肢（7）にする。首（15）は +X と 6.6 度しか離れておらず縮退するため。
-    // **既定 false（2026-09-11 に差し戻し）。**実機で「首がぐちゃぐちゃ」と指摘され、
-    // こちらの計測でも絶対差 78 度と大きい。相関は 0.365 → 0.718 に上がるが、
-    // 向きそのものが合っていないので採用しない。詳細は Docs/smpl-retargeting.md。
-    public bool headAimFromModelForward;
+    // **既定 true（2026-09-11 再変更）。**上の「モデルの前方」案は不採用のままで、
+    // 現在このフラグが入口にしているのは**当てはめ表**（Assets/Resources/animal_head_fit.json）:
+    //   - 照準 bindDirLocal … 頭メッシュの重心ではなく、当てはめた向き
+    //   - ロール θ         … M = FromToRotation が拘束しない 1 自由度を埋める
+    //   - 頭は jointFrameMap を FromToRotation に固定（2 軸基底と併用すると二重補正）
+    // 表に無いモデルは従来どおり。excludeHeadFromChain = false と**必ずセット**で使う
+    // （当てはめが連鎖前提で解かれているため）。詳細は Docs/smpl-retargeting.md。
+    public bool headAimFromModelForward = true;
 
     // 頭だけ per-joint の FromToRotation をやめ、**体レベルのフレーム写像**で解く。
     // 既定 true（2026-09-11）。
@@ -559,9 +569,13 @@ public sealed partial class AnimalPoseApplier
                 // ログだけから再計算できるので、Unity を回さずに探索できる。
                 if (joint == 16 && debugLog)
                 {
+                    // useChain も出す。「直したのに効かない」と「そもそも分岐が切り替わって
+                    // いない」を取り違えないため（2026-09-11。平滑化値が実ボーンに
+                    // 届いていなかった前例がある）。
                     Debug.Log("[HEADFIT] restWorldRot=" + restWorldRot.eulerAngles.ToString("F3") +
                         " bindDirLocal=" + boneBindDirLocal.ToString("F4") +
-                        " unityRestDirWorld=" + unityRestDirWorld.ToString("F4"));
+                        " unityRestDirWorld=" + unityRestDirWorld.ToString("F4") +
+                        " useChain=" + useChain);
                 }
 
                 // 2 軸版（既定 OFF）。ロールを同じ肢のもう 1 本で拘束する。
@@ -570,15 +584,14 @@ public sealed partial class AnimalPoseApplier
                 // bendUnity は曲げの回転軸 n を jointFrameMap * n に写すので、ロールが
                 // ずれると**屈曲が伸展に化ける**。SmalRollRefJoint のコメント参照。
                 SmalRollRefOverrideJoint = -1;
-                // 頭は耳の軸で 2 軸基底を作る（SMAL の LEar-REar = (0,1,0) と対応）。
                 Quaternion jointFrameMap;
-                if (headAim && useTwoAxisJointFrameMap &&
-                    headEarAxisLocal.sqrMagnitude > 1e-8f &&
-                    TryBuildDirectionBasis(smalRestDir, Vector3.up, out Quaternion smalBasisH) &&
-                    TryBuildDirectionBasis(unityRestDirWorld,
-                        (restWorldRot * headEarAxisLocal).normalized, out Quaternion unityBasisH))
+                if (headAim && joint == 16)
                 {
-                    jointFrameMap = unityBasisH * Quaternion.Inverse(smalBasisH);
+                    // **頭は FromToRotation に固定する。**ロールは当てはめた θ で埋めるので、
+                    // 2 軸基底と併用すると二重補正になる。
+                    // （2026-09-11: オフラインの当てはめは FromToRotation を前提にしていたのに、
+                    //  runtime は耳ベースの 2 軸基底を使っており、式が食い違っていた）
+                    jointFrameMap = Quaternion.FromToRotation(smalRestDir, unityRestDirWorld);
                 }
                 else if (!useTwoAxisJointFrameMap
                     || !TryGetRollRef(joint, out int rollRefJoint)

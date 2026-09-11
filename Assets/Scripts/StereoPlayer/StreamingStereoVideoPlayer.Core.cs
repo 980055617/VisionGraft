@@ -250,12 +250,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public int forceRootYawFix;
 
     // 頭を連鎖から外す。詳細は AnimalSmalFkApplier.excludeHeadFromChain。
-    // 既定 true に差し戻し（2026-09-11）。
-    public bool excludeHeadFromChain = true;
+    // **既定 false（2026-09-11 再変更）。**下の headAimFromModelForward と必ずセット。
+    public bool excludeHeadFromChain;
 
-    // 頭の照準をモデルの前方に揃える。詳細は AnimalSmalFkApplier.headAimFromModelForward。
-    // 既定 false に差し戻し（2026-09-11）。
-    public bool headAimFromModelForward;
+    // 頭の照準を当てはめ表から与える。詳細は AnimalSmalFkApplier.headAimFromModelForward。
+    // **既定 true（2026-09-11 再変更）。**上の excludeHeadFromChain = false と必ずセット。
+    // ここが実効値。AnimalSmalFkApplier 側の同名フィールドは
+    // StreamingStereoVideoPlayer.PosePipeline が毎フレーム上書きするので、
+    // **applier 側の既定だけ変えても効かない**（2026-09-11 に踏んだ）。
+    public bool headAimFromModelForward = true;
 
     // 頭を体レベルのフレーム写像で解く。詳細は AnimalSmalFkApplier.headUseBodyFrameMap。
     // 既定 false。実測で悪化した。

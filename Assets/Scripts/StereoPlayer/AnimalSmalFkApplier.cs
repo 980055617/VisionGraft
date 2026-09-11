@@ -507,7 +507,11 @@ public sealed partial class AnimalPoseApplier
                 // 照準は +Y。副軸は**耳の軸**にする。SMAL 側の LEar-REar は
                 // 頭→口 とちょうど 90 度で条件が良く、Unity 側も耳ボーンが 2 つあるので
                 // **両側で実体のある対応**が取れる（首を副軸にすると Unity 側でほぼ平行になり縮退する）。
-                bool headAim = headAimFromModelForward && joint == 16 && bone.childCount >= 3;
+                // **当てはめ表に載っているモデルだけ新経路に入れる**（2026-09-11）。
+                // 表が無いと照準は頭メッシュの重心のまま・ロールは 0 で、
+                // FromToRotation 固定にするとロールが拘束されずむしろ悪くなる。
+                bool headFitted = joint == 16 && HasBakedHeadFit(cache);
+                bool headAim = headAimFromModelForward && headFitted && bone.childCount >= 3;
                 Vector3 headEarAxisLocal = Vector3.zero;
                 if (headAim)
                 {
@@ -551,7 +555,10 @@ public sealed partial class AnimalPoseApplier
                 // 従来（smalLocal）は**親の曲げを全部無視**していたので、
                 // 各ボーンが bind pose から自分のぶんだけずれた向きにしかならず、
                 // 座る・伏せるのように連鎖して成立する姿勢が作れなかった。
-                bool useChain = accumulateSmalParentBend && !(excludeHeadFromChain && joint == 16);
+                // 頭を連鎖に入れるのは**当てはめ済みのモデルだけ**。
+                // 当てはめ自体が連鎖（Aacc）を前提に解いてあるので、両者はセットでしか成立しない。
+                bool useChain = accumulateSmalParentBend
+                    && (joint != 16 || (!excludeHeadFromChain && headFitted));
                 Quaternion smalPose = useChain ? smalAccum[joint] : smalLocal;
                 Vector3 smalPosedDir = (smalPose * smalRestDir).normalized;
                 Quaternion bendSmal = Quaternion.FromToRotation(smalRestDir, smalPosedDir);
@@ -575,7 +582,7 @@ public sealed partial class AnimalPoseApplier
                     Debug.Log("[HEADFIT] restWorldRot=" + restWorldRot.eulerAngles.ToString("F3") +
                         " bindDirLocal=" + boneBindDirLocal.ToString("F4") +
                         " unityRestDirWorld=" + unityRestDirWorld.ToString("F4") +
-                        " useChain=" + useChain);
+                        " useChain=" + useChain + " fitted=" + headFitted);
                 }
 
                 // 2 軸版（既定 OFF）。ロールを同じ肢のもう 1 本で拘束する。
@@ -613,7 +620,7 @@ public sealed partial class AnimalPoseApplier
                 // M = FromToRotation(smalRestDir, unityRestDirWorld) は方向 1 本しか拘束せず
                 // ロールが任意。クリップ全体から θ を当てはめて埋める。
                 // 照準（bindDirLocal）も同じ当てはめで決めている（PrimeAnimalBind）。
-                if (joint == 16 && headAimFromModelForward)
+                if (headFitted && headAimFromModelForward)
                 {
                     float roll = GetBakedHeadRoll(cache);
                     if (Mathf.Abs(roll) > 0.001f)

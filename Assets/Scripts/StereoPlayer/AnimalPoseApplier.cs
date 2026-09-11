@@ -1291,6 +1291,19 @@ public sealed partial class AnimalPoseApplier
     private static Dictionary<string, Vector3> bakedHeadAim;
     private static Dictionary<string, float> bakedHeadRoll;
 
+    // このモデルが当てはめ表に載っているか。
+    //
+    // **載っていないモデルに頭の新経路を掛けてはいけない**（2026-09-11）。
+    // 新経路は「頭も連鎖に入れる」＋「jointFrameMap を FromToRotation に固定」で、
+    // どちらも**当てはめた照準とロールがあって初めて成立する**。
+    // 表に無いモデルは照準が頭メッシュの重心のままなので、連鎖で入力が大きくなるぶん
+    // 誤差も増え、ロールも 0 のままで拘束されない。従来経路（連鎖から外す＋首を副軸にした
+    // 2 軸基底）に残す。
+    internal static bool HasBakedHeadFit(AnimalRigCache cache)
+    {
+        return TryGetBakedHeadAim(cache, out _);
+    }
+
     // 当てはめたロール（度）。表に無ければ 0。
     internal static float GetBakedHeadRoll(AnimalRigCache cache)
     {

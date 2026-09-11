@@ -50,6 +50,8 @@ bundle 内の検出オブジェクト（Human / Animal / Else）を、対応す�
 
 作業前に関連ドキュメントを参照すること。ドキュメントがない場合は `docs/` に作成し、作業中・作業後に更新する。
 
+**`Docs/` は git で追跡しない**（2026-09-11 に `.gitignore` へ追加。手元にだけ置く）。docs を書く・更新する運用はそのまま続ける。コミットに docs を含めようとしても ignore される。`docs/bundle-shared/` の生成側との同期は従来どおりフォルダごとのコピーで行う。
+
 | ドキュメント | 内容 |
 |---|---|
 | [docs/bundle-placement.md](docs/bundle-placement.md) | bundle 構造・meta.bin・anchor 配置（発表用まとめ + 実装リファレンス） |

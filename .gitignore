@@ -82,8 +82,10 @@ Assets/AssetStoreTools*
 .gemini/
 
 
-# 検証用の一時成果物（比較画像・キャプチャ動画）。手元には残すがリポジトリには入れない
-/[Dd]ocs/tmp/
+# Docs/ は丸ごとリポジトリに入れない（2026-09-11〜）。手元には残す。
+# 作業記録・週次・bundle 生成側との共有フォルダ（bundle-shared/ はフォルダごとコピーで同期する）
+# もここに含まれる。それ以前の履歴には残っている。
+/[Dd]ocs/
 
 # bundle はリポジトリに入れない。1 個 100MB 級で、生成側（Python プロジェクト）が
 # 正本を持っているため。手元には置くが git では追わない。
@@ -93,7 +95,6 @@ Assets/AssetStoreTools*
 !/Assets/StreamingAssets/bundle.svb
 !/Assets/StreamingAssets/bundle.svb.meta
 
-# 共有フォルダはそのまま相手に渡すので、生成物を混ぜない
-Docs/bundle-shared/__pycache__/
-# 解析スクリプトを走らせると Docs 配下にも出る。共有物に混ぜない。
+# 共有フォルダはそのまま相手に渡すので、生成物を混ぜない（Docs/ 自体は上で ignore 済み。
+# 解析スクリプトを走らせると Docs 配下にも出るので、コピーして渡す前に消す目印として残す）
 Docs/**/__pycache__/

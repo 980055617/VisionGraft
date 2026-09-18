@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 3ca2cccf70c710c46819bd4036ba9592
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 360150
+  packageName: Sport Car Free 4
+  packageVersion: 1.0
+  assetPath: Assets/SportCar/Models/SportCar_4/Materials/Body.mat
+  uploadId: 864038

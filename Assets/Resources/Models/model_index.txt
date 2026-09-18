@@ -73,3 +73,12 @@ Models/Else/03_Golf
 Models/Else/04_Soccer
 Models/Else/05_Tennis
 Models/Else/06_DieselLocomotive
+Models/Else/07_SportCar_1_Blue
+Models/Else/08_SportCar_1_Orange
+Models/Else/09_SportCar_1_White
+Models/Else/10_SportCar_4_Black
+Models/Else/11_SportCar_4_Red
+Models/Else/12_SportCar_4_Silver
+Models/Else/13_SportCar_5_Blue
+Models/Else/14_SportCar_5_Green
+Models/Else/15_SportCar_5_White

@@ -62,6 +62,7 @@ bundle 内の検出オブジェクト（Human / Animal / Else）を、対応す�
 | [docs/model-materials.md](docs/model-materials.md) | モデルのマテリアル（毛・ヒゲのカードの透け等）。棚卸しは `ModelMaterialAudit` |
 | [docs/animal-model-consistency.md](docs/animal-model-consistency.md) | Animal をモデル差し替えしたときの大きさ・姿勢の揃い方。棚卸しは `AnimalModelGeometryAudit` |
 | [docs/refactoring.md](docs/refactoring.md) | リファクタリングの手順（安全網の取り方・NG パターン）と実施記録 |
+| [docs/architecture-audit-2026-09-18.md](docs/architecture-audit-2026-09-18.md) | 全体構成の再点検（実験進行・track 状態の寿命・シーン値とコード既定・実機条件）。未対処の問題一覧 |
 | [docs/DogMetaBoneMapping.md](docs/DogMetaBoneMapping.md) | 犬モデルのボーンマッピング・スケール調査 |
 | [docs/human-animation-test-scene.md](docs/human-animation-test-scene.md) | Human アニメーションテストシーンの使い方 |
 | [docs/presentations/weekly/](docs/presentations/weekly/) | 週次進捗ファイル（`YYYY-MM-DD.md`、金曜日の日付） |

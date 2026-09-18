@@ -15,7 +15,7 @@ public sealed class ExperimentBundleCatalog
 {
     public string humanBundleFileName = DefaultHumanBundleFileName;
     public string animalBundleFileName = DefaultAnimalBundleFileName;
-    public string trainBundleFileName = DefaultTrainBundleFileName;
+    public string carBundleFileName = DefaultCarBundleFileName;
     // 操作チュートリアル用。実験の 3 本とは別のクリップで、置換ありモードで再生する
     // （Model ボタンを教えるため）。人か動物が 1 体は写っていること、video.mp4 が
     // H.264 であること（Quest は mp4v を再生できない。ADR 0003）が条件。
@@ -25,19 +25,21 @@ public sealed class ExperimentBundleCatalog
     // 中身が再生成版に差し替わっていく。
     // 動画の同一性は manifest.inputs.video_mp4 で見ること。ファイル名は当てにならない。
     //
-    // 2026-09-05 現在の中身（D-006 で 3 本とも除去前ステレオ動画を差し替えた）:
-    //   bundle_human.svb  : bundle_shots_driftfix_preremovalfix
-    //                       ← 背景ドリフト補正あり。**inpaintfix 系を入れないこと**。
-    //                       一度間違えた版が配布され、補正が消えるところだった
-    //   bundle_animal.svb : bundle_shots_depthdriftfix_shotsfix_preremovalfix（shots 28）
-    //   bundle_train.svb  : bundle_shots_inpaintfix_zquantfix_preremovalfix
-    //                       ← quant_pos_scale = 0.0001（D-008）
+    // 2026-09-17 現在の中身（生成側の 720 行世代への再納品。D-010〜D-015、
+    // 中身の同一性は docs/bundle-shared/recommended_bundles.json の sha256 で照合する）:
+    //   bundle_human.svb  : bundle_fullframe_20260917（FINNAL_HUMAN、165 MB）
+    //                       ← 背景ドリフト補正 + mask 中央値 anchor。**inpaintfix 系を入れないこと**。
+    //   bundle_animal.svb : bundle_fullframe_20260917（FINNAL_ANIMAL、124 MB、shots 28、anchor v の鏡映修正済み）
+    //   bundle_car.svb    : bundle_fullframe_20260917（FINNAL_CAR、129 MB、other 5 track）
+    //                       ← quant_pos_scale = 0.0001（D-008 と同じ遠景対策）
+    //   train は研究対象から外れた（2026-09-17）。bundle_train.svb は置かない。
+    // 3 本とも eye 1280x720（旧世代は 640 行）。旧世代と混ぜて置かないこと。
     //
     // **StreamingAssets は APK に丸ごと焼かれる。** 検証用の古い bundle を置きっぱなしに
     // しないこと（2026-09-05 に 737MB → 380MB まで戻した）。
     public const string DefaultHumanBundleFileName = "bundle_human.svb";
     public const string DefaultAnimalBundleFileName = "bundle_animal.svb";
-    public const string DefaultTrainBundleFileName = "bundle_train.svb";
+    public const string DefaultCarBundleFileName = "bundle_car.svb";
     // 2026-09-11 時点の中身: 旧 bundle.svb（01_dog クリップ、289 フレーム）の video.mp4 を
     // H.264 に再エンコードした暫定版。生成側が正式なチュートリアル用 bundle を出したら差し替える。
     public const string DefaultTutorialBundleFileName = "bundle_tutorial.svb";
@@ -50,8 +52,8 @@ public sealed class ExperimentBundleCatalog
                 return FallbackIfBlank(humanBundleFileName, DefaultHumanBundleFileName);
             case ExperimentVideo.Animal:
                 return FallbackIfBlank(animalBundleFileName, DefaultAnimalBundleFileName);
-            case ExperimentVideo.Train:
-                return FallbackIfBlank(trainBundleFileName, DefaultTrainBundleFileName);
+            case ExperimentVideo.Car:
+                return FallbackIfBlank(carBundleFileName, DefaultCarBundleFileName);
             case ExperimentVideo.Tutorial:
                 return FallbackIfBlank(tutorialBundleFileName, DefaultTutorialBundleFileName);
             default:

@@ -10,7 +10,7 @@ public class ExperimentBundleCatalogTests
         // 既定名は StreamingAssets に実在するファイルでなければならない。
         Assert.That(catalog.Resolve(ExperimentVideo.Human), Is.EqualTo("bundle_human.svb"));
         Assert.That(catalog.Resolve(ExperimentVideo.Animal), Is.EqualTo("bundle_animal.svb"));
-        Assert.That(catalog.Resolve(ExperimentVideo.Train), Is.EqualTo("bundle_train.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Car), Is.EqualTo("bundle_car.svb"));
     }
 
     [Test]
@@ -32,10 +32,10 @@ public class ExperimentBundleCatalogTests
     {
         ExperimentBundleCatalog catalog = new ExperimentBundleCatalog
         {
-            trainBundleFileName = string.Empty,
+            carBundleFileName = string.Empty,
         };
 
-        Assert.That(catalog.Resolve(ExperimentVideo.Train), Is.EqualTo("bundle_train.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Car), Is.EqualTo("bundle_car.svb"));
     }
 
     [Test]
@@ -45,11 +45,11 @@ public class ExperimentBundleCatalogTests
 
         string human = catalog.Resolve(ExperimentVideo.Human);
         string animal = catalog.Resolve(ExperimentVideo.Animal);
-        string train = catalog.Resolve(ExperimentVideo.Train);
+        string car = catalog.Resolve(ExperimentVideo.Car);
 
         Assert.That(human, Is.Not.EqualTo(animal));
-        Assert.That(animal, Is.Not.EqualTo(train));
-        Assert.That(human, Is.Not.EqualTo(train));
+        Assert.That(animal, Is.Not.EqualTo(car));
+        Assert.That(human, Is.Not.EqualTo(car));
     }
 }
 
@@ -95,29 +95,36 @@ public class ExperimentTrialHandoffTests
         Assert.That(ExperimentTrialHandoff.Consume(), Is.Null);
     }
 
-    // StereoOnly 条件が normal mode（除去前動画）で再生されること。
+    // StereoOnly と Monocular が normal mode（除去前動画）で再生されること。
     // ここが逆になると対照条件が「穴の空いた映像」になり実験が成立しない。
+    // 単眼はさらに左目映像を両目に出す（StartMonocular）。
     [Test]
-    public void StartInNormalMode_IsTrueOnlyForStereoOnly()
+    public void StartInNormalMode_IsTrueForStereoOnlyAndMonocular()
     {
         ExperimentTrialRequest stereoOnly = new ExperimentTrialRequest(
-            "bundle_human.svb", ExperimentDisplayMode.StereoOnly, 0, ExperimentVideo.Human);
+            "bundle_human.svb", ExperimentDisplayMode.StereoOnly, 3, ExperimentVideo.Human);
         ExperimentTrialRequest modelReplaced = new ExperimentTrialRequest(
-            "bundle_human.svb", ExperimentDisplayMode.ModelReplaced, 3, ExperimentVideo.Human);
+            "bundle_human.svb", ExperimentDisplayMode.ModelReplaced, 6, ExperimentVideo.Human);
+        ExperimentTrialRequest monocular = new ExperimentTrialRequest(
+            "bundle_human.svb", ExperimentDisplayMode.Monocular, 0, ExperimentVideo.Human);
 
         Assert.That(stereoOnly.StartInNormalMode, Is.True);
+        Assert.That(stereoOnly.StartMonocular, Is.False);
         Assert.That(modelReplaced.StartInNormalMode, Is.False);
+        Assert.That(modelReplaced.StartMonocular, Is.False);
+        Assert.That(monocular.StartInNormalMode, Is.True);
+        Assert.That(monocular.StartMonocular, Is.True);
     }
 
     [Test]
     public void Request_KeepsTrialMetadata()
     {
         ExperimentTrialRequest request = new ExperimentTrialRequest(
-            "bundle_train.svb", ExperimentDisplayMode.ModelReplaced, 4, ExperimentVideo.Train);
+            "bundle_car.svb", ExperimentDisplayMode.ModelReplaced, 4, ExperimentVideo.Car);
 
-        Assert.That(request.bundleFileName, Is.EqualTo("bundle_train.svb"));
+        Assert.That(request.bundleFileName, Is.EqualTo("bundle_car.svb"));
         Assert.That(request.trialIndex, Is.EqualTo(4));
-        Assert.That(request.video, Is.EqualTo(ExperimentVideo.Train));
+        Assert.That(request.video, Is.EqualTo(ExperimentVideo.Car));
         Assert.That(request.mode, Is.EqualTo(ExperimentDisplayMode.ModelReplaced));
     }
 }
@@ -127,12 +134,12 @@ public class ExperimentTrialDescribeTests
     [Test]
     public void Describe_ShowsOneBasedPositionAndCondition()
     {
-        ExperimentTrial trial = ExperimentPlan.BuildTrials(ExperimentGroup.A, 1)[2];
+        ExperimentTrial trial = ExperimentPlan.BuildTrials(ExperimentGroup.A, 1)[5];
 
         string text = trial.Describe(ExperimentPlan.TrialCount);
 
-        Assert.That(text, Does.StartWith("3/6"));
-        Assert.That(text, Does.Contain("Train"));
+        Assert.That(text, Does.StartWith("6/9"));
+        Assert.That(text, Does.Contain("Car"));
         Assert.That(text, Does.Contain("StereoOnly"));
     }
 }

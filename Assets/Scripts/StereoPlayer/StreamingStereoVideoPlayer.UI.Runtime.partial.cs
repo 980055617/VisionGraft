@@ -644,6 +644,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
 
 
+    // 掴んでいる間の scrub（つまみに映像を追従させる）の状態。
+    // 2026-09-11 実機「ドラッグ中に動画が関係なく動いている。普通はつまみに合わせて動く」。
+    private bool runtimeProgressDragWasPlaying;
+    private float runtimeProgressLastScrubTime = -1f;
+    private float runtimeProgressLastScrubValue = -1f;
+    // 毎フレーム飛ばすとデコーダが flush され続けて離したあと映像が出るまで待たされる（2026-09-01）ので、
+    // 0.15 秒に 1 回・つまみが 0.4% 以上動いたときだけ飛ばす。一時停止した上で飛ばすので、
+    // 追従が遅れても再生が勝手に進むことはない。
+    private const float ProgressScrubMinIntervalSeconds = 0.15f;
+    private const float ProgressScrubMinDelta = 0.004f;
+
     private void OnRuntimeProgressSliderChanged(float normalized)
     {
         if (suppressRuntimeProgressCallback || vp == null)
@@ -651,28 +662,56 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        // **掴んでいる間はシークしない。**
-        // 以前は値が動くたびに毎フレーム シークしていたので、ドラッグ中ずっと
-        // デコーダが flush され続け、離したあと映像が出るまで待たされていた。
-        // 離したときに 1 回だけ飛ばす。
         if (runtimeProgressDragNotifier != null && runtimeProgressDragNotifier.IsDragging)
         {
+            // 掴んでいる間は間引いて飛ばし、映像をつまみに追従させる。操作ログには残さない
+            // （離したときの 1 回だけ `seek` として残す）。
+            float now = Time.unscaledTime;
+            if (now - runtimeProgressLastScrubTime >= ProgressScrubMinIntervalSeconds &&
+                Mathf.Abs(normalized - runtimeProgressLastScrubValue) >= ProgressScrubMinDelta)
+            {
+                runtimeProgressLastScrubTime = now;
+                runtimeProgressLastScrubValue = normalized;
+                SeekToNormalizedPosition(normalized, false);
+            }
+
             return;
         }
 
-        SeekToNormalizedPosition(normalized);
+        SeekToNormalizedPosition(normalized, true);
     }
 
 
-    // 掴んでいたつまみを離したとき。ここで初めて飛ばす。
+    // 掴んだとき: 再生中なら止める（映像がつまみと無関係に進まないように）。
+    // 離したとき: その位置へ飛ばし、掴む前に再生中だったなら再開する。
+    // ここでの一時停止・再開は被験者の操作ではないので、TogglePausePlayback を通さず
+    // 操作ログ（pause / resume）にも残さない。チュートリアルの A ボタンの段階を誤って進めないため。
     private void OnRuntimeProgressDragChanged(bool dragging)
     {
-        if (dragging || vp == null || runtimeProgressSlider == null)
+        if (vp == null || runtimeProgressSlider == null)
         {
             return;
         }
 
-        SeekToNormalizedPosition(runtimeProgressSlider.value);
+        if (dragging)
+        {
+            runtimeProgressDragWasPlaying = vp.isPlaying;
+            runtimeProgressLastScrubTime = -1f;
+            runtimeProgressLastScrubValue = -1f;
+            if (runtimeProgressDragWasPlaying)
+            {
+                RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Pause);
+            }
+
+            return;
+        }
+
+        SeekToNormalizedPosition(runtimeProgressSlider.value, true);
+        if (runtimeProgressDragWasPlaying)
+        {
+            runtimeProgressDragWasPlaying = false;
+            RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
+        }
     }
 
 
@@ -697,7 +736,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private void SeekToNormalizedPosition(float normalized)
+    // logOperation: 操作ログに `seek` を残すか。掴んでいる間の scrub は残さない（離したときの 1 回だけ）。
+    private void SeekToNormalizedPosition(float normalized, bool logOperation = true)
     {
         normalized = Mathf.Clamp01(normalized);
         long totalFramesVp = vp.frameCount > 0 ? (long)vp.frameCount : 0L;
@@ -715,7 +755,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             totalFrames);
         RuntimePlaybackController.ApplySeekTarget(vp, target);
 
-        ExperimentLog.Operation("seek", ExperimentCsv.Format(normalized));
+        if (logOperation)
+        {
+            ExperimentLog.Operation("seek", ExperimentCsv.Format(normalized));
+        }
         UpdateRuntimeProgressUi();
     }
 

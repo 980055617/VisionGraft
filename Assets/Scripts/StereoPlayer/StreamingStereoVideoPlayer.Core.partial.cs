@@ -154,6 +154,83 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 実験の試行として起動したか。Home へ戻るボタンの生成可否に使う。
     private bool startedAsExperimentTrial;
 
+    // 実験の指示「この category の track だけ読む」（null / 空 = 全部）。
+    // TryReadFrameObjects で落とすので、表示・pick・ピッカー・深度較正のすべてがこの絞り込みを見る。
+    // public なのはバッチ検証（BatchPlaybackLogger の -onlyCategory）が play mode 前に流し込むため。
+    // シーンには書き込まない（Inspector にも出さない）。
+    [HideInInspector] public string experimentOnlyCategory;
+
+    // 実験の指示「animal の既定モデルはこの prefab 名」。prefab 一覧はフレームを跨いで読まれるので、
+    // 最初に animal track を置くときに index へ解決する（ApplyExperimentPreferredAnimalModelOnce）。
+    [HideInInspector] public string experimentPreferredAnimalModelName;
+
+    // 実験の指示「model_selection.json とセッション上書きを読まない」。
+    [HideInInspector] public bool experimentSkipTrackCustomizationRestore;
+
+    // 実験の単眼条件: 除去前ステレオ動画の**左目映像を両目に**出す（両眼視差なし）。
+    // Screens.cs の ApplyStereoUvSettings が右目の板にも左半分の UV を割り当てる。
+    // startInNormalMode と組で使う（Monocular は normal mode の一種）。
+    [HideInInspector] public bool experimentMonocular;
+
+
+    private bool IsCategoryExcludedByExperiment(byte categoryId)
+    {
+        return !string.IsNullOrEmpty(experimentOnlyCategory) && !IsCategoryNamed(categoryId, experimentOnlyCategory);
+    }
+
+
+    // animal の既定モデルを prefab 名で決める。一覧がまだ無ければ次回に持ち越す。
+    private void ApplyExperimentPreferredAnimalModelOnce()
+    {
+        if (string.IsNullOrEmpty(experimentPreferredAnimalModelName) || animalPrefabs == null || animalPrefabs.Length == 0)
+        {
+            return;
+        }
+
+        string wanted = experimentPreferredAnimalModelName;
+        experimentPreferredAnimalModelName = null;
+
+        for (int i = 0; i < animalPrefabs.Length; i++)
+        {
+            GameObject prefab = animalPrefabs[i];
+            if (prefab != null && string.Equals(prefab.name, wanted, System.StringComparison.OrdinalIgnoreCase))
+            {
+                selectedAnimalIndex = i;
+                Debug.Log($"[Experiment] animal の既定モデル = {prefab.name}（index {i}）");
+                return;
+            }
+        }
+
+        Debug.LogWarning($"[Experiment] animal モデル '{wanted}' が一覧に無いので selectedAnimalIndex={selectedAnimalIndex} のまま");
+    }
+
+
+    // 実験の説明パネルを画面に被せないための読み取り口。画面の中心・上・右・大きさ（m）。
+    // 画面より手前に置いた UI でないとレイが画面のコライダーに取られて押せない（2026-09-11 実機指摘）ので、
+    // ExperimentController はこれを基準に画面の外側へパネルを置く。
+    public bool TryGetScreenFrame(out Vector3 center, out Vector3 up, out Vector3 right, out Vector2 sizeMeters)
+    {
+        center = Vector3.zero;
+        up = Vector3.up;
+        right = Vector3.right;
+        sizeMeters = Vector2.zero;
+
+        Transform basis = leftScreen != null ? leftScreen : rightScreen;
+        if (basis == null)
+        {
+            return false;
+        }
+
+        center = leftScreen != null && rightScreen != null
+            ? (leftScreen.position + rightScreen.position) * 0.5f
+            : basis.position;
+        GetScreenSizeMeters(basis, out float width, out float height, out _);
+        up = basis.up;
+        right = basis.right;
+        sizeMeters = new Vector2(Mathf.Abs(width), Mathf.Abs(height));
+        return sizeMeters.x > 0.001f && sizeMeters.y > 0.001f;
+    }
+
     // 入口シーンへ戻れるか。実験中は戻らせない。
     private bool CanReturnToHomeScene()
     {
@@ -229,8 +306,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 被験者に表示条件を切り替えさせない。
         enableNormalModeToggleButton = false;
 
+        experimentOnlyCategory = request.onlyCategory;
+        experimentPreferredAnimalModelName = request.preferredAnimalModelName;
+        experimentSkipTrackCustomizationRestore = request.skipTrackCustomizationRestore;
+        experimentMonocular = request.StartMonocular;
+
         Debug.Log(
-            $"[Experiment] trial {request.trialIndex}: {request.video} / {request.mode} → {bundleFileName}");
+            $"[Experiment] trial {request.trialIndex}: {request.video} / {request.mode} → {bundleFileName} " +
+            $"monocular={experimentMonocular} " +
+            $"onlyCategory={(string.IsNullOrEmpty(request.onlyCategory) ? "(all)" : request.onlyCategory)} " +
+            $"animalModel={(string.IsNullOrEmpty(request.preferredAnimalModelName) ? "(inspector)" : request.preferredAnimalModelName)} " +
+            $"skipRestore={request.skipTrackCustomizationRestore}");
     }
 
 

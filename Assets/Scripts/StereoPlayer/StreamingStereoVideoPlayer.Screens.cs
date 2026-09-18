@@ -143,7 +143,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         leftTexProp = ResolveTexProp(leftMat);
         rightTexProp = ResolveTexProp(rightMat);
 
-        ApplyStereoUvSettings(leftMat, 1);
+        // 単眼条件（experimentMonocular）は板を 1 枚にする。左の板を _EyeMode 0（両目に描く）にし、
+        // 右の板は PlaceScreens で隠す。「二枚に同じ情報を見せるのではなく、一枚のみ両目で見る」
+        // （2026-09-11 指示）。それまでは右の板にも左半分を割り当てて 2 枚出していた。
+        ApplyStereoUvSettings(leftMat, experimentMonocular ? 0 : 1);
         ApplyStereoUvSettings(rightMat, 2);
 
         // スクリーンは背景として先に描き、深度を書かない。
@@ -253,7 +256,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (mat.HasProperty("_UVOffset"))
         {
-            float uOffset = eyeMode == 2 ? 0.5f : 0f;
+            // 右目の板は SBS の右半分（u 0.5〜1.0）。左の板と _EyeMode 0（両目。単眼条件）は左半分。
+            // 単眼条件の右の板は隠すので値は使われないが、万一出ても左半分になるよう 0 にしておく。
+            float uOffset = eyeMode == 2 && !experimentMonocular ? 0.5f : 0f;
             mat.SetVector("_UVOffset", new Vector4(uOffset, 0f, 0f, 0f));
         }
     }
@@ -363,14 +368,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         SyncRayCanvasInteractionSurfaceToScreen(leftScreen);
         SyncRayCanvasInteractionSurfaceToScreen(rightScreen);
 
+        // 単眼条件は 1 枚を両目で見る: 左の板を中央（左右 1 mm のずらし無し）に置き、右の板は消す。
+        // 右の板は消えていても位置は中央に揃えておく（画面の中心を左右の中点で取る所がある）。
+        bool singleScreen = experimentMonocular;
         if (leftScreen != null)
         {
-            TransformWriter.ApplyPose(leftScreen, placement.leftPosition, placement.rotation);
+            TransformWriter.ApplyPose(leftScreen, singleScreen ? placement.center : placement.leftPosition, placement.rotation);
         }
 
         if (rightScreen != null)
         {
-            TransformWriter.ApplyPose(rightScreen, placement.rightPosition, placement.rotation);
+            TransformWriter.ApplyPose(rightScreen, singleScreen ? placement.center : placement.rightPosition, placement.rotation);
+            SceneObjectWriter.ApplyActive(rightScreen.gameObject, !singleScreen);
         }
 
         FixFacingIfNeeded(leftScreen, head);

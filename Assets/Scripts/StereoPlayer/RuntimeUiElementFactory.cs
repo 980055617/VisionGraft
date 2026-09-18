@@ -35,4 +35,10 @@ public static class RuntimeUiElementFactory
     {
         return target != null ? target.AddComponent<Slider>() : null;
     }
+
+    // Graphic の周りに縁を描く（選択中のセルの枠など）。
+    public static Outline AddOutline(GameObject target)
+    {
+        return target != null ? target.AddComponent<Outline>() : null;
+    }
 }

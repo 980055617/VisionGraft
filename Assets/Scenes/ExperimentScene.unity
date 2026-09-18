@@ -990,7 +990,7 @@ MonoBehaviour:
   bundleCatalog:
     humanBundleFileName: bundle_human.svb
     animalBundleFileName: bundle_animal.svb
-    trainBundleFileName: bundle_train.svb
+    carBundleFileName: bundle_car.svb
   panelCanvasWithInteractionRayPrefab: {fileID: 3675716834162371033, guid: 19be18d74f8608a4583c4c6c4e6e8723, type: 3}
   panelDistanceMeters: 1.2
   trialPanelVerticalOffsetMeters: -0.5

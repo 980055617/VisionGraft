@@ -185,7 +185,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         uv = Vector2.zero;
         distance = 0f;
         point = Vector3.zero;
-        if (screen == null)
+        // 単眼条件で隠した右の板（非アクティブ）は当たり判定からも外す。
+        if (screen == null || !screen.gameObject.activeInHierarchy)
         {
             return false;
         }

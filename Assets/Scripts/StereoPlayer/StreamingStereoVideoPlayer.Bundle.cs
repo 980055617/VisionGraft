@@ -189,7 +189,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         LoadHumanSmplSidecar(extractedHumanSmplPath);
         Debug.Log($"[BUNDLETIME] sidecar {loadStopwatch.ElapsedMilliseconds}ms");
 
-        RestoreTrackCustomization();
+        if (experimentSkipTrackCustomizationRestore)
+        {
+            // チュートリアルは毎回同じ見た目で始める（研究者の基準ファイルも被験者の調整も読まない）。
+            Debug.Log("[Customization] 実験の指示により復元を省略");
+        }
+        else
+        {
+            RestoreTrackCustomization();
+        }
         // 復元の**あと**に流す。バッチ検証の指定を保存値に勝たせるため。
         ApplyBatchManualOverrideSpecs();
 

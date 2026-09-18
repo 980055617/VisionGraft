@@ -77,5 +77,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         ResetHumanOtherContactStateForShotBoundary();
         // Else の連結順と向きの記憶も shot をまたがせない。
         ResetElseChainStateForShotBoundary();
+        ResetElseFrameOutStateForShotBoundary();
     }
 }

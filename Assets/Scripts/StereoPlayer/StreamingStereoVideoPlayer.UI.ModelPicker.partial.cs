@@ -22,6 +22,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // セルの間隔は 316、素のプレビューは 108 なので 2.6 倍（281）でも隣のモデルには当たらない。
     private const float ModelPickerPreviewHoverBoost = 2.6f;
 
+    // 今のモデルのセルに付ける縁。背景色（薄い青）だけでは分からないと指摘された（2026-09-11 実機）。
+    // 縁は Outline（Image を 4 方向にずらして描く）。6px は 300×175 のセルに対して細い枠に見える幅。
+    private static readonly Color ModelPickerCurrentOutlineColor = new Color(1f, 0.85f, 0.35f, 1f);
+    private static readonly Vector2 ModelPickerCurrentOutlineDistance = new Vector2(6f, 6f);
+    private readonly List<Outline> runtimeModelPickerEntryOutlines = new List<Outline>();
+
+    // 画面が UI（1.2 m）より手前にあるとき、パネルを画面の面よりこれだけ手前に置く。
+    // 画面の Quad は ISDK のレイの面を持ち、手前にある面がレイを取るため、パネルが画面と重なる
+    // 部分は画面より手前に無いと押せない（2026-09-11 実機指摘）。
+    private const float ModelPickerInFrontOfScreenMarginMeters = 0.10f;
+
     // ヘッダの track ボタン列。**固定枠にしない。**
     // 同時に出る track は bundle_train の実測で最大 5 だが、上限を決め打ちすると
     // それを超えた ID に到達できなくなる。出ている数だけその場で作る。
@@ -160,6 +171,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         RegisterModelPickerTabObject(ModelPickerTabModels, runtimeModelPickerHideButton.gameObject);
 
         runtimeModelPickerEntryButtons.Clear();
+        runtimeModelPickerEntryOutlines.Clear();
         for (int i = 0; i < RuntimeModelPickerEntriesPerPage; i++)
         {
             int localIndex = i;
@@ -177,6 +189,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             RuntimeHoverNotifier hover = button.gameObject.AddComponent<RuntimeHoverNotifier>();
             hover.index = localIndex;
             hover.onHoverChanged = OnRuntimeModelPickerEntryHoverChanged;
+
+            // 今のモデルのセルに付ける縁。ON/OFF は UpdateRuntimeModelPickerEntryButtons で切り替える。
+            Outline outline = RuntimeUiElementFactory.AddOutline(button.gameObject);
+            UiComponentWriter.ApplyOutline(outline, false, ModelPickerCurrentOutlineColor, ModelPickerCurrentOutlineDistance);
+            runtimeModelPickerEntryOutlines.Add(outline);
 
             runtimeModelPickerEntryButtons.Add(button);
             RegisterModelPickerTabObject(ModelPickerTabModels, button.gameObject);
@@ -326,9 +343,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         runtimeModelPickerPreferredTrackId = runtimeModelPickerTrackId;
         runtimeTrackPrevKeyFrame = -1;
         runtimeTrackNextKeyFrame = -1;
-        runtimeModelPickerPageIndex = 0;
         // 回転の対象も合わせておく。別々だと「どれを触っているか」が分からなくなる。
         selectedManualRotationTrackId = runtimeModelPickerTrackId;
+        // 対象を替えたら、その track の今のモデルが載っているページへ。
+        runtimeModelPickerPageIndex = ResolveRuntimeModelPickerPageForCurrentSelection();
         Debug.Log($"[ModelPicker] target -> track={runtimeModelPickerTrackId} (slot {slot})");
         UpdateRuntimeModelPickerUiState();
     }
@@ -423,7 +441,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         runtimeModelPickerOpen = true;
         runtimeSettingsOpen = false;
-        runtimeModelPickerPageIndex = 0;
+        // 今のモデルが載っているページから始める（1 ページ目固定だと、どれが今のモデルか分からない）。
+        runtimeModelPickerPageIndex = ResolveRuntimeModelPickerPageForCurrentSelection();
 
         // 開いている間は再生を止める。動いている対象を見ながら選ぶのは難しく、
         // 選んだ瞬間にインスタンスを作り直すので画が飛ぶ（2026-08-28 の要望）。
@@ -502,6 +521,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             basisWidth = Mathf.Abs(screenWidthMeters);
         }
 
+        // 位置は画面の面（画面の右端の右）で計算し、そのあと PinRuntimeUiDistance で頭から一定距離
+        // （runtimeUiDistanceMeters + ドラッグ分）へ引き寄せる。板の物理サイズは RuntimeModelPickerSizeMeters
+        // のまま距離換算しないので、位置の計算に渡す「画面の面での幅」は
+        // **物理幅 × 画面の距離 ÷ パネルの距離** に換算する（画面中央付近の角度が一致する）。
+        // 以前は ScaleUiOffsetForDistance（× screenDist / 2.0）で渡していて、画面 1.0 m のときは
+        // 実際の板の半分の幅で計算されていた。ただし横に大きく振った位置では線形の足し算が角度と
+        // 合わず、これだけでは左端の被り（約 7°）は残る。被りの対処は下の「画面より手前に置く」。
+        Vector2 pickerSizeAtScreen = ResolvePanelSizeAtScreenPlane(RuntimeModelPickerSizeMeters, basis.position, head);
         RuntimeControlsPlacement.Pose pose = RuntimeControlsPlacement.ResolveSettingsPose(
             basis.position,
             basis.forward,
@@ -511,11 +538,31 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             head != null,
             head != null ? head.position : Vector3.zero,
             basisWidth,
-            ScaleUiOffsetForDistance(RuntimeModelPickerSizeMeters),
+            pickerSizeAtScreen,
             ScaleUiOffsetForDistance(SettingsPanelGapMeters),
             ScaleUiOffsetForDistance(SettingsPanelOffsetMeters),
             SettingsPanelForwardOffsetMeters);
         Vector3 pickerPos = ApplyRuntimePanelDistanceOffset(PinRuntimeUiDistance(pose.position));
+
+        // **画面より手前に置く。** 板は角度で 38° 幅あり（0.84 m @1.2 m）、画面の右端（fovx 70° で 35°）に
+        // 被せずに置くと中心が 57° になって首を大きく振らないと見えない。だから被りは残し、
+        // 代わりに板を画面の面より手前（画面までの距離 − 0.1 m）に引き寄せ、見かけの大きさが
+        // 変わらないよう板を距離の比で縮める。手前にあれば重なった部分のレイも板に当たる。
+        // 画面が UI より奥（screenDist 2.0 など）のときは何もしない（元から手前）。
+        float pickerScale = 1f;
+        if (pinRuntimeUiDistance && head != null && baseScreen != null)
+        {
+            float screenDistance = Vector3.Distance(head.position, basis.position);
+            float maxDistance = screenDistance - ModelPickerInFrontOfScreenMarginMeters;
+            Vector3 away = pickerPos - head.position;
+            float distance = away.magnitude;
+            if (maxDistance >= 0.25f && distance > maxDistance && distance > 0.0001f)
+            {
+                pickerPos = head.position + away.normalized * maxDistance;
+                pickerScale = maxDistance / distance;
+            }
+        }
+
         TransformWriter.ApplyPose(
             runtimeModelPickerRoot.transform, pickerPos,
             FaceRuntimeUiToView(pickerPos, pose.rotation));
@@ -526,10 +573,57 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             TransformWriter.ApplyLocalScale(
                 rect,
                 new Vector3(
-                    RuntimeModelPickerSizeMeters.x / RuntimeModelPickerDefaultCanvasWidth,
-                    RuntimeModelPickerSizeMeters.y / RuntimeModelPickerDefaultCanvasHeight,
+                    RuntimeModelPickerSizeMeters.x * pickerScale / RuntimeModelPickerDefaultCanvasWidth,
+                    RuntimeModelPickerSizeMeters.y * pickerScale / RuntimeModelPickerDefaultCanvasHeight,
                     1f));
         }
+    }
+
+
+    // 頭から一定距離に引き寄せて置くパネルの「画面の面での見かけの大きさ」。
+    // 角度を揃える: 画面の面での幅 = 物理幅 × 画面までの距離 ÷ パネルまでの距離。
+    // 距離固定を切っているときは画面の面にそのまま置くので物理サイズのまま。
+    private Vector2 ResolvePanelSizeAtScreenPlane(Vector2 physicalSizeMeters, Vector3 screenPosition, Transform head)
+    {
+        if (!pinRuntimeUiDistance)
+        {
+            return physicalSizeMeters;
+        }
+
+        float screenDistance = head != null
+            ? Vector3.Distance(head.position, screenPosition)
+            : Mathf.Max(0.001f, screenDistanceMeters);
+        float panelDistance = Mathf.Max(0.25f, Mathf.Max(0.25f, runtimeUiDistanceMeters) + runtimePanelDistanceOffsetMeters);
+        return physicalSizeMeters * (Mathf.Max(0.001f, screenDistance) / panelDistance);
+    }
+
+
+    // 対象 track の今のモデルが載っているページ。開いた瞬間に「今のモデル」が見えるようにする
+    // （52 体・9 ページの animal では 1 ページ目に無いことが多い。2026-09-11 実機指摘）。
+    // 非表示や対象なしのときは 1 ページ目。
+    private int ResolveRuntimeModelPickerPageForCurrentSelection()
+    {
+        if (!TryGetRuntimeModelPickerTarget(out uint trackId, out byte categoryId, out _))
+        {
+            return 0;
+        }
+
+        GameObject[] prefabs = ResolveRuntimeModelPickerPrefabs(categoryId);
+        if (prefabs == null || prefabs.Length == 0)
+        {
+            return 0;
+        }
+
+        int defaultIndex = IsCategoryAnimal(categoryId) ? selectedAnimalIndex
+            : IsCategoryOther(categoryId) ? selectedElseIndex : selectedHumanIndex;
+        int selected = ResolveSelectedModelIndex(trackId, defaultIndex);
+        if (IsHiddenModelIndex(selected))
+        {
+            return 0;
+        }
+
+        selected = Mathf.Clamp(selected, 0, prefabs.Length - 1);
+        return selected / RuntimeModelPickerEntriesPerPage;
     }
 
 
@@ -598,9 +692,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (runtimeModelPickerStatusText != null)
         {
+            // 番号とページも出す。一覧は 6 件ずつなので、今のモデルが別ページにあるとき
+            // 「何番のどこにあるか」が分からない（2026-09-11 実機指摘）。
             string selectedName = hidden
                 ? "表示しない"
-                : (prefabs[selectedIndex] != null ? CleanModelDisplayName(prefabs[selectedIndex].name) : "missing");
+                : (prefabs[selectedIndex] != null
+                    ? $"{selectedIndex + 1}. {CleanModelDisplayName(prefabs[selectedIndex].name)} (p.{selectedIndex / RuntimeModelPickerEntriesPerPage + 1})"
+                    : "missing");
             List<uint> targets = availableTracks;
             int pos = targets != null ? targets.IndexOf(trackId) + 1 : 0;
             string targetInfo = targets != null && targets.Count > 1
@@ -696,23 +794,29 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             int modelIndex = startIndex + i;
             Text label = button.GetComponentInChildren<Text>(true);
             Image image = button.targetGraphic as Image;
+            Outline outline = i < runtimeModelPickerEntryOutlines.Count ? runtimeModelPickerEntryOutlines[i] : null;
             if (modelIndex < prefabs.Length)
             {
                 GameObject prefab = prefabs[modelIndex];
                 string modelName = prefab != null ? CleanModelDisplayName(prefab.name) : "missing";
+                bool isCurrent = modelIndex == selectedIndex;
                 if (label != null)
                 {
-                    // 選択中は枠の色で示すので、行頭の "> " は付けない（中央寄せだと中心がずれる）。
+                    // 今のモデルは縁（下）と状態行で示す。名前に「（現在）」を足すとセル幅 300px で
+                    // 2 行に折り返した（バッチ撮影で確認）ので文言は付けない。行頭の "> " も
+                    // 中央寄せで中心がずれるので使わない。
                     UiComponentWriter.ApplyTextContent(label, $"{modelIndex + 1}. {modelName}");
                 }
                 if (image != null)
                 {
                     UiComponentWriter.ApplyGraphicColor(
                         image,
-                        modelIndex == selectedIndex
+                        isCurrent
                             ? new Color(0.15f, 0.35f, 0.48f, 0.95f)
                             : new Color(0.13f, 0.14f, 0.15f, 0.92f));
                 }
+                // 今のモデルのセルだけ明るい縁を付ける。プレビュー（3D）には触らないので邪魔にならない。
+                UiComponentWriter.ApplyOutline(outline, isCurrent, ModelPickerCurrentOutlineColor, ModelPickerCurrentOutlineDistance);
 
                 SceneObjectWriter.ApplyActive(button.gameObject, true);
                 UiComponentWriter.ApplyInteractable(button, true);
@@ -729,6 +833,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 {
                     UiComponentWriter.ApplyTextContent(label, string.Empty);
                 }
+                UiComponentWriter.ApplyOutline(outline, false, ModelPickerCurrentOutlineColor, ModelPickerCurrentOutlineDistance);
                 SceneObjectWriter.ApplyActive(button.gameObject, false);
             }
         }

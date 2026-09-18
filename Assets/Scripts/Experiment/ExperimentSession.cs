@@ -132,7 +132,7 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
     // 操作チュートリアルの開始。試行ではないので trials.csv には書かず、operations.csv に
     // tutorial_begin / tutorial_end を残す。sink は ExperimentController が ExperimentTutorial
     // （段階検出）を挟んで設定するので、ここでは触らない。
-    public void BeginTutorial(string bundleFileName, int beforeBlockIndex)
+    public void BeginTutorial(string bundleFileName, int beforeBlockIndex, ExperimentDisplayMode mode)
     {
         currentBundleFileName = bundleFileName;
         currentLoopCount = 0;
@@ -141,7 +141,7 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
         tutorialInProgress = true;
         tutorialBeforeBlock = beforeBlockIndex;
 
-        RecordOperation("tutorial_begin", $"bundle={bundleFileName} before_block={beforeBlockIndex}");
+        RecordOperation("tutorial_begin", $"bundle={bundleFileName} before_block={beforeBlockIndex} mode={mode}");
     }
 
     // result は ExperimentTutorial.DescribeResult() か "load_failed" / "aborted"。

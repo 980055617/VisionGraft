@@ -53,30 +53,30 @@ public sealed class HomeMenu : MonoBehaviour
         Camera cam = ResolveCamera();
         if (panel != null && cam != null)
         {
-            panel.UpdatePlacement(cam.transform);
+            // 動画の画面と同じ正面（トラッキング原点のヨー）に置く。頭の向きは使わない。
+            panel.UpdatePlacement(cam.transform, ExperimentPanel.ResolveFrontForward(cam.transform));
         }
     }
 
 
+    // 操作チュートリアルは被験者実験の中（各ブロックの直前）でだけ出す。Home からの単独起動は
+    // 2026-09-11 に一度足して同日に外した（「被験者実験からしか行かないように」）。
     private void ShowMenu()
     {
         panel.Show(
             "VisionGraft",
-            "どれを開きますか。\n\n" +
+            "どちらを開きますか。\n\n" +
             "・自由に見る … bundle を選んで再生します\n" +
-            "・被験者実験 … 参加者 ID と群を設定して開始します\n" +
-            "・チュートリアル … 操作の練習だけを行います（ログは残しません）",
+            "・被験者実験 … 参加者 ID を設定して開始します",
             new List<ExperimentPanel.ButtonSpec>
             {
-                ExperimentPanel.ButtonSpec.Create("自由に見る", () => Load(viewerSceneName, false)),
-                ExperimentPanel.ButtonSpec.Create("被験者実験", () => Load(experimentSceneName, false)),
-                ExperimentPanel.ButtonSpec.Create("チュートリアル", () => Load(experimentSceneName, true)),
+                ExperimentPanel.ButtonSpec.Create("自由に見る", () => Load(viewerSceneName)),
+                ExperimentPanel.ButtonSpec.Create("被験者実験", () => Load(experimentSceneName)),
             });
     }
 
 
-    // tutorialOnly: ExperimentScene をチュートリアル専用で開く（セッションもログも作らない）。
-    private void Load(string sceneName, bool tutorialOnly)
+    private void Load(string sceneName)
     {
         if (loading || string.IsNullOrEmpty(sceneName))
         {
@@ -98,34 +98,19 @@ public sealed class HomeMenu : MonoBehaviour
             HomeLaunchHandoff.RequestBundlePicker();
         }
 
-        if (tutorialOnly)
-        {
-            HomeLaunchHandoff.RequestTutorialOnly();
-        }
-
-        Debug.Log($"[Home] load scene: {sceneName} tutorialOnly={tutorialOnly}");
-        StartCoroutine(LoadSceneRoutine(sceneName, tutorialOnly));
+        Debug.Log($"[Home] load scene: {sceneName}");
+        StartCoroutine(LoadSceneRoutine(sceneName));
     }
 
 
     // **同期 LoadScene は使わない。** 押した瞬間にフレームが止まり、画面が固まったまま
     // 数秒待たされる（実機で「押しても反応しない」と報告された 2026-08-31）。
     // 先に「読み込み中」を出して 1 フレーム描かせてから、非同期で読み込む。
-    private IEnumerator LoadSceneRoutine(string sceneName, bool tutorialOnly)
+    private IEnumerator LoadSceneRoutine(string sceneName)
     {
-        string loadingBody;
-        if (tutorialOnly)
-        {
-            loadingBody = "チュートリアルを準備しています…";
-        }
-        else if (sceneName == viewerSceneName)
-        {
-            loadingBody = "bundle ピッカーを準備しています…";
-        }
-        else
-        {
-            loadingBody = "実験シーンを準備しています…";
-        }
+        string loadingBody = sceneName == viewerSceneName
+            ? "bundle ピッカーを準備しています…"
+            : "実験シーンを準備しています…";
 
         panel.Show("読み込み中", loadingBody, new List<ExperimentPanel.ButtonSpec>());
 

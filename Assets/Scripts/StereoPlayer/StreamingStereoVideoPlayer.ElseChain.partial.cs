@@ -37,12 +37,15 @@ public partial class StreamingStereoVideoPlayer
     private readonly Dictionary<ulong, int> elseChainOrderMemory = new Dictionary<ulong, int>();
     // 連結で決めた向き（yaw、度）。連結が解けた後もこれを使い続ける。
     private readonly Dictionary<uint, float> elseChainYawByTrack = new Dictionary<uint, float>();
+    // 前 frame の押し出し倍率（変化量の上限に使う）。
+    private readonly Dictionary<uint, float> elseChainPushByTrack = new Dictionary<uint, float>();
 
 
     private void ResetElseChainStateForShotBoundary()
     {
         elseChainOrderMemory.Clear();
         elseChainYawByTrack.Clear();
+        elseChainPushByTrack.Clear();
     }
 
 
@@ -95,6 +98,38 @@ public partial class StreamingStereoVideoPlayer
                 instance = instance,
                 model = model,
                 position = instance.transform.position,
+                scaleFactor = 1f,
+            });
+        }
+
+        // 慣性中（frame out 後）の車両も制約として残す。消えた瞬間に後続の押し出しが解けて
+        // 手前へ跳ぶ（1.59 m → 0.69 m）のを防ぐ。位置は慣性が決めた値、向きは凍結。
+        foreach (KeyValuePair<uint, ElseFrameOutState> kv in elseFrameOutByTrack)
+        {
+            ElseFrameOutState st = kv.Value;
+            if (!st.coasting ||
+                !trackInstances.TryGetValue(kv.Key, out GameObject coastInstance) ||
+                coastInstance == null || !coastInstance.activeInHierarchy)
+            {
+                continue;
+            }
+
+            bool dup = false;
+            for (int i = 0; i < elseChainItems.Count; i++)
+            {
+                if (elseChainItems[i].obj.trackId == kv.Key) { dup = true; break; }
+            }
+            if (dup) { continue; }
+
+            ReplaceableModel coastModel = coastInstance.GetComponent<ReplaceableModel>();
+            if (coastModel == null) { continue; }
+            if (screen == null && !ResolveAnchorToScreen(st.lastObj.anchorU, out screen, out _, out _)) { continue; }
+            elseChainItems.Add(new ElseChainItem
+            {
+                obj = st.lastObj,
+                instance = coastInstance,
+                model = coastModel,
+                position = coastInstance.transform.position,
                 scaleFactor = 1f,
             });
         }
@@ -174,6 +209,13 @@ public partial class StreamingStereoVideoPlayer
                 }
             }
 
+            if (elseChainMaxPushStep > 0f && elseChainPushByTrack.TryGetValue(item.obj.trackId, out float kPrev))
+            {
+                kMax = Mathf.Clamp(kMax, kPrev - elseChainMaxPushStep, kPrev + elseChainMaxPushStep);
+                kMax = Mathf.Max(1f, kMax);
+            }
+            elseChainPushByTrack[item.obj.trackId] = kMax;
+
             if (kMax > 1.0001f)
             {
                 item.position = camOrigin + v * kMax;
@@ -197,7 +239,24 @@ public partial class StreamingStereoVideoPlayer
                 continue;
             }
 
-            Vector3 dh = Vector3.ProjectOnPlane(d, up);
+            // 向きをどの位置から決めるか。押し出し後の位置から決めると、押し出し量が変わる → 向きが変わる →
+            // 端合わせの補正量が変わる → また押し出し量が変わる、という循環になる（通過中に後続の yaw が
+            // 108° → 170° まで流れた）。bundle の深度差がペアの前後を決められる（差 > elseChainDepthTieMeters、
+            // 通過中は 60〜130 mm）なら、**押し出す前の位置**（bundle の anchor そのもの）から向きを取る。
+            // 差が無い遠方（数 mm）だけ押し出し後の位置を使う（そこでは押し出しが唯一の奥行き情報）。
+            // bbox 高の比で奥行きを作る案は、機関車と客車で実高が違うので通過中に破綻した（154°）。
+            Vector3 headingD = d;
+            float kItem = Mathf.Max(0.0001f, item.scaleFactor);
+            float kFront = Mathf.Max(0.0001f, front.scaleFactor);
+            Vector3 itemRaw = camOrigin + (item.position - camOrigin) / kItem;
+            Vector3 frontRaw = camOrigin + (front.position - camOrigin) / kFront;
+            float dzData = Vector3.Dot(itemRaw - frontRaw, camForward);
+            if (Mathf.Abs(dzData) > Mathf.Max(0f, elseChainDepthTieMeters))
+            {
+                headingD = itemRaw - frontRaw;
+            }
+
+            Vector3 dh = Vector3.ProjectOnPlane(headingD, up);
             if (dh.sqrMagnitude < 0.000001f || camForwardH.sqrMagnitude < 0.000001f)
             {
                 continue;
@@ -208,11 +267,11 @@ public partial class StreamingStereoVideoPlayer
             // 反対を向く（2026-09-11 実機指摘「反対側が先頭」）。elseChainHeadingOffsetDeg（既定 180）で
             // 先頭側を手前（進行方向）へ向ける。
             float yaw = Mathf.DeltaAngle(0f, Vector3.SignedAngle(camForwardH, dh, up) + elseChainHeadingOffsetDeg);
-            elseChainYawByTrack[item.obj.trackId] = yaw;
+            UpdateElseChainYaw(item.obj.trackId, yaw);
             item.chained = true;
             if (i == 1)
             {
-                elseChainYawByTrack[front.obj.trackId] = yaw;
+                UpdateElseChainYaw(front.obj.trackId, yaw);
                 front.chained = true;
             }
         }
@@ -244,6 +303,27 @@ public partial class StreamingStereoVideoPlayer
                     $"chained={item.chained} yaw={(hasYaw ? yawDeg.ToString("F1") : "manual")}");
             }
         }
+    }
+
+
+    // 向きの更新。端に掛かっている・慣性中の track は凍結（ElseFrameOut が決める）。それ以外は
+    // 1 frame の変化量を elseChainMaxYawStepDeg に抑える（通過中の押し出しで連結方向が視線側へ
+    // 傾き、先頭車が視聴者の方を向く暴走を鈍らせる）。初回は目標値をそのまま採る。
+    private void UpdateElseChainYaw(uint trackId, float targetYaw)
+    {
+        if (elseFrameOutFrozenYawTracks.Contains(trackId) && elseChainYawByTrack.ContainsKey(trackId))
+        {
+            return;
+        }
+
+        if (elseChainYawByTrack.TryGetValue(trackId, out float current) && elseChainMaxYawStepDeg > 0f)
+        {
+            float step = Mathf.Clamp(Mathf.DeltaAngle(current, targetYaw), -elseChainMaxYawStepDeg, elseChainMaxYawStepDeg);
+            elseChainYawByTrack[trackId] = Mathf.DeltaAngle(0f, current + step);
+            return;
+        }
+
+        elseChainYawByTrack[trackId] = targetYaw;
     }
 
 

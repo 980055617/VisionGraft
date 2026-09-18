@@ -80,6 +80,15 @@ public static class UiComponentWriter
         selectable.interactable = interactable;
     }
 
+    public static void ApplyOutline(Outline outline, bool enabled, Color color, Vector2 distance)
+    {
+        if (outline == null) return;
+        outline.enabled = enabled;
+        outline.effectColor = color;
+        outline.effectDistance = distance;
+        outline.useGraphicAlpha = false;
+    }
+
     // ── Slider ──────────────────────────────────────────────────────────
 
     public static void ApplySliderDirection(Slider slider, Slider.Direction direction)

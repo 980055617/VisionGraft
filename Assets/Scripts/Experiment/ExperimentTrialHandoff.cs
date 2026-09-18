@@ -38,21 +38,51 @@ public sealed class ExperimentTrialRequest
         ExperimentDisplayMode mode,
         int trialIndex,
         ExperimentVideo video)
+        : this(bundleFileName, mode, trialIndex, video, null, null, false)
+    {
+    }
+
+    // onlyCategory: この category 名（"animal" など）の track だけを読む。null / 空 = 全部。
+    //   チュートリアルの旧 dog クリップは犬を「person」としても誤検出しているので、
+    //   "animal" にして人モデルが犬に重ならないようにする（2026-09-11 実機指摘）。
+    // preferredAnimalModelName: animal の既定モデルの prefab 名（"00_Dog" など）。null = Inspector の値。
+    // skipTrackCustomizationRestore: model_selection.json とセッション上書きを読まない。
+    //   チュートリアルは毎回同じ見た目で始めたいので true にする。
+    public ExperimentTrialRequest(
+        string bundleFileName,
+        ExperimentDisplayMode mode,
+        int trialIndex,
+        ExperimentVideo video,
+        string onlyCategory,
+        string preferredAnimalModelName,
+        bool skipTrackCustomizationRestore)
     {
         this.bundleFileName = bundleFileName;
         this.mode = mode;
         this.trialIndex = trialIndex;
         this.video = video;
+        this.onlyCategory = onlyCategory;
+        this.preferredAnimalModelName = preferredAnimalModelName;
+        this.skipTrackCustomizationRestore = skipTrackCustomizationRestore;
     }
 
     public readonly string bundleFileName;
     public readonly ExperimentDisplayMode mode;
     public readonly int trialIndex;
     public readonly ExperimentVideo video;
+    public readonly string onlyCategory;
+    public readonly string preferredAnimalModelName;
+    public readonly bool skipTrackCustomizationRestore;
 
-    // StereoOnly 条件は normal mode（source/pre_removal_stereo_video.mp4）で再生する。
+    // StereoOnly と Monocular は normal mode（source/pre_removal_stereo_video.mp4）で再生する。
     public bool StartInNormalMode
     {
-        get { return mode == ExperimentDisplayMode.StereoOnly; }
+        get { return mode == ExperimentDisplayMode.StereoOnly || mode == ExperimentDisplayMode.Monocular; }
+    }
+
+    // Monocular は左目映像を両目に出す（Screens.cs の ApplyStereoUvSettings）。
+    public bool StartMonocular
+    {
+        get { return mode == ExperimentDisplayMode.Monocular; }
     }
 }

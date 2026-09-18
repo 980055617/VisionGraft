@@ -55,6 +55,11 @@ public static class BatchPlaybackLogger
         bool? boneLen = null;
         float gapSmooth = -1f;
         string depthRef = null;
+        // 実験（チュートリアル）の絞り込みを同じ経路で検証するため。ExperimentTrialHandoff は
+        // static なので play mode 入りのドメインリロードで消える。プレイヤーの serialize 済み
+        // フィールドへ直接入れる（displayTracks / animalIndex と同じやり方）。
+        string onlyCategory = null;
+        string animalModel = null;
         bool? otherScale = null;
         bool? bodyAlign = null;
         bool? genericBones = null;
@@ -70,6 +75,8 @@ public static class BatchPlaybackLogger
         bool? headChain = null;
         bool? headAim = null;
         int? animalIndex = null;
+        int? elseIndex = null;     // Else の既定モデル index（2026-09-18、車の絵を撮るため）
+        bool? elseFrameOutMotion = null;
         bool? headBodyMap = null;
         bool? twoAxis = null;
         bool? animAim = null;
@@ -93,6 +100,10 @@ public static class BatchPlaybackLogger
         string displayTracks = null;
         string swapModel = null;
         bool? elseChain = null;
+        bool? elseFrameOut = null;
+        bool? elseVerticalFrameOut = null;
+        // 1 フレーム孤立の bbox 跳ね除去（rejectIsolatedBBoxSpikes）の A/B 用。
+        bool? bboxSpikeFix = null;
         string captureFrames = null;
         string captureDir = null;
         int captureWidth = 3840;
@@ -139,9 +150,13 @@ public static class BatchPlaybackLogger
             if (args[i] == "-headChain" && bool.TryParse(args[i + 1], out bool vHc)) headChain = vHc;
             if (args[i] == "-headAim" && bool.TryParse(args[i + 1], out bool vHa)) headAim = vHa;
             if (args[i] == "-animalIndex" && int.TryParse(args[i + 1], out int vAi)) animalIndex = vAi;
+            if (args[i] == "-elseIndex" && int.TryParse(args[i + 1], out int vEi)) elseIndex = vEi;
+            if (args[i] == "-elseFrameOutMotion" && bool.TryParse(args[i + 1], out bool vEm)) elseFrameOutMotion = vEm;
             if (args[i] == "-headBodyMap" && bool.TryParse(args[i + 1], out bool vHb)) headBodyMap = vHb;
             if (args[i] == "-alignTop" && bool.TryParse(args[i + 1], out bool vAt)) alignTop = vAt;
             if (args[i] == "-bundle") bundleName = args[i + 1];
+            if (args[i] == "-onlyCategory") onlyCategory = args[i + 1];
+            if (args[i] == "-animalModel") animalModel = args[i + 1];
             if (args[i] == "-manualYaw") manualYaw = args[i + 1];
             if (args[i] == "-manualScale") manualScale = args[i + 1];
             if (args[i] == "-openSettings") bool.TryParse(args[i + 1], out openSettings);
@@ -154,6 +169,9 @@ public static class BatchPlaybackLogger
             if (args[i] == "-displayTracks") displayTracks = args[i + 1];
             if (args[i] == "-swapModel") swapModel = args[i + 1];
             if (args[i] == "-elseChain" && bool.TryParse(args[i + 1], out bool vEc)) elseChain = vEc;
+            if (args[i] == "-elseFrameOut" && bool.TryParse(args[i + 1], out bool vEf)) elseFrameOut = vEf;
+            if (args[i] == "-elseVerticalFrameOut" && bool.TryParse(args[i + 1], out bool vEv)) elseVerticalFrameOut = vEv;
+            if (args[i] == "-bboxSpikeFix" && bool.TryParse(args[i + 1], out bool vBs)) bboxSpikeFix = vBs;
             if (args[i] == "-captureFrames") captureFrames = args[i + 1];
             if (args[i] == "-captureDir") captureDir = args[i + 1];
             if (args[i] == "-captureWidth") int.TryParse(args[i + 1], out captureWidth);
@@ -273,6 +291,8 @@ public static class BatchPlaybackLogger
                 if (headChain.HasValue) { p.SetExcludeHeadFromChain(!headChain.Value); }
                 if (headAim.HasValue) { p.SetHeadAimFromModelForward(headAim.Value); }
                 if (animalIndex.HasValue) { p.selectedAnimalIndex = animalIndex.Value; }
+                if (elseIndex.HasValue) { p.selectedElseIndex = elseIndex.Value; }
+                if (elseFrameOutMotion.HasValue) { p.elseFrameOutFollowMotion = elseFrameOutMotion.Value; }
                 if (headBodyMap.HasValue) { p.SetHeadUseBodyFrameMap(headBodyMap.Value); }
                 if (twoAxis.HasValue) { p.SetTwoAxisJointFrameMap(twoAxis.Value); }
                 if (headPose.HasValue) { p.SetAnimalHeadPose(headPose.Value); }
@@ -282,6 +302,9 @@ public static class BatchPlaybackLogger
                 if (frameSmooth.HasValue) { p.SetSmoothDepthPerVideoFrame(frameSmooth.Value); }
                 if (animAim.HasValue) { p.SetAnimalKeypointAimAt(animAim.Value); }
                 if (elseChain.HasValue) { p.enableElseChainPlacement = elseChain.Value; }
+                if (elseFrameOut.HasValue) { p.enableElseFrameOutContinuation = elseFrameOut.Value; }
+                if (elseVerticalFrameOut.HasValue) { p.enableElseVerticalFrameOutContinuation = elseVerticalFrameOut.Value; }
+                if (bboxSpikeFix.HasValue) { p.rejectIsolatedBBoxSpikes = bboxSpikeFix.Value; }
                 // バッチは測定環境なので、明示的に -remember true と言われない限り OFF。
                 // persistentDataPath に保存済みの選択が残っていると A/B が静かに汚れる。
                 p.rememberTrackCustomization = remember.HasValue && remember.Value;
@@ -298,7 +321,7 @@ public static class BatchPlaybackLogger
                 + " otherScale=" + (otherScale.HasValue ? otherScale.Value.ToString() : "scene")
                 + " bodyAlign=" + (bodyAlign.HasValue ? bodyAlign.Value.ToString() : "scene")
                 + " genericBones=" + (genericBones.HasValue ? genericBones.Value.ToString() : "scene")
-                + " extendH=" + (extendH.HasValue ? extendH.Value.ToString() : "scene") + " maxExtrap=" + maxExtrap + " minRatio=" + minRatio + " fastLo=" + fastLo + " fastHi=" + fastHi + " alignTop=" + (alignTop.HasValue ? alignTop.Value.ToString() : "scene") + " noBend=" + (noBend.HasValue ? noBend.Value.ToString() : "scene") + " twoAxis=" + (twoAxis.HasValue ? twoAxis.Value.ToString() : "scene") + " animAim=" + (animAim.HasValue ? animAim.Value.ToString() : "scene") + " elseChain=" + (elseChain.HasValue ? elseChain.Value.ToString() : "scene") + " remember=" + (remember.HasValue ? remember.Value.ToString() : "False(batch既定)"));
+                + " extendH=" + (extendH.HasValue ? extendH.Value.ToString() : "scene") + " maxExtrap=" + maxExtrap + " minRatio=" + minRatio + " fastLo=" + fastLo + " fastHi=" + fastHi + " alignTop=" + (alignTop.HasValue ? alignTop.Value.ToString() : "scene") + " noBend=" + (noBend.HasValue ? noBend.Value.ToString() : "scene") + " twoAxis=" + (twoAxis.HasValue ? twoAxis.Value.ToString() : "scene") + " animAim=" + (animAim.HasValue ? animAim.Value.ToString() : "scene") + " elseChain=" + (elseChain.HasValue ? elseChain.Value.ToString() : "scene") + " elseFrameOut=" + (elseFrameOut.HasValue ? elseFrameOut.Value.ToString() : "scene") + " elseVerticalFrameOut=" + (elseVerticalFrameOut.HasValue ? elseVerticalFrameOut.Value.ToString() : "scene") + " remember=" + (remember.HasValue ? remember.Value.ToString() : "False(batch既定)"));
         }
 
         // 検証用 bundle を差し替える（シーンには保存しない）。
@@ -313,6 +336,21 @@ public static class BatchPlaybackLogger
                 applied++;
             }
             Debug.Log("[BATCH] bundleFileName=" + bundleName + " applied to " + applied);
+        }
+
+        // 実験の絞り込み（category）と animal の既定モデル名をこの実行の間だけ入れる。
+        if (!string.IsNullOrEmpty(onlyCategory) || !string.IsNullOrEmpty(animalModel))
+        {
+            int applied = 0;
+            foreach (var p in UnityEngine.Object.FindObjectsByType<StreamingStereoVideoPlayer>(
+                         FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                if (!string.IsNullOrEmpty(onlyCategory)) { p.experimentOnlyCategory = onlyCategory; }
+                if (!string.IsNullOrEmpty(animalModel)) { p.experimentPreferredAnimalModelName = animalModel; }
+                EditorUtility.SetDirty(p);
+                applied++;
+            }
+            Debug.Log("[BATCH] onlyCategory=" + (onlyCategory ?? "(all)") + " animalModel=" + (animalModel ?? "(scene)") + " applied to " + applied);
         }
 
         // 表示 track の絞り込みをこの実行の間だけ差し替える（シーンには保存しない）。
@@ -575,6 +613,12 @@ public static class BatchPlaybackLogger
             // 目視比較に使うので高解像度で撮る。スクリーンはカメラ視野の一部にしか
             // 映らないため、この解像度でも切り出すと 1000px 程度にしかならない。
             // 連番で撮るときは -captureWidth 1920 などに落とさないと容量と時間が嵩む。
+            //
+            // 撮っている間は動画を止める（2026-09-17）。止めないと撮影の後に VideoPlayer が
+            // 1〜2 秒ぶん飛び（car f236 で撮ったら次に読めた frame が 289）、
+            // "236-262:2" のような連番指定が 1 枚しか撮れない。
+            bool resumeVideo = vp.isPlaying;
+            if (resumeVideo) { vp.Pause(); }
             int W = Mathf.Clamp(SessionState.GetInt(KeyCaptureWidth, 3840), 640, 3840);
             int H = Mathf.RoundToInt(W * 9f / 16f);
             var rt = new RenderTexture(W, H, 24) { antiAliasing = 8 };
@@ -597,6 +641,7 @@ public static class BatchPlaybackLogger
             rt.Release();
             UnityEngine.Object.DestroyImmediate(rt);
             captured.Add(want);
+            if (resumeVideo) { vp.Play(); }
             Debug.Log($"[CAPTURE] frame={want} (vp={cur}) -> {path}");
         }
     }

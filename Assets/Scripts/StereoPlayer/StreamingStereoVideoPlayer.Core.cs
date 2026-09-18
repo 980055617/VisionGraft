@@ -199,6 +199,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 1.81 / 2.43 / 2.59 で、1.6 が最も近い。上限なしだと外挿が効きすぎて逆に大きくなる。
     public float maxClippedHeightExtrapolation = 1.6f;
 
+    // 1 フレームだけ孤立して跳ねた bbox（マスクの漏れ等）を前後フレームの中央値で置き換える。**既定 ON。**
+    // 次のフレームを先読みして判定するので遅延は無く、2 フレーム以上続く変化には一切触らない
+    // （Meta.cs の RepairIsolatedBBoxSpikes）。
+    // 実測（2026-09-11）: 旧 dog クリップ track 1 の f24 で bbox 高 271→572→274（上端だけ 300px 飛ぶ、
+    // 下端と幅は不変 = マスクが上に漏れた）。⑧ の fast track が即座に深度を寄せ、犬が 1 フレームだけ
+    // 約 2 倍に見えた（実機報告「一瞬大きくなって戻る」）。実験用 bundle にも同種が 4 件ある:
+    // human ボール f584（×1.29）、train f1052 / f1054（×1.42 / ×1.65）・f365（×1.67）。
+    public bool rejectIsolatedBBoxSpikes = true;
+
     // ⑧ が発動する ratio（投影高 ÷ 目標高）の下限。スケール再ロック側の
     // MinProjectedBoneRatioForScaleRefine とは独立に振れるようにした。
     // 0.2 は実測で決めた（2026-08-27）。0.4 のままだと shot 内で被写体の見かけが 3 倍に
@@ -415,7 +424,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     //    連結中とその後は手動回転（yaw/pitch/roll キー）を使わない。
     // 前後の順は配置深度で決め、差が elseChainDepthTieMeters 以内なら bbox 高（大きい＝手前）で
     // 決めた順を track ペアごとに記憶して以後は変えない（車両は追い越さない）。
-    public bool enableElseChainPlacement = true;
+    //
+    // **2026-09-18 に既定 OFF。** train 用の機能で、train は研究対象から退役した。car では別レーンの
+    // 2 台（深度 0.73 / 0.835）を列車扱いして yaw 112° を与え、連結が解けた後も残るので、prefab に
+    // 焼いた正面向き 180° と合わさって 292°（横向きで少し後ろ寄り）になった。実機でユーザーが
+    // 「車が逆を向いている」と指摘。train を見るときは Inspector かバッチの -elseChain true で戻す。
+    public bool enableElseChainPlacement = false;
     [Min(0f)] public float elseChainDepthTieMeters = 0.02f;
     // 隣と見なす中心間距離の上限（接触距離の何倍か）。これより離れていれば向きも触らない。
     [Min(1f)] public float elseChainNeighborFactor = 2f;
@@ -423,7 +437,30 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 06_DieselLocomotive はキャブ（先頭）が +Z 端（実機で確認、2026-09-11: 通過時に先頭が
     // 進行方向の反対を向いていた）。0 なら −Z 端が先頭の扱いになる。
     public float elseChainHeadingOffsetDeg = 180f;
+    // 連結の向きの 1 frame あたりの変化量の上限（度）。通過中に後続が奥へ押し出されると連結方向が
+    // 視線側へ傾き、先頭車が視聴者の方を向いてしまう（f885〜935 で 108° → 161°）。その暴走を鈍らせる。
+    [Min(0f)] public float elseChainMaxYawStepDeg = 1f;
+    // 押し出し倍率 k の 1 frame あたりの変化量の上限。通過中は端合わせと押し出しが互いに影響して
+    // k が 1.0 ↔ 2.1 を往復した（f920〜945）。往復を鈍らせる。0 で無効。
+    [Min(0f)] public float elseChainMaxPushStep = 0.05f;
     public bool logElseChainPlacement = false;
+
+    // Else の frame out 継続（2026-09-11）。画面の端に掛かった Else は「可視部分の中心」ではなく
+    // 見切れる直前の幅から真の中心に置き、scale も直前の値で固定する。track が消えた後は
+    // 直前の速度で進め続け、**視界から映らなくなったら**非表示にする（2026-09-18 ユーザー要望。
+    // それまでは全長 × 1.2 進んだら消していた）。距離（全長 × elseFrameOutCoastLengths）と 180 frame は安全弁。
+    // データは画面の外を表さない（bbox は可視部分のみ、anchor はその中心で hold される）ので
+    // 外挿になる。StreamingStereoVideoPlayer.ElseFrameOut.partial.cs。
+    public bool enableElseFrameOutContinuation = true;
+    [Min(0.1f)] public float elseFrameOutCoastLengths = 6f;
+    // 上と同じことを画面の上下端でも行う（2026-09-17）。car clip（D-014）は 5 台とも下端から出る。
+    // OFF だと下端に掛かった frame は「見切れなし」扱いで、bbox 高（105 → 7 px）に追従して
+    // モデルが下端に向かって縮み、track が消えた瞬間に消える。左右の見切れが同時にあるときは左右を優先。
+    // enableElseFrameOutContinuation が OFF ならこれも効かない。
+    public bool enableElseVerticalFrameOutContinuation = true;
+    // 縦の frame out で、端に掛かる前の 3D の動き（横・奥行き）と大きさの変化率を端に掛かっている間と慣性で続ける
+    // （2026-09-18、ユーザー要望「真下に落ちるのではなく、近づきながら」）。OFF なら従来どおり真下へ、大きさ固定。
+    public bool elseFrameOutFollowMotion = true;
 
     // ⑩ で「画面上で重なっている」と判定する余裕（px）。Else の投影半径にこれを足した
     // 距離より近ければ重なりとみなす。

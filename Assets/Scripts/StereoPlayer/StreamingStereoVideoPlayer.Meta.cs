@@ -118,6 +118,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         frameOffsets = null;
         humanSmplPosesMetaBin.Clear();
         animalSmalPosesMetaBin.Clear();
+        rawFrameObjectsMemo.Clear();
+        rawFrameObjectsMemoOrder.Clear();
+        loggedBBoxSpikeKeys.Clear();
 
         try
         {
@@ -290,7 +293,217 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             UseFrameReadySync);
     }
 
+    // 直近に読んだ生のフレームを覚えておく。前後 1 フレームの先読み（RepairIsolatedBBoxSpikes）用で、
+    // 同じ tick 内で同じフレームを何度も読む呼び出し元（表示・pick・ピッカー）の IO も減る。
+    // 覚えるのは meta.bin から読んだままの値。配置深度（anchorZ）は screenDist や較正で変わるので
+    // 取り出すたびに anchorZ01 から引き直す（TryReadFrameObjects）。
+    private readonly Dictionary<int, List<MetaObj>> rawFrameObjectsMemo = new Dictionary<int, List<MetaObj>>();
+    private readonly Queue<int> rawFrameObjectsMemoOrder = new Queue<int>();
+    private const int RawFrameObjectsMemoCapacity = 8;
+    private readonly HashSet<long> loggedBBoxSpikeKeys = new HashSet<long>();
+
+    // 1 フレームだけ孤立して跳ねた bbox の判定。当該フレームが前後の両方からこれ以上外れていて、
+    // かつ前後どうしはこれ以内で一致している（= 持続する変化ではない）。
+    private const float BBoxSpikeRelativeThreshold = 0.25f;
+    private const float BBoxSpikeNeighborAgreement = 0.15f;
+
     public bool TryReadFrameObjects(int frameIndex, List<MetaObj> outObjs)
+    {
+        outObjs.Clear();
+        if (!TryReadFrameObjectsMemo(frameIndex, out List<MetaObj> current))
+        {
+            return false;
+        }
+
+        for (int i = 0; i < current.Count; i++)
+        {
+            MetaObj obj = current[i];
+            obj.anchorZ = DecodeAnchorDepthMetersFromBundle(obj.anchorZ01);
+            outObjs.Add(obj);
+        }
+
+        if (rejectIsolatedBBoxSpikes)
+        {
+            RepairIsolatedBBoxSpikes(frameIndex, outObjs);
+        }
+
+        return true;
+    }
+
+
+    private bool TryReadFrameObjectsMemo(int frameIndex, out List<MetaObj> objs)
+    {
+        if (rawFrameObjectsMemo.TryGetValue(frameIndex, out objs))
+        {
+            return true;
+        }
+
+        objs = new List<MetaObj>();
+        if (!TryReadFrameObjectsRaw(frameIndex, objs))
+        {
+            objs = null;
+            return false;
+        }
+
+        rawFrameObjectsMemo[frameIndex] = objs;
+        rawFrameObjectsMemoOrder.Enqueue(frameIndex);
+        while (rawFrameObjectsMemoOrder.Count > RawFrameObjectsMemoCapacity)
+        {
+            rawFrameObjectsMemo.Remove(rawFrameObjectsMemoOrder.Dequeue());
+        }
+
+        return true;
+    }
+
+
+    // 前後 1 フレームの同じ track と比べ、bbox の高さか幅が孤立して跳ねていたら、
+    // bbox と anchor（u, v, z01）を 3 フレームの中央値で置き換える。
+    //
+    // 2026-09-11、旧 dog クリップの track 1 f24: bbox 高 271→572→274、上端だけ 300px 上に飛び
+    // 下端と幅は不変（マスクが 1 フレームだけ上に漏れた）。⑧ RefineDepthFromProjectedBones は
+    // 投影高 ÷ bbox 高の比が大きく外れると即座に追従する（fast track）ので、そのフレームだけ
+    // 深度が半分に寄って犬が約 2 倍に見え、次のフレームで戻っていた（実機報告）。
+    // 次のフレームを先読みするので遅延は無い。2 フレーム以上続く変化（shot の切り替わりを含む）は
+    // 前後が一致しないので触らない。先頭・末尾のフレームは前後が無いので触らない。
+    //
+    // 2026-09-17、car track 1 f434 / f436: 跳ねが 1 frame おきに 2 回続く（h 172 → 486 → 156 → 489 → 134）と、
+    // 間の正常な f435 が「前後（486 / 489）が一致していて自分だけ外れている」ように見え、
+    // 3 frame の中央値で 486 に**置き換えられて**いた（跳ねを消すはずの機構が跳ねを作る）。
+    // 前後 2 frame まで読めるときは 5 frame の中央値からも外れていることを条件に足す
+    // （f435 は 5 frame 中央値 172 に対し 9% しか外れていないので触らない。f434 / f436 は従来どおり直す）。
+    // 読めないとき（track の先頭・末尾付近）は従来の 3 frame 判定のまま。
+    private void RepairIsolatedBBoxSpikes(int frameIndex, List<MetaObj> objs)
+    {
+        if (objs.Count == 0 ||
+            !TryReadFrameObjectsMemo(frameIndex - 1, out List<MetaObj> prevObjs) ||
+            !TryReadFrameObjectsMemo(frameIndex + 1, out List<MetaObj> nextObjs))
+        {
+            return;
+        }
+
+        bool hasWide = TryReadFrameObjectsMemo(frameIndex - 2, out List<MetaObj> prev2Objs);
+        List<MetaObj> next2Objs = null;
+        hasWide = hasWide && TryReadFrameObjectsMemo(frameIndex + 2, out next2Objs);
+
+        for (int i = 0; i < objs.Count; i++)
+        {
+            MetaObj cur = objs[i];
+            if (!TryFindTrackObject(prevObjs, cur.trackId, out MetaObj prev) ||
+                !TryFindTrackObject(nextObjs, cur.trackId, out MetaObj next))
+            {
+                continue;
+            }
+
+            bool spikeH = IsIsolatedSpike(prev.bboxH, cur.bboxH, next.bboxH);
+            bool spikeW = IsIsolatedSpike(prev.bboxW, cur.bboxW, next.bboxW);
+            if (!spikeH && !spikeW)
+            {
+                continue;
+            }
+
+            if (hasWide &&
+                TryFindTrackObject(prev2Objs, cur.trackId, out MetaObj prev2) &&
+                TryFindTrackObject(next2Objs, cur.trackId, out MetaObj next2))
+            {
+                bool confirmedH = spikeH && DeviatesFromMedian5(prev2.bboxH, prev.bboxH, cur.bboxH, next.bboxH, next2.bboxH);
+                bool confirmedW = spikeW && DeviatesFromMedian5(prev2.bboxW, prev.bboxW, cur.bboxW, next.bboxW, next2.bboxW);
+                if (!confirmedH && !confirmedW)
+                {
+                    continue;
+                }
+            }
+
+            MetaObj repaired = cur;
+            repaired.bboxX = Median3(prev.bboxX, cur.bboxX, next.bboxX);
+            repaired.bboxY = Median3(prev.bboxY, cur.bboxY, next.bboxY);
+            repaired.bboxW = Median3(prev.bboxW, cur.bboxW, next.bboxW);
+            repaired.bboxH = Median3(prev.bboxH, cur.bboxH, next.bboxH);
+            repaired.anchorU = Median3(prev.anchorU, cur.anchorU, next.anchorU);
+            repaired.anchorV = Median3(prev.anchorV, cur.anchorV, next.anchorV);
+            repaired.anchorZ01 = Median3(prev.anchorZ01, cur.anchorZ01, next.anchorZ01);
+            repaired.anchorZ = DecodeAnchorDepthMetersFromBundle(repaired.anchorZ01);
+            objs[i] = repaired;
+
+            long key = ((long)frameIndex << 32) | cur.trackId;
+            if (loggedBBoxSpikeKeys.Add(key))
+            {
+                Debug.Log(
+                    $"[BBOXFIX] f={frameIndex} track={cur.trackId} bbox h {prev.bboxH}→{cur.bboxH}→{next.bboxH} " +
+                    $"w {prev.bboxW}→{cur.bboxW}→{next.bboxW} anchorV {prev.anchorV}→{cur.anchorV}→{next.anchorV}: " +
+                    $"孤立した跳ねなので中央値へ（h={repaired.bboxH} y={repaired.bboxY} anchorV={repaired.anchorV}）");
+            }
+        }
+    }
+
+
+    private static bool TryFindTrackObject(List<MetaObj> objs, uint trackId, out MetaObj found)
+    {
+        for (int i = 0; i < objs.Count; i++)
+        {
+            if (objs[i].trackId == trackId)
+            {
+                found = objs[i];
+                return true;
+            }
+        }
+
+        found = default;
+        return false;
+    }
+
+
+    private static bool IsIsolatedSpike(float prev, float cur, float next)
+    {
+        if (prev <= 0f || next <= 0f)
+        {
+            return false;
+        }
+
+        float fromPrev = Mathf.Abs(cur - prev) / prev;
+        float fromNext = Mathf.Abs(cur - next) / next;
+        float neighbors = Mathf.Abs(next - prev) / prev;
+        return fromPrev > BBoxSpikeRelativeThreshold &&
+               fromNext > BBoxSpikeRelativeThreshold &&
+               neighbors < BBoxSpikeNeighborAgreement;
+    }
+
+
+    // 前後 2 frame を含めた 5 frame の中央値から、当該 frame が閾値以上外れているか。
+    // 3 frame 判定の裏取り（跳ねが 1 frame おきに続くと、間の正常な frame が 3 frame 判定に掛かる）。
+    private static bool DeviatesFromMedian5(float a, float b, float cur, float d, float e)
+    {
+        float[] window = { a, b, cur, d, e };
+        System.Array.Sort(window);
+        float median = window[2];
+        if (median <= 0f)
+        {
+            return false;
+        }
+
+        return Mathf.Abs(cur - median) / median > BBoxSpikeRelativeThreshold;
+    }
+
+
+    private static ushort Median3(ushort a, ushort b, ushort c)
+    {
+        if (a > b) { (a, b) = (b, a); }
+        if (b > c) { (b, c) = (c, b); }
+        if (a > b) { (a, b) = (b, a); }
+        return b;
+    }
+
+
+    private static float Median3(float a, float b, float c)
+    {
+        if (a > b) { (a, b) = (b, a); }
+        if (b > c) { (b, c) = (c, b); }
+        if (a > b) { (a, b) = (b, a); }
+        return b;
+    }
+
+
+    // meta.bin からそのフレームの object を読んで outObjs に入れる（生の値。メモ化は上）。
+    private bool TryReadFrameObjectsRaw(int frameIndex, List<MetaObj> outObjs)
     {
         if (!metaLoaded || frameOffsets == null || frameOffsets.Length == 0)
         {
@@ -440,7 +653,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                         };
 
                         ApplySidecarsToMetaObject(ref obj, frameIndex);
-                        outObjs.Add(obj);
+
+                        // 実験の絞り込み（チュートリアルの誤検出 person を落とす）。ここで落とせば
+                        // 表示・pick・ピッカー・深度較正のすべてに効く。payload は順に読む必要が
+                        // あるので、読み終えてから捨てる（読み飛ばしはしない）。
+                        if (!IsCategoryExcludedByExperiment(categoryId))
+                        {
+                            outObjs.Add(obj);
+                        }
                     }
                 }
             }
@@ -647,7 +867,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             selectedManualRotationTrackId = bestTrack;
             runtimeModelPickerTrackId = bestTrack;
             runtimeModelPickerPreferredTrackId = bestTrack;
-            runtimeModelPickerPageIndex = 0;
+            // 指した対象の今のモデルが載っているページから始める。
+            runtimeModelPickerPageIndex = ResolveRuntimeModelPickerPageForCurrentSelection();
             Debug.Log($"[Pick] track={bestTrack}（{how}） pixel={pick.pixel} eye={pick.eye}");
             UpdateRuntimeModelPickerUiState();
         }

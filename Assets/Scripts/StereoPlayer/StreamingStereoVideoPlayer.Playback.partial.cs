@@ -27,6 +27,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (!TryReadFrameObjects(metaFrameUsed, metaFrameObjects) ||
             metaFrameObjects.Count == 0)
         {
+            // 2026-09-18: track が 1 つも無い frame でも、直前まで出ていたモデルを消し、慣性中の Else は進める。
+            // 以前はここで何もせず return していたので、car（25% の frame に track が無い）で最後に消えた車が
+            // 次の track が出るまで置き去りになり（track 3 は f1036 → 1340 の 10 秒、track 4 は動画の最後まで）、
+            // 空の区間へシークしても直前のモデルがその場に残っていた（実機のユーザー指摘）。
+            metaFrameObjects.Clear();
+            HideUnselectedTrackInstances(NoTracks);
+            ApplyElseFrameOutForFrame(metaFrameUsed);
             return;
         }
 
@@ -39,6 +46,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             ApplyOtherDepthFollowForFrame();
             ApplyOtherPenetrationResolveForFrame();
+            ApplyElseFrameOutForFrame(frame);
             ApplyElseChainPlacementForFrame(frame);
             ApplyHumanOtherContactCorrectionForFrame();
             LogHumanOtherGapIfEnabled(frame);
@@ -56,6 +64,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         ApplyMetaTarget(target, frame);
         ApplyOtherDepthFollowForFrame();
         ApplyOtherPenetrationResolveForFrame();
+        ApplyElseFrameOutForFrame(frame);
         ApplyElseChainPlacementForFrame(frame);
         ApplyHumanOtherContactCorrectionForFrame();
         LogHumanOtherGapIfEnabled(frame);
@@ -137,6 +146,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return true;
     }
 
+
+    // track の無い frame で「全部消す」ために渡す空集合。
+    private static readonly HashSet<uint> NoTracks = new HashSet<uint>();
 
     private void HideUnselectedTrackInstances(HashSet<uint> selectedTracks)
     {
@@ -330,6 +342,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (IsCategoryAnimal(categoryId))
         {
+            // 実験の指示（チュートリアルは犬）があれば、ここで初めて index に解決する。
+            ApplyExperimentPreferredAnimalModelOnce();
             return ResolvePrefabFromSelection(trackId, animalPrefabs, selectedAnimalIndex);
         }
         if (IsCategoryOther(categoryId))

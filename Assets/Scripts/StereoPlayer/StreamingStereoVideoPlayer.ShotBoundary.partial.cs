@@ -52,7 +52,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     // 2026-09-18: manifest の shot 境界のうち「偽のカット」（カット検出の偽陽性）とみなすもの。
     // 条件は 3 つとも必要:
-    //   1. 前の shot から次の shot へ順方向に 1 つ進んだ（シークで別の shot に飛んだのではない）
+    //   1. 順方向に隣の shot へ移った（戻りと 2 つ以上の飛びは除く。隣へ着地する順方向シークは通るが、
+    //      3 の判定は境界の frame のデータで行うので結果は通し再生と同じ）
     //   2. 境界のどちらか側の shot が短い（KeepScaleShortShotMaxFrames 以下）。
     //      カット検出の偽陽性は動きの速い区間で短い shot を連発する。本物のカットは 1 秒以上の shot で区切られる
     //   3. 境界の frame（新しい shot の先頭）とその 1 つ前で、両方に写っている track の bbox が連続している

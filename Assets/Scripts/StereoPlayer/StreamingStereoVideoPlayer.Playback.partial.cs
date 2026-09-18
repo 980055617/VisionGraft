@@ -159,6 +159,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 continue;
             }
 
+            if (logElseChainPlacement && kv.Value.activeSelf)
+            {
+                Debug.Log($"[HIDE] track={kv.Key} ({kv.Value.name}) hidden: not in this frame");
+            }
             SceneObjectWriter.ApplyActive(kv.Value, false);
         }
     }

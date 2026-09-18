@@ -141,6 +141,22 @@ public class ShotBoundariesTests
         Assert.That(shots.GetStartFrame(4), Is.EqualTo(0));
     }
 
+    // shot の長さは次の shot の開始との差。最後の shot は総フレーム数まで、総フレーム数が不明なら「無限」。
+    [Test]
+    public void GetShotLength_UsesNextStartOrTotalFrames()
+    {
+        ShotBoundaries shots = ShotBoundaries.FromManifestJson("{\"shots\":[[0,258],[258,280],[280,290],[290,338]]}");
+
+        Assert.That(shots.GetShotLength(0, 338), Is.EqualTo(258));
+        Assert.That(shots.GetShotLength(1, 338), Is.EqualTo(22));
+        Assert.That(shots.GetShotLength(2, 338), Is.EqualTo(10));
+        Assert.That(shots.GetShotLength(3, 338), Is.EqualTo(48));
+        Assert.That(shots.GetShotLength(3, 0), Is.EqualTo(int.MaxValue));
+        Assert.That(shots.GetShotLength(-1, 338), Is.EqualTo(int.MaxValue));
+        Assert.That(shots.GetShotLength(4, 338), Is.EqualTo(int.MaxValue));
+        Assert.That(ShotBoundaries.Empty.GetShotLength(0, 338), Is.EqualTo(int.MaxValue));
+    }
+
     [Test]
     public void Empty_ResolvesEveryFrameToShotZero()
     {

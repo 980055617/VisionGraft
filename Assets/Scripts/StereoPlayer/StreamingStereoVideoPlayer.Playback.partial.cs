@@ -691,7 +691,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 平滑化を最後に進めた動画フレーム。tick ではなく動画フレームで刻むため。
     private readonly Dictionary<uint, int> smoothedDepthRatioFrameByTrack = new Dictionary<uint, int>();
 
-    private float SmoothProjectedDepthRatio(uint trackId, float ratio)
+    private float SmoothProjectedDepthRatio(uint trackId, float ratio, bool allowFastTrack = true)
     {
         float tau = Mathf.Max(0f, projectedDepthSmoothingSeconds);
         if (tau <= 0.0001f)
@@ -751,10 +751,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             float videoFps = manifest != null && manifest.fps > 0.01f ? (float)manifest.fps : 30f;
             float dt = advanced / videoFps;
             float a = 1f - Mathf.Exp(-dt / tau);
-            float relErr = Mathf.Abs(ratio - previous) / Mathf.Max(0.05f, Mathf.Abs(previous));
-            float loF = Mathf.Max(0f, depthRefineFastTrackLow);
-            float hiF = Mathf.Max(loF + 0.001f, depthRefineFastTrackHigh);
-            a = Mathf.Clamp01(a + (1f - a) * Mathf.Clamp01((relErr - loF) / (hiF - loF)));
+            if (allowFastTrack)
+            {
+                float relErr = Mathf.Abs(ratio - previous) / Mathf.Max(0.05f, Mathf.Abs(previous));
+                float loF = Mathf.Max(0f, depthRefineFastTrackLow);
+                float hiF = Mathf.Max(loF + 0.001f, depthRefineFastTrackHigh);
+                a = Mathf.Clamp01(a + (1f - a) * Mathf.Clamp01((relErr - loF) / (hiF - loF)));
+            }
             float result = previous + a * (ratio - previous);
             smoothedProjectedDepthRatioByTrack[trackId] = result;
             return result;
@@ -779,11 +782,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         //
         // そこで「小さいズレ = ノイズなので鈍く、大きいズレ = 実際の変化なので速く」に
         // する。相対誤差が fastLo を超えたぶんだけ alpha を 1 に寄せる。
-        float relativeError = Mathf.Abs(ratio - previous) / Mathf.Max(0.05f, Mathf.Abs(previous));
-        float lo = Mathf.Max(0f, depthRefineFastTrackLow);
-        float hi = Mathf.Max(lo + 0.001f, depthRefineFastTrackHigh);
-        float boost = Mathf.Clamp01((relativeError - lo) / (hi - lo));
-        alpha = Mathf.Clamp01(alpha + (1f - alpha) * boost);
+        if (allowFastTrack)
+        {
+            float relativeError = Mathf.Abs(ratio - previous) / Mathf.Max(0.05f, Mathf.Abs(previous));
+            float lo = Mathf.Max(0f, depthRefineFastTrackLow);
+            float hi = Mathf.Max(lo + 0.001f, depthRefineFastTrackHigh);
+            float boost = Mathf.Clamp01((relativeError - lo) / (hi - lo));
+            alpha = Mathf.Clamp01(alpha + (1f - alpha) * boost);
+        }
 
         float smoothed = previous + alpha * (ratio - previous);
         smoothedProjectedDepthRatioByTrack[trackId] = smoothed;
@@ -999,7 +1005,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // ratio を許容範囲に丸める形で入れる。深度側でクランプすると発動フレームで
         // 一気に 135mm 動いて跳ねる（2026-08-20 実測、1 フレーム変化 max 22mm → 206mm）。
         ratio = ClampRatioPreservingOtherOrder(obj, camLocal.z, ratio);
-        ratio = SmoothProjectedDepthRatio(obj.trackId, ratio);
+        // animal は姿勢で骨格の投影高が急に変わるので、速追従（1 frame で奥行きが飛ぶ）は掛けない（2026-09-18）。
+        bool allowFastTrack = depthRefineFastTrackForAnimal || !IsCategoryAnimal(obj.categoryId);
+        ratio = SmoothProjectedDepthRatio(obj.trackId, ratio, allowFastTrack);
 
         float beforeZ = camLocal.z;
         float ratioZ = camLocal.z * ratio * Mathf.Max(0.1f, projectedDepthScaleK);

@@ -45,6 +45,19 @@ public sealed class ShotBoundaries
         return startFrames[shotIndex];
     }
 
+    // shot の長さ（frame 数）。最後の shot は totalFrames までとし、totalFrames が不明（<= 0）なら
+    // int.MaxValue（「短い shot」判定に掛からない）。範囲外の index も int.MaxValue。
+    public int GetShotLength(int shotIndex, int totalFrames)
+    {
+        if (shotIndex < 0 || shotIndex >= startFrames.Length)
+        {
+            return int.MaxValue;
+        }
+
+        int end = shotIndex + 1 < startFrames.Length ? startFrames[shotIndex + 1] : totalFrames;
+        return end > startFrames[shotIndex] ? end - startFrames[shotIndex] : int.MaxValue;
+    }
+
     // JsonUtility は [[0, 258], [258, 338], ...] のような入れ子配列を扱えないため、
     // manifest の生 JSON から MiniJson で shots だけを読む。
     public static ShotBoundaries FromManifestJson(string manifestJson)

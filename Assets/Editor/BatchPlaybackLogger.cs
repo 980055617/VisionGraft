@@ -77,6 +77,8 @@ public static class BatchPlaybackLogger
         int? animalIndex = null;
         int? elseIndex = null;     // Else の既定モデル index（2026-09-18、車の絵を撮るため）
         bool? elseFrameOutMotion = null;
+        bool? animalFastTrack = null;
+        bool? keepScaleContinuousShot = null;
         bool? headBodyMap = null;
         bool? twoAxis = null;
         bool? animAim = null;
@@ -152,6 +154,8 @@ public static class BatchPlaybackLogger
             if (args[i] == "-animalIndex" && int.TryParse(args[i + 1], out int vAi)) animalIndex = vAi;
             if (args[i] == "-elseIndex" && int.TryParse(args[i + 1], out int vEi)) elseIndex = vEi;
             if (args[i] == "-elseFrameOutMotion" && bool.TryParse(args[i + 1], out bool vEm)) elseFrameOutMotion = vEm;
+            if (args[i] == "-animalFastTrack" && bool.TryParse(args[i + 1], out bool vAf)) animalFastTrack = vAf;
+            if (args[i] == "-keepScaleContinuousShot" && bool.TryParse(args[i + 1], out bool vKs)) keepScaleContinuousShot = vKs;
             if (args[i] == "-headBodyMap" && bool.TryParse(args[i + 1], out bool vHb)) headBodyMap = vHb;
             if (args[i] == "-alignTop" && bool.TryParse(args[i + 1], out bool vAt)) alignTop = vAt;
             if (args[i] == "-bundle") bundleName = args[i + 1];
@@ -293,6 +297,8 @@ public static class BatchPlaybackLogger
                 if (animalIndex.HasValue) { p.selectedAnimalIndex = animalIndex.Value; }
                 if (elseIndex.HasValue) { p.selectedElseIndex = elseIndex.Value; }
                 if (elseFrameOutMotion.HasValue) { p.elseFrameOutFollowMotion = elseFrameOutMotion.Value; }
+                if (animalFastTrack.HasValue) { p.depthRefineFastTrackForAnimal = animalFastTrack.Value; }
+                if (keepScaleContinuousShot.HasValue) { p.keepScaleAcrossContinuousShotBoundary = keepScaleContinuousShot.Value; }
                 if (headBodyMap.HasValue) { p.SetHeadUseBodyFrameMap(headBodyMap.Value); }
                 if (twoAxis.HasValue) { p.SetTwoAxisJointFrameMap(twoAxis.Value); }
                 if (headPose.HasValue) { p.SetAnimalHeadPose(headPose.Value); }

@@ -223,6 +223,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // human でも回帰なし（boneRatio 0.978→0.971、姿勢一致 5.30% で同値、揺れ 6.0mm 同値）。
     public float depthRefineFastTrackLow = 0.15f;
     public float depthRefineFastTrackHigh = 0.60f;
+    // 速追従を animal にも掛けるか。**既定 OFF（2026-09-18）。** animal は姿勢で骨格の投影高が急に変わる
+    // （振り向き・頭の上下）ので、相対誤差 0.6 超で即時追従すると 1 frame で奥行きが 0.43 → 0.74 m 飛び、
+    // scale 固定のぶんが見かけの大きさの跳ねになる（実機でユーザー指摘、bundle_animal f60 / f81 / f1212〜1218）。
+    // OFF なら animal は τ の平滑化だけで動く。human は従来どおり速追従あり。
+    public bool depthRefineFastTrackForAnimal = false;
 
     // ⑧ の平滑化を tick ではなく**動画フレーム**で刻む。**既定 ON。**
     //
@@ -343,6 +348,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // Animal 版の姿勢一致診断 [ANIMALKP]。human の logBoneVsKeypoint に対応する。
     public bool logAnimalBoneVsKeypoint = false;
     public bool refineDepthFromProjectedBones = true;
+
+    // shot 境界の前後で bbox が連続している（同じ track が同じ位置・同じ大きさで写っている）なら、
+    // 「偽のカット」とみなして scale のロックと ⑧ の比を持ち越す。**既定 ON（2026-09-18）。**
+    // bundle_animal の 1104 / 1117 / 1127 / 1130 / 1144 / 1146 は 1.4 秒に 6 回の境界で、2〜14 frame の shot が
+    // 連続する（走る犬をカット検出が拾った偽陽性）。境界ごとに再ロックすると大きさが往復した。
+    // 姿勢の平滑化などのリセットは従来どおり行う（連続なら 1 frame の再初期化で見えない）。
+    public bool keepScaleAcrossContinuousShotBoundary = true;
 
     // 上記で逆算した深度に掛ける係数。1.0 で「投影高 = bbox 高」ちょうど。
     // 大きくするとモデルが奥へ寄り Else との前後関係は改善するが、モデルが小さく写る。

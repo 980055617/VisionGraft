@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
@@ -8,6 +9,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private ShotBoundaries shotBoundaries = ShotBoundaries.Empty;
     private int lastAppliedShotIndex = -1;
+
+    // 「短い shot」の上限（frame）。bundle_animal のカット検出の偽陽性（走る犬）は 2〜14 frame の shot が連続した。
+    // 本物のカットで区切られた shot はこの bundle では最短 22 frame。
+    private const int KeepScaleShortShotMaxFrames = 15;
 
     private void ApplyLoadedShotBoundaries(ShotBoundaries loadedShotBoundaries)
     {
@@ -32,16 +37,77 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        bool hasPreviousShot = lastAppliedShotIndex >= 0;
+        int previousShotIndex = lastAppliedShotIndex;
         lastAppliedShotIndex = shotIndex;
-        if (!hasPreviousShot)
+        if (previousShotIndex < 0)
         {
             // bundle ロード直後の最初の 1 フレーム。持ち越している状態がないので何もしない。
             return;
         }
 
-        Debug.Log($"[Shot] boundary crossed. frame={frame} shotIndex={shotIndex} startFrame={shotBoundaries.GetStartFrame(shotIndex)}");
-        ResetPerShotTrackState();
+        bool keepScale = keepScaleAcrossContinuousShotBoundary && IsFalseCutBoundary(previousShotIndex, shotIndex);
+        Debug.Log($"[Shot] boundary crossed. frame={frame} shotIndex={shotIndex} startFrame={shotBoundaries.GetStartFrame(shotIndex)} keepScale={keepScale}");
+        ResetPerShotTrackState(keepScale);
+    }
+
+    // 2026-09-18: manifest の shot 境界のうち「偽のカット」（カット検出の偽陽性）とみなすもの。
+    // 条件は 3 つとも必要:
+    //   1. 前の shot から次の shot へ順方向に 1 つ進んだ（シークで別の shot に飛んだのではない）
+    //   2. 境界のどちらか側の shot が短い（KeepScaleShortShotMaxFrames 以下）。
+    //      カット検出の偽陽性は動きの速い区間で短い shot を連発する。本物のカットは 1 秒以上の shot で区切られる
+    //   3. 境界の frame（新しい shot の先頭）とその 1 つ前で、両方に写っている track の bbox が連続している
+    // bbox の連続だけでは足りない: bundle_animal では本物のカット 151 / 801 / 1034 / 1435 なども
+    // （被写体を中央に置く撮り方のため）bbox が連続と判定される。shot の長さだけでも足りない:
+    // 本物のカット 1104 の次の shot は 13 frame。両方を要求すると、この bundle では
+    // 280 / 290 / 520 / 1117 / 1127 / 1130 / 1144（目視で全部同じテイク）だけが残る。
+    private bool IsFalseCutBoundary(int previousShotIndex, int shotIndex)
+    {
+        if (shotIndex != previousShotIndex + 1)
+        {
+            return false;
+        }
+
+        int totalFrames = (int)metaHeader.numFrames;
+        bool previousShort = shotBoundaries.GetShotLength(previousShotIndex, totalFrames) <= KeepScaleShortShotMaxFrames;
+        bool nextShort = shotBoundaries.GetShotLength(shotIndex, totalFrames) <= KeepScaleShortShotMaxFrames;
+        if (!previousShort && !nextShort)
+        {
+            return false;
+        }
+
+        return IsShotBoundaryBBoxContinuous(shotBoundaries.GetStartFrame(shotIndex));
+    }
+
+    // 境界の前後（boundaryFrame-1 と boundaryFrame）で、両方に写っている track の bbox がすべて「同じ位置・同じ大きさ」なら true。
+    // 両方に写っている track が無ければ false（新しい track は初回ロックなので判定は要らない）。
+    private bool IsShotBoundaryBBoxContinuous(int boundaryFrame)
+    {
+        if (boundaryFrame <= 0 ||
+            !TryReadFrameObjectsMemo(boundaryFrame - 1, out List<MetaObj> prev) ||
+            !TryReadFrameObjectsMemo(boundaryFrame, out List<MetaObj> cur))
+        {
+            return false;
+        }
+
+        bool anyShared = false;
+        for (int i = 0; i < cur.Count; i++)
+        {
+            MetaObj c = cur[i];
+            if (!TryFindTrackObject(prev, c.trackId, out MetaObj p) || p.bboxH <= 0 || p.bboxW <= 0)
+            {
+                continue;
+            }
+            anyShared = true;
+            float heightRatio = (float)c.bboxH / p.bboxH;
+            float dx = (c.bboxX + c.bboxW * 0.5f) - (p.bboxX + p.bboxW * 0.5f);
+            float dy = (c.bboxY + c.bboxH * 0.5f) - (p.bboxY + p.bboxH * 0.5f);
+            float tolerance = 0.5f * Mathf.Max(p.bboxW, p.bboxH);
+            if (heightRatio < 0.67f || heightRatio > 1.5f || Mathf.Abs(dx) > tolerance || Mathf.Abs(dy) > tolerance)
+            {
+                return false;
+            }
+        }
+        return anyShared;
     }
 
     // bundle の shot_boundary_policy.unity_guidance:
@@ -49,18 +115,21 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     //    trackId; snap to the new shot's first-frame anchor instead."
     // モデルのボーン解決結果 (HumanoidRigCache / AnimalRigCache)、ユーザーが選んだモデル、
     // 手動 yaw キーフレームは shot とは無関係なので触らない。
-    private void ResetPerShotTrackState()
+    private void ResetPerShotTrackState(bool keepScale = false)
     {
-        // 主対象: 前 shot のカメラ距離で確定した表示スケール。
-        lockedModelLocalScaleByTrack.Clear();
-        // スケールを測り直したかどうかも shot ごと（GetOrLockModelLocalScale でも外れるが、
-        // ロックを経由せず消えるケースに備えてここでもクリアする）。
-        scaleRefinedByTrack.Clear();
-        // 補正倍率もここで捨てる。**モデル差し替えでは持ち越すが、shot 境界では持ち越さない。**
-        // カットが変われば被写体の典型的な姿勢も変わるので、測り直すのが正しい。
-        scaleRefineFactorByTrack.Clear();
-        // ⑧ の深度補正比率も前 shot の値を引きずらせない。
-        smoothedProjectedDepthRatioByTrack.Clear();
+        if (!keepScale)
+        {
+            // 主対象: 前 shot のカメラ距離で確定した表示スケール。
+            lockedModelLocalScaleByTrack.Clear();
+            // スケールを測り直したかどうかも shot ごと（GetOrLockModelLocalScale でも外れるが、
+            // ロックを経由せず消えるケースに備えてここでもクリアする）。
+            scaleRefinedByTrack.Clear();
+            // 補正倍率もここで捨てる。**モデル差し替えでは持ち越すが、shot 境界では持ち越さない。**
+            // カットが変われば被写体の典型的な姿勢も変わるので、測り直すのが正しい。
+            scaleRefineFactorByTrack.Clear();
+            // ⑧ の深度補正比率も前 shot の値を引きずらせない。
+            smoothedProjectedDepthRatioByTrack.Clear();
+        }
         // ⑨ の深度差の平滑化も shot をまたがせない。
         otherDepthGapByTrack.Clear();
 

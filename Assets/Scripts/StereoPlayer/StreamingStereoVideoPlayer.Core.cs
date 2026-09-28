@@ -673,6 +673,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool logPlacementMeasurement = false;
     public int logPlacementMeasurementEveryNFrames = 30;
 
+    // 計測用: 描画されるメッシュの頂点そのものを投影した外接矩形を [MESH2D] に出す（2026-09-25）。
+    // [PLACE] の sizeRatio は Renderer.bounds（world 軸の箱）の 8 隅の投影なので、体の前後の広がりぶん
+    // 必ず過大に出る。boneRatio は骨格（頭の関節〜つま先の関節）なので髪や靴を含まない。
+    // 「見た目のシルエット」が bbox からどれだけはみ出しているかは、この頂点投影でしか測れない。
+    // SkinnedMeshRenderer.BakeMesh を使うので重い。[PLACE] と同じ間隔でだけ走る。
+    public bool logMeshProjection = false;
+
+    // [MESH2D] の切り分け用: SkinnedMeshRenderer ごとに可視状態・rootBone・倍率 1 での大きさを [MESH2D-PART] に出す。
+    // 行数が多い（レンダラ数 × 計測フレーム数）ので、原因調査のときだけ。バッチは -meshParts true で入れる。
+    public bool logMeshProjectionParts = false;
+
     // 計測: Human と Other の位置関係を「視線方向」と「画面平行方向」に分解して出す。
     // 「ボールが足に埋もれる」原因が深度不足なのか画面上の位置ずれなのかを切り分けるための
     // 観測専用フラグで、配置には一切影響しない。[GAP] を出力する。
@@ -732,6 +743,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public float humanWalkSpeedMetersPerSecond = 0.8f;
     public float animalApproachStopDistanceMeters = 0.5f;
     public float animalWalkSpeedMetersPerSecond = 0.5f;
+    // Else（車などの剛体）の自発的な動き（2026-09-25、ユーザー指示）: 走って視聴者の手前まで近づき、
+    // 弧を描いて U ターンし、走って戻る。その場回転は使わない（車らしくないため）。
+    // 向きは前後のホイール（FL/FR/RL/RR の子）から決める。ホイールが無いモデルは向きを変えずに滑る。
+    // 走行中はホイールを進んだ距離ぶん回す。U ターンの半径は 0 なら車体の長さから決める。
+    // Random イベントで動画を止める前後の音量フェード（秒）。0 なら即時（以前の挙動）。
+    // 音が急に消えるのが驚かれる（2026-09-28、実機のユーザー指摘）ので、止める前にこの時間で 0 へ落とし、
+    // 再開後に同じ時間で戻す。モデルの動きはフェードの開始と同時に始まる（絵はあと fade 秒だけ動く）。
+    public float interactiveMotionAudioFadeSeconds = 0.5f;
+    public bool enableElseInteractiveMotion = true;
+    public float elseApproachStopDistanceMeters = 0.45f;
+    public float elseDriveSpeedMetersPerSecond = 0.35f;
+    [Min(0f)] public float elseTurnRadiusMeters = 0f;
 
     // popoutRangeMeters（Inspector 調整可）へ移行済み。
     private const float EpsilonMeters = 0.02f;

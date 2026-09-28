@@ -16,7 +16,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private const float SystemTriggerLoopSeconds = 2.0f;
     private const float AnimalBodyTurnMaxDegrees = 35f;
 
-    private enum InteractiveMotionSubject { Person, Animal }
+    private enum InteractiveMotionSubject { Person, Animal, Rigid }
     private enum InteractiveEventKind { Static, Dynamic }
     private enum InteractiveTriggerSource { Random, SystemFrameOut }
     private enum InteractiveDynamicPhase { WalkIn, Gesture, WalkBack }
@@ -90,6 +90,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public Quaternion cachedAnimalBaseRotation = Quaternion.identity;
         public bool cachedAnimalHasSmalPose;
         public AnimalSmalPose cachedAnimalSmalPose;
+
+        // Else（剛体）の走行イベント。経路は ElseDrivePath、向きは出発時の回転を yaw だけ回す。
+        public ElseDrivePath.Path drivePath;
+        public float driveSpeed;
+        public float driveLastDistance;
+        public int driveSegmentLogged = -1;
+        public Vector3 driveHeading = Vector3.forward;
+        public Vector3 rigidAxleLocal = Vector3.right;
+        public float wheelAngleDegrees;
+        public readonly List<RigidWheel> rigidWheels = new List<RigidWheel>();
 
         public readonly Dictionary<HumanBodyBones, Quaternion> fallbackBoneBaseLocalRotations = new Dictionary<HumanBodyBones, Quaternion>();
         public readonly Dictionary<HumanBodyBones, Quaternion> handoffFromBoneLocalRotations = new Dictionary<HumanBodyBones, Quaternion>();
@@ -179,7 +189,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void UpdateInteractiveMotionSchedule(uint trackId, MetaObj obj, int frame)
     {
-        bool isSupportedCategory = IsCategoryPerson(obj.categoryId) || IsCategoryAnimal(obj.categoryId);
+        // Else は、同じフレームに Person / Animal がいないときだけ（car クリップ）。人物クリップのボールまで走らせると、
+        // ⑨ の深度追従や接触補正がイベント中の位置を毎フレーム書き戻して動きが壊れる。
+        bool isSupportedCategory = IsCategoryPerson(obj.categoryId) || IsCategoryAnimal(obj.categoryId) ||
+                                   (enableElseInteractiveMotion && IsCategoryOther(obj.categoryId) && !FrameHasPersonOrAnimal());
         if (!enableInteractiveMotion || !isSupportedCategory)
         {
             return;
@@ -240,6 +253,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void StartRandomInteractiveMotion(uint trackId, MetaObj obj, float now)
     {
+        if (IsCategoryOther(obj.categoryId))
+        {
+            if (!StartRigidDriveMotion(trackId, now))
+            {
+                // 経路が組めない（視聴者が近すぎる等）ときは次の機会へ。
+                GetOrCreateInteractiveMotionState(trackId).nextTriggerTime = RuntimeClock.ResolveNextTime(now, RandomInteractiveInterval());
+            }
+            return;
+        }
+
         bool isAnimal = IsCategoryAnimal(obj.categoryId);
         InteractiveEventKind kind = UnityEngine.Random.value < DynamicEventProbability ? InteractiveEventKind.Dynamic : InteractiveEventKind.Static;
         StartInteractiveMotion(trackId, isAnimal, kind, now);
@@ -273,6 +296,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             bool isPerson = IsCategoryPerson(state.lastCategoryId);
             if (!isAnimal && !isPerson)
             {
+                if (enableElseInteractiveMotion && IsCategoryOther(state.lastCategoryId) && !FrameHasPersonOrAnimal() &&
+                    StartRigidDriveMotion(trackId, tick.now))
+                {
+                    Debug.Log($"DebugForceInteractiveMotion: track {trackId} forced into rigid drive (Else).");
+                    return;
+                }
                 continue;
             }
 
@@ -294,24 +323,120 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return activeRandomInteractiveMotionCount > 0;
     }
 
-    private void BeginRandomInteractiveMotionVideoPause()
+    // Random イベントで動画を止めた時刻（実時間）。止めていないときは負。
+    // 実験ログに「何秒止めたか」を残す（2026-09-25、第 3 条件の duration_sec を解釈するため）。
+    private float randomMotionVideoPauseStartedAt = -1f;
+
+    // 止める前後の音量フェード（2026-09-28、実機のユーザー指摘「急に音が消えると驚く」）。
+    // 動画はフェードアウトが終わってから止める（モデルの動きはフェードの開始と同時に始まる）。
+    // 再開は先に Play してから同じ時間でフェードイン。秒数は interactiveMotionAudioFadeSeconds（0 なら即時）。
+    private readonly InteractiveMotionAudioFade motionAudioFade = new InteractiveMotionAudioFade();
+    private uint motionAudioFadeTrackId;
+
+    private void BeginRandomInteractiveMotionVideoPause(uint trackId)
     {
         activeRandomInteractiveMotionCount++;
         if (activeRandomInteractiveMotionCount == 1 && vp != null && vp.isPlaying)
         {
-            RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Pause);
-            UpdatePauseButtonLabel();
+            motionAudioFadeTrackId = trackId;
+            float seconds = Mathf.Max(0f, interactiveMotionAudioFadeSeconds);
+            motionAudioFade.BeginFadeOut(GetDirectAudioVolumeForFade(), seconds);
+            Debug.Log($"[MOTION] audio fade out begin track={trackId} seconds={seconds:F2} videoTime={vp.time:F2}s");
+            if (seconds <= 0f)
+            {
+                TickInteractiveMotionAudioFade();   // 即時（以前の挙動）
+            }
         }
     }
 
-    private void EndRandomInteractiveMotionVideoPause()
+    private void EndRandomInteractiveMotionVideoPause(uint trackId)
     {
         activeRandomInteractiveMotionCount = Mathf.Max(0, activeRandomInteractiveMotionCount - 1);
-        if (activeRandomInteractiveMotionCount == 0 && vp != null && !vp.isPlaying)
+        if (activeRandomInteractiveMotionCount != 0 || vp == null)
+        {
+            return;
+        }
+
+        float seconds = Mathf.Max(0f, interactiveMotionAudioFadeSeconds);
+        motionAudioFade.BeginFadeIn(seconds);
+        // 従来どおり、止まっていれば戻す（フェードで止めた場合も、フェードが終わる前に手動で止まっていた場合も）。
+        if (!vp.isPlaying)
         {
             RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
             UpdatePauseButtonLabel();
+            float paused = randomMotionVideoPauseStartedAt >= 0f ? Time.unscaledTime - randomMotionVideoPauseStartedAt : 0f;
+            randomMotionVideoPauseStartedAt = -1f;
+            Debug.Log($"[MOTION] video pause end track={trackId} paused={paused:F2}s");
+            ExperimentLog.Interaction(trackId, "video_pause_end", $"paused_sec={ExperimentCsv.Format(paused)}");
         }
+        if (seconds <= 0f)
+        {
+            TickInteractiveMotionAudioFade();
+        }
+    }
+
+    // フェードアウトが終わったときに呼ばれる。手動で止められていたら何もしない（従来どおり）。
+    private void PauseVideoForInteractiveMotion()
+    {
+        if (vp == null || !vp.isPlaying)
+        {
+            return;
+        }
+        RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Pause);
+        UpdatePauseButtonLabel();
+        randomMotionVideoPauseStartedAt = Time.unscaledTime;
+        Debug.Log($"[MOTION] video pause begin track={motionAudioFadeTrackId} videoTime={vp.time:F2}s");
+        ExperimentLog.Interaction(motionAudioFadeTrackId, "video_pause_begin", null);
+    }
+
+    // 毎描画フレーム（UpdateRuntimePlaybackTick）から呼ぶ。実時間で進める。
+    private void TickInteractiveMotionAudioFade()
+    {
+        if (motionAudioFade.CurrentPhase == InteractiveMotionAudioFade.Phase.Idle)
+        {
+            return;
+        }
+        // 止めている間に被験者が手動で再開したら、無音のままにせず音量を戻す。
+        if (motionAudioFade.CurrentPhase == InteractiveMotionAudioFade.Phase.Paused && vp != null && vp.isPlaying)
+        {
+            motionAudioFade.BeginFadeIn(Mathf.Max(0f, interactiveMotionAudioFadeSeconds));
+        }
+        InteractiveMotionAudioFade.Step step = motionAudioFade.Tick(Time.unscaledDeltaTime);
+        if (step.applyVolume)
+        {
+            SetDirectAudioVolumeForFade(step.volume);
+        }
+        if (step.pauseNow)
+        {
+            PauseVideoForInteractiveMotion();
+        }
+    }
+
+    private float GetDirectAudioVolumeForFade()
+    {
+        return vp != null && vp.audioTrackCount > 0 ? vp.GetDirectAudioVolume(0) : 1f;
+    }
+
+    private void SetDirectAudioVolumeForFade(float volume)
+    {
+        if (vp == null)
+        {
+            return;
+        }
+        for (ushort track = 0; track < vp.audioTrackCount; track++)
+        {
+            vp.SetDirectAudioVolume(track, volume);
+        }
+    }
+
+    // 各フェーズの長さを残す。第 3 条件で動画が合計何秒止まるかは、この行の和で分かる。
+    private void LogInteractiveMotionPhase(uint trackId, string phase, string clipName, float durationSeconds, float distanceMeters)
+    {
+        Debug.Log($"[MOTION] {phase} track={trackId} clip={clipName} duration={durationSeconds:F2}s distance={distanceMeters:F2}m");
+        ExperimentLog.Interaction(
+            trackId,
+            phase,
+            $"clip={clipName} duration_sec={ExperimentCsv.Format(durationSeconds)} distance_m={ExperimentCsv.Format(distanceMeters)}");
     }
 
     private void StartInteractiveMotion(uint trackId, bool isAnimal, InteractiveEventKind kind, float now)
@@ -320,7 +445,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.subject = isAnimal ? InteractiveMotionSubject.Animal : InteractiveMotionSubject.Person;
         state.triggerSource = InteractiveTriggerSource.Random;
         state.kind = kind;
-        BeginRandomInteractiveMotionVideoPause();
+        BeginRandomInteractiveMotionVideoPause(trackId);
         state.originPosition = state.hasLiveSample ? state.livePosition : Vector3.zero;
         state.originRotation = state.hasLiveSample ? state.liveRotation : Quaternion.identity;
 
@@ -370,6 +495,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.phaseStartTime = now;
         state.phaseDuration = Mathf.Max(MinWalkDurationSeconds, distance / speed);
         state.stage = InteractiveEventStage.Owned;
+        LogInteractiveMotionPhase(trackId, "walk_in", isAnimal ? "animal_walk" : "human_walk", state.phaseDuration, distance);
 
         if (isAnimal)
         {
@@ -402,6 +528,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             state.phaseDuration = gestureClip != null
                 ? Mathf.Max(MinGestureDurationSeconds, gestureClip.duration)
                 : Mathf.Max(MinGestureDurationSeconds, staticAnimationDurationSeconds);
+            LogInteractiveMotionPhase(
+                trackId, "gesture", gestureClip != null ? gestureClip.name : state.animalPreset.ToString(), state.phaseDuration, 0f);
             return;
         }
 
@@ -411,12 +539,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             state.humanPreset = InteractiveHumanPreset.ClipGesture;
             state.phaseDuration = Mathf.Max(MinGestureDurationSeconds, state.humanClip.length > 0.0001f ? state.humanClip.length : staticAnimationDurationSeconds);
+            LogInteractiveMotionPhase(trackId, "gesture", state.humanClip.name, state.phaseDuration, 0f);
             StartHumanClipPlayback(trackId, instance, state.humanClip, false);
             return;
         }
 
         state.humanPreset = InteractiveHumanPreset.FaceViewer;
         state.phaseDuration = Mathf.Max(MinGestureDurationSeconds, staticAnimationDurationSeconds);
+        LogInteractiveMotionPhase(trackId, "gesture", "FaceViewer", state.phaseDuration, 0f);
     }
 
     private void BeginWalkBackPhase(InteractiveMotionState state, uint trackId, bool isAnimal, float now)
@@ -441,6 +571,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.phaseStartTime = now;
         state.phaseDuration = Mathf.Max(MinWalkDurationSeconds, distance / speed);
         state.stage = InteractiveEventStage.Owned;
+        LogInteractiveMotionPhase(trackId, "walk_back", isAnimal ? "animal_walk" : "human_walk", state.phaseDuration, distance);
 
         if (isAnimal)
         {
@@ -716,6 +847,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         RuntimeClock.TickContext tick = GetRuntimeTickContext();
+        if (state.subject == InteractiveMotionSubject.Rigid)
+        {
+            return ApplyRigidDrive(trackId, instance, state, tick);
+        }
+
         bool isAnimal = state.subject == InteractiveMotionSubject.Animal;
         bool isGesturePhase = state.kind == InteractiveEventKind.Static || state.dynamicPhase == InteractiveDynamicPhase.Gesture;
 
@@ -934,6 +1070,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             animalPoseApplier.CaptureBoneLocalRotations(instance.transform, state.handoffFromAnimalBoneLocalRotations);
         }
+        else if (state.subject == InteractiveMotionSubject.Rigid)
+        {
+            RestoreRigidWheels(state);
+        }
         state.stage = InteractiveEventStage.HandoffBlend;
         state.handoffStartTime = now;
         StopHumanClipPlayback(trackId);
@@ -973,7 +1113,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             state.nextTriggerTime = RuntimeClock.ResolveNextTime(tick.now, RandomInteractiveInterval());
             if (state.triggerSource == InteractiveTriggerSource.Random)
             {
-                EndRandomInteractiveMotionVideoPause();
+                EndRandomInteractiveMotionVideoPause(trackId);
             }
         }
     }
@@ -1728,14 +1868,331 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     // --- Lifecycle -----------------------------------------------------------------------
 
+    // --- Else（剛体）: 走って近づく → U ターン → 走って戻る（2026-09-25） --------------------
+    //
+    // 車にはリグもクリップも無いので、root の移動と yaw だけで作る。経路は ElseDrivePath（純粋な幾何）。
+    // 向きは出発時の回転を「経路の接線と出発時の向きの差」だけ yaw で回す（ピッチ・ロールは手動キーの値のまま）。
+    // 前後のホイール（FL/FR/RL/RR）から車の前方向を決め、走った距離ぶんホイールを回す。
+    // ホイールが無いモデル（ボール等）は向きを変えずに経路の上を滑る。
+    // 終点は出発位置・出発時の向きなので、ハンドオフで跳ばない（動画は止めているので追従の姿勢も同じ）。
+
+    public struct RigidWheel
+    {
+        public Transform transform;
+        public Quaternion relativeRotation;   // 出発時の root 回転から見たホイールの world 回転
+        public Quaternion baseLocalRotation;  // 復元用
+        public float radius;
+        public bool isFront;
+    }
+
+    // U ターンの半径。car クリップの車は world で 0.2〜0.5 m あり（popout の距離に対して大きい）、
+    // 車長 × 0.6 では視聴者までの余地（0.2〜0.4 m）に入らなかった（2026-09-25 バッチ実測）。
+    // おもちゃの車のように小回りさせる: 車長 × 0.25、上限 0.12 m、さらに余地に合わせて縮める。
+    private const float ElseTurnRadiusFromLengthFactor = 0.25f;
+    private const float ElseTurnRadiusMin = 0.02f;
+    private const float ElseTurnRadiusMax = 0.12f;
+
+    private bool FrameHasPersonOrAnimal()
+    {
+        for (int i = 0; i < metaFrameObjects.Count; i++)
+        {
+            byte category = metaFrameObjects[i].categoryId;
+            if (IsCategoryPerson(category) || IsCategoryAnimal(category))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // 実験の集計とバッチの確認用: どれかのトラックでイベント中（Owned か HandoffBlend）か。
+    public bool IsAnyInteractiveMotionActive()
+    {
+        foreach (KeyValuePair<uint, InteractiveMotionState> kv in interactiveMotionByTrack)
+        {
+            if (kv.Value != null && kv.Value.stage != InteractiveEventStage.Inactive)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private bool StartRigidDriveMotion(uint trackId, float now)
+    {
+        GameObject instance = GetTrackInstanceOrNull(trackId);
+        InteractiveMotionState state = GetOrCreateInteractiveMotionState(trackId);
+        if (instance == null || !state.hasLiveSample || state.stage != InteractiveEventStage.Inactive)
+        {
+            return false;
+        }
+
+        Vector3 up = Vector3.up;
+        Transform viewer = GetViewOrHeadTransform();
+        Vector3 forwardFallback = state.lastScreen != null ? -state.lastScreen.forward : Vector3.forward;
+        Vector3 viewerPosition = viewer != null ? viewer.position : state.livePosition + forwardFallback;
+        Vector3 toViewer = Vector3.ProjectOnPlane(viewerPosition - state.livePosition, up);
+        float stopDistance = Mathf.Max(0.05f, elseApproachStopDistanceMeters);
+        if (toViewer.magnitude <= stopDistance + 0.01f)
+        {
+            Debug.Log($"[MOTION] rigid drive skipped track={trackId}: viewer too close ({toViewer.magnitude:F2}m <= stop {stopDistance:F2}m)");
+            return false;
+        }
+        Vector3 stop = PreserveHeight(viewerPosition - toViewer.normalized * stopDistance, state.livePosition, up);
+
+        // 車の前方向: 前後のホイールの中点の差（root ローカル）。無ければ視聴者方向を向いていることにして、向きは変えない。
+        state.rigidWheels.Clear();
+        bool hasForward = TryResolveRigidWheels(instance, state.liveRotation, state.rigidWheels, out Vector3 forwardLocal);
+        Vector3 headingWorld = hasForward ? Vector3.ProjectOnPlane(state.liveRotation * forwardLocal, up) : toViewer;
+        if (headingWorld.sqrMagnitude <= 0.000001f)
+        {
+            headingWorld = toViewer;
+        }
+        headingWorld.Normalize();
+        Vector3 upLocal = Quaternion.Inverse(state.liveRotation) * up;
+        state.rigidAxleLocal = hasForward ? Vector3.Cross(upLocal, forwardLocal).normalized : Vector3.right;
+
+        float radius = elseTurnRadiusMeters > 0f
+            ? elseTurnRadiusMeters
+            : Mathf.Clamp(ResolveRigidLengthAlong(instance, headingWorld) * ElseTurnRadiusFromLengthFactor, ElseTurnRadiusMin, ElseTurnRadiusMax);
+        float driveDistance = Vector3.Distance(state.livePosition, stop);
+        // 余地が短いときは半径を縮めて収める（下限 ElseTurnRadiusMin）。
+        radius = Mathf.Min(radius, Mathf.Max(ElseTurnRadiusMin, (driveDistance - 0.02f) * 0.5f));
+        if (driveDistance < ElseDrivePath.MinimumDriveDistance(radius))
+        {
+            Debug.Log($"[MOTION] rigid drive skipped track={trackId}: drive {driveDistance:F2}m < minimum {ElseDrivePath.MinimumDriveDistance(radius):F2}m (radius {radius:F3}m)");
+            state.rigidWheels.Clear();
+            return false;
+        }
+
+        state.subject = InteractiveMotionSubject.Rigid;
+        state.triggerSource = InteractiveTriggerSource.Random;
+        state.kind = InteractiveEventKind.Dynamic;
+        state.dynamicPhase = InteractiveDynamicPhase.WalkIn;
+        state.originPosition = state.livePosition;
+        state.originRotation = state.liveRotation;
+        state.driveHeading = headingWorld;
+        state.drivePath = ElseDrivePath.Build(state.originPosition, headingWorld, stop, up, radius);
+        state.driveSpeed = Mathf.Max(0.05f, elseDriveSpeedMetersPerSecond);
+        state.driveLastDistance = 0f;
+        state.driveSegmentLogged = -1;
+        state.wheelAngleDegrees = 0f;
+        state.phaseStartTime = now;
+        state.phaseDuration = state.drivePath.TotalLength / state.driveSpeed;
+        state.stage = InteractiveEventStage.Owned;
+        BeginRandomInteractiveMotionVideoPause(trackId);
+        ExperimentLog.Interaction(trackId, "random_Dynamic", $"subject=else wheels={state.rigidWheels.Count} radius_m={ExperimentCsv.Format(radius)}");
+        Debug.Log(
+            $"[MOTION] rigid drive start track={trackId} wheels={state.rigidWheels.Count} hasForward={hasForward} " +
+            $"radius={radius:F3}m drive={driveDistance:F2}m total={state.drivePath.TotalLength:F2}m duration={state.phaseDuration:F2}s");
+        LogRigidSegmentIfEntered(trackId, state, ElseDrivePath.SegmentDriveIn);
+        return true;
+    }
+
+    private static readonly string[] RigidFrontWheelNames = { "FL", "FR" };
+    private static readonly string[] RigidRearWheelNames = { "RL", "RR" };
+
+    // FL/FR/RL/RR という名前の子（大文字小文字は区別しない）を探す。前後とも見つかったときだけ前方向を返す。
+    private static bool TryResolveRigidWheels(GameObject instance, Quaternion rootRotation, List<RigidWheel> wheels, out Vector3 forwardLocal)
+    {
+        forwardLocal = Vector3.forward;
+        Transform[] all = instance.GetComponentsInChildren<Transform>(true);
+        Vector3 frontSum = Vector3.zero;
+        Vector3 rearSum = Vector3.zero;
+        int frontCount = 0;
+        int rearCount = 0;
+        Quaternion inverseRoot = Quaternion.Inverse(rootRotation);
+        for (int i = 0; i < all.Length; i++)
+        {
+            Transform t = all[i];
+            if (t == null || t == instance.transform)
+            {
+                continue;
+            }
+            bool isFront = MatchesAny(t.name, RigidFrontWheelNames);
+            bool isRear = !isFront && MatchesAny(t.name, RigidRearWheelNames);
+            if (!isFront && !isRear)
+            {
+                continue;
+            }
+            Renderer renderer = t.GetComponentInChildren<Renderer>();
+            float radius = renderer != null
+                ? Mathf.Max(renderer.bounds.extents.x, Mathf.Max(renderer.bounds.extents.y, renderer.bounds.extents.z))
+                : 0.01f;
+            wheels.Add(new RigidWheel
+            {
+                transform = t,
+                relativeRotation = inverseRoot * t.rotation,
+                baseLocalRotation = t.localRotation,
+                radius = Mathf.Max(0.002f, radius),
+                isFront = isFront,
+            });
+            Vector3 local = instance.transform.InverseTransformPoint(t.position);
+            if (isFront)
+            {
+                frontSum += local;
+                frontCount++;
+            }
+            else
+            {
+                rearSum += local;
+                rearCount++;
+            }
+        }
+
+        if (frontCount == 0 || rearCount == 0)
+        {
+            return false;
+        }
+        Vector3 axis = frontSum / frontCount - rearSum / rearCount;
+        if (axis.sqrMagnitude <= 0.000001f)
+        {
+            return false;
+        }
+        forwardLocal = axis.normalized;
+        return true;
+    }
+
+    private static bool MatchesAny(string name, string[] candidates)
+    {
+        for (int i = 0; i < candidates.Length; i++)
+        {
+            if (string.Equals(name, candidates[i], System.StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // 車体の長さ（world の描画 bounds を進行方向へ射影した幅）。
+    private static float ResolveRigidLengthAlong(GameObject instance, Vector3 directionWorld)
+    {
+        Renderer[] renderers = instance.GetComponentsInChildren<Renderer>(false);
+        float min = float.MaxValue;
+        float max = float.MinValue;
+        Vector3 dir = directionWorld.normalized;
+        for (int r = 0; r < renderers.Length; r++)
+        {
+            if (renderers[r] == null || !renderers[r].enabled)
+            {
+                continue;
+            }
+            Bounds b = renderers[r].bounds;
+            for (int c = 0; c < 8; c++)
+            {
+                Vector3 corner = new Vector3(
+                    (c & 1) == 0 ? b.min.x : b.max.x,
+                    (c & 2) == 0 ? b.min.y : b.max.y,
+                    (c & 4) == 0 ? b.min.z : b.max.z);
+                float d = Vector3.Dot(corner, dir);
+                min = Mathf.Min(min, d);
+                max = Mathf.Max(max, d);
+            }
+        }
+        return max > min ? max - min : 0.05f;
+    }
+
+    private bool ApplyRigidDrive(uint trackId, GameObject instance, InteractiveMotionState state, RuntimeClock.TickContext tick)
+    {
+        if (state.drivePath == null || state.drivePath.TotalLength <= 0f)
+        {
+            BeginHandoff(trackId, state, tick.now);
+            return true;
+        }
+
+        float elapsed = RuntimeClock.ResolveElapsed(tick.now, state.phaseStartTime);
+        float distance = Mathf.Clamp(elapsed * state.driveSpeed, 0f, state.drivePath.TotalLength);
+        ElseDrivePath.Sample sample = state.drivePath.Evaluate(distance);
+        LogRigidSegmentIfEntered(trackId, state, sample.segment);
+
+        // 向き: 出発時の回転を、経路の接線と出発時の向きの差だけ yaw で回す。ピッチ・ロールは保つ。
+        float yaw = Vector3.SignedAngle(state.driveHeading, sample.tangent, Vector3.up);
+        Quaternion rotation = Quaternion.AngleAxis(yaw, Vector3.up) * state.originRotation;
+        TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(sample.position, rotation, instance.transform.localScale));
+
+        // ホイール: 進んだ距離ぶん車軸まわりに回す（前進なので常に正）。
+        float advanced = Mathf.Max(0f, distance - state.driveLastDistance);
+        state.driveLastDistance = distance;
+        if (state.rigidWheels.Count > 0)
+        {
+            Vector3 axleWorld = rotation * state.rigidAxleLocal;
+            state.wheelAngleDegrees += advanced / state.rigidWheels[0].radius * Mathf.Rad2Deg;
+            for (int i = 0; i < state.rigidWheels.Count; i++)
+            {
+                RigidWheel wheel = state.rigidWheels[i];
+                if (wheel.transform == null)
+                {
+                    continue;
+                }
+                // relativeRotation で root に対する姿勢を保ちつつ、車軸まわりに回す。
+                wheel.transform.rotation = Quaternion.AngleAxis(state.wheelAngleDegrees, axleWorld) * (rotation * wheel.relativeRotation);
+            }
+        }
+
+        if (distance >= state.drivePath.TotalLength)
+        {
+            BeginHandoff(trackId, state, tick.now);
+        }
+        return true;
+    }
+
+    private void LogRigidSegmentIfEntered(uint trackId, InteractiveMotionState state, int segment)
+    {
+        if (segment == state.driveSegmentLogged || state.drivePath == null)
+        {
+            return;
+        }
+        state.driveSegmentLogged = segment;
+        string phase = segment == ElseDrivePath.SegmentUTurn ? "u_turn" : (segment == ElseDrivePath.SegmentDriveBack ? "drive_back" : "drive_in");
+        float length = state.drivePath.segmentLengths[Mathf.Clamp(segment, 0, 2)];
+        LogInteractiveMotionPhase(trackId, phase, "else_drive", length / Mathf.Max(0.05f, state.driveSpeed), length);
+    }
+
+    private static void RestoreRigidWheels(InteractiveMotionState state)
+    {
+        for (int i = 0; i < state.rigidWheels.Count; i++)
+        {
+            if (state.rigidWheels[i].transform != null)
+            {
+                state.rigidWheels[i].transform.localRotation = state.rigidWheels[i].baseLocalRotation;
+            }
+        }
+        state.rigidWheels.Clear();
+        state.drivePath = null;
+    }
+
     private void StopInteractiveMotion(uint trackId)
     {
         if (interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) && state != null)
         {
+            // Random イベントの途中で止めるなら、動画の一時停止も解く。以前はカウンタが残ったままになり、
+            // Motion を OFF にしたあと動画が止まったまま・以後 Random が二度と発火しない状態になり得た（2026-09-25）。
+            bool wasRandomActive = state.stage != InteractiveEventStage.Inactive &&
+                                   state.triggerSource == InteractiveTriggerSource.Random;
             state.stage = InteractiveEventStage.Inactive;
             state.humanClip = null;
+            RestoreRigidWheels(state);
+            if (wasRandomActive)
+            {
+                EndRandomInteractiveMotionVideoPause(trackId);
+            }
         }
         StopHumanClipPlayback(trackId);
+    }
+
+    // モデルを消された track の後片付け。走っていないときは何もしない（毎フレーム呼ばれる経路なので）。
+    private void StopInteractiveMotionForHiddenTrack(uint trackId)
+    {
+        if (!interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) ||
+            state == null ||
+            state.stage == InteractiveEventStage.Inactive)
+        {
+            return;
+        }
+
+        Debug.Log($"[MOTION] stop track={trackId}: モデルが非表示になったので中断（動画の一時停止も解く）");
+        StopInteractiveMotion(trackId);
     }
 
     private void StopAllInteractiveMotion()

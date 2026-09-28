@@ -150,6 +150,227 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             $"anchorV={obj.anchorV} depth={depthMeters:F3} scale={localScale.x:F4}" +
             scaleInfo +
             boneInfo);
+
+        LogMeshProjectionIfEnabled(obj, instance, screen, frame, category);
+    }
+
+
+    // ---- 計測: 描画されるメッシュの頂点を投影した外接矩形（[MESH2D]）----
+    // meshRatio   = 頂点投影の高さ ÷ bbox 高さ（見た目のシルエットが bbox に対してどれだけ大きいか）
+    // meshTop/BottomDelta = 投影上端・下端 − bbox 上端・下端（px、正なら下）
+    // widthRatio  = 頂点投影の幅 ÷ bbox 幅
+    // 論文側の依頼 D-3（2026-09-25）: boneRatio（骨格）が 1.0 でも髪・靴のぶんシルエットは外に出る、を数字で出す。
+    private readonly System.Collections.Generic.List<Vector3> meshProjectionVertexBuffer =
+        new System.Collections.Generic.List<Vector3>(65536);
+    private Mesh meshProjectionBakeBuffer;
+
+    private void LogMeshProjectionIfEnabled(MetaObj obj, GameObject instance, Transform screen, int frame, string category)
+    {
+        if (!logMeshProjection || instance == null || obj.bboxH <= 0 || obj.bboxW <= 0)
+        {
+            return;
+        }
+
+        if (!TryProjectMeshVerticesToEye(
+                instance, screen, out float minU, out float maxU, out float minV, out float maxV, out int vertexCount))
+        {
+            return;
+        }
+
+        float bboxTop = obj.bboxY;
+        float bboxBottom = obj.bboxY + obj.bboxH;
+        float bboxLeft = obj.bboxX;
+        float bboxRight = obj.bboxX + obj.bboxW;
+        Debug.Log(
+            $"[MESH2D] f={frame} track={obj.trackId} {category} " +
+            $"meshRatio={(maxV - minV) / obj.bboxH:F3} " +
+            $"meshTopDelta={minV - bboxTop:F1} meshBottomDelta={maxV - bboxBottom:F1} " +
+            $"widthRatio={(maxU - minU) / obj.bboxW:F3} " +
+            $"meshLeftDelta={minU - bboxLeft:F1} meshRightDelta={maxU - bboxRight:F1} " +
+            $"mesh[top={minV:F1} bot={maxV:F1} left={minU:F1} right={maxU:F1}] " +
+            $"bbox[top={bboxTop:F0} bot={bboxBottom:F0} left={bboxLeft:F0} right={bboxRight:F0}] " +
+            $"vertices={vertexCount} rejected={meshProjectionLastRejected} bakeScale={meshProjectionLastScale:F4}");
+    }
+
+
+    // SkinnedMeshRenderer は BakeMesh（スキニング後の形）、MeshRenderer は sharedMesh の頂点を world に直して投影する。
+    // 手動回転ガイド（Settings を開いたときだけ出る子）は除く。
+    private bool TryProjectMeshVerticesToEye(
+        GameObject instance,
+        Transform screen,
+        out float minU,
+        out float maxU,
+        out float minV,
+        out float maxV,
+        out int vertexCount)
+    {
+        minU = float.MaxValue;
+        maxU = float.MinValue;
+        minV = float.MaxValue;
+        maxV = float.MinValue;
+        vertexCount = 0;
+        if (instance == null || manifest == null || manifest.eye_h <= 0)
+        {
+            return false;
+        }
+
+        if (!TryGetProjectionIntrinsics(out float fx, out float fy, out _, out _) ||
+            !TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
+        {
+            return false;
+        }
+
+        if (meshProjectionBakeBuffer == null)
+        {
+            meshProjectionBakeBuffer = new Mesh();
+        }
+
+        // BakeMesh(useScale=false) が返す頂点は「レンダラの位置・回転だけを外した world 寸法」で、
+        // world = レンダラの位置 + 回転 × 焼いた頂点（倍率 1）。2026-09-25 の診断（[MESH2D-PART]、
+        // 30 レンダラ × 175 フレーム）で、全パーツ・全フレームがこの空間で骨格 AABB と同じ大きさだった。
+        // 踏んだ穴: TransformPoint を使うと bone の world スケールが二重に掛かって 1/4 になる。
+        // 「骨格の大きさと比べて倍率を 1 / lossyScale / 1/lossyScale から選ぶ」較正は、同じ入力でも走りごとに
+        // 違うフレームで 1/4 を選んだ（AABB 基準・95 パーセンタイル基準とも。パーツごとの大きさは正常だったので
+        // 原因は未特定）。なので較正はせず倍率 1 固定。骨格 AABB の中心から対角より遠い頂点だけ外れとして捨てる
+        // （useScale=true で試したとき −586399 px に投影された頂点があった保険。2026-09-25 の走りでは 0 個）。
+        Animator animator = instance.GetComponentInChildren<Animator>(true);
+        var bones = ResolveProjectionBones(instance, animator);
+        Bounds boneBounds = default;
+        bool hasBoneBounds = false;
+        for (int b = 0; b < bones.Count; b++)
+        {
+            Transform bone = bones[b].Value;
+            if (bone == null)
+            {
+                continue;
+            }
+            if (!hasBoneBounds)
+            {
+                boneBounds = new Bounds(bone.position, Vector3.zero);
+                hasBoneBounds = true;
+            }
+            else
+            {
+                boneBounds.Encapsulate(bone.position);
+            }
+        }
+
+        // 1 回目の走査: 焼いた頂点をレンダラごとに集める。
+        meshProjectionSkinnedParts.Clear();
+        meshProjectionRigidWorld.Clear();
+        Renderer[] renderers = instance.GetComponentsInChildren<Renderer>(false);
+        for (int r = 0; r < renderers.Length; r++)
+        {
+            Renderer renderer = renderers[r];
+            if (renderer == null || !renderer.enabled ||
+                (manualYawGuideRoot != null && renderer.transform.IsChildOf(manualYawGuideRoot.transform)))
+            {
+                continue;
+            }
+
+            Transform space = renderer.transform;
+            if (renderer is SkinnedMeshRenderer smr)
+            {
+                if (smr.sharedMesh == null)
+                {
+                    continue;
+                }
+                smr.BakeMesh(meshProjectionBakeBuffer, false);
+                Vector3[] verts = meshProjectionBakeBuffer.vertices;
+                meshProjectionSkinnedParts.Add(new MeshProjectionPart { position = space.position, rotation = space.rotation, vertices = verts });
+                if (logMeshProjectionParts && hasBoneBounds && verts.Length > 0)
+                {
+                    // パーツごとの診断（2026-09-25）: 倍率 1 で world に直したときの AABB の対角と、骨格 AABB 中心からの距離。
+                    // 「画面外扱い（isVisible=false）のパーツがバインド姿勢のまま 4 倍の空間で返る」疑いを確かめるために
+                    // 入れた。結果: バッチでは全パーツが常に isVisible=false だが、倍率 1 の大きさは全フレームで正常だった。
+                    Bounds partBounds = new Bounds(space.position + space.rotation * verts[0], Vector3.zero);
+                    for (int i = 1; i < verts.Length; i++)
+                    {
+                        partBounds.Encapsulate(space.position + space.rotation * verts[i]);
+                    }
+                    Debug.Log(
+                        $"[MESH2D-PART] name={smr.name} visible={smr.isVisible} offscreen={smr.updateWhenOffscreen} " +
+                        $"verts={verts.Length} rootBone={(smr.rootBone != null ? smr.rootBone.name : "none")} bones={(smr.bones != null ? smr.bones.Length : 0)} " +
+                        $"parent={(space.parent != null ? space.parent.name : "none")} lossyY={space.lossyScale.y:F4} " +
+                        $"diag1={partBounds.size.magnitude:F3} centerDist1={(partBounds.center - boneBounds.center).magnitude:F3} boneDiag={boneBounds.size.magnitude:F3}");
+                }
+            }
+            else
+            {
+                MeshFilter filter = renderer.GetComponent<MeshFilter>();
+                if (filter == null || filter.sharedMesh == null)
+                {
+                    continue;
+                }
+                Vector3[] verts = filter.sharedMesh.vertices;
+                for (int i = 0; i < verts.Length; i++)
+                {
+                    meshProjectionRigidWorld.Add(space.TransformPoint(verts[i]));
+                }
+            }
+        }
+
+        const float bakedScale = 1f;
+        meshProjectionLastScale = bakedScale;
+        meshProjectionLastRejected = 0;
+
+        // 2 回目の走査: 投影する。骨格 AABB の中心から対角より遠い頂点は外れとして捨てる（本物の頂点は
+        // 髪・靴を含めても対角の半分 + 数 cm に収まる。外れは 1e3 以上先）。
+        Vector3 rejectCenter = hasBoneBounds ? boneBounds.center : Vector3.zero;
+        float rejectRadius = hasBoneBounds ? Mathf.Max(boneBounds.size.magnitude, 0.05f) : float.MaxValue;
+        Quaternion worldToCam = Quaternion.Inverse(camRotation);
+        for (int p = 0; p < meshProjectionSkinnedParts.Count; p++)
+        {
+            MeshProjectionPart part = meshProjectionSkinnedParts[p];
+            for (int i = 0; i < part.vertices.Length; i++)
+            {
+                Vector3 world = part.position + part.rotation * (part.vertices[i] * bakedScale);
+                if (hasBoneBounds && (world - rejectCenter).magnitude > rejectRadius)
+                {
+                    meshProjectionLastRejected++;
+                    continue;
+                }
+                AccumulateMeshProjection(world, worldToCam, camOrigin, fx, fy, ref minU, ref maxU, ref minV, ref maxV, ref vertexCount);
+            }
+        }
+        for (int i = 0; i < meshProjectionRigidWorld.Count; i++)
+        {
+            AccumulateMeshProjection(meshProjectionRigidWorld[i], worldToCam, camOrigin, fx, fy, ref minU, ref maxU, ref minV, ref maxV, ref vertexCount);
+        }
+
+        return vertexCount > 0 && maxV > minV;
+    }
+
+
+    private struct MeshProjectionPart
+    {
+        public Vector3 position;
+        public Quaternion rotation;
+        public Vector3[] vertices;
+    }
+
+    private readonly System.Collections.Generic.List<MeshProjectionPart> meshProjectionSkinnedParts =
+        new System.Collections.Generic.List<MeshProjectionPart>(32);
+    private readonly System.Collections.Generic.List<Vector3> meshProjectionRigidWorld =
+        new System.Collections.Generic.List<Vector3>(4096);
+    private float meshProjectionLastScale = 1f;
+    private int meshProjectionLastRejected;
+
+    private void AccumulateMeshProjection(
+        Vector3 world, Quaternion worldToCam, Vector3 camOrigin, float fx, float fy,
+        ref float minU, ref float maxU, ref float minV, ref float maxV, ref int vertexCount)
+    {
+        Vector3 cam = worldToCam * (world - camOrigin);
+        if (!PinholePlacementSpace.TryProjectCamLocalToEyePixel(manifest, cam, fx, fy, out Vector2 pixel))
+        {
+            return;
+        }
+
+        if (pixel.x < minU) minU = pixel.x;
+        if (pixel.x > maxU) maxU = pixel.x;
+        if (pixel.y < minV) minV = pixel.y;
+        if (pixel.y > maxV) maxV = pixel.y;
+        vertexCount++;
     }
 
 

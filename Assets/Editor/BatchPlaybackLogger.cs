@@ -23,6 +23,10 @@ public static class BatchPlaybackLogger
     private const string KeyTargetFps = "BatchPlaybackLogger.TargetFps";
     private const string KeyCaptureDir = "BatchPlaybackLogger.CaptureDir";
     private const string KeyCaptureWidth = "BatchPlaybackLogger.CaptureWidth";
+    // インタラクティブモーションの確認用（2026-09-25）: 動画時刻が -forceMotionAt 秒に達したら 1 回だけ強制発火し、
+    // -captureMotion 秒おきにイベント中（Owned / HandoffBlend）の絵を m00000.png… で撮る。
+    private const string KeyForceMotionAt = "BatchPlaybackLogger.ForceMotionAt";
+    private const string KeyCaptureMotionEvery = "BatchPlaybackLogger.CaptureMotionEvery";
 
     public static void Run()
     {
@@ -40,6 +44,7 @@ public static class BatchPlaybackLogger
         float boneRatioTarget = -1f;
         bool diagLogs = false;
         int diagEveryN = 10;
+        bool meshParts = false;
         float depthK = -1f;
         float depthSmooth = -1f;
         float depthEps = -1f;
@@ -106,7 +111,12 @@ public static class BatchPlaybackLogger
         bool? elseVerticalFrameOut = null;
         // 1 フレーム孤立の bbox 跳ね除去（rejectIsolatedBBoxSpikes）の A/B 用。
         bool? bboxSpikeFix = null;
+        // インタラクティブモーションの ON/OFF（両シーンとも serialize 値は 0）。第 3 条件で動画が
+        // 合計何秒止まるかを測るために足した（2026-09-25）。[MOTION] のログで集計する。
+        bool? motion = null;
         string captureFrames = null;
+        float forceMotionAt = -1f;
+        float captureMotionEvery = 0f;
         string captureDir = null;
         int captureWidth = 3840;
         for (int i = 0; i < args.Length - 1; i++)
@@ -116,6 +126,7 @@ public static class BatchPlaybackLogger
             if (args[i] == "-boneRatioTarget") float.TryParse(args[i + 1], out boneRatioTarget);
             if (args[i] == "-diagLogs") bool.TryParse(args[i + 1], out diagLogs);
             if (args[i] == "-diagEveryN") int.TryParse(args[i + 1], out diagEveryN);
+            if (args[i] == "-meshParts") bool.TryParse(args[i + 1], out meshParts);
             if (args[i] == "-depthK") float.TryParse(args[i + 1], out depthK);
             if (args[i] == "-depthSmooth") float.TryParse(args[i + 1], out depthSmooth);
             if (args[i] == "-depthEps") float.TryParse(args[i + 1], out depthEps);
@@ -176,7 +187,10 @@ public static class BatchPlaybackLogger
             if (args[i] == "-elseFrameOut" && bool.TryParse(args[i + 1], out bool vEf)) elseFrameOut = vEf;
             if (args[i] == "-elseVerticalFrameOut" && bool.TryParse(args[i + 1], out bool vEv)) elseVerticalFrameOut = vEv;
             if (args[i] == "-bboxSpikeFix" && bool.TryParse(args[i + 1], out bool vBs)) bboxSpikeFix = vBs;
+            if (args[i] == "-motion" && bool.TryParse(args[i + 1], out bool vMo)) motion = vMo;
             if (args[i] == "-captureFrames") captureFrames = args[i + 1];
+            if (args[i] == "-forceMotionAt") float.TryParse(args[i + 1], out forceMotionAt);
+            if (args[i] == "-captureMotion") float.TryParse(args[i + 1], out captureMotionEvery);
             if (args[i] == "-captureDir") captureDir = args[i + 1];
             if (args[i] == "-captureWidth") int.TryParse(args[i + 1], out captureWidth);
         }
@@ -311,6 +325,7 @@ public static class BatchPlaybackLogger
                 if (elseFrameOut.HasValue) { p.enableElseFrameOutContinuation = elseFrameOut.Value; }
                 if (elseVerticalFrameOut.HasValue) { p.enableElseVerticalFrameOutContinuation = elseVerticalFrameOut.Value; }
                 if (bboxSpikeFix.HasValue) { p.rejectIsolatedBBoxSpikes = bboxSpikeFix.Value; }
+                if (motion.HasValue) { p.enableInteractiveMotion = motion.Value; }
                 // バッチは測定環境なので、明示的に -remember true と言われない限り OFF。
                 // persistentDataPath に保存済みの選択が残っていると A/B が静かに汚れる。
                 p.rememberTrackCustomization = remember.HasValue && remember.Value;
@@ -327,7 +342,8 @@ public static class BatchPlaybackLogger
                 + " otherScale=" + (otherScale.HasValue ? otherScale.Value.ToString() : "scene")
                 + " bodyAlign=" + (bodyAlign.HasValue ? bodyAlign.Value.ToString() : "scene")
                 + " genericBones=" + (genericBones.HasValue ? genericBones.Value.ToString() : "scene")
-                + " extendH=" + (extendH.HasValue ? extendH.Value.ToString() : "scene") + " maxExtrap=" + maxExtrap + " minRatio=" + minRatio + " fastLo=" + fastLo + " fastHi=" + fastHi + " alignTop=" + (alignTop.HasValue ? alignTop.Value.ToString() : "scene") + " noBend=" + (noBend.HasValue ? noBend.Value.ToString() : "scene") + " twoAxis=" + (twoAxis.HasValue ? twoAxis.Value.ToString() : "scene") + " animAim=" + (animAim.HasValue ? animAim.Value.ToString() : "scene") + " elseChain=" + (elseChain.HasValue ? elseChain.Value.ToString() : "scene") + " elseFrameOut=" + (elseFrameOut.HasValue ? elseFrameOut.Value.ToString() : "scene") + " elseVerticalFrameOut=" + (elseVerticalFrameOut.HasValue ? elseVerticalFrameOut.Value.ToString() : "scene") + " remember=" + (remember.HasValue ? remember.Value.ToString() : "False(batch既定)"));
+                + " extendH=" + (extendH.HasValue ? extendH.Value.ToString() : "scene") + " maxExtrap=" + maxExtrap + " minRatio=" + minRatio + " fastLo=" + fastLo + " fastHi=" + fastHi + " alignTop=" + (alignTop.HasValue ? alignTop.Value.ToString() : "scene") + " noBend=" + (noBend.HasValue ? noBend.Value.ToString() : "scene") + " twoAxis=" + (twoAxis.HasValue ? twoAxis.Value.ToString() : "scene") + " animAim=" + (animAim.HasValue ? animAim.Value.ToString() : "scene") + " elseChain=" + (elseChain.HasValue ? elseChain.Value.ToString() : "scene") + " elseFrameOut=" + (elseFrameOut.HasValue ? elseFrameOut.Value.ToString() : "scene") + " elseVerticalFrameOut=" + (elseVerticalFrameOut.HasValue ? elseVerticalFrameOut.Value.ToString() : "scene") + " remember=" + (remember.HasValue ? remember.Value.ToString() : "False(batch既定)")
+                + " motion=" + (motion.HasValue ? motion.Value.ToString() : "scene"));
         }
 
         // 検証用 bundle を差し替える（シーンには保存しない）。
@@ -428,6 +444,9 @@ public static class BatchPlaybackLogger
                     int every = Mathf.Max(1, diagEveryN);
                     p.logPlacementMeasurement = true;
                     p.logPlacementMeasurementEveryNFrames = every;
+                    // 頂点投影（[MESH2D]）。[PLACE] と同じ間隔でだけ走る。
+                    p.logMeshProjection = true;
+                    p.logMeshProjectionParts = meshParts;
                     p.logHumanOtherGap = true;
                     p.logHumanOtherGapEveryNFrames = every;
                     p.logDepthRefineStages = true;
@@ -457,6 +476,8 @@ public static class BatchPlaybackLogger
         SessionState.SetInt(KeyTargetFps, targetFps);
         SessionState.SetString(KeyCaptureDir, captureDir ?? string.Empty);
         SessionState.SetInt(KeyCaptureWidth, captureWidth);
+        SessionState.SetFloat(KeyForceMotionAt, forceMotionAt);
+        SessionState.SetFloat(KeyCaptureMotionEvery, captureMotionEvery);
         SessionState.SetBool(KeyRunning, true);
         SessionState.SetBool(KeyStarted, false);
         SessionState.SetFloat(KeyDeadline, (float)seconds);
@@ -652,6 +673,68 @@ public static class BatchPlaybackLogger
         }
     }
 
+    private static bool forcedMotion;
+    private static double nextMotionCaptureAt;
+    private static int motionCaptureCount;
+
+    // -forceMotionAt: 動画時刻が指定秒に達したら 1 回だけ Dynamic を強制発火（Random の抽選を待たない）。
+    // -captureMotion: イベント中は指定秒おきにカメラの絵を m00000.png… で撮る（動画は止まっているので
+    // フレーム番号では区別できない）。連番を ffmpeg で並べれば動きを確認できる。
+    private static void TryForceMotionAndCaptureMotion()
+    {
+        float forceAt = SessionState.GetFloat(KeyForceMotionAt, -1f);
+        float every = SessionState.GetFloat(KeyCaptureMotionEvery, 0f);
+        if (forceAt < 0f && every <= 0f) { return; }
+
+        var player = UnityEngine.Object.FindFirstObjectByType<StreamingStereoVideoPlayer>();
+        var vp = UnityEngine.Object.FindFirstObjectByType<UnityEngine.Video.VideoPlayer>();
+        if (player == null || vp == null) { return; }
+
+        if (forceAt >= 0f && !forcedMotion && vp.isPlaying && vp.time >= forceAt)
+        {
+            forcedMotion = true;
+            player.DebugForceInteractiveMotion(true);
+            Debug.Log($"[BATCH] forceMotionAt {forceAt}s → DebugForceInteractiveMotion(dynamic) at videoTime={vp.time:F2}");
+        }
+
+        if (every <= 0f || !player.IsAnyInteractiveMotionActive()) { return; }
+        double now = EditorApplication.timeSinceStartup;
+        if (now < nextMotionCaptureAt) { return; }
+        nextMotionCaptureAt = now + every;
+
+        string dir = SessionState.GetString(KeyCaptureDir, string.Empty);
+        if (string.IsNullOrEmpty(dir)) { return; }
+        Camera cam = Camera.main;
+        if (cam == null) { cam = UnityEngine.Object.FindFirstObjectByType<Camera>(); }
+        if (cam == null)
+        {
+            var all = UnityEngine.Object.FindObjectsByType<Camera>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            if (all.Length > 0) { cam = all[0]; }
+        }
+        if (cam == null) { return; }
+
+        int W = Mathf.Clamp(SessionState.GetInt(KeyCaptureWidth, 3840), 640, 3840);
+        int H = Mathf.RoundToInt(W * 9f / 16f);
+        var rt = new RenderTexture(W, H, 24) { antiAliasing = 8 };
+        RenderTexture prevTarget = cam.targetTexture;
+        RenderTexture prevActive = RenderTexture.active;
+        cam.targetTexture = rt;
+        cam.Render();
+        RenderTexture.active = rt;
+        var tex = new Texture2D(W, H, TextureFormat.RGB24, false);
+        tex.ReadPixels(new Rect(0, 0, W, H), 0, 0);
+        tex.Apply();
+        cam.targetTexture = prevTarget;
+        RenderTexture.active = prevActive;
+        Directory.CreateDirectory(dir);
+        string path = Path.Combine(dir, $"m{motionCaptureCount:D5}.png");
+        File.WriteAllBytes(path, tex.EncodeToPNG());
+        motionCaptureCount++;
+        UnityEngine.Object.DestroyImmediate(tex);
+        rt.Release();
+        UnityEngine.Object.DestroyImmediate(rt);
+    }
+
     private static void Tick()
     {
         if (!SessionState.GetBool(KeyRunning, false))
@@ -691,6 +774,7 @@ public static class BatchPlaybackLogger
         }
 
         TryCaptureFrames();
+        TryForceMotionAndCaptureMotion();
 
         double elapsed = EditorApplication.timeSinceStartup - startedAt;
         if (elapsed > SessionState.GetFloat(KeyDeadline, 16f))

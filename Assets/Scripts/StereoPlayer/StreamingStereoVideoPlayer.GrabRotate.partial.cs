@@ -102,8 +102,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 編集タブで値やキーを見ながら向きを合わせられない（2026-09-04 の要望）。
         // 掴めない理由は「パネルが開いていること」ではなく「そのトリガーが
         // パネル操作のものだから」なので、パネルを指しているかどうかで分ければよい。
-        if ((runtimeSettingsOpen || runtimeModelPickerOpen) &&
-            IsPointerOnRuntimePanel(origin, rotation * Vector3.forward))
+        //
+        // **「Settings / Model が開いているとき」の門を置いてはいけない。**コントロールバーと実験のパネル
+        // （「視聴を終了」「次へ」）は両方閉じているときにこそ押されるので、門があると判定自体が走らず、
+        // バーの「Model」を指したトリガーが 25° の角度フォールバックでモデルを掴み、動画が止まったまま
+        // パネルが開く（2026-09-29 の 3 回目の監査。前日の修正は判定の中身だけ広げて門を残していた）。
+        if (IsPointerOnRuntimePanel(origin, rotation * Vector3.forward))
         {
             EndGrabRotate("パネルを指している");
             SetPointerRayVisible(false);

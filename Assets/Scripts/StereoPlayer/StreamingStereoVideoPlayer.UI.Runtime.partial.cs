@@ -359,10 +359,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // 値セルは 180 px × 36 px なので全角の「（固定）」を足すと 2 行に折れ、2 行目は Truncate で消える
+        // （「OFF（固定」か「OFF」だけが見える。2026-09-29 の 3 回目の監査）。半角で 1 行に収める。
         string text = enableInteractiveMotion ? "ON" : "OFF";
         if (experimentLockInteractiveMotion)
         {
-            text += "（固定）";
+            text += " (fixed)";
         }
         UiComponentWriter.ApplyTextContent(runtimeInteractiveMotionValueText, text);
     }
@@ -579,8 +581,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         // 向きのガイドは「いま編集している」ときだけ出す。
+        // 被験者実験では Settings は Motion / Screen Dist の操作にしか使わないので、Settings を開いただけでは
+        // 出さない（モデル編集タブのときだけ）。出すと置換ありの練習 3/3（Settings を開かせる）で必ず
+        // モデルの頭上に赤い棒と球が現れ、被験者がモデルの一部と受け取る（2026-09-29 の 3 回目の監査）。
+        // 自由視聴のときは従来どおり Settings でも出す。
         UpdateManualYawGuide(
-            runtimeSettingsOpen || (runtimeModelPickerOpen && runtimeModelPickerTab == ModelPickerTabEdit));
+            (runtimeSettingsOpen && !startedAsExperimentTrial) ||
+            (runtimeModelPickerOpen && runtimeModelPickerTab == ModelPickerTabEdit));
 
         if (!runtimeSettingsOpen)
         {
@@ -740,6 +747,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (runtimeProgressDragWasPlaying)
             {
                 RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Pause);
+                // バーの Pause / Resume の表示も合わせる。以前はここで止めても戻しても表示が変わらず、
+                // 掴んでいる間は「Pause」（実際は停止中）、モーションから再開を預かって離した後は
+                // 「Resume」（実際は再生中）のまま次の操作まで残った（2026-09-29 の 3 回目の監査）。
+                UpdatePauseButtonLabel();
             }
 
             return;
@@ -754,6 +765,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (!TryDeferVideoResumeToRandomMotionEnd())
             {
                 RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
+                UpdatePauseButtonLabel();
             }
         }
     }
@@ -895,11 +907,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             $"frame={vp.frame} len={vp.frameCount} url={(string.IsNullOrEmpty(vp.url) ? "(empty)" : "set")} " +
             $"picker={runtimeModelPickerOpen} settings={runtimeSettingsOpen} normalMode={isNormalMode}");
 
+        bool wasPlaying = vp.isPlaying;
         RuntimePlaybackController.Apply(
             vp,
-            RuntimePlaybackController.ResolveToggleCommand(vp.isPlaying));
+            RuntimePlaybackController.ResolveToggleCommand(wasPlaying));
 
         ExperimentLog.Operation(vp.isPlaying ? "resume" : "pause");
+
+        // Random モーションが止めていた動画を被験者が A で戻したら、止めた所有権はモーションから被験者に移る。
+        // 移さないと、モーションの終わりに「自分が止めた」と思って再開しに来て、その間に被験者が改めて A で
+        // 止めた停止まで解いてしまう（2026-09-29 の 3 回目の監査）。video_pause_end もここで対にする。
+        if (!wasPlaying && vp.isPlaying)
+        {
+            ReleaseRandomMotionVideoPauseOwnership("manual_resume");
+        }
 
         // 再生に戻したら編集用のパネルは畳む。モデル変更も向き調整も
         // 一時停止して行う操作なので、再生中に開いたままだと視界を塞ぐだけ

@@ -107,8 +107,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         UpdateRuntimeScreenDistanceText(screenDistanceMeters);
 
         // 掴み代は**下端**。上に置くとタイトルと重なり、視線も上へ引っ張られる。
+        // 高さは Model パネルと同じ 26。24 だと 22 px の文字の行高（約 25 px）が入らず Truncate で
+        // 文字が消え、掴み代が無地の帯になる（2026-09-29 の 3 回目の監査）。
         CreateRuntimePanelDragHandle(
-            panelObj.transform, "PanelDragHandle", new Vector2(0f, SettingsDragHandleY), new Vector2(760f, 24f));
+            panelObj.transform, "PanelDragHandle", new Vector2(0f, SettingsDragHandleY), new Vector2(760f, 26f));
 
         UpdateRuntimeInteractiveMotionUiState();
 

@@ -207,9 +207,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // **動画が止まっている間は発火させない。**止まっている動画を「中断」する意味は無く、しかも誰が
         // 止めたか（被験者の A / Model パネル / シークバーの掴み）を知らずに発火すると、そちらの再開処理と
         // モーションの一時停止が衝突して、モーション中に動画が動き出したり、パネルが開いたまま再生が
-        // 始まったりした（2026-09-29 の監査）。次の発火時刻はそのまま持ち越す。
+        // 始まったりした（2026-09-29 の監査）。
+        //
+        // 止まっている間も次の発火時刻は最短間隔ぶん先へ押しておく。持ち越すだけだと、長く止めていた
+        // （Model パネルを開いて選んでいた等）あとに再開した瞬間、期限切れの発火が同じフレームで起きて
+        // 「戻したらすぐまた止まる」になる（2026-09-29 の 3 回目の監査）。
         if (vp == null || !vp.isPlaying)
         {
+            float pausedNow = GetRuntimeTickContext().now;
+            float minInterval = Mathf.Max(0.1f, interactiveMotionMinIntervalSeconds);
+            if (state.nextTriggerTime < pausedNow + minInterval)
+            {
+                state.nextTriggerTime = pausedNow + minInterval;
+            }
             return;
         }
 
@@ -375,6 +385,35 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return true;
     }
 
+    // 被験者が自分で再生を触った（A ボタン / バーの Pause）。モーションが止めていた動画を戻したなら所有権は
+    // 被験者に移り、モーションの終わりには何もしない。預かっていた再開（パネルを閉じた・つまみを離した）も捨てる。
+    // 捨てないと、被験者が改めて止めた停止を、モーションの終わりに「預かっていた再開」が解いてしまう
+    // （2026-09-29 の 3 回目の監査）。
+    private void ReleaseRandomMotionVideoPauseOwnership(string cause)
+    {
+        deferredVideoResumeAfterRandomMotion = false;
+        if (randomMotionVideoPauseStartedAt < 0f)
+        {
+            return;
+        }
+
+        float paused = Time.unscaledTime - randomMotionVideoPauseStartedAt;
+        randomMotionVideoPauseStartedAt = -1f;
+        Debug.Log($"[MOTION] video pause ownership released by {cause} track={motionAudioFadeTrackId} paused={paused:F2}s");
+        ExperimentLog.Interaction(
+            motionAudioFadeTrackId,
+            "video_pause_end",
+            $"paused_sec={ExperimentCsv.Format(paused)} released_by={cause}");
+    }
+
+    // 試行・練習を閉じるとき。走っている Random モーションを止めて video_pause_begin を end と対にする。
+    // 呼ばないとシーンのアンロードで黙って消え、interactions.csv の最後の begin だけが残る
+    // （2026-09-29 の 3 回目の監査）。ExperimentController が session.EndTrial の前に呼ぶ。
+    public void StopAllInteractiveMotionForExperimentEnd()
+    {
+        StopAllInteractiveMotion();
+    }
+
     private void EndRandomInteractiveMotionVideoPause(uint trackId)
     {
         activeRandomInteractiveMotionCount = Mathf.Max(0, activeRandomInteractiveMotionCount - 1);
@@ -436,6 +475,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         motionAudioFade.BeginFadeIn(seconds);
         RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
         UpdatePauseButtonLabel();
+        if (!pausedByMotion)
+        {
+            // 預かっていた再開（パネルを閉じた・つまみを離した）をここで実行した。止めた側の pause_auto と
+            // 対になる行が無いと、operations.csv では止まったまま試行が終わったように見える。
+            ExperimentLog.Operation("resume_auto", "cause=random_motion_end");
+        }
         if (seconds <= 0f)
         {
             TickInteractiveMotionAudioFade();

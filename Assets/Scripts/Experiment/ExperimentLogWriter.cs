@@ -174,6 +174,18 @@ public sealed class ExperimentLogWriter : IDisposable
 
     private readonly HashSet<string> failedFiles = new HashSet<string>();
 
+    // 開けなかったファイルをもう一度だけ試す。試行・練習の切れ目で呼ぶ（ExperimentSession）。
+    // 一時的な失敗（ストレージの一瞬の不調）でセッションの残り全部を失わないため。失敗が続くなら
+    // 試行ごとに 1 回ずつエラーが出るだけで、以前のように 15 Hz で例外が続くことはない。
+    public void AllowRetryOfFailedFiles()
+    {
+        if (failedFiles.Count > 0)
+        {
+            Debug.LogWarning($"[Experiment] 開けなかったログファイルを次の書き込みで再試行します: {string.Join(", ", failedFiles)}");
+            failedFiles.Clear();
+        }
+    }
+
     public void Dispose()
     {
         if (disposed)

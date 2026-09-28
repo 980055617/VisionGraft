@@ -49,7 +49,7 @@ public class ExperimentTutorialTests
 
         Assert.That(tutorial.StepCount, Is.EqualTo(0));
         Assert.That(tutorial.IsDone, Is.True);
-        Assert.That(tutorial.Title, Is.EqualTo("このブロックの説明"));
+        Assert.That(tutorial.Title, Is.EqualTo("次の動画の説明"));
         Assert.That(tutorial.Body, Does.Contain("立体"));
     }
 
@@ -74,8 +74,13 @@ public class ExperimentTutorialTests
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion));
         Assert.That(tutorial.Body, Does.Contain("自分から"));
 
-        // モデルが自分から動いた（Random イベント）ことが「例を見せた」の合図。
+        // モデルが自分から動き始めた（Random イベント）。動いている間は文面だけ変え、段階はまだ進めない。
         tutorial.RecordInteraction(1, "random_Static", "subject=human");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion));
+        Assert.That(tutorial.Body, Does.Contain("動いています"));
+
+        // 動き終わって動画の一時停止が解けたところで「例を見せた」。
+        tutorial.RecordInteraction(1, "video_pause_end", "paused_sec=3.2");
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ChangeModel));
         Assert.That(tutorial.Body, Does.Contain("Model"));
 
@@ -96,6 +101,7 @@ public class ExperimentTutorialTests
 
         // まず 1 段階目（WatchMotion）を済ませ、2 段階目（ChangeModel）に居る状態を作る。
         tutorial.RecordInteraction(1, "random_Static", null);
+        tutorial.RecordInteraction(1, "video_pause_end", "paused_sec=2");
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ChangeModel));
 
         // ChangeModel の最中にもう一度発火しても、後ろの段階を勝手に済ませない。
@@ -128,6 +134,7 @@ public class ExperimentTutorialTests
         Assert.That(tutorial.Body, Does.Contain("自分から"));
 
         tutorial.RecordInteraction(1, "random_Dynamic", "subject=human");
+        tutorial.RecordInteraction(1, "video_pause_end", "paused_sec=4");
         tutorial.RecordOperation("change_model", "track=1 prefab=x");
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ToggleMotion), "切り替えの練習は残っている");
 
@@ -165,7 +172,7 @@ public class ExperimentTutorialTests
 
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.PressButton));
         Assert.That(tutorial.StepCount, Is.EqualTo(4));
-        Assert.That(tutorial.Title, Is.EqualTo("チュートリアル 1/4"));
+        Assert.That(tutorial.Title, Is.EqualTo("練習 1/4"));
         Assert.That(tutorial.Body, Does.Contain("トリガー"));
     }
 
@@ -193,7 +200,7 @@ public class ExperimentTutorialTests
 
         tutorial.RecordOperation("pause", null);
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ResumePlayback));
-        Assert.That(tutorial.Title, Is.EqualTo("チュートリアル 3/4"));
+        Assert.That(tutorial.Title, Is.EqualTo("練習 3/4"));
 
         tutorial.RecordOperation("resume", null);
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.Seek));
@@ -201,8 +208,66 @@ public class ExperimentTutorialTests
 
         tutorial.RecordOperation("seek", "0.42");
         Assert.That(tutorial.IsDone, Is.True);
-        Assert.That(tutorial.Title, Is.EqualTo("チュートリアル 終了"));
+        Assert.That(tutorial.Title, Is.EqualTo("練習 終了"));
         Assert.That(tutorial.Body, Does.Contain("視聴を終了"));
+    }
+
+    // 被験者が A で止めたままだと Random イベントは出ない（動画が動いている間しか発火しない）。
+    // 待たせずに戻し方を出し、戻したら元の文面へ（2026-09-29 の 3 回目の監査）。
+    [Test]
+    public void ModelReplaced_PausedByParticipant_TellsToResume()
+    {
+        ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
+        int changed = 0;
+        tutorial.Changed += () => changed++;
+
+        tutorial.RecordOperation("pause", null);
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion));
+        Assert.That(tutorial.Body, Does.Contain("A ボタンを押して再開"));
+        Assert.That(changed, Is.EqualTo(1));
+
+        tutorial.RecordOperation("resume", null);
+        Assert.That(tutorial.Body, Does.Contain("自分から"));
+        Assert.That(changed, Is.EqualTo(2));
+
+        // 自動再開（パネルを閉じた・モーションが終わった）でも戻る。
+        tutorial.RecordOperation("pause", null);
+        tutorial.RecordOperation("resume_auto", "cause=model_panel_closed");
+        Assert.That(tutorial.Body, Does.Contain("自分から"));
+        Assert.That(changed, Is.EqualTo(4));
+
+        // 同じ状態の繰り返しでは作り直さない。
+        tutorial.RecordOperation("resume", null);
+        Assert.That(changed, Is.EqualTo(4));
+    }
+
+    // フェードアウト中に A で止められると video_pause_end が来ない。2 回目の発火で 1 回目は終わっているので済ませる。
+    [Test]
+    public void ModelReplaced_SecondMotionWithoutPauseEnd_CompletesWatchMotion()
+    {
+        ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
+
+        tutorial.RecordInteraction(1, "random_Static", null);
+        tutorial.RecordInteraction(1, "video_pause_begin", "already_paused=1");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion));
+
+        tutorial.RecordInteraction(1, "random_Dynamic", null);
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ChangeModel));
+
+        // 段階が進んだ後の video_pause_end は何も変えない。
+        tutorial.RecordInteraction(1, "video_pause_end", "paused_sec=1");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ChangeModel));
+    }
+
+    // video_pause_end だけが先に来ても（例を見ていない）段階は進まない。
+    [Test]
+    public void ModelReplaced_PauseEndWithoutMotion_DoesNotCount()
+    {
+        ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
+
+        tutorial.RecordInteraction(1, "video_pause_end", "paused_sec=1");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion));
+        Assert.That(tutorial.Body, Does.Contain("自分から"));
     }
 
     [Test]

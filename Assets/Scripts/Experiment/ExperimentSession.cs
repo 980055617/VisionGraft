@@ -124,6 +124,7 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
         trialStartedAt = DateTime.Now;
         trialStartRealtime = Realtime;
         trialInProgress = true;
+        writer?.AllowRetryOfFailedFiles();
 
         trialBundleSha256 = null;
         trialBundleBytes = 0;
@@ -309,6 +310,7 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
         trialStartRealtime = Realtime;
         tutorialInProgress = true;
         tutorialBeforeBlock = beforeBlockIndex;
+        writer?.AllowRetryOfFailedFiles();
 
         RecordOperation("tutorial_begin", $"bundle={bundleFileName} before_block={beforeBlockIndex} mode={mode}");
         writer?.Flush();

@@ -158,6 +158,27 @@ public sealed class ExperimentController : MonoBehaviour
     // 読み込みの期限（実時間）。ヘッドセットを外していた時間は数えない（OnApplicationPause で延ばす）。
     private float loadDeadlineRealtime;
     private float appPausedAtRealtime = -1f;
+    // 休止から戻った最初のフレームの dt は停止時間を含みうるので perf の窓に入れない（SamplePerfIfDue が 1 回読み飛ばす）。
+    private bool skipNextPerfPush;
+
+    // 次の参加者の番号。Home へ戻るとこのシーンごと捨てられるので static に覚える。以前は戻るたびに
+    // シーンの値（1）に戻り、実験者が毎回 ＋ を押し直していた。セッションを完走したら +1、途中で戻ったら同じ番号
+    // （同じ参加者でやり直すことが多い）。テスト用の P00 を完走したら P01（2026-09-29 の 3 回目の監査）。
+    private static int rememberedParticipantNumber = -1;
+    private bool sessionCompleted;
+
+    // 実験者用のボタンで途中終了した練習のブロック（-1 = 無い）。待機画面で「やり直すか飛ばすか」を出す。
+    private int tutorialEscapedForBlock = -1;
+
+    // panel_reanchored の記録は動きが止まってから 1 行（Screen Dist のスライダー中は 3 cm ごとに置き直すので、
+    // そのたびに書くと 1 秒に 30 行になる。2026-09-29 の 3 回目の監査）。置き直し自体は即時。
+    private bool reanchorLogPending;
+    private float reanchorLogChangedAt;
+    private int reanchorLogCount;
+    private float reanchorLogMovedTotal;
+    private float reanchorLogTurnedMax;
+    private AnchoredPanelKind reanchorLogKind;
+    private const float ReanchorLogSettleSeconds = 0.5f;
 
     private static readonly Vector2 FullPanelSizeMeters = new Vector2(1.05f, 0.82f);
     private const float LogFlushIntervalSeconds = 10f;
@@ -179,6 +200,10 @@ public sealed class ExperimentController : MonoBehaviour
 
     private void Start()
     {
+        if (rememberedParticipantNumber >= 0)
+        {
+            participantNumber = rememberedParticipantNumber;
+        }
         ShowSetupPanel();
     }
 
@@ -204,6 +229,11 @@ public sealed class ExperimentController : MonoBehaviour
         if (paused)
         {
             appPausedAtRealtime = Time.realtimeSinceStartup;
+            // 書きかけの perf の窓（1 秒未満）は捨てずに書き切る。休止から戻った最初のフレームの dt は
+            // 停止時間を含みうるので、その 1 回だけ Push を読み飛ばす（skipNextPerfPush）。
+            // 以前は戻ったときに perf.Reset() していたが、Reset は Push より前なので復帰フレームの dt は
+            // 除けておらず、休止前の窓だけが消えていた（2026-09-29 の 3 回目の監査）。
+            FlushPerfWindow();
         }
         else if (appPausedAtRealtime >= 0f)
         {
@@ -212,8 +242,7 @@ public sealed class ExperimentController : MonoBehaviour
             float pausedFor = Mathf.Max(0f, Time.realtimeSinceStartup - appPausedAtRealtime);
             loadDeadlineRealtime += pausedFor;
             appPausedAtRealtime = -1f;
-            // 休止を跨いだ最初のフレームの dt は停止時間を含みうる。perf の窓に混ぜない。
-            perf.Reset();
+            skipNextPerfPush = true;
         }
 
         if (session == null)
@@ -267,6 +296,7 @@ public sealed class ExperimentController : MonoBehaviour
     {
         Transform head = ResolveHeadTransform();
         ReanchorPanelIfScreenMoved();
+        FlushPendingReanchorLog();
         panel?.UpdatePlacement(head, ExperimentPanel.ResolveFrontForward(head));
 
         if (phase == Phase.Trial)
@@ -389,11 +419,12 @@ public sealed class ExperimentController : MonoBehaviour
         string assignmentNote = deriveAssignmentFromParticipantNumber
             ? "（群と動画順は参加者番号から自動: 奇数 = A、偶数 = B、動画順は 2 人ごとに 1→6）\n"
             : string.Empty;
+        // この画面は実験者が見る（群・動画順・条件の並びを確認する）ので内部名のままでよい。
         return
             participantLine +
             $"{ExperimentPlan.DescribeAssignment(group, videoOrderPattern)}\n" +
             assignmentNote +
-            $"\n全 {ExperimentPlan.TrialCount} 試行 / チュートリアル: {DescribeTutorialTiming()}\n" +
+            $"\n動画 {ExperimentPlan.TrialCount} 本 / 練習: {DescribeTutorialTiming()}\n" +
             "参加者 ID を確認してから開始してください。";
     }
 
@@ -402,9 +433,9 @@ public sealed class ExperimentController : MonoBehaviour
         switch (tutorialTiming)
         {
             case ExperimentTutorialTiming.BeforeFirstTrial:
-                return "最初の試行の前に 1 回";
+                return "最初の動画の前に 1 回";
             case ExperimentTutorialTiming.BeforeEachBlock:
-                return $"各ブロックの前に 1 回ずつ（{ExperimentPlan.BlockCount} 回）";
+                return $"3 本ごとの前に 1 回（計 {ExperimentPlan.BlockCount} 回）";
             default:
                 return "なし";
         }
@@ -459,6 +490,8 @@ public sealed class ExperimentController : MonoBehaviour
         ExperimentSessionOverrides.BeginSession();
         System.Array.Clear(tutorialDoneForBlock, 0, tutorialDoneForBlock.Length);
         tutorialBlockInProgress = -1;
+        tutorialEscapedForBlock = -1;
+        sessionCompleted = false;
         sessionMinimumViewingSeconds = ResolveTrialMinimumViewingSeconds();
 
         Debug.Log($"[Experiment] セッション開始: {ParticipantId} / 群 {group} / 動画順 {videoOrderPattern} / チュートリアル {tutorialTiming}");
@@ -485,19 +518,20 @@ public sealed class ExperimentController : MonoBehaviour
             return;
         }
 
+        // 被験者向けの語は「動画」（「試行」「ブロック」は出さない。2026-09-29 の 3 回目の監査）。
         string body =
             $"参加者 ID: {session.ParticipantId}\n" +
             $"次: {next.DescribeForParticipant(ExperimentPlan.TrialCount)}\n\n" +
             // ログの保存先はここに出さない（被験者が知る必要はない。2026-09-11 指示）。Debug.Log には残る。
             (session.CurrentTrialIndex >= 0
-                ? "アンケートの記入が終わったら、実験者の合図で\n「この試行を開始」を押してください。"
-                : "実験者の合図があったら\n「この試行を開始」を押してください。");
+                ? "アンケートの記入が終わったら、実験者の合図で\n「この動画を開始」を押してください。"
+                : "実験者の合図があったら\n「この動画を開始」を押してください。");
 
         List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
         {
-            ExperimentPanel.ButtonSpec.Create("この試行を開始", BeginNextTrial),
-            // 設定を間違えたまま始めたとき用。ここまでのログは残して閉じる。
-            ExperimentPanel.ButtonSpec.Create("中止して Home へ", ReturnToHome),
+            ExperimentPanel.ButtonSpec.Create("この動画を開始", BeginNextTrial),
+            // 設定を間違えたまま始めたとき用。ここまでのログは残して閉じる。2 度押しで実行。
+            ExperimentPanel.ButtonSpec.CreateConfirm("中止して Home へ", ReturnToHome),
         };
 
         panel.Show("待機中", body, specs);
@@ -678,18 +712,21 @@ public sealed class ExperimentController : MonoBehaviour
         PrepareLoadingPanelPlacement();
         List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
         {
-            ExperimentPanel.ButtonSpec.Create("中止", RequestLoadCancel),
+            // 実験者用。2 度押しで実行（被験者が待ちきれずに押しても 1 回では効かない）。
+            ExperimentPanel.ButtonSpec.CreateConfirm("中止", RequestLoadCancel),
         };
         panel.Show(
             "読み込み中",
-            $"{title}\n\n動画を読み込んでいます。\nそのままお待ちください。\n（動かないときは実験者が「中止」を押す）",
+            $"{title}\n\n動画を読み込んでいます。\n何も押さずにお待ちください。\n（進まないときは実験者が「中止」を 2 回押す）",
             specs);
     }
 
     // ボタンの無い「お待ちください」。シーンのアンロードなど、押せるものが無い間に出す。
+    // 画面（試行シーン）がまだある間は読み込み中パネルと同じく画面より手前に置く。1.2 m の既定だと
+    // アンロードが終わるまでの 1 秒ほど、1.0 m の画面の裏に両眼視差だけ奥のパネルが描かれる（2026-09-29 の 3 回目の監査）。
     private void ShowPleaseWaitPanel(string body)
     {
-        PreparePanel(FullPanelSizeMeters, Vector2.zero, ExperimentPanel.DefaultLayout);
+        PrepareLoadingPanelPlacement();
         panel.Show("お待ちください", body, null);
     }
 
@@ -729,14 +766,14 @@ public sealed class ExperimentController : MonoBehaviour
 
         string body =
             $"{trial.DescribeForParticipant(ExperimentPlan.TrialCount)} を開始できませんでした。\n" +
-            "試行シーンをロードできません（アプリの設定の問題）。\n\n" +
-            "この試行はまだ記録していません。\n" +
+            "アプリの設定に問題があり、動画の画面を開けません。\n\n" +
+            "この動画はまだ記録していません。\n" +
             "実験者に知らせてください。";
 
         List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
         {
             ExperimentPanel.ButtonSpec.Create("待機画面へ", ShowWaitingPanel),
-            ExperimentPanel.ButtonSpec.Create("中止して Home へ", ReturnToHome),
+            ExperimentPanel.ButtonSpec.CreateConfirm("中止して Home へ", ReturnToHome),
         };
 
         panel.Show("開始できません", body, specs);
@@ -752,24 +789,27 @@ public sealed class ExperimentController : MonoBehaviour
         string body =
             $"{trial.DescribeForParticipant(ExperimentPlan.TrialCount)} を開始できませんでした。\n" +
             $"理由: {DescribeLoadFailure(reason)}\n\n" +
-            "この試行は中断（aborted）として記録しました。\n" +
+            "この動画は「中断」として記録しました。\n" +
             "実験者が次を選んでください。";
 
         List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
         {
-            ExperimentPanel.ButtonSpec.Create("同じ試行をやり直す", RetryFailedTrial),
-            ExperimentPanel.ButtonSpec.Create("この試行を飛ばす", SkipFailedTrial),
-            ExperimentPanel.ButtonSpec.Create("中止して Home へ", ReturnToHome),
+            ExperimentPanel.ButtonSpec.Create("同じ動画をやり直す", RetryFailedTrial),
+            ExperimentPanel.ButtonSpec.Create("この動画を飛ばす", SkipFailedTrial),
+            ExperimentPanel.ButtonSpec.CreateConfirm("中止して Home へ", ReturnToHome),
         };
 
         panel.Show("読み込み失敗", body, specs);
     }
 
+    // 失敗理由の語彙（load_timeout / cancelled_by_button / load_failed:<理由>）を被験者が見てもよい定型文にする。
+    // load_failed の後ろは bundle のファイル名やフルパス、Unity のエラー文がそのまま入る（Bundle.cs / Core）ので
+    // 出さない（2026-09-29 の 3 回目の監査）。生の文字列は呼び出し側が Debug.LogError に残す。
     private static string DescribeLoadFailure(string reason)
     {
         if (string.IsNullOrEmpty(reason))
         {
-            return "不明";
+            return "不明（ログを確認）";
         }
         if (reason == "load_timeout")
         {
@@ -782,9 +822,9 @@ public sealed class ExperimentController : MonoBehaviour
         }
         if (reason.StartsWith("load_failed:", System.StringComparison.Ordinal))
         {
-            return reason.Substring("load_failed:".Length);
+            return "動画のファイルを読み込めなかった（ログを確認）";
         }
-        return reason;
+        return "不明（ログを確認）";
     }
 
     // 失敗した試行を同じ index からやり直す。trials.csv には失敗した行（aborted=1）が残り、次の行が同じ trial_index で出る。
@@ -931,13 +971,13 @@ public sealed class ExperimentController : MonoBehaviour
         {
             case AnchoredPanelKind.Trial:
                 panel.Reanchor(
-                    TryResolvePanelAnchorOutsideScreen(trialPanelSide, trialPanelSizeMeters, trialPanelGapMeters, Vector2.zero, out anchor)
+                    TryResolvePanelAnchorOutsideScreen(trialPanelSide, trialPanelSizeMeters, trialPanelGapMeters, Vector2.zero, out anchor, false)
                         ? anchor
                         : (Vector3?)null);
                 break;
             case AnchoredPanelKind.Tutorial:
                 panel.Reanchor(
-                    TryResolvePanelAnchorOutsideScreen(tutorialPanelSide, tutorialPanelSizeMeters, tutorialPanelGapMeters, tutorialPanelNudgeMeters, out anchor)
+                    TryResolvePanelAnchorOutsideScreen(tutorialPanelSide, tutorialPanelSizeMeters, tutorialPanelGapMeters, tutorialPanelNudgeMeters, out anchor, false)
                         ? anchor
                         : (Vector3?)null);
                 break;
@@ -948,10 +988,36 @@ public sealed class ExperimentController : MonoBehaviour
                 break;
         }
 
-        Debug.Log($"[Experiment] 画面が動いたのでパネルを置き直します: kind={anchoredPanelKind} moved={moved:F3}m turned={turned:F1}deg");
+        // 記録は動きが止まってから 1 行にまとめる（Screen Dist のスライダー中は毎 2〜3 フレーム来る）。
+        if (!reanchorLogPending || reanchorLogKind != anchoredPanelKind)
+        {
+            reanchorLogCount = 0;
+            reanchorLogMovedTotal = 0f;
+            reanchorLogTurnedMax = 0f;
+        }
+        reanchorLogPending = true;
+        reanchorLogKind = anchoredPanelKind;
+        reanchorLogChangedAt = Time.unscaledTime;
+        reanchorLogCount++;
+        reanchorLogMovedTotal += moved;
+        reanchorLogTurnedMax = Mathf.Max(reanchorLogTurnedMax, turned);
+    }
+
+    private void FlushPendingReanchorLog()
+    {
+        if (!reanchorLogPending || Time.unscaledTime - reanchorLogChangedAt < ReanchorLogSettleSeconds)
+        {
+            return;
+        }
+
+        reanchorLogPending = false;
+        Debug.Log(
+            $"[Experiment] 画面が動いたのでパネルを置き直しました: kind={reanchorLogKind} times={reanchorLogCount} " +
+            $"moved={reanchorLogMovedTotal:F3}m turned_max={reanchorLogTurnedMax:F1}deg");
         session?.RecordOperation(
             "panel_reanchored",
-            $"kind={anchoredPanelKind} screen_moved_m={ExperimentCsv.Format(moved)} screen_turned_deg={ExperimentCsv.Format(turned)}");
+            $"kind={reanchorLogKind} times={reanchorLogCount} screen_moved_m={ExperimentCsv.Format(reanchorLogMovedTotal)} " +
+            $"screen_turned_deg={ExperimentCsv.Format(reanchorLogTurnedMax)}");
     }
 
     private bool IsTrialEndAllowed()
@@ -1010,6 +1076,12 @@ public sealed class ExperimentController : MonoBehaviour
         // 実機で 1 秒以上かかり、その間「視聴を終了」のボタンが画面に残って押せてしまう。押しても
         // 何も起きないので被験者が連打する（ログにも残らない。2026-09-25 の監査 F-4）。
         phase = Phase.Loading;
+        // 走っている Random モーションを止め、video_pause_begin を end と対にしてから閉じる。
+        // アンロード任せだと Sink が外れた後に消えて begin だけが残る。
+        if (cachedPlayer != null)
+        {
+            cachedPlayer.StopAllInteractiveMotionForExperimentEnd();
+        }
         // perf の閉じていない窓（1 秒未満）を書き切る。捨てると video_played_sec が最大 1 秒少なくなる。
         FlushPerfWindow();
         session.EndTrial(aborted, abortReason);
@@ -1067,8 +1139,9 @@ public sealed class ExperimentController : MonoBehaviour
 
         string body =
             $"参加者 ID: {session.ParticipantId}\n" +
-            $"全 {ExperimentPlan.TrialCount} 試行が終了しました。\n\n" +
-            "最後のアンケートを回収してください。";
+            $"全 {ExperimentPlan.TrialCount} 本の動画が終わりました。\n" +
+            "お疲れさまでした。\n\n" +
+            "（実験者: 最後のアンケートを回収してください）";
 
         // 次の参加者に移るための戻り道。以前はボタンが無く、アプリの再起動が要った。
         List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
@@ -1076,7 +1149,8 @@ public sealed class ExperimentController : MonoBehaviour
             ExperimentPanel.ButtonSpec.Create("Home へ戻る", ReturnToHome),
         };
 
-        panel.Show("セッション終了", body, specs);
+        panel.Show("実験終了", body, specs);
+        sessionCompleted = true;
         Debug.Log($"[Experiment] セッション終了: {session.ParticipantId} / ログ: {session.LogDirectory}");
         // 以降ログは書かないので、ここでファイルを閉じて手放す（閉じたあとの書き込みは黙って捨てられるだけだが、
         // 参照を残す意味も無い）。セッション上書きは「Home へ戻る」で片付く。
@@ -1140,19 +1214,27 @@ public sealed class ExperimentController : MonoBehaviour
 
         List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
         {
-            ExperimentPanel.ButtonSpec.Create("チュートリアルを開始", BeginTutorial),
-            ExperimentPanel.ButtonSpec.Create("スキップ", SkipTutorialFromWaiting),
-            ExperimentPanel.ButtonSpec.Create("中止して Home へ", ReturnToHome),
+            ExperimentPanel.ButtonSpec.Create("練習を開始", BeginTutorial),
+            // 実験者用。2 度押しで実行（1 度目は「もう一度押す」に変わる）。
+            ExperimentPanel.ButtonSpec.CreateConfirm("練習を飛ばす", SkipTutorialFromWaiting),
+            ExperimentPanel.ButtonSpec.CreateConfirm("中止して Home へ", ReturnToHome),
         };
 
         ExperimentDisplayMode mode = ResolveNextTutorialMode();
+        int beforeBlock = session.HasNextTrial ? session.NextTrial.blockIndex : -1;
+        string escapedNote = beforeBlock >= 0 && tutorialEscapedForBlock == beforeBlock
+            ? "前の練習は途中で終わりました。\nもう一度行うか、実験者が「練習を飛ばす」を選んでください。\n"
+            : string.Empty;
         string body =
             $"参加者 ID: {session.ParticipantId}\n" +
-            $"次: 操作のチュートリアル（{DescribeTutorialPosition()}）\n" +
+            $"次: 操作の練習 ― {DescribeTutorialPosition()}\n" +
             $"内容: {DescribeTutorialContent(mode)}\n\n" +
-            "実験者の合図があったら\n「チュートリアルを開始」を押してください。";
+            escapedNote +
+            (session.CurrentTrialIndex >= 0
+                ? "アンケートの記入が終わったら、実験者の合図で\n「練習を開始」を押してください。"
+                : "実験者の合図があったら\n「練習を開始」を押してください。");
 
-        panel.Show("チュートリアル", body, specs);
+        panel.Show("練習", body, specs);
     }
 
     // 次のブロックの表示条件。チュートリアルはこの条件で再生し、内容もこれで決まる。
@@ -1168,12 +1250,12 @@ public sealed class ExperimentController : MonoBehaviour
         switch (mode)
         {
             case ExperimentDisplayMode.Monocular:
-                return "ボタンを押す / A ボタンで一時停止・再開 / シークバー / 「視聴を終了」の場所";
+                return "ボタンを押す / A ボタンで一時停止・再開 / つまみで動画の位置を変える / 「視聴を終了」の場所";
             case ExperimentDisplayMode.StereoOnly:
                 return "立体で見えることの説明のみ（操作は同じ）";
             default:
                 // 2026-09-25 に 1 段階から 3 段階に増えたので文面も合わせる（監査で指摘）。
-                return "モデルが自分から動く例 / Model でモデルを替える / Settings で動きの切り替え";
+                return "モデルが自分から動く例を見る / Model でモデルを替える / Settings で動きの切り替え";
         }
     }
 
@@ -1185,10 +1267,10 @@ public sealed class ExperimentController : MonoBehaviour
         }
 
         ExperimentTrial next = session.NextTrial;
-        // 被験者も見る画面なので内部の enum 名は出さない（2026-09-25 の監査）。
+        // 被験者も見る画面なので内部の enum 名は出さない（2026-09-25 の監査）。「ブロック」「組」も出さない。
         return next.blockIndex == 0
-            ? "最初の試行の前"
-            : $"{next.blockIndex + 1} 組目（{DescribeDisplayModeForParticipant(next.mode)}）の前";
+            ? "最初の動画の前"
+            : $"次の 3 本（{DescribeDisplayModeForParticipant(next.mode)}）の前";
     }
 
     private void BeginTutorial()
@@ -1290,12 +1372,24 @@ public sealed class ExperimentController : MonoBehaviour
 
         // アンロード中に phase を Tutorial のままにしない（試行側の EndTrialRoutine と同じ理由）。
         phase = Phase.Loading;
+        if (cachedPlayer != null)
+        {
+            cachedPlayer.StopAllInteractiveMotionForExperimentEnd();
+        }
+        bool completed = tutorial.IsDone;
         ExperimentLog.Sink = null;
         session.EndTutorial(tutorial.DescribeResult());
         ForgetAnchoredPanel();
         ShowPleaseWaitPanel("次の画面を準備しています。");
         yield return UnloadTrialSceneRoutine();
-        OnTutorialFinished();
+        // 実験者用のボタンで途中で終えた練習は「済み」にしない。待機画面に戻り、やり直すか飛ばすかを
+        // 実験者が選ぶ。以前は無条件で済みにしていたので、被験者が「次へ」のつもりで押すと
+        // その練習はやり直せなかった（2026-09-29 の 3 回目の監査）。
+        if (!completed)
+        {
+            tutorialEscapedForBlock = tutorialBlockInProgress;
+        }
+        OnTutorialFinished(completed);
     }
 
     // 練習のシーンがロードできなかったとき。記録も番号も動いていないので、待機へ戻す道だけ用意する。
@@ -1306,13 +1400,13 @@ public sealed class ExperimentController : MonoBehaviour
 
         string body =
             "練習を開始できませんでした。\n" +
-            "試行シーンをロードできません（アプリの設定の問題）。\n\n" +
+            "アプリの設定に問題があり、動画の画面を開けません。\n\n" +
             "実験者に知らせてください。";
 
         List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
         {
             ExperimentPanel.ButtonSpec.Create("待機画面へ", ShowWaitingPanel),
-            ExperimentPanel.ButtonSpec.Create("中止して Home へ", ReturnToHome),
+            ExperimentPanel.ButtonSpec.CreateConfirm("中止して Home へ", ReturnToHome),
         };
 
         panel.Show("開始できません", body, specs);
@@ -1352,7 +1446,8 @@ public sealed class ExperimentController : MonoBehaviour
         Vector2 panelSizeMeters,
         float gapMeters,
         Vector2 nudgeMeters,
-        out Vector3 anchor)
+        out Vector3 anchor,
+        bool verbose = true)
     {
         anchor = Vector3.zero;
         if (cachedPlayer == null ||
@@ -1386,9 +1481,13 @@ public sealed class ExperimentController : MonoBehaviour
         }
 
         anchor += right * nudge.x + up * nudge.y;
-        Debug.Log(
-            $"[Experiment] panel side={side} size={panelSizeMeters.x:F2}x{panelSizeMeters.y:F2}m " +
-            $"screen={screenSize.x:F2}x{screenSize.y:F2}m @{screenDistance:F2}m k={k:F2} anchor={anchor:F3}");
+        // 置き直し（Screen Dist のスライダー中は毎 2〜3 フレーム）からは出さない。
+        if (verbose)
+        {
+            Debug.Log(
+                $"[Experiment] panel side={side} size={panelSizeMeters.x:F2}x{panelSizeMeters.y:F2}m " +
+                $"screen={screenSize.x:F2}x{screenSize.y:F2}m @{screenDistance:F2}m k={k:F2} anchor={anchor:F3}");
+        }
         return true;
     }
 
@@ -1417,9 +1516,11 @@ public sealed class ExperimentController : MonoBehaviour
         // 実験者用と明記して出す。押されたことは tutorial_end の detail に completed=0 と段階名で残る。
         // 文言はボタン幅（330 px、40 px フォント）に 1 行で収まる長さにする。長いと 2 行になり、
         // 日本語のフォールバックフォントの行高では 2 行目が切れうる（2026-09-29 の監査）。
+        // 2 度押しで実行。途中の段階はこのボタンしか無いので、被験者が「次へ」のつもりで 1 回押しても効かない
+        // （2026-09-29 の 3 回目の監査）。押し切ったときはその練習を「済み」にせず待機画面へ戻す（RunTutorialRoutine）。
         if (tutorial != null && !tutorial.IsDone)
         {
-            specs.Add(ExperimentPanel.ButtonSpec.Create("実験者用: 終了", RequestTutorialEnd));
+            specs.Add(ExperimentPanel.ButtonSpec.CreateConfirm("実験者用: 終了", RequestTutorialEnd));
         }
 
         return specs;
@@ -1454,7 +1555,9 @@ public sealed class ExperimentController : MonoBehaviour
         tutorialEndRequested = true;
     }
 
-    private void OnTutorialFinished()
+    // markDone: そのブロックの練習を済みにする（完走した・実験者が「練習なしで続行」を選んだ）。
+    // 途中終了なら false で、待機画面はもう一度練習の案内を出す。
+    private void OnTutorialFinished(bool markDone)
     {
         if (tutorial != null)
         {
@@ -1462,7 +1565,10 @@ public sealed class ExperimentController : MonoBehaviour
             tutorial = null;
         }
 
-        MarkTutorialDoneForBlock(tutorialBlockInProgress);
+        if (markDone)
+        {
+            MarkTutorialDoneForBlock(tutorialBlockInProgress);
+        }
         tutorialBlockInProgress = -1;
         ShowWaitingPanel();
     }
@@ -1481,8 +1587,8 @@ public sealed class ExperimentController : MonoBehaviour
 
         List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
         {
-            ExperimentPanel.ButtonSpec.Create("練習なしで続行", OnTutorialFinished),
-            ExperimentPanel.ButtonSpec.Create("中止して Home へ", ReturnToHome),
+            ExperimentPanel.ButtonSpec.Create("練習なしで続行", () => OnTutorialFinished(true)),
+            ExperimentPanel.ButtonSpec.CreateConfirm("中止して Home へ", ReturnToHome),
         };
 
         panel.Show("練習を読み込めません", body, specs);
@@ -1521,11 +1627,21 @@ public sealed class ExperimentController : MonoBehaviour
         ExperimentTrialHandoff.Clear();
         HomeLaunchHandoff.Clear();
         ForgetAnchoredPanel();
-        Debug.Log("[Experiment] return to HomeScene");
+        // 次に「被験者実験」へ入ったときの参加者番号。完走したら次の人、途中なら同じ人。
+        rememberedParticipantNumber = sessionCompleted ? participantNumber + 1 : participantNumber;
+        Debug.Log($"[Experiment] return to HomeScene (next participant number = {rememberedParticipantNumber})");
 
         PreparePanel(FullPanelSizeMeters, Vector2.zero, ExperimentPanel.DefaultLayout);
         panel.Show("お待ちください", "入口の画面に戻ります。", null);
-        SceneManager.LoadSceneAsync(homeSceneName, LoadSceneMode.Single);
+        AsyncOperation load = SceneManager.LoadSceneAsync(homeSceneName, LoadSceneMode.Single);
+        if (load == null)
+        {
+            // Build Settings に HomeScene が無い等。ボタンの無いパネルのまま止まると何もできないので、
+            // セットアップ画面に戻して押せるものを残す（2026-09-29 の 3 回目の監査）。
+            Debug.LogError($"[Experiment] Home シーンをロードできません: {homeSceneName}（Build Settings に追加済みか確認）");
+            returningToHome = false;
+            ShowSetupPanel();
+        }
     }
 
     private bool returningToHome;
@@ -1562,6 +1678,13 @@ public sealed class ExperimentController : MonoBehaviour
     {
         if (!logPerf || session == null || !session.TrialInProgress || cachedPlayer == null)
         {
+            return;
+        }
+
+        // 休止から戻った最初のフレーム。dt に停止時間が乗りうるので窓に入れない（OnApplicationPause）。
+        if (skipNextPerfPush)
+        {
+            skipNextPerfPush = false;
             return;
         }
 

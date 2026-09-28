@@ -51,10 +51,13 @@ public sealed class HomeMenu : MonoBehaviour
     private void Update()
     {
         Camera cam = ResolveCamera();
-        if (panel != null && cam != null)
+        if (panel != null)
         {
             // 動画の画面と同じ正面（トラッキング原点のヨー）に置く。頭の向きは使わない。
-            panel.UpdatePlacement(cam.transform, ExperimentPanel.ResolveFrontForward(cam.transform));
+            // カメラが取れないフレームでも呼ぶ。作り直し直後のボタンの押下抑止（0.4 s）は UpdatePlacement の
+            // 中で解かれるので、呼ばないと入口のボタンが灰色のまま押せない（2026-09-29 の 3 回目の監査）。
+            Transform head = cam != null ? cam.transform : null;
+            panel.UpdatePlacement(head, ExperimentPanel.ResolveFrontForward(head));
         }
     }
 

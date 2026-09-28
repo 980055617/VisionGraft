@@ -163,6 +163,21 @@ public class ExperimentPerfSeekJumpTests
         Assert.That(acc.TryFlush(out _), Is.False, "空の窓は返さない");
     }
 
+    // TryFlush の video_playing_at_end は**最後に Push した**再生状態。以前は窓が閉じたときの値しか覚えず、
+    // 端の窓（試行の終わり）では前の窓の値が出た（2026-09-29 の 3 回目の監査）。
+    [Test]
+    public void TryFlush_UsesThePlayingStateOfTheLastPush()
+    {
+        ExperimentPerfAccumulator acc = new ExperimentPerfAccumulator();
+        Push(acc, 0.5f, 0, 0.0, out _, playing: true);
+        Assert.That(Push(acc, 0.5f, 15, 0.5, out ExperimentPerfAccumulator.Sample closed, playing: true), Is.True);
+        Assert.That(closed.videoPlayingAtEnd, Is.True);
+
+        Push(acc, 0.125f, 16, 0.53, out _, playing: false);
+        Assert.That(acc.TryFlush(out ExperimentPerfAccumulator.Sample partial), Is.True);
+        Assert.That(partial.videoPlayingAtEnd, Is.False, "端の窓は最後の Push の状態");
+    }
+
     // 窓の長さとフレーム数が行に載る（1 フレームが長いと窓は 1 秒より伸びる）。
     [Test]
     public void Push_WindowSecondsAndFramesReflectTheActualWindow()
@@ -438,11 +453,12 @@ public class ExperimentTutorialAuditTests
     {
         ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
 
-        Assert.That(tutorial.Title, Is.EqualTo("チュートリアル 1/3"));
+        Assert.That(tutorial.Title, Is.EqualTo("練習 1/3"));
         Assert.That(tutorial.DescribeResult(), Is.EqualTo("completed=0 step=WatchMotion mode=ModelReplaced"));
 
         tutorial.RecordInteraction(1, "random_Static", null);
-        Assert.That(tutorial.Title, Is.EqualTo("チュートリアル 2/3"));
+        tutorial.RecordInteraction(1, "video_pause_end", "paused_sec=2");
+        Assert.That(tutorial.Title, Is.EqualTo("練習 2/3"));
         Assert.That(tutorial.DescribeResult(), Is.EqualTo("completed=0 step=ChangeModel mode=ModelReplaced"));
     }
 

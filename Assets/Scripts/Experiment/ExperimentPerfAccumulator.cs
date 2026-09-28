@@ -88,6 +88,10 @@ public sealed class ExperimentPerfAccumulator
             deltaSeconds = 0f;
         }
 
+        // TryFlush（試行の終わり・休止）が使う「最後に見た再生状態」。窓が閉じたときだけ覚えると、
+        // 1 秒未満の端の窓では前の窓の値が出る（2026-09-29 の 3 回目の監査）。
+        lastVideoPlaying = videoPlaying;
+
         windowSeconds += deltaSeconds;
         frames++;
         if (deltaSeconds > maxDt)
@@ -186,7 +190,6 @@ public sealed class ExperimentPerfAccumulator
 
     private Sample BuildSample(bool videoPlaying)
     {
-        lastVideoPlaying = videoPlaying;
         return new Sample
         {
             windowSeconds = windowSeconds,

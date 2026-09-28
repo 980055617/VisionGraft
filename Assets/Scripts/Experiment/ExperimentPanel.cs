@@ -17,12 +17,28 @@ public sealed class ExperimentPanel
         public string label;
         public Action onClick;
         public bool interactable;
+        // 2 度押しで初めて実行する（ConfirmWindowSeconds 以内）。取り返しのつかない実験者用の操作
+        // （セッション中断・練習を飛ばす・練習を途中で終える・読み込みの中止）に付ける。
+        // 練習の途中の段階は「実験者用: 終了」しかボタンが無く、被験者が「次へ」のつもりで押すと
+        // その練習が丸ごと終わっていた（2026-09-29 の 3 回目の監査）。
+        public bool confirm;
 
         public static ButtonSpec Create(string label, Action onClick, bool interactable = true)
         {
             return new ButtonSpec { label = label, onClick = onClick, interactable = interactable };
         }
+
+        public static ButtonSpec CreateConfirm(string label, Action onClick)
+        {
+            return new ButtonSpec { label = label, onClick = onClick, interactable = true, confirm = true };
+        }
     }
+
+    // 2 度押しの猶予と、1 度目を押したあとの文言。2 度目は 1 度目から ConfirmMinGapSeconds 以上あとでないと
+    // 数えない（トリガーの二重発火は数十 ms なので、それを「確認した」と取らないため）。
+    public const float ConfirmWindowSeconds = 3f;
+    public const float ConfirmMinGapSeconds = 0.4f;
+    public const string ConfirmLabel = "もう一度押す";
 
     private const float CanvasWidth = 1200f;
     private const float CanvasHeight = 900f;
@@ -72,6 +88,9 @@ public sealed class ExperimentPanel
     // ボタンごとの「本来押せるか」。作り直した直後は全部押せなくしておき、少し経ってからこの値に戻す。
     private readonly List<bool> buttonDesiredInteractable = new List<bool>();
     private float buttonsArmAtRealtime = -1f;
+    // 2 度押しのボタン: 本来の文言と、1 度目を押した時刻（負 = 押していない）。
+    private readonly List<string> buttonLabels = new List<string>();
+    private readonly List<float> buttonConfirmArmedAt = new List<float>();
     private bool placementLocked;
 
     // **作り直した直後のボタンはこの秒数だけ押せない。**
@@ -150,6 +169,9 @@ public sealed class ExperimentPanel
     {
         WorldAnchor = worldAnchor;
         placementLocked = false;
+        // 呼び出し側が SizeMeters / DistanceMeters を取り直していることがある（読み込み中パネルは
+        // 画面より手前に寄せた距離の比で寸法も縮める）。距離だけ反映して寸法が前のままだと見かけが変わる。
+        ApplyPanelScale();
     }
 
     public void SetBody(string body)
@@ -167,13 +189,13 @@ public sealed class ExperimentPanel
 
         Button button = buttons[index];
         buttonDesiredInteractable[index] = interactable;
+        buttonLabels[index] = label;
         // 作り直し直後の抑止中なら、抑止が明けたときに反映される。
         if (buttonsArmAtRealtime < 0f)
         {
-            UiComponentWriter.ApplyInteractable(button, interactable);
+            ApplyButtonInteractable(button, interactable);
         }
-        Text text = button.GetComponentInChildren<Text>(true);
-        UiComponentWriter.ApplyTextContent(text, label);
+        SetButtonLabel(button, label);
     }
 
     // 作り直し直後の押下抑止を、時間が来たら解く。毎フレーム呼ぶ（UpdatePlacement の先頭）。
@@ -189,9 +211,73 @@ public sealed class ExperimentPanel
         {
             if (buttons[i] != null)
             {
-                UiComponentWriter.ApplyInteractable(buttons[i], buttonDesiredInteractable[i]);
+                ApplyButtonInteractable(buttons[i], buttonDesiredInteractable[i]);
             }
         }
+    }
+
+    // 2 度押しのボタン: 1 度目から猶予が過ぎたら文言を戻す。毎フレーム呼ぶ。
+    private void ExpireConfirmIfDue()
+    {
+        float now = Time.realtimeSinceStartup;
+        for (int i = 0; i < buttons.Count && i < buttonConfirmArmedAt.Count; i++)
+        {
+            if (buttonConfirmArmedAt[i] < 0f || now - buttonConfirmArmedAt[i] <= ConfirmWindowSeconds)
+            {
+                continue;
+            }
+
+            buttonConfirmArmedAt[i] = -1f;
+            if (buttons[i] != null)
+            {
+                SetButtonLabel(buttons[i], buttonLabels[i]);
+            }
+        }
+    }
+
+    // 2 度押しのボタンが押された。1 度目は文言を変えて待つ、猶予内（最短間隔より後）の 2 度目で実行する。
+    private void HandleConfirmClick(int index, Action onClick)
+    {
+        if (index < 0 || index >= buttons.Count || buttons[index] == null)
+        {
+            return;
+        }
+
+        float now = Time.realtimeSinceStartup;
+        float armedAt = buttonConfirmArmedAt[index];
+        if (armedAt >= 0f && now - armedAt <= ConfirmWindowSeconds)
+        {
+            if (now - armedAt < ConfirmMinGapSeconds)
+            {
+                // 二重発火。1 度目のまま待つ。
+                return;
+            }
+
+            buttonConfirmArmedAt[index] = -1f;
+            onClick?.Invoke();
+            return;
+        }
+
+        buttonConfirmArmedAt[index] = now;
+        SetButtonLabel(buttons[index], ConfirmLabel);
+    }
+
+    // 押せないボタンは文字も落とす。ColorTint は背景（targetGraphic）にしか掛からず、白い文字が
+    // そのまま残ると「押せるのに反応しない」に見える（2026-09-29 の 3 回目の監査）。
+    private static void ApplyButtonInteractable(Button button, bool interactable)
+    {
+        UiComponentWriter.ApplyInteractable(button, interactable);
+        Text text = button != null ? button.GetComponentInChildren<Text>(true) : null;
+        if (text != null)
+        {
+            UiComponentWriter.ApplyGraphicColor(text, interactable ? Color.white : new Color(0.55f, 0.55f, 0.55f, 1f));
+        }
+    }
+
+    private static void SetButtonLabel(Button button, string label)
+    {
+        Text text = button != null ? button.GetComponentInChildren<Text>(true) : null;
+        UiComponentWriter.ApplyTextContent(text, label);
     }
 
     // パネルを置く「正面」。動画の画面と同じ向きにする。
@@ -224,6 +310,7 @@ public sealed class ExperimentPanel
         }
 
         ArmButtonsIfDue();
+        ExpireConfirmIfDue();
         if (placementLocked || head == null)
         {
             return;
@@ -384,6 +471,8 @@ public sealed class ExperimentPanel
     {
         ClearButtons();
         buttonDesiredInteractable.Clear();
+        buttonLabels.Clear();
+        buttonConfirmArmedAt.Clear();
         buttonsArmAtRealtime = -1f;
         if (specs == null || specs.Count == 0)
         {
@@ -417,12 +506,21 @@ public sealed class ExperimentPanel
             float y = firstRowY - row * (buttonHeight + gapY);
 
             ButtonSpec spec = specs[i];
+            Action onClick = spec.onClick;
+            if (spec.confirm)
+            {
+                int index = i;
+                Action confirmed = spec.onClick;
+                onClick = () => HandleConfirmClick(index, confirmed);
+            }
             Button button = CreateButton(buttonRow, $"Button_{i}", spec.label, new Vector2(x, y),
-                new Vector2(buttonWidth, buttonHeight), spec.onClick, CurrentLayout.buttonFontSize);
+                new Vector2(buttonWidth, buttonHeight), onClick, CurrentLayout.buttonFontSize);
             // 作り直した直後は押せない（ButtonArmDelaySeconds）。本来の可否は ArmButtonsIfDue が戻す。
-            UiComponentWriter.ApplyInteractable(button, false);
+            ApplyButtonInteractable(button, false);
             buttons.Add(button);
             buttonDesiredInteractable.Add(spec.interactable);
+            buttonLabels.Add(spec.label);
+            buttonConfirmArmedAt.Add(-1f);
         }
 
         SetLayerRecursively(root, UiLayer);
@@ -519,12 +617,16 @@ public sealed class ExperimentPanel
         RectTransform rect = RuntimeUiElementFactory.CreateRectChild(name, parent, out GameObject obj);
         TransformWriter.ApplyCenteredRect(rect, anchoredPos, size);
 
+        // **Image の色は白にして、見せたい色は ColorBlock 側に置く。** ColorTint は Image の色に
+        // **掛け算**される（CanvasRenderer の色）ので、Image と normalColor の両方に同じ色を入れると
+        // 二乗されてほぼ黒になり、disabledColor（0.18 の灰 × 0.6）との差が消えて「押せない」が
+        // 見えなかった（2026-09-29 の 3 回目の監査。以前の作りは normalColor = image.color）。
         Image image = RuntimeUiElementFactory.AddImage(obj);
-        UiComponentWriter.ApplyGraphicColor(image, new Color(0.22f, 0.26f, 0.34f, 0.96f));
+        UiComponentWriter.ApplyGraphicColor(image, Color.white);
 
         Button button = RuntimeUiElementFactory.AddButton(obj);
         ColorBlock colors = button.colors;
-        colors.normalColor = image.color;
+        colors.normalColor = new Color(0.22f, 0.26f, 0.34f, 0.96f);
         colors.highlightedColor = new Color(0.30f, 0.35f, 0.44f, 0.98f);
         colors.pressedColor = new Color(0.16f, 0.20f, 0.28f, 1f);
         colors.selectedColor = colors.highlightedColor;

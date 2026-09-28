@@ -52,6 +52,17 @@ public sealed class ExperimentTutorial : IExperimentLogSink
     // 「表示しない」を選んだときに detail へ入る prefab 名（StreamingStereoVideoPlayer.HiddenModelName）。
     private const string HiddenPrefabToken = "prefab=(none)";
 
+    // 被験者が A ボタンで動画を止めているか。Random イベントは動画が動いている間しか発火しないので、
+    // 止めたまま「1 回出るまで見ていてください」を待たせると永久に出ない。文面で戻し方を出す
+    // （2026-09-29 の 3 回目の監査）。pause / resume の操作ログから追う。
+    private bool videoPausedByParticipant;
+
+    // 例のモーションが走っている（random_* を受けてから、その動画の一時停止が解けるまで）。
+    // 走っている間は「動いています」の文面にし、**終わってから**段階を済ませる。発火した瞬間に
+    // 次の段階へ進めると、モデルが動いている最中にパネルが差し替わって説明に目を取られ、肝心の
+    // 例を見ない（2026-09-29 の 3 回目の監査）。
+    private bool motionExampleRunning;
+
     public ExperimentTutorial(IExperimentLogSink inner, ExperimentDisplayMode mode)
     {
         this.inner = inner;
@@ -128,13 +139,15 @@ public sealed class ExperimentTutorial : IExperimentLogSink
     {
         get
         {
+            // 被験者向けの語は「練習」で統一する（待機画面・ボタンも同じ。「チュートリアル」は 10 文字で
+            // ボタン幅に収まらず 2 行目が切れうる。2026-09-29 の 3 回目の監査）。「ブロック」も出さない。
             Step step = CurrentStep;
             if (step == Step.Done)
             {
-                return StepCount == 0 ? "このブロックの説明" : "チュートリアル 終了";
+                return StepCount == 0 ? "次の動画の説明" : "練習 終了";
             }
 
-            return $"チュートリアル {CurrentStepNumber}/{StepCount}";
+            return $"練習 {CurrentStepNumber}/{StepCount}";
         }
     }
 
@@ -163,7 +176,7 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                         "再生が再開します。";
                 case Step.Seek:
                     return
-                        "下のバーの上にあるつまみを\n" +
+                        "下のバーにあるつまみを\n" +
                         "光線で指してトリガーを引いたまま\n" +
                         "左右に動かすと、動画の位置を\n" +
                         "変えられます。動かしてみてください。";
@@ -192,12 +205,29 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                             "Motion を ON に戻してください。";
                     }
 
+                    // 止めたままでは出ない。
+                    if (videoPausedByParticipant)
+                    {
+                        return
+                            "動画が止まっています。\n" +
+                            "A ボタンを押して再開してください。\n" +
+                            "（モデルは動画が動いているときに\n" +
+                            "動きます）";
+                    }
+
+                    if (motionExampleRunning)
+                    {
+                        return
+                            "モデルが動いています。\n" +
+                            "動くあいだ動画は自動で止まります。\n" +
+                            "終わるまで見ていてください。";
+                    }
+
                     return
-                        "このブロックでは動画の人や動物が\n" +
-                        "3D モデルに置き換わり、モデルが\n" +
-                        "自分から動くことがあります。\n" +
-                        "動くあいだ動画は自動で止まります。\n" +
-                        "1 回出るまで見ていてください。";
+                        "次の 3 本では動画の人や動物が\n" +
+                        "3D モデルに置き換わり、ときどき自分から\n" +
+                        "動きます。動くあいだ動画は止まります。\n" +
+                        "1 回動くまで見ていてください。";
                 case Step.ToggleMotion:
                     return
                         "いまの動きは ON / OFF を\n" +
@@ -224,10 +254,10 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                     "進みます。押して練習を終えてください。";
             case ExperimentDisplayMode.StereoOnly:
                 return
-                    "このブロックでは動画が\n" +
+                    "次の 3 本の動画は\n" +
                     "立体（奥行きあり）で見えます。\n" +
                     "操作はこれまでと同じです。\n" +
-                    "「視聴を終了」を押して始めてください。";
+                    "上の「視聴を終了」を押すと始まります。";
             default:
                 return
                     "操作は以上です。モデルの動きは\n" +
@@ -253,6 +283,7 @@ public sealed class ExperimentTutorial : IExperimentLogSink
         {
             case "pause":
                 SetDone(Step.PausePlayback);
+                SetVideoPausedByParticipant(true);
                 break;
             case "resume":
                 // 止めていないのに resume だけ来ることはないはずだが、来ても数えない。
@@ -260,6 +291,11 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                 {
                     SetDone(Step.ResumePlayback);
                 }
+                SetVideoPausedByParticipant(false);
+                break;
+            case "resume_auto":
+                // パネルを閉じた・モーションが終わったときの自動再開。被験者の停止はもう残っていない。
+                SetVideoPausedByParticipant(false);
                 break;
             case "seek":
                 SetDone(Step.Seek);
@@ -296,14 +332,49 @@ public sealed class ExperimentTutorial : IExperimentLogSink
     {
         inner?.RecordInteraction(trackId, kind, detail);
 
-        // モデルが自分から動いた（Random イベント。frame-out も一応受けるが、現行の再生経路では
+        if (CurrentStep != Step.WatchMotion || kind == null)
+        {
+            return;
+        }
+
+        // モデルが自分から動き始めた（Random イベント。frame-out も一応受けるが、現行の再生経路では
         // 発火しないことを 2026-09-25 の監査で確認した。予備として残す）。
         // **その段階を表示している間の発火だけ数える。** 先回りで済ませると説明が出ないまま次へ進む。
-        if (CurrentStep == Step.WatchMotion &&
-            kind != null &&
-            (kind.StartsWith("random_", StringComparison.Ordinal) || kind == "system_frameout"))
+        // 済ませるのは動き終わってから（video_pause_end）。2 回目の発火が来たら 1 回目は終わっているので済ませる
+        // （被験者がフェードアウト中に A で止めた場合は video_pause_end が出ない。その保険）。
+        if (kind.StartsWith("random_", StringComparison.Ordinal) || kind == "system_frameout")
         {
+            if (motionExampleRunning)
+            {
+                motionExampleRunning = false;
+                SetDone(Step.WatchMotion);
+                return;
+            }
+
+            motionExampleRunning = true;
+            Changed?.Invoke();
+            return;
+        }
+
+        if (motionExampleRunning && kind == "video_pause_end")
+        {
+            motionExampleRunning = false;
             SetDone(Step.WatchMotion);
+        }
+    }
+
+    private void SetVideoPausedByParticipant(bool paused)
+    {
+        if (videoPausedByParticipant == paused)
+        {
+            return;
+        }
+
+        videoPausedByParticipant = paused;
+        // 文面が変わるのは WatchMotion を表示している間だけ（他の段階では A ボタンの案内は出さない）。
+        if (CurrentStep == Step.WatchMotion && motionEnabled && !(sawModelEvent && tracksWithVisibleModel.Count == 0))
+        {
+            Changed?.Invoke();
         }
     }
 

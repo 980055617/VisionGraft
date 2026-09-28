@@ -7,10 +7,11 @@ using UnityEngine;
 // 実験ログ CSV をセッション単位のフォルダに書き出す。
 //
 // 出力先: {persistentDataPath}/ExperimentLogs/{participantId}_{yyyyMMdd_HHmmss}/
-//   trials.csv        試行ごとの 1 行（条件・開始終了時刻・視聴周回数）
-//   operations.csv    被験者の操作履歴
-//   headpose.csv      頭部姿勢サンプル
+//   trials.csv        試行ごとの 1 行（条件・開始時の状態・開始終了時刻・視聴周回数）
+//   operations.csv    被験者の操作履歴と試行の状態変化
+//   headpose.csv      頭部姿勢サンプル（試行中のみ）
 //   interactions.csv  インタラクティブモーションの発火
+//   perf.csv          1 秒窓の描画レート・動画の進み・コントローラの動き（試行中のみ）
 //
 // Quest 実機からは adb pull で回収する（手順は Docs/experiment-flow.md）。
 public sealed class ExperimentLogWriter : IDisposable
@@ -150,6 +151,12 @@ public sealed class ExperimentLogWriter : IDisposable
             return existing;
         }
 
+        // 一度開けなかったファイルは二度と試さない。試すと headpose の 15 Hz ぶん毎秒十数回の例外とログが出続ける。
+        if (failedFiles.Contains(fileName))
+        {
+            return null;
+        }
+
         try
         {
             string path = Path.Combine(SessionDirectory, fileName);
@@ -159,10 +166,13 @@ public sealed class ExperimentLogWriter : IDisposable
         }
         catch (Exception ex)
         {
-            Debug.LogError($"[Experiment] ログファイルを開けません: {fileName} | {ex.Message}");
+            failedFiles.Add(fileName);
+            Debug.LogError($"[Experiment] ログファイルを開けません: {fileName} | {ex.Message}（以後このファイルへは書きません）");
             return null;
         }
     }
+
+    private readonly HashSet<string> failedFiles = new HashSet<string>();
 
     public void Dispose()
     {

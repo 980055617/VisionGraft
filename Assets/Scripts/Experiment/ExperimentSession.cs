@@ -3,8 +3,8 @@ using UnityEngine;
 
 // 1 参加者分のセッション。割り付け・試行の進行・ログ書き出しを保持する。
 //
-// 試行シーンは試行ごとにロードし直されるが、このオブジェクトは ExperimentController
-// (DontDestroyOnLoad) が持ち続けるのでセッション中ずっと生存する。
+// 試行シーンは試行ごとにロードし直されるが、このオブジェクトは ExperimentScene（Additive の
+// ベースシーン）に常駐する ExperimentController が持ち続けるのでセッション中ずっと生存する。
 public sealed class ExperimentSession : IExperimentLogSink, IDisposable
 {
     private readonly ExperimentLogWriter writer;
@@ -34,12 +34,14 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
     // Motion で動画が止まる第 3 条件では duration_sec（試行の経過時間）と分かれる。
     private double trialVideoPlayedSeconds;
 
+    // realtimeProvider: 経過秒の時計（null なら Time.realtimeSinceStartup）。テストが差し替える。
     public ExperimentSession(
         string participantId,
         ExperimentGroup group,
         int videoOrderPattern,
         ExperimentLogWriter writer,
-        Func<double> videoTimeProvider)
+        Func<double> videoTimeProvider,
+        Func<float> realtimeProvider = null)
     {
         ParticipantId = participantId;
         Group = group;
@@ -50,6 +52,14 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
 
         this.writer = writer;
         this.videoTimeProvider = videoTimeProvider;
+        this.realtimeProvider = realtimeProvider ?? (() => Time.realtimeSinceStartup);
+    }
+
+    private readonly Func<float> realtimeProvider;
+
+    private float Realtime
+    {
+        get { return realtimeProvider(); }
     }
 
     public string ParticipantId { get; }
@@ -73,7 +83,7 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
 
     // operations.csv / interactions.csv の trial_index 列。チュートリアル中は試行ではないので -1
     // （後半ブロックの前のチュートリアルでも、直前の試行番号を書かない）。
-    private int TrialIndexForLog
+    public int TrialIndexForLog
     {
         get { return tutorialInProgress ? -1 : CurrentTrialIndex; }
     }
@@ -100,11 +110,19 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
 
     public void BeginTrial(int trialIndex, string bundleFileName)
     {
+        // 試行とチュートリアルは開始時刻（trialStartRealtime）を共有する。両方が同時に進行中になると
+        // duration_sec が静かに誤るので、片方が残っていたら先に閉じる（進行上は起きないはず。防御）。
+        if (tutorialInProgress)
+        {
+            Debug.LogError("[Experiment] チュートリアルが閉じられないまま試行を始めようとしました。閉じてから続けます");
+            EndTutorial("aborted:trial_started");
+        }
+
         CurrentTrialIndex = Mathf.Clamp(trialIndex, 0, Trials.Length - 1);
         currentBundleFileName = bundleFileName;
         currentLoopCount = 0;
         trialStartedAt = DateTime.Now;
-        trialStartRealtime = Time.realtimeSinceStartup;
+        trialStartRealtime = Realtime;
         trialInProgress = true;
 
         trialBundleSha256 = null;
@@ -121,6 +139,9 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
 
         ExperimentLog.Sink = this;
         RecordOperation("trial_begin", CurrentTrial.Describe(Trials.Length));
+        // 読み込み中（実機で 5〜十数秒）に落ちると trial_begin すら残らない。周期 flush は再生開始後に
+        // しか走らないので、ここで書き切る（2026-09-29 の監査）。
+        writer?.Flush();
     }
 
     // 再生が始まった時点の状態一式。operations.csv に `trial_state` 1 行で残し、trials.csv の列にも入れる。
@@ -158,6 +179,8 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
             $"source={bundleSource} app_build={appBuild} motion={ExperimentCsv.Format(motionEnabled)} " +
             $"monocular={ExperimentCsv.Format(monocular)} screen_dist={ExperimentCsv.Format(screenDistanceMeters)} " +
             $"bone_length_correction={ExperimentCsv.Format(boneLengthCorrection)} display_hz={ExperimentCsv.Format(displayHz)}");
+        // 視聴開始の刻（解析の起点）。周期 flush まで 10 秒あるので、ここでも書き切る。
+        writer?.Flush();
     }
 
     public bool TrialStateRecorded
@@ -274,17 +297,25 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
     // （段階検出）を挟んで設定するので、ここでは触らない。
     public void BeginTutorial(string bundleFileName, int beforeBlockIndex, ExperimentDisplayMode mode)
     {
+        if (trialInProgress)
+        {
+            Debug.LogError("[Experiment] 試行が閉じられないままチュートリアルを始めようとしました。閉じてから続けます");
+            EndTrial(true, "tutorial_started");
+        }
+
         currentBundleFileName = bundleFileName;
         currentLoopCount = 0;
         trialStartedAt = DateTime.Now;
-        trialStartRealtime = Time.realtimeSinceStartup;
+        trialStartRealtime = Realtime;
         tutorialInProgress = true;
         tutorialBeforeBlock = beforeBlockIndex;
 
         RecordOperation("tutorial_begin", $"bundle={bundleFileName} before_block={beforeBlockIndex} mode={mode}");
+        writer?.Flush();
     }
 
-    // result は ExperimentTutorial.DescribeResult() か "load_failed" / "aborted"。
+    // result は ExperimentTutorial.DescribeResult()（completed=… step=… mode=…）か、読み込みの失敗理由
+    // （load_timeout / load_failed:<理由> / cancelled_by_button）か "aborted"。
     public void EndTutorial(string result)
     {
         if (!tutorialInProgress)
@@ -305,7 +336,7 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
         get
         {
             return trialInProgress || tutorialInProgress
-                ? Time.realtimeSinceStartup - trialStartRealtime
+                ? Realtime - trialStartRealtime
                 : 0f;
         }
     }

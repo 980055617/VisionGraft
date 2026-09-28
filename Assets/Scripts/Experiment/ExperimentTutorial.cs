@@ -7,10 +7,10 @@ using System.Collections.Generic;
 //   A Monocular（必ず最初）: トリガーでボタンを押す → A ボタンで一時停止 → 再開 → シークバーをドラッグ
 //                           → 画面の上に出る「視聴を終了」を押す（次の動画に移るときの操作をここで覚える）
 //   B StereoOnly           : 立体で見える説明だけ。操作は同じ。「視聴を終了」を押して終わる
-//   C ModelReplaced        : Model ボタンでモデルを替える → モデルが自分から動く例を見る
+//   C ModelReplaced        : モデルが自分から動く例を見る → Model ボタンでモデルを替える
 //                           → Settings の Motion で ON/OFF を切り替える → 「視聴を終了」
 //                           （2026-09-25 指示「インタラクションモードの切り替えもできて、
-//                           そのモードの説明の例も見せたい」）
+//                           そのモードの説明の例も見せたい」。並びは 2026-09-28 に入れ替えた。ResolveSequence）
 //
 // 検出は ExperimentLog の sink を横取りして行う（プレイヤー側には手を入れない）。
 // 受け取った操作は内側の sink（セッション）へそのまま流すので、チュートリアル中の
@@ -18,7 +18,8 @@ using System.Collections.Generic;
 //
 // 各段階は「済んだかどうか」で持ち、現在の段階はその列の最初の未完了項目。
 // 順番どおりでなくても済んだ操作は数える。resume だけは pause の後でないと数えない。
-// 段階を飛ばす手段は置かない（実際に操作しないと進めない）。
+// 段階を個別に飛ばす手段は置かない（実際に操作しないと進めない）。練習全体は実験者用のボタンで
+// いつでも終えられる（ExperimentController が出す。completed=0 と段階名が記録に残る）。
 public sealed class ExperimentTutorial : IExperimentLogSink
 {
     public enum Step
@@ -77,11 +78,6 @@ public sealed class ExperimentTutorial : IExperimentLogSink
 
     // 段階が変わったとき。パネルの作り直しに使う。
     public event Action Changed;
-
-    public ExperimentDisplayMode Mode
-    {
-        get { return mode; }
-    }
 
     // Done を除いた段階数（見出しの「n/N」用）。
     public int StepCount
@@ -288,7 +284,7 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                 {
                     SetDone(Step.ToggleMotion);
                 }
-                if (hintChanges && CurrentStep == Step.WatchMotion)
+                if (hintChanges)
                 {
                     Changed?.Invoke();
                 }
@@ -339,7 +335,9 @@ public sealed class ExperimentTutorial : IExperimentLogSink
             return;
         }
 
-        bool hadVisible = tracksWithVisibleModel.Count > 0;
+        // 「全部消えている」の案内が出るかどうかが変わったときだけ Changed（パネルの作り直しは
+        // ボタンの押下抑止を伴うので、文面が変わらないのに作り直さない）。
+        bool hintBefore = sawModelEvent && tracksWithVisibleModel.Count == 0;
         if (detail.IndexOf(HiddenPrefabToken, StringComparison.Ordinal) >= 0)
         {
             tracksWithVisibleModel.Remove(track);
@@ -350,7 +348,8 @@ public sealed class ExperimentTutorial : IExperimentLogSink
         }
 
         sawModelEvent = true;
-        if (hadVisible != (tracksWithVisibleModel.Count > 0) && CurrentStep == Step.WatchMotion)
+        bool hintAfter = tracksWithVisibleModel.Count == 0;
+        if (hintBefore != hintAfter && CurrentStep == Step.WatchMotion)
         {
             Changed?.Invoke();
         }

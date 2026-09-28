@@ -124,7 +124,9 @@ public static class AndroidBuilder
             string fileName = ExperimentBuildInfo.ResourcePath + ".txt";
             string path = Path.Combine(dir, fileName);
             string line =
-                $"{Path.GetFileName(apkPath)};{DateTime.Now:yyyy-MM-dd HH:mm:ss};{(string.IsNullOrEmpty(stamp) ? "nostamp" : stamp)}";
+                // 日時は 'T' 区切り。空白を入れると operations.csv の trial_state（key=value の空白区切り）で
+                // app_build= の値が割れて後続の列がずれる（2026-09-29 の監査）。
+                $"{Path.GetFileName(apkPath)};{DateTime.Now:yyyy-MM-ddTHH:mm:ss};{(string.IsNullOrEmpty(stamp) ? "nostamp" : stamp)}";
             File.WriteAllText(path, line + "\n");
             AssetDatabase.ImportAsset("Assets/Resources/" + fileName, ImportAssetOptions.ForceSynchronousImport);
             Debug.Log($"[BUILD] build_info: {line}");

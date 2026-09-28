@@ -4,7 +4,8 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
-// 実験フローで使うワールド空間パネル（セットアップ / 待機 / 終了）。
+// 実験フローで使うワールド空間パネル（セットアップ / 待機 / 読み込み中 / 試行中 / チュートリアル / 終了。
+// Home の入口も流用）。
 //
 // 見出し + 本文 + ボタン列という同じ構成を局面ごとに差し替えて使い回す。
 // 生成手順は StreamingStereoVideoPlayer の bundle picker に合わせてあり、
@@ -68,7 +69,21 @@ public sealed class ExperimentPanel
     private Text bodyText;
     private Transform buttonRow;
     private readonly List<Button> buttons = new List<Button>();
+    // ボタンごとの「本来押せるか」。作り直した直後は全部押せなくしておき、少し経ってからこの値に戻す。
+    private readonly List<bool> buttonDesiredInteractable = new List<bool>();
+    private float buttonsArmAtRealtime = -1f;
     private bool placementLocked;
+
+    // **作り直した直後のボタンはこの秒数だけ押せない。**
+    // 同じフレームの 2 発目はレイの仕組み上届かない（ClearButtons が旧ボタンを非アクティブにし、
+    // 新ボタンは canvas 再構築まで当たらない）が、数フレーム遅れた 2 発目は**作り直した別のボタン**に
+    // 当たる。「スキップ」の真下に「中止して Home へ」が来る配置なので、遅れた 2 発目でセッションが
+    // 中断しうる（2026-09-29 の監査）。トリガーの二重発火は数十 ms なので 0.4 s あれば十分。
+    public const float ButtonArmDelaySeconds = 0.4f;
+
+    // 掴んで回す判定（プレイヤー側）が、このパネルを指しているトリガー押下を「モデルを掴んだ」と
+    // 誤認しないための読み取り口。表示中のパネルの root（無ければ null）。
+    public static GameObject ActiveRoot { get; private set; }
 
     public ExperimentPanel(GameObject prefab, Func<Camera> cameraProvider)
     {
@@ -83,7 +98,8 @@ public sealed class ExperimentPanel
 
     public Vector2 SizeMeters = new Vector2(1.05f, 0.82f);
     public float DistanceMeters = 1.2f;
-    // 頭の向きを基準にした横・縦のずらし量。試行中パネルは映像を隠さないよう下にずらす。
+    // 正面基準で置くときの横・縦のずらし量（UI 距離での m）。画面の位置が取れないときの逃げにだけ使う
+    // （試行中・チュートリアルは上 0.6 m）。通常は WorldAnchor で画面の外側に置く。
     public Vector2 OffsetMeters = Vector2.zero;
     public bool FlipHorizontal = true;
 
@@ -116,6 +132,7 @@ public sealed class ExperimentPanel
 
         SceneObjectWriter.ApplyActive(root, true);
         SetLayerRecursively(root, UiLayer);
+        ActiveRoot = root;
     }
 
     // worldAnchor の方向（頭から見た角度）に置く。画面の外側に出したいときに使う。
@@ -123,6 +140,16 @@ public sealed class ExperimentPanel
     {
         Show(title, body, buttonSpecs, false);
         WorldAnchor = worldAnchor;
+    }
+
+    // 中身はそのままで置き場所だけ取り直す（worldAnchor が null なら正面基準）。
+    // 動画の画面が動いたとき（Reset View の再センタリング、Screen Dist）に使う。以前は置き直す手段が無く、
+    // 再センタリングで画面だけが動いてパネルが画面の裏に取り残され、「視聴を終了」が押せなくなった
+    // （2026-09-29 の監査）。ボタンはそのままなので押下抑止も掛けない。
+    public void Reanchor(Vector3? worldAnchor)
+    {
+        WorldAnchor = worldAnchor;
+        placementLocked = false;
     }
 
     public void SetBody(string body)
@@ -139,16 +166,31 @@ public sealed class ExperimentPanel
         }
 
         Button button = buttons[index];
-        UiComponentWriter.ApplyInteractable(button, interactable);
+        buttonDesiredInteractable[index] = interactable;
+        // 作り直し直後の抑止中なら、抑止が明けたときに反映される。
+        if (buttonsArmAtRealtime < 0f)
+        {
+            UiComponentWriter.ApplyInteractable(button, interactable);
+        }
         Text text = button.GetComponentInChildren<Text>(true);
         UiComponentWriter.ApplyTextContent(text, label);
     }
 
-    public void Hide()
+    // 作り直し直後の押下抑止を、時間が来たら解く。毎フレーム呼ぶ（UpdatePlacement の先頭）。
+    private void ArmButtonsIfDue()
     {
-        if (root != null)
+        if (buttonsArmAtRealtime < 0f || Time.realtimeSinceStartup < buttonsArmAtRealtime)
         {
-            SceneObjectWriter.ApplyActive(root, false);
+            return;
+        }
+
+        buttonsArmAtRealtime = -1f;
+        for (int i = 0; i < buttons.Count && i < buttonDesiredInteractable.Count; i++)
+        {
+            if (buttons[i] != null)
+            {
+                UiComponentWriter.ApplyInteractable(buttons[i], buttonDesiredInteractable[i]);
+            }
         }
     }
 
@@ -176,7 +218,13 @@ public sealed class ExperimentPanel
     // WorldAnchor があるとき（画面の上など）はそちらが優先で、frontForward は向きの逃げにだけ使う。
     public void UpdatePlacement(Transform head, Vector3 frontForward)
     {
-        if (root == null || !root.activeSelf || placementLocked || head == null)
+        if (root == null || !root.activeSelf)
+        {
+            return;
+        }
+
+        ArmButtonsIfDue();
+        if (placementLocked || head == null)
         {
             return;
         }
@@ -229,6 +277,10 @@ public sealed class ExperimentPanel
     public void Destroy()
     {
         ClearButtons();
+        if (ReferenceEquals(ActiveRoot, root))
+        {
+            ActiveRoot = null;
+        }
         if (root != null)
         {
             SceneObjectWriter.DestroyObject(root);
@@ -331,10 +383,14 @@ public sealed class ExperimentPanel
     private void RebuildButtons(IList<ButtonSpec> specs)
     {
         ClearButtons();
+        buttonDesiredInteractable.Clear();
+        buttonsArmAtRealtime = -1f;
         if (specs == null || specs.Count == 0)
         {
             return;
         }
+
+        buttonsArmAtRealtime = Time.realtimeSinceStartup + ButtonArmDelaySeconds;
 
         // 1 行あたり 3 個まで。それを超えたら 2 段目に折り返す。ボタン列の高さ（200）には 2 段しか
         // 入らないので、7 個以上のときは幅を詰めて 1 行 4 個にする（セットアップ画面の 7 個）。
@@ -363,8 +419,10 @@ public sealed class ExperimentPanel
             ButtonSpec spec = specs[i];
             Button button = CreateButton(buttonRow, $"Button_{i}", spec.label, new Vector2(x, y),
                 new Vector2(buttonWidth, buttonHeight), spec.onClick, CurrentLayout.buttonFontSize);
-            UiComponentWriter.ApplyInteractable(button, spec.interactable);
+            // 作り直した直後は押せない（ButtonArmDelaySeconds）。本来の可否は ArmButtonsIfDue が戻す。
+            UiComponentWriter.ApplyInteractable(button, false);
             buttons.Add(button);
+            buttonDesiredInteractable.Add(spec.interactable);
         }
 
         SetLayerRecursively(root, UiLayer);
@@ -493,11 +551,7 @@ public sealed class ExperimentPanel
 
     private static void EnsureEventSystem()
     {
-#if UNITY_2023_1_OR_NEWER
         EventSystem eventSystem = UnityEngine.Object.FindFirstObjectByType<EventSystem>();
-#else
-        EventSystem eventSystem = UnityEngine.Object.FindObjectOfType<EventSystem>();
-#endif
         RuntimeEventSystemFactory.Ensure(eventSystem);
     }
 

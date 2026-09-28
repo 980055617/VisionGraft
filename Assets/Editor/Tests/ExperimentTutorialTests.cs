@@ -177,7 +177,8 @@ public class ExperimentTutorialTests
         tutorial.CompleteCurrentStep();
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.PausePlayback));
 
-        // 2 段階目以降は操作ログで進む。ボタンでは進まない（段階を飛ばす手段は無い）。
+        // 2 段階目以降は操作ログで進む。ボタンでは進まない（段階を個別に飛ばす手段は無い。
+        // 練習全体を終える実験者用のボタンは ExperimentController 側にあり、この状態機械には無い）。
         tutorial.CompleteCurrentStep();
         tutorial.RecordOperation("change_scale", "track=1 scale=1.2");
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.PausePlayback));

@@ -61,11 +61,6 @@ public sealed class ExperimentBundleCatalog
         }
     }
 
-    public static string ResolveDefault(ExperimentVideo video)
-    {
-        return new ExperimentBundleCatalog().Resolve(video);
-    }
-
     private static string FallbackIfBlank(string value, string fallback)
     {
         return string.IsNullOrEmpty(value) ? fallback : value;

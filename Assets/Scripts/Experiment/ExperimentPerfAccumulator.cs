@@ -2,7 +2,7 @@ using UnityEngine;
 
 // 試行中の描画レート・動画の進み・コントローラの動きを 1 秒窓で集計する（perf.csv の 1 行分）。
 //
-// Unity API に依存しない純粋なクラスにしてある（EditMode テストで検算できるように）。
+// MonoBehaviour に依存しない純粋なクラスにしてある（UnityEngine.Vector3 は使う。EditMode テストで検算できるように）。
 // 呼び出し側（ExperimentController.Update）が毎フレーム Push し、窓が閉じたら Sample を受け取って書く。
 //
 // 何を測るか（2026-09-25、論文側の依頼 §3.2 / §3.3）:
@@ -36,10 +36,14 @@ public sealed class ExperimentPerfAccumulator
     public float LongFrameThresholdSeconds = 0.020f;
     public float WindowLengthSeconds = 1f;
 
-    // 前向きの飛びをシークとみなす閾値。描画の刻みの 4 倍か 0.25 秒の大きい方を超えたらシーク。
-    // 72 Hz なら 1 フレーム 13.9 ms なので、通常の再生（0.014 秒進む）とは 1 桁以上離れている。
-    public const double SeekJumpMinSeconds = 0.25d;
-    public const double SeekJumpDeltaFactor = 4d;
+    // 前向きの飛びをシークとみなす閾値: 動画の進み > 描画の刻み × 1.5 + 0.1 秒。
+    // 1 描画フレームで動画が進める量は刻み × 再生速度（1 倍）なので、それを 1.5 倍 + 0.1 秒超えたら再生ではない。
+    //   72 Hz 通常再生: 進み 0.0139 vs 閾値 0.121 → 再生 / 2 フレーム進み 0.0667 → 再生 / GC で 0.4 秒伸びた
+    //   フレームの進み 0.4 vs 0.7 → 再生 / 着地フレームが 0.3 秒詰まった 1.0 秒のシーク vs 0.55 → シーク。
+    // 以前の max(0.25, 刻み × 4) は、car 動画の scrub 最小刻み（0.240 秒）が再生扱いになり、
+    // 着地フレームが長いとシークまで再生扱いになった（2026-09-29 の監査）。
+    public const double SeekJumpDeltaFactor = 1.5d;
+    public const double SeekJumpSlackSeconds = 0.1d;
 
     private float windowSeconds;
     private int frames;
@@ -99,10 +103,10 @@ public sealed class ExperimentPerfAccumulator
         // 1 描画フレームで動画が進める上限は描画の刻み × 再生速度なので、それを大きく超えた進みは
         // 再生ではなくシーク。除外しないと「見た秒数」に飛ばした区間が丸ごと入り、コマ落ちには
         // その区間のフレーム数がそのまま乗る（2026-09-25 の監査。実機ログに前方シークの連続あり）。
-        // 余裕を大きめに取り、GC や読み込みで 1 フレームが伸びた場合を誤ってシーク扱いしない。
+        // 刻みに比例させるので、GC や読み込みで 1 フレームが伸びた場合を誤ってシーク扱いしない。
         bool seekJump =
             !double.IsNaN(lastVideoTime) &&
-            videoTimeSeconds - lastVideoTime > System.Math.Max(SeekJumpMinSeconds, deltaSeconds * SeekJumpDeltaFactor);
+            videoTimeSeconds - lastVideoTime > deltaSeconds * SeekJumpDeltaFactor + SeekJumpSlackSeconds;
         if (seekJump)
         {
             videoSeekJumps++;
@@ -158,7 +162,32 @@ public sealed class ExperimentPerfAccumulator
             return false;
         }
 
-        sample = new Sample
+        sample = BuildSample(videoPlaying);
+        ResetWindow();
+        return true;
+    }
+
+    // 閉じていない窓（1 秒未満）を書き切る。試行の終わりに呼ぶ。捨てると video_played_sec が
+    // 最大 1 秒少なくなる。フレームが 1 つも無ければ何も返さない。
+    public bool TryFlush(out Sample sample)
+    {
+        sample = default;
+        if (frames <= 0)
+        {
+            return false;
+        }
+
+        sample = BuildSample(lastVideoPlaying);
+        ResetWindow();
+        return true;
+    }
+
+    private bool lastVideoPlaying;
+
+    private Sample BuildSample(bool videoPlaying)
+    {
+        lastVideoPlaying = videoPlaying;
+        return new Sample
         {
             windowSeconds = windowSeconds,
             frames = frames,
@@ -174,8 +203,6 @@ public sealed class ExperimentPerfAccumulator
             triggerFrames = triggerFrames,
             buttonFrames = buttonFrames,
         };
-        ResetWindow();
-        return true;
     }
 
     private void ResetWindow()

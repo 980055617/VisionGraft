@@ -23,10 +23,10 @@ public enum ExperimentTutorialTiming
 {
     None,
 
-    // 最初の試行の前に 1 回（既定）。
+    // 最初の試行の前に 1 回（単眼の内容のみ）。
     BeforeFirstTrial,
 
-    // 各条件ブロックの先頭で 1 回ずつ（計 2 回）。
+    // 各条件ブロックの先頭で 1 回ずつ（BlockCount = 3 回）。**既定**（ExperimentController.tutorialTiming）。
     BeforeEachBlock,
 }
 

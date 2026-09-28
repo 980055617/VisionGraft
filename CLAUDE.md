@@ -59,6 +59,7 @@ bundle 内の検出オブジェクト（Human / Animal / Else）を、対応す�
 | [docs/smpl-retargeting.md](docs/smpl-retargeting.md) | Human SMPL / Animal SMAL FK・座標変換・調査ログ（発表用まとめ付き） |
 | [docs/interactive-motion-events.md](docs/interactive-motion-events.md) | インタラクティブモーションイベント（発表用まとめ付き） |
 | [docs/experiment-flow.md](docs/experiment-flow.md) | 被験者実験フロー・シーン構成・ログ仕様（発表用まとめ付き） |
+| [docs/migration-checklist.md](docs/migration-checklist.md) | **別マシンへ移すときに git では渡らないもの**（bundle 4 本・Docs・端末と PC の基準ファイル・APK・メモリ）と移行先での確認手順 |
 | [docs/model-materials.md](docs/model-materials.md) | モデルのマテリアル（毛・ヒゲのカードの透け等）。棚卸しは `ModelMaterialAudit` |
 | [docs/animal-model-consistency.md](docs/animal-model-consistency.md) | Animal をモデル差し替えしたときの大きさ・姿勢の揃い方。棚卸しは `AnimalModelGeometryAudit` |
 | [docs/refactoring.md](docs/refactoring.md) | リファクタリングの手順（安全網の取り方・NG パターン）と実施記録 |

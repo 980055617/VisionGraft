@@ -19,6 +19,10 @@
 /[Ii]l2CppOutputProject/
 **/il2cpp_cache/
 
+# Build stamp written by AndroidBuilder for trials.csv app_build (changes every build)
+Assets/Resources/build_info.txt
+Assets/Resources/build_info.txt.meta
+
 # Addressables generated content
 Assets/AddressableAssetsData/*/*.bin*
 Assets/AddressableAssetsData/link.xml

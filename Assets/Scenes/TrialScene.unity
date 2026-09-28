@@ -437,7 +437,7 @@ MonoBehaviour:
   followOtherDepthToRefinedSkeleton: 1
   projectedBoneRatioTarget: 1
   enableHumanArmLengthCorrection: 0
-  enableHumanBoneLengthCorrection: 1
+  enableHumanBoneLengthCorrection: 0
   logHumanBoneLengthCorrection: 0
   enableHumanOtherContactCorrection: 0
   logHumanOtherContact: 1
@@ -476,8 +476,8 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 422e018c5b1e3de4aa3acc2a34624f38, type: 2}
   animalWalkClips:
   - {fileID: 11400000, guid: cbd6419643807bc4793fb2652fd65cc5, type: 2}
-  interactiveMotionMinIntervalSeconds: 6
-  interactiveMotionMaxIntervalSeconds: 14
+  interactiveMotionMinIntervalSeconds: 12
+  interactiveMotionMaxIntervalSeconds: 24
   staticAnimationDurationSeconds: 2.4
   interactiveHandoffBlendSeconds: 0.45
   humanApproachStopDistanceMeters: 0.6

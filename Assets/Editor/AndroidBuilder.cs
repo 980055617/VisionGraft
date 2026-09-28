@@ -28,6 +28,7 @@ public static class AndroidBuilder
     {
         string outPath = null;
         bool development = false;
+        string buildStamp = null;
         string[] args = Environment.GetCommandLineArgs();
         for (int i = 0; i < args.Length; i++)
         {
@@ -40,6 +41,12 @@ public static class AndroidBuilder
             {
                 development = true;
             }
+
+            // git の短いハッシュなど。trials.csv の app_build に入る（ExperimentBuildInfo）。
+            if (args[i] == "-buildStamp" && i + 1 < args.Length)
+            {
+                buildStamp = args[i + 1];
+            }
         }
 
         if (string.IsNullOrEmpty(outPath))
@@ -48,6 +55,7 @@ public static class AndroidBuilder
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(outPath));
+        WriteBuildInfo(outPath, buildStamp);
 
         List<string> scenes = new List<string>();
         foreach (EditorBuildSettingsScene s in EditorBuildSettings.scenes)
@@ -102,5 +110,28 @@ public static class AndroidBuilder
         }
 
         EditorApplication.Exit(0);
+    }
+
+    // Assets/Resources/build_info.txt に「APK 名;ビルド日時;スタンプ」を 1 行書く。
+    // 実機の trials.csv の app_build 列がこれになり、どの参加者がどのビルドを見たかを一意にできる（2026-09-25）。
+    // gitignore 済み（ビルドごとに変わる）。Editor 実行時は ExperimentBuildInfo がこれを使わず "editor" と書く。
+    private static void WriteBuildInfo(string apkPath, string stamp)
+    {
+        try
+        {
+            string dir = Path.Combine(Application.dataPath, "Resources");
+            Directory.CreateDirectory(dir);
+            string fileName = ExperimentBuildInfo.ResourcePath + ".txt";
+            string path = Path.Combine(dir, fileName);
+            string line =
+                $"{Path.GetFileName(apkPath)};{DateTime.Now:yyyy-MM-dd HH:mm:ss};{(string.IsNullOrEmpty(stamp) ? "nostamp" : stamp)}";
+            File.WriteAllText(path, line + "\n");
+            AssetDatabase.ImportAsset("Assets/Resources/" + fileName, ImportAssetOptions.ForceSynchronousImport);
+            Debug.Log($"[BUILD] build_info: {line}");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[BUILD] build_info.txt を書けませんでした: {ex.Message}");
+        }
     }
 }

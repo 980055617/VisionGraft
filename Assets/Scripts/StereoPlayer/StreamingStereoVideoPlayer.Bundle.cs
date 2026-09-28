@@ -1,6 +1,7 @@
 using System.Collections;
 using System.IO;
 using System.IO.Compression;
+using System.Security.Cryptography;
 using UnityEngine;
 using UnityEngine.Networking;
 
@@ -47,6 +48,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // Use Android's getCacheDir() for truly internal storage accessible to the media codec
         // GetSvbCacheDir は AndroidJavaClass を触るのでメインスレッドで呼ぶ。
         string cacheDir = GetSvbCacheDir();
+        ResetBundleLoadStatus();
+        loadedBundleSource = string.IsNullOrEmpty(selectedBundlePath) ? "streamingAssets" : "picker";
 
         // 前回の展開を消す。120MB 超を削除するのでこれもメインスレッドではやらない。
         yield return RunBundleIoOffMainThread("前回の展開を削除", () =>
@@ -85,6 +88,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Debug.Log($"[Bundle] shared storage hit: {sharedPath}");
             selectedBundlePath = sharedPath;
             useStreamingAssets = false;
+            loadedBundleSource = "sharedStorage";
         }
 
         byte[] streamingBytes = null;
@@ -100,6 +104,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 if (request.result != UnityWebRequest.Result.Success)
                 {
                     Debug.LogError($"[Bundle] Download failed: {request.result} | {request.error} | URL: {streamingBundleUrl}");
+                    FailBundleLoad($"bundle not found: {bundleFileName}（共有ストレージにも StreamingAssets にも無い）");
                     yield break;
                 }
 
@@ -112,6 +117,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (!File.Exists(selectedBundlePath))
             {
                 Debug.LogError($"[Bundle] File not found: {selectedBundlePath}");
+                FailBundleLoad($"file not found: {selectedBundlePath}");
                 yield break;
             }
             Debug.Log($"[Bundle] Opening: {selectedBundlePath}");
@@ -119,6 +125,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         bool extractOk = false;
         string extractError = null;
+        string bundleSha256 = null;
+        long bundleBytes = 0;
         yield return RunBundleIoOffMainThread("bundle の展開", () =>
         {
             try
@@ -145,6 +153,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                             extractedHumanSmplPath, extractedNormalModeVideoPath);
                     }
                 }
+
+                // 読んだ .svb を一意に指す SHA-256（trials.csv の bundle_sha256）。165 MB で 1 秒前後。
+                // 同じワーカースレッドで済ませるので描画は止まらない。
+                using (var sha = SHA256.Create())
+                {
+                    byte[] hash;
+                    if (useStreamingAssets)
+                    {
+                        hash = sha.ComputeHash(streamingBytes);
+                        bundleBytes = streamingBytes.LongLength;
+                    }
+                    else
+                    {
+                        using (var hfs = new FileStream(selectedBundlePath, FileMode.Open, FileAccess.Read))
+                        {
+                            hash = sha.ComputeHash(hfs);
+                            bundleBytes = hfs.Length;
+                        }
+                    }
+                    bundleSha256 = System.BitConverter.ToString(hash).Replace("-", string.Empty).ToLowerInvariant();
+                }
             }
             catch (System.Exception ex)
             {
@@ -152,26 +181,34 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
         });
 
+        loadedBundleSha256 = bundleSha256;
+        loadedBundleSizeBytes = bundleBytes;
+        Debug.Log($"[Bundle] sha256={loadedBundleSha256 ?? "(none)"} bytes={loadedBundleSizeBytes} source={loadedBundleSource}");
+
         if (extractError != null)
         {
             Debug.LogError($"[Bundle] Extraction failed: {extractError}");
+            FailBundleLoad($"extraction failed: {extractError}");
             yield break;
         }
 
         if (!extractOk)
         {
+            FailBundleLoad("required entry missing (video.mp4 / manifest.json / meta.bin)");
             yield break;
         }
 
         if (!File.Exists(extractedVideoPath))
         {
             Debug.LogError($"[Bundle] Extracted video not found: {extractedVideoPath}");
+            FailBundleLoad("extracted video not found");
             yield break;
         }
 
         if (!ManifestLoader.TryLoad(extractedManifestPath, out manifest, out ShotBoundaries loadedShotBoundaries))
         {
             Debug.LogError($"[Bundle] Manifest load failed: {extractedManifestPath}");
+            FailBundleLoad("manifest load failed");
             yield break;
         }
         Debug.Log($"[Bundle] Manifest loaded. Video: {extractedVideoPath}");
@@ -253,6 +290,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             IsBackground = true,
         };
+        bundleIoBusy = true;
         thread.Start();
 
         while (thread.IsAlive)
@@ -260,6 +298,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             yield return null;
         }
 
+        bundleIoBusy = false;
         Debug.Log($"[BUNDLETIME] {label} {stopwatch.ElapsedMilliseconds}ms（別スレッド）");
     }
 

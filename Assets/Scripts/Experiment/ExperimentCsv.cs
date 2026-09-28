@@ -67,6 +67,11 @@ public static class ExperimentCsv
         return value.ToString(CultureInfo.InvariantCulture);
     }
 
+    public static string Format(long value)
+    {
+        return value.ToString(CultureInfo.InvariantCulture);
+    }
+
     public static string Format(bool value)
     {
         return value ? "1" : "0";

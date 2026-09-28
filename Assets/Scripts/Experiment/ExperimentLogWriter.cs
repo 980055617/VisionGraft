@@ -19,6 +19,8 @@ public sealed class ExperimentLogWriter : IDisposable
     public const string OperationsFileName = "operations.csv";
     public const string HeadPoseFileName = "headpose.csv";
     public const string InteractionsFileName = "interactions.csv";
+    // 1 秒ごとの描画レート・動画の進み・コントローラの動き（2026-09-25 追加。ExperimentPerfAccumulator）。
+    public const string PerfFileName = "perf.csv";
 
     private readonly Dictionary<string, StreamWriter> writers = new Dictionary<string, StreamWriter>();
     private bool disposed;
@@ -28,11 +30,16 @@ public sealed class ExperimentLogWriter : IDisposable
         SessionDirectory = sessionDirectory;
         Directory.CreateDirectory(SessionDirectory);
 
+        // 2026-09-25 に列を足した（bundle_sha256 〜 bone_length_correction、video_played_sec、abort_reason）。
+        // 列の意味は Docs/experiment-flow.md「ログ」。
         WriteHeader(TrialsFileName,
             "participant_id", "group", "video_order_pattern",
             "trial_index", "block_index", "index_in_block",
             "video", "mode", "bundle_file",
-            "start_time", "end_time", "duration_sec", "loop_count", "aborted");
+            "bundle_sha256", "bundle_bytes", "bundle_source", "app_build",
+            "motion_enabled", "monocular", "screen_dist_start", "bone_length_correction", "display_hz",
+            "start_time", "end_time", "duration_sec", "video_played_sec", "loop_count",
+            "aborted", "abort_reason");
 
         WriteHeader(OperationsFileName,
             "participant_id", "trial_index", "time", "trial_elapsed_sec", "video_time_sec",
@@ -45,6 +52,15 @@ public sealed class ExperimentLogWriter : IDisposable
         WriteHeader(InteractionsFileName,
             "participant_id", "trial_index", "time", "trial_elapsed_sec", "video_time_sec",
             "track_id", "kind", "detail");
+
+        // window_sec / frames は「その行が何秒ぶんの集計か」。窓は 1 秒で閉じるが、1 フレームが長いと
+        // それより伸びる。無いと fps 以外の列（long_frames 等）を比較できない（2026-09-25 の監査）。
+        // video_seek_jumps は前向きのシークで飛んだ回数。advanced / skips からは除いてある。
+        WriteHeader(PerfFileName,
+            "participant_id", "trial_index", "time", "trial_elapsed_sec", "video_time_sec",
+            "video_frame", "window_sec", "frames", "fps", "frame_time_max_ms", "long_frames",
+            "video_frames_advanced", "video_frame_skips", "video_seek_jumps", "video_time_advanced_sec", "video_playing",
+            "ctrl_moved_m", "ctrl_trigger_frames", "ctrl_button_frames");
     }
 
     public string SessionDirectory { get; }

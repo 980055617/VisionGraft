@@ -58,9 +58,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             BindRuntimeButton(modeButton, ToggleNormalMode);
         }
 
-        Button modelPickerButton = CreateBarButton(panelObj.transform, "PrefabSelectButton", new Vector2(210f, -12f));
-        runtimeModelPickerButtonText = GetButtonText(modelPickerButton);
-        BindRuntimeButton(modelPickerButton, ToggleRuntimeModelPickerPanel);
+        // **通常モード（単眼・ステレオ条件）では作らない。** モデルが 1 体も出ないので選ぶものが無く、
+        // それでも押せると動画が止まって（PauseForManualRotationEdit）空のパネルが開く。閉じても
+        // 再生は戻らないので、被験者は静止画を見続けることになる（2026-09-25 の監査 F-4）。
+        if (!isNormalMode)
+        {
+            Button modelPickerButton = CreateBarButton(panelObj.transform, "PrefabSelectButton", new Vector2(210f, -12f));
+            runtimeModelPickerButtonText = GetButtonText(modelPickerButton);
+            BindRuntimeButton(modelPickerButton, ToggleRuntimeModelPickerPanel);
+        }
 
         Button pauseButton = CreateBarButton(panelObj.transform, "PauseToggleButton", new Vector2(-210f, -100f));
         runtimePauseButtonText = GetButtonText(pauseButton);
@@ -397,8 +403,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Button modelPickerButton = FindButton(root, "prefabselect");
         if (modelPickerButton != null)
         {
-            BindRuntimeButton(modelPickerButton, ToggleRuntimeModelPickerPanel);
-            runtimeModelPickerButtonText = GetButtonText(modelPickerButton);
+            // 通常モード（単眼・ステレオ条件）はモデルが出ないので押させない。Display ボタンと同じ扱いで、
+            // prefab 由来のボタンは非アクティブにする（2026-09-25 の監査 F-4）。
+            if (isNormalMode)
+            {
+                SceneObjectWriter.ApplyActive(modelPickerButton.gameObject, false);
+            }
+            else
+            {
+                BindRuntimeButton(modelPickerButton, ToggleRuntimeModelPickerPanel);
+                runtimeModelPickerButtonText = GetButtonText(modelPickerButton);
+            }
         }
 
         runtimeProgressSlider = FindSlider(root, "progressslider");

@@ -145,6 +145,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private void OnVideoErrorReceived(VideoPlayer source, string message)
     {
         Debug.LogError($"[Video] error: {message} | url={(source != null ? source.url : "null")}");
+        // 実験の試行は「再生が始まるまで待つ」ので、デコードできない動画（mp4v 等）はここで失敗にしないと
+        // timeout まで待つことになる（2026-09-25）。再生中のエラーでも立つが、ExperimentController は
+        // 読み込み中しか見ない。
+        FailBundleLoad($"video error: {message}");
     }
 
 
@@ -171,6 +175,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // Screens.cs の ApplyStereoUvSettings が右目の板にも左半分の UV を割り当てる。
     // startInNormalMode と組で使う（Monocular は normal mode の一種）。
     [HideInInspector] public bool experimentMonocular;
+
+    // 実験の指示「インタラクティブモーションの ON/OFF は条件で固定し、被験者に変えさせない」（2026-09-25）。
+    // true の間は Settings パネルに Motion の Toggle ボタンを作らず、値の表示だけにする。
+    [HideInInspector] public bool experimentLockInteractiveMotion;
 
 
     private bool IsCategoryExcludedByExperiment(byte categoryId)
@@ -311,9 +319,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         experimentSkipTrackCustomizationRestore = request.skipTrackCustomizationRestore;
         experimentMonocular = request.StartMonocular;
 
+        // モーションは条件で決める（置換あり = ON、それ以外 = OFF）。シーンの serialize 値
+        // （TrialScene は 0）より優先する（2026-09-25）。
+        // **置換あり条件だけ、被験者が Settings の Motion で切り替えられる**（同日のユーザー指示で
+        // 固定を取り消した）。単眼・ステレオはモデルが出ないので固定のまま（トグルを出さない）。
+        enableInteractiveMotion = request.InteractiveMotionEnabled;
+        experimentLockInteractiveMotion = request.LockInteractiveMotion;
+
+        // 置換ありブロックのチュートリアルだけ発火間隔を短くし、練習中に必ず 1 回は見せる。
+        if (request.UseTutorialInteractiveMotionInterval)
+        {
+            interactiveMotionMinIntervalSeconds = ExperimentTrialRequest.TutorialInteractiveMotionMinIntervalSeconds;
+            interactiveMotionMaxIntervalSeconds = ExperimentTrialRequest.TutorialInteractiveMotionMaxIntervalSeconds;
+        }
+
         Debug.Log(
             $"[Experiment] trial {request.trialIndex}: {request.video} / {request.mode} → {bundleFileName} " +
             $"monocular={experimentMonocular} " +
+            $"motion={enableInteractiveMotion}{(experimentLockInteractiveMotion ? "(locked)" : "(switchable)")} " +
             $"onlyCategory={(string.IsNullOrEmpty(request.onlyCategory) ? "(all)" : request.onlyCategory)} " +
             $"animalModel={(string.IsNullOrEmpty(request.preferredAnimalModelName) ? "(inspector)" : request.preferredAnimalModelName)} " +
             $"skipRestore={request.skipTrackCustomizationRestore}");
@@ -330,6 +353,37 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool IsVideoPlaying
     {
         get { return vp != null && vp.isPlaying; }
+    }
+
+
+    // perf.csv 用。動画の現在フレーム（Prepare 前は -1）。
+    public long CurrentVideoFrame
+    {
+        get { return vp != null && vp.isPrepared ? vp.frame : -1L; }
+    }
+
+
+    public bool InteractiveMotionEnabled
+    {
+        get { return enableInteractiveMotion; }
+    }
+
+
+    public float ScreenDistanceMeters
+    {
+        get { return screenDistanceMeters; }
+    }
+
+
+    public bool IsExperimentMonocular
+    {
+        get { return experimentMonocular; }
+    }
+
+
+    public bool HumanBoneLengthCorrectionEnabled
+    {
+        get { return enableHumanBoneLengthCorrection; }
     }
 
 
@@ -511,6 +565,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         HandleRuntimePauseInput();
         RefreshRuntimeSettingsPerFrame();
         UpdateRuntimeProgressUi();
+        // 実験ログ: パネルの開閉と Screen Dist の変更を、状態の変化として 1 行ずつ残す。
+        LogExperimentPanelStateChanges();
+        FlushPendingExperimentScreenDistLog();
+        TickInteractiveMotionAudioFade();
         // **画面のテクスチャをここで当てる。**
         // 以前は OnVideoFrameReady からしか呼ばれておらず、
         // sendFrameReadyEvents を切ったとたん画面が真っ黒になった（2026-09-04）。

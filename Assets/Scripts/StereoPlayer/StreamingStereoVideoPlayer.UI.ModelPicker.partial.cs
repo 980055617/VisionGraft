@@ -439,6 +439,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // 通常モードは対象が無い（ボタンも作らないが、prefab 由来のボタンが残っていても効かないように）。
+        if (isNormalMode)
+        {
+            return;
+        }
+
+        // 開く前の再生状態を覚えておき、閉じたら戻す（2026-09-25 の監査 F-4）。
+        modelPickerWasPlayingBeforeOpen = vp != null && vp.isPlaying;
         runtimeModelPickerOpen = true;
         runtimeSettingsOpen = false;
         // 今のモデルが載っているページから始める（1 ページ目固定だと、どれが今のモデルか分からない）。
@@ -481,10 +489,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
+    // 開いている間に止めた再生を戻すためのフラグ。開く直前の状態を覚える。
+    private bool modelPickerWasPlayingBeforeOpen;
+
     private void CloseRuntimeModelPickerPanel()
     {
         runtimeModelPickerOpen = false;
         ClearRuntimeModelPickerPreviews();
+
+        // 開いたときに止めた（PauseForManualRotationEdit）ぶんを戻す。戻さないと、被験者が
+        // 自分で A ボタンを押すまで静止画のままになる（2026-09-25 の監査 F-4）。
+        // 一時停止の操作ログは出さない方針に合わせ、ここも出さない（チュートリアルの段階を誤進行させない）。
+        if (modelPickerWasPlayingBeforeOpen && vp != null && !vp.isPlaying)
+        {
+            RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
+            UpdatePauseButtonLabel();
+            ExperimentLog.Operation("resume_auto", "cause=model_panel_closed");
+        }
+        modelPickerWasPlayingBeforeOpen = false;
         if (runtimeModelPickerRoot != null)
         {
             SceneObjectWriter.ApplyActive(runtimeModelPickerRoot, false);
@@ -583,7 +605,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 頭から一定距離に引き寄せて置くパネルの「画面の面での見かけの大きさ」。
     // 角度を揃える: 画面の面での幅 = 物理幅 × 画面までの距離 ÷ パネルまでの距離。
     // 距離固定を切っているときは画面の面にそのまま置くので物理サイズのまま。
-    private Vector2 ResolvePanelSizeAtScreenPlane(Vector2 physicalSizeMeters, Vector3 screenPosition, Transform head)
+    // includePanelDragOffset: 掴んで前後に動かせるパネル（Settings / Model）は true。
+    // コントロールバーはドラッグの対象ではなく `runtimeUiDistanceMeters` に固定されるので false。
+    // true のまま使うと、Settings パネルを前後に動かしただけでバーの位置が動く（2026-09-28）。
+    private Vector2 ResolvePanelSizeAtScreenPlane(
+        Vector2 physicalSizeMeters,
+        Vector3 screenPosition,
+        Transform head,
+        bool includePanelDragOffset = true)
     {
         if (!pinRuntimeUiDistance)
         {
@@ -593,7 +622,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float screenDistance = head != null
             ? Vector3.Distance(head.position, screenPosition)
             : Mathf.Max(0.001f, screenDistanceMeters);
-        float panelDistance = Mathf.Max(0.25f, Mathf.Max(0.25f, runtimeUiDistanceMeters) + runtimePanelDistanceOffsetMeters);
+        float panelDistance = Mathf.Max(0.25f, runtimeUiDistanceMeters);
+        if (includePanelDragOffset)
+        {
+            panelDistance = Mathf.Max(0.25f, panelDistance + runtimePanelDistanceOffsetMeters);
+        }
+
         return physicalSizeMeters * (Mathf.Max(0.001f, screenDistance) / panelDistance);
     }
 

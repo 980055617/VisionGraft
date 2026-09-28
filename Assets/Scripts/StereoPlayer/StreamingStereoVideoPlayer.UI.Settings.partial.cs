@@ -84,9 +84,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         CreateSettingsLabel(panelObj.transform, "InteractiveMotionLabel", "Motion", SettingsRowY(1), 40, TextAnchor.MiddleLeft);
         runtimeInteractiveMotionValueText =
             CreateSettingsValue(panelObj.transform, "InteractiveMotionValue", string.Empty, SettingsRowY(1), 36);
-        Button motionToggle = CreateSmallButton(
-            panelObj.transform, "InteractiveMotionToggleButton", new Vector2(-120f, SettingsRowY(1)), "Toggle");
-        BindRuntimeButton(motionToggle, OnRuntimeInteractiveMotionToggleClicked);
+        // 実験中は条件で固定するので Toggle ボタンを作らない（値の表示だけ残す）。
+        // Display ボタンと同じ扱い（2026-09-25、Docs/experiment-flow.md「Motion の条件固定」）。
+        if (!experimentLockInteractiveMotion)
+        {
+            Button motionToggle = CreateSmallButton(
+                panelObj.transform, "InteractiveMotionToggleButton", new Vector2(-120f, SettingsRowY(1)), "Toggle");
+            BindRuntimeButton(motionToggle, OnRuntimeInteractiveMotionToggleClicked);
+        }
 
         CreateSettingsLabel(panelObj.transform, "ScreenDistLabel", "Screen Dist", SettingsRowY(2), 40, TextAnchor.MiddleLeft);
         runtimeScreenDistanceValueText =
@@ -336,6 +341,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         UpdateRuntimeScreenDistanceText(screenDistanceMeters);
         ReleaseLockedScalesForViewingChange();
         PlaceScreensWithoutMovingSettings();
+        // 実験ログ: 動きが止まってから 1 行（ExperimentLogging.partial.cs）。
+        NoteExperimentScreenDistChange(screenDistanceMeters);
     }
 
 
@@ -389,6 +396,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void ToggleRuntimeSettingsPanel()
     {
+        // **root が無いときにフラグだけ反転させない。**反転したまま true で残ると、Picking が
+        // 「パネルを開いている間は pick しない」の判定に引っかかり、スクリーン上の対象選択が
+        // 恒久的に死ぬ（2026-09-25 の監査 F-8）。
+        if (runtimeSettingsRoot == null)
+        {
+            Debug.LogWarning("[Settings] パネルの root が無いので開閉しません（runtimeSettingsOpen は変えない）");
+            return;
+        }
+
         runtimeSettingsOpen = !runtimeSettingsOpen;
         if (runtimeSettingsRoot != null)
         {

@@ -38,7 +38,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             head != null,
             head != null ? head.position : Vector3.zero,
             screenHeightMeters,
-            ScaleUiOffsetForDistance(ControlsBarSizeMeters),
+            // 板の高さも Model / Settings と同じ換算で渡す。× screenDist / 2.0 だと高さが半分で
+            // 計算され、バーの上端（約 1.1°）が画面の角度内かつ画面より奥に入る。今はその帯に
+            // ウィジェットが無いので押せない操作は無いが、余裕がゼロだった（2026-09-25 の監査 F-3）。
+            ResolvePanelSizeAtScreenPlane(ControlsBarSizeMeters, center, head, false),
             ScaleUiOffsetForDistance(ControlsBarGapMeters),
             ScaleUiOffsetForDistance(ControlsBarOffsetMeters),
             ControlsBarForwardOffsetMeters);
@@ -89,6 +92,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             basisWidth = Mathf.Abs(screenWidthMeters);
         }
 
+        // 板の幅は Model パネルと同じ換算で渡す（**物理幅 × 画面の距離 ÷ パネルの距離**）。
+        // ScaleUiOffsetForDistance は × screenDist / 2.0 なので、画面 1.0 m では実物の半分の幅で
+        // 計算され、板の左 1/4 が画面の角度内（かつ画面より奥）に入っていた。そこはレイを画面に
+        // 取られる（2026-09-25 の監査 F-2。Model パネルは既にこの換算に直してあった）。
+        Vector2 settingsSizeAtScreen = ResolvePanelSizeAtScreenPlane(SettingsPanelSizeMeters, basis.position, head);
         RuntimeControlsPlacement.Pose pose = RuntimeControlsPlacement.ResolveSettingsPose(
             basis.position,
             basis.forward,
@@ -98,11 +106,29 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             head != null,
             head != null ? head.position : Vector3.zero,
             basisWidth,
-            ScaleUiOffsetForDistance(SettingsPanelSizeMeters),
+            settingsSizeAtScreen,
             ScaleUiOffsetForDistance(SettingsPanelGapMeters),
             ScaleUiOffsetForDistance(SettingsPanelOffsetMeters),
             SettingsPanelForwardOffsetMeters);
         Vector3 settingsPos = ApplyRuntimePanelDistanceOffset(PinRuntimeUiDistance(pose.position));
+
+        // **画面より手前に引き寄せる。**換算だけでは横に大きく振った位置で被りが残るのと、
+        // 掴んで前後に動かせる（±1 m）ので奥へ押し込むと画面の裏に入って自分では戻せなくなる
+        // （同監査 F-7）。Model パネルと同じ処理。見かけの大きさが変わらないよう距離比で縮める。
+        float settingsScale = 1f;
+        if (pinRuntimeUiDistance && head != null && baseScreen != null)
+        {
+            float screenDistance = Vector3.Distance(head.position, basis.position);
+            float maxDistance = screenDistance - ModelPickerInFrontOfScreenMarginMeters;
+            Vector3 away = settingsPos - head.position;
+            float distance = away.magnitude;
+            if (maxDistance >= 0.25f && distance > maxDistance && distance > 0.0001f)
+            {
+                settingsPos = head.position + away.normalized * maxDistance;
+                settingsScale = maxDistance / distance;
+            }
+        }
+
         TransformWriter.ApplyPose(
             runtimeSettingsRoot.transform, settingsPos, FaceRuntimeUiToView(settingsPos, pose.rotation));
 
@@ -122,11 +148,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 TransformWriter.ApplySizeDelta(rect, size);
             }
 
+            // settingsScale は「画面より手前へ引き寄せた分」。見かけの大きさを変えないよう距離比で縮める。
             TransformWriter.ApplyLocalScale(
                 rect,
                 new Vector3(
-                    SettingsPanelSizeMeters.x / size.x,
-                    SettingsPanelSizeMeters.y / size.y,
+                    SettingsPanelSizeMeters.x * settingsScale / size.x,
+                    SettingsPanelSizeMeters.y * settingsScale / size.y,
                     1f));
         }
     }
@@ -302,7 +329,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void OnRuntimeInteractiveMotionToggleClicked()
     {
-        if (isNormalMode)
+        // 実験中は条件で固定（ボタン自体を作らないが、prefab 由来のボタンが残っていても効かないように）。
+        if (isNormalMode || experimentLockInteractiveMotion)
         {
             return;
         }
@@ -313,6 +341,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             StopAllInteractiveMotion();
         }
         UpdateRuntimeInteractiveMotionUiState();
+        ExperimentLog.Operation("motion_toggle", $"value={(enableInteractiveMotion ? 1 : 0)}");
     }
 
 
@@ -322,7 +351,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Button motionToggle = FindButton(runtimeSettingsRoot, "interactivemotiontoggle");
         if (motionToggle != null)
         {
-            UiComponentWriter.ApplyInteractable(motionToggle, !isNormalMode);
+            UiComponentWriter.ApplyInteractable(motionToggle, !isNormalMode && !experimentLockInteractiveMotion);
         }
 
         if (runtimeInteractiveMotionValueText == null)
@@ -330,7 +359,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        UiComponentWriter.ApplyTextContent(runtimeInteractiveMotionValueText, enableInteractiveMotion ? "ON" : "OFF");
+        string text = enableInteractiveMotion ? "ON" : "OFF";
+        if (experimentLockInteractiveMotion)
+        {
+            text += "（固定）";
+        }
+        UiComponentWriter.ApplyTextContent(runtimeInteractiveMotionValueText, text);
     }
 
 
@@ -510,6 +544,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         RuntimePlaybackController.Apply(vp, command);
         UpdatePauseButtonLabel();
+
+        // **自動で止めたことも記録する。**手動の pause / resume しか残っていなかったので、
+        // operations.csv だけでは「動画が止まっていた合計時間」が出せなかった（2026-09-25 の監査 M-4）。
+        // action 名を分けてあるので、チュートリアルの段階検出（pause / resume を見る）は誤進行しない。
+        ExperimentLog.Operation("pause_auto", "cause=panel_or_edit");
     }
 
 

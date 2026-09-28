@@ -100,6 +100,15 @@ public sealed class ExperimentController : MonoBehaviour
     [Header("Logging")]
     public bool logHeadPose = true;
     [Range(1f, 60f)] public float headPoseSampleHz = 15f;
+    // 1 秒ごとの描画レート・動画の進み・コントローラの動き（perf.csv、2026-09-25）。
+    public bool logPerf = true;
+
+    [Header("Trial Loading")]
+    // 試行の bundle 読み込み（展開 + Prepare）がこの秒数で始まらなければ失敗として閉じる（2026-09-25）。
+    // 以前は期限が無く、bundle が無い・デコードできないと「読み込み中」で永久に止まった
+    // （Docs/architecture-audit-2026-09-18.md #1）。実機の読み込みは十数秒なので 60 s で十分に余裕がある。
+    // プレイヤー側が失敗を報告したとき（bundle が無い・展開失敗・動画エラー）は期限を待たずに閉じる。
+    [Min(10f)] public float trialLoadTimeoutSeconds = 60f;
 
     private Phase phase = Phase.Setup;
     private ExperimentSession session;
@@ -110,6 +119,10 @@ public sealed class ExperimentController : MonoBehaviour
     private float nextHeadPoseSampleTime;
     private float nextLogFlushTime;
     private bool trialEndRequested;
+    // 読み込み中パネルの「中止」。
+    private bool loadCancelRequested;
+    private readonly ExperimentPerfAccumulator perf = new ExperimentPerfAccumulator();
+    private readonly List<UnityEngine.XR.InputDevice> xrDevices = new List<UnityEngine.XR.InputDevice>();
 
     private ExperimentTutorial tutorial;
     private bool tutorialEndRequested;
@@ -119,11 +132,20 @@ public sealed class ExperimentController : MonoBehaviour
     private float trialEndAllowedAtRealtime;
     private bool trialEndEnabled;
     private const string TrialEndButtonLabel = "視聴を終了";
-    // 済ませた（飛ばしたものも含む）チュートリアルの数。BeforeEachBlock の判定に使う。
-    private int tutorialsCompleted;
+    // ブロックごとに「そのブロックの前の練習を済ませたか（飛ばしたものも含む）」。
+    // 以前は 1 本のカウンタで `tutorialsCompleted <= blockIndex` と判定していたので、二重押しで
+    // 1 つ余計に進むと**別のブロックの練習が丸ごと消えた**（2026-09-25 の監査 F-2）。
+    // ブロックごとに持てば、数がずれても他のブロックに波及しない。
+    private readonly bool[] tutorialDoneForBlock = new bool[ExperimentPlan.BlockCount];
+    // 実行中の練習がどのブロックの前のものか（-1 = 実行中でない）。終わったときにその枠を立てる。
+    private int tutorialBlockInProgress = -1;
+    // 待機画面のボタンの二重押し止め。押してからボタンを作り直すまでの間だけ立てる。
+    private bool waitingActionInProgress;
 
     private static readonly Vector2 FullPanelSizeMeters = new Vector2(1.05f, 0.82f);
     private const float LogFlushIntervalSeconds = 10f;
+    // 読み込み中パネルを画面より手前に置くときの余裕。プレイヤーの Model パネルと同じ 0.10 m。
+    private const float LoadingPanelInFrontOfScreenMarginMeters = 0.10f;
 
     private void Awake()
     {
@@ -141,27 +163,41 @@ public sealed class ExperimentController : MonoBehaviour
 
     private void OnDestroy()
     {
-        FinishSessionIfRunning(true);
+        FinishSessionIfRunning(true, "controller_destroyed");
         panel?.Destroy();
     }
 
     private void OnApplicationQuit()
     {
-        FinishSessionIfRunning(true);
+        FinishSessionIfRunning(true, "app_quit");
     }
 
     // Quest ではヘッドセットを外す・ホームに戻ると一時停止が来る。ここで書き出して
     // おかないと、そのまま終了された場合に進行中の試行のログが丸ごと消える。
     private void OnApplicationPause(bool paused)
     {
+        // **ヘッドセットを外したこと自体を記録する。**以前は flush だけで、operations.csv に何も残らず、
+        // 「最短視聴時間 70 秒（実時間）のうちどれだけ装着していなかったか」を後から追えなかった
+        // （2026-09-25 の監査 F-6）。装着時間の記録は 70 秒の基準を実時間のままにする判断
+        // （同日ユーザー指示）と対で要る。
+        if (session == null)
+        {
+            return;
+        }
+
         if (paused)
         {
-            session?.FlushLogs();
+            session.RecordOperation("app_pause", $"phase={phase} video_played_sec={ExperimentCsv.Format(session.TrialVideoPlayedSeconds)}");
+            session.FlushLogs();
+            return;
         }
+
+        session.RecordOperation("app_resume", $"phase={phase}");
+        session.FlushLogs();
     }
 
-    // 進行中の試行を中断扱いで確定させてからログを閉じる。
-    private void FinishSessionIfRunning(bool aborted)
+    // 進行中の試行を中断扱いで確定させてからログを閉じる。abortReason は trials.csv の abort_reason 列。
+    private void FinishSessionIfRunning(bool aborted, string abortReason)
     {
         if (session == null)
         {
@@ -170,7 +206,7 @@ public sealed class ExperimentController : MonoBehaviour
 
         if (session.TrialInProgress)
         {
-            session.EndTrial(aborted);
+            session.EndTrial(aborted, abortReason);
         }
 
         if (session.TutorialInProgress)
@@ -195,6 +231,7 @@ public sealed class ExperimentController : MonoBehaviour
         if (phase == Phase.Trial)
         {
             SampleHeadPoseIfDue();
+            SamplePerfIfDue();
             FlushLogsIfDue();
             UpdateTrialEndButtonIfDue();
         }
@@ -233,6 +270,35 @@ public sealed class ExperimentController : MonoBehaviour
         panel.SizeMeters = sizeMeters;
         panel.OffsetMeters = offsetMeters;
         panel.CurrentLayout = layout;
+        // 読み込み中パネルが画面より手前へ寄せた距離を、次の局面で元に戻す。
+        panel.DistanceMeters = panelDistanceMeters;
+    }
+
+    // 読み込み中だけ、パネルを**画面より手前**に置く。既定の 1.2 m は画面（試行シーンでは 1.0 m）より
+    // 奥にあり、角度も画面の内側に入るので、レイを画面のコライダーと ISDK サーフェスに取られて
+    // 「中止」が押せなかった。押せないと 60 秒の期限まで待つしかない（2026-09-25 の監査 F-1）。
+    // 見かけの大きさを変えないよう、寄せた距離の比でパネルの寸法も縮める。
+    private void PrepareLoadingPanelPlacement()
+    {
+        PreparePanel(FullPanelSizeMeters, Vector2.zero, ExperimentPanel.DefaultLayout);
+
+        Transform head = ResolveHeadTransform();
+        if (cachedPlayer == null || head == null ||
+            !cachedPlayer.TryGetScreenFrame(out Vector3 center, out _, out _, out _))
+        {
+            return;
+        }
+
+        float screenDistance = Vector3.Distance(head.position, center);
+        float wanted = screenDistance - LoadingPanelInFrontOfScreenMarginMeters;
+        if (wanted < 0.35f || wanted >= panelDistanceMeters)
+        {
+            return;
+        }
+
+        float ratio = wanted / panelDistanceMeters;
+        panel.DistanceMeters = wanted;
+        panel.SizeMeters = FullPanelSizeMeters * ratio;
     }
 
     private void ShowSetupPanel()
@@ -348,7 +414,9 @@ public sealed class ExperimentController : MonoBehaviour
         // 参加者が変わるのでモデル・向きのセッション上書きを捨てる。
         // 研究者が仕込んだ基準（model_selection.json）はそのまま読み込まれる。
         ExperimentSessionOverrides.BeginSession();
-        tutorialsCompleted = 0;
+        System.Array.Clear(tutorialDoneForBlock, 0, tutorialDoneForBlock.Length);
+        tutorialBlockInProgress = -1;
+        waitingActionInProgress = false;
 
         Debug.Log($"[Experiment] セッション開始: {ParticipantId} / 群 {group} / 動画順 {videoOrderPattern} / チュートリアル {tutorialTiming}");
         Debug.Log($"[Experiment] ログ出力先: {sessionDir}");
@@ -376,7 +444,7 @@ public sealed class ExperimentController : MonoBehaviour
 
         string body =
             $"参加者 ID: {session.ParticipantId}\n" +
-            $"次の試行: {next.Describe(ExperimentPlan.TrialCount)}\n\n" +
+            $"次: {next.DescribeForParticipant(ExperimentPlan.TrialCount)}\n\n" +
             // ログの保存先はここに出さない（被験者が知る必要はない。2026-09-11 指示）。Debug.Log には残る。
             (session.CurrentTrialIndex >= 0
                 ? "アンケートの記入が終わったら、実験者の合図で\n「この試行を開始」を押してください。"
@@ -406,16 +474,14 @@ public sealed class ExperimentController : MonoBehaviour
     {
         phase = Phase.Loading;
         trialEndRequested = false;
+        loadCancelRequested = false;
 
         // このコルーチンは待機画面のボタンのクリックハンドラから始まる。パネルの
         // 作り直しはそのボタン自身の破棄を伴うので、ハンドラを抜けてから行う。
         yield return null;
 
         string bundleFileName = bundleCatalog.Resolve(trial.video);
-        panel.Show(
-            "読み込み中",
-            $"{trial.Describe(ExperimentPlan.TrialCount)}\n{bundleFileName}\n\nそのままお待ちください。",
-            null);
+        ShowLoadingPanel(trial.DescribeForParticipant(ExperimentPlan.TrialCount), bundleFileName);
 
         // プレイヤーの Start() が読む。シーンをロードする前に必ず置いておくこと。
         ExperimentTrialHandoff.SetPending(
@@ -424,9 +490,11 @@ public sealed class ExperimentController : MonoBehaviour
         AsyncOperation load = SceneManager.LoadSceneAsync(trialSceneName, LoadSceneMode.Additive);
         if (load == null)
         {
+            // Build Settings に TrialScene が無い等。理由を出さずに待機画面へ戻ると、実験者が
+            // 「開始」を押しても一瞬で戻るだけで原因が分からない（2026-09-25 の監査 F-10）。
             Debug.LogError($"[Experiment] 試行シーンをロードできません: {trialSceneName}（Build Settings に追加済みか確認）");
             ExperimentTrialHandoff.Clear();
-            ShowWaitingPanel();
+            ShowTrialNotStartedPanel(trial);
             yield break;
         }
 
@@ -447,12 +515,57 @@ public sealed class ExperimentController : MonoBehaviour
         session.BeginTrial(trial.trialIndex, bundleFileName);
 
         // bundle の展開と Prepare が終わって実際に再生が始まるまで待つ
-        // （bundle_human.svb は 129MB あり、実機では十数秒かかる）。
-        while (cachedPlayer != null && !cachedPlayer.IsVideoPlaying)
+        // （bundle_human.svb は 165MB あり、実機では十数秒かかる）。
+        // 期限・プレイヤー側の失敗報告・「中止」ボタンのどれかで抜ける（2026-09-25）。
+        float deadline = Time.realtimeSinceStartup + trialLoadTimeoutSeconds;
+        string failure = null;
+        bool loadingPanelMovedInFront = false;
+        while (true)
         {
+            if (cachedPlayer == null)
+            {
+                failure = "load_failed:player_missing";
+                break;
+            }
+
+            // 動画のスクリーンは Prepare が終わった時点で作られる。パネルはそれより前に置いてあるので、
+            // 画面が出てきたところで一度だけ「画面より手前」に置き直す。そうしないと「中止」が
+            // 画面の裏に入って押せない（2026-09-25 の監査 F-1）。
+            if (!loadingPanelMovedInFront &&
+                cachedPlayer.TryGetScreenFrame(out Vector3 _, out Vector3 _, out Vector3 _, out Vector2 _))
+            {
+                loadingPanelMovedInFront = true;
+                ShowLoadingPanel(trial.DescribeForParticipant(ExperimentPlan.TrialCount), bundleFileName);
+            }
+            if (cachedPlayer.IsVideoPlaying)
+            {
+                break;
+            }
+            if (loadCancelRequested)
+            {
+                failure = "cancelled_by_button";
+                break;
+            }
+            if (cachedPlayer.BundleLoadFailed)
+            {
+                failure = "load_failed:" + cachedPlayer.BundleLoadFailureMessage;
+                break;
+            }
+            if (Time.realtimeSinceStartup >= deadline)
+            {
+                failure = "load_timeout";
+                break;
+            }
             yield return null;
         }
 
+        if (failure != null)
+        {
+            yield return AbortTrialAfterLoadFailure(trial, bundleFileName, failure);
+            yield break;
+        }
+
+        RecordTrialStartState();
         ShowTrialPanel(trial);
 
         while (!trialEndRequested)
@@ -460,7 +573,202 @@ public sealed class ExperimentController : MonoBehaviour
             yield return null;
         }
 
-        yield return EndTrialRoutine(false);
+        yield return EndTrialRoutine(false, null);
+    }
+
+    // 読み込み中は「中止」だけ押せる。押されると読み込みを待つのをやめ、その試行を aborted で閉じる。
+    // bundle のファイル名は被験者に出さない（2026-09-25 の監査）。
+    private void ShowLoadingPanel(string title, string bundleFileName)
+    {
+        PrepareLoadingPanelPlacement();
+        List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
+        {
+            ExperimentPanel.ButtonSpec.Create("中止", RequestLoadCancel),
+        };
+        panel.Show(
+            "読み込み中",
+            $"{title}\n\n動画を読み込んでいます。\nそのままお待ちください。\n（動かないときは実験者が「中止」を押す）",
+            specs);
+        Debug.Log($"[Experiment] 読み込み中: {title} / {bundleFileName}");
+    }
+
+    private void RequestLoadCancel()
+    {
+        if (phase != Phase.Loading)
+        {
+            return;
+        }
+
+        Debug.LogWarning("[Experiment] 読み込み中に「中止」が押されました");
+        loadCancelRequested = true;
+    }
+
+    // 読み込みに失敗した試行を aborted で閉じ、シーンを捨て、実験者に次の手を選ばせる。
+    private IEnumerator AbortTrialAfterLoadFailure(ExperimentTrial trial, string bundleFileName, string reason)
+    {
+        Debug.LogError($"[Experiment] 試行 {trial.trialIndex} を開始できません: {reason}（{bundleFileName}）");
+        session.EndTrial(true, reason);
+        session.FlushLogs();
+
+        // ワーカースレッドが展開の途中なら終わるまで待つ（最大 30 s）。走ったまま次の試行が
+        // キャッシュを消すと、書きかけのファイルと衝突する。
+        float ioDeadline = Time.realtimeSinceStartup + 30f;
+        while (cachedPlayer != null && cachedPlayer.IsBundleIoBusy && Time.realtimeSinceStartup < ioDeadline)
+        {
+            yield return null;
+        }
+
+        // 期限切れでも先へ進むしかないが、**黙って進むと次の試行の読み込み失敗の原因が追えない**
+        // （キャッシュが壊れて失敗が連鎖しうる。2026-09-25 の監査 F-5）。必ず記録に残す。
+        if (cachedPlayer != null && cachedPlayer.IsBundleIoBusy)
+        {
+            Debug.LogError("[Experiment] bundle の展開スレッドが 30 秒で終わりませんでした。次の試行でキャッシュが壊れている可能性があります");
+            session.RecordOperation("bundle_io_abandoned", $"trial_index={trial.trialIndex} waited_sec=30");
+            session.FlushLogs();
+        }
+
+        yield return UnloadTrialSceneRoutine();
+        ShowTrialLoadFailedPanel(trial, bundleFileName, reason);
+    }
+
+    // シーンのロード自体ができなかったとき（Build Settings に TrialScene が無い等）。
+    // この経路は session.BeginTrial の前なので**何も記録されておらず、試行番号も動いていない**。
+    // 「やり直す / 飛ばす」を出すと番号がずれるので、理由を出して待機に戻す道だけ用意する
+    // （2026-09-25 の監査 F-10。以前は理由を出さずに待機画面へ戻っていた）。
+    private void ShowTrialNotStartedPanel(ExperimentTrial trial)
+    {
+        phase = Phase.Waiting;
+        PreparePanel(FullPanelSizeMeters, Vector2.zero, ExperimentPanel.DefaultLayout);
+
+        string body =
+            $"{trial.DescribeForParticipant(ExperimentPlan.TrialCount)} を開始できませんでした。\n" +
+            "試行シーンをロードできません（アプリの設定の問題）。\n\n" +
+            "この試行はまだ記録していません。\n" +
+            "実験者に知らせてください。";
+
+        List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
+        {
+            ExperimentPanel.ButtonSpec.Create("待機画面へ", ShowWaitingPanel),
+            ExperimentPanel.ButtonSpec.Create("中止して Home へ", ReturnToHome),
+        };
+
+        panel.Show("開始できません", body, specs);
+    }
+
+    private void ShowTrialLoadFailedPanel(ExperimentTrial trial, string bundleFileName, string reason)
+    {
+        phase = Phase.Waiting;
+        PreparePanel(FullPanelSizeMeters, Vector2.zero, ExperimentPanel.DefaultLayout);
+        // bundle 名と生の理由はパネルに出さず（被験者が見る画面）、ログに残す。
+        Debug.LogError($"[Experiment] 読み込み失敗パネル: trial={trial.trialIndex} bundle={bundleFileName} reason={reason}");
+
+        string body =
+            $"{trial.DescribeForParticipant(ExperimentPlan.TrialCount)} を開始できませんでした。\n" +
+            $"理由: {DescribeLoadFailure(reason)}\n\n" +
+            "この試行は中断（aborted）として記録しました。\n" +
+            "実験者が次を選んでください。";
+
+        List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
+        {
+            ExperimentPanel.ButtonSpec.Create("同じ試行をやり直す", RetryFailedTrial),
+            ExperimentPanel.ButtonSpec.Create("この試行を飛ばす", SkipFailedTrial),
+            ExperimentPanel.ButtonSpec.Create("中止して Home へ", ReturnToHome),
+        };
+
+        panel.Show("読み込み失敗", body, specs);
+    }
+
+    private static string DescribeLoadFailure(string reason)
+    {
+        if (string.IsNullOrEmpty(reason))
+        {
+            return "不明";
+        }
+        if (reason == "load_timeout")
+        {
+            // パネルは 1 行 30 字ほどで折り返すので短く。詳細は Debug.Log の [Bundle] / [Video] にある。
+            return "時間内に再生が始まらなかった";
+        }
+        if (reason == "cancelled_by_button")
+        {
+            return "実験者が「中止」を押した";
+        }
+        if (reason.StartsWith("load_failed:", System.StringComparison.Ordinal))
+        {
+            return reason.Substring("load_failed:".Length);
+        }
+        return reason;
+    }
+
+    // 失敗した試行を同じ index からやり直す。trials.csv には失敗した行（aborted=1）が残り、次の行が同じ trial_index で出る。
+    private void RetryFailedTrial()
+    {
+        // 二重押しで試行番号が 2 つ戻り、完了済みの前の試行までやり直しになる経路があった
+        // （2026-09-25 の監査 F-3）。RetryCurrentTrial の戻り値も見る。
+        if (phase != Phase.Waiting || session == null || waitingActionInProgress)
+        {
+            return;
+        }
+
+        waitingActionInProgress = true;
+        // **記録は巻き戻す前に。**後だと trial_index 列が 1 つ手前を指し、試行 0 では −1 になって
+        // チュートリアル行と混ざる（同監査 M-3）。
+        session.RecordOperation("trial_retry", $"trial_index={session.CurrentTrialIndex}");
+        if (session.RetryCurrentTrial())
+        {
+            ShowWaitingPanel();
+        }
+        else
+        {
+            Debug.LogWarning("[Experiment] やり直せる試行がありません（進行中か、最初の試行より前）");
+            ShowWaitingPanel();
+        }
+        waitingActionInProgress = false;
+    }
+
+    // 失敗した試行を飛ばして次へ。EndTrial 済みなので NextTrial は既に次の試行を指している。
+    private void SkipFailedTrial()
+    {
+        if (phase != Phase.Waiting || session == null || waitingActionInProgress)
+        {
+            return;
+        }
+
+        waitingActionInProgress = true;
+        session.RecordOperation("trial_skipped_after_failure", $"trial_index={session.CurrentTrialIndex}");
+        session.FlushLogs();
+        ShowWaitingPanel();
+        waitingActionInProgress = false;
+    }
+
+    // 再生が始まった時点の状態一式を記録する（bundle の SHA-256、ビルド、条件どおりの Motion 等）。
+    private void RecordTrialStartState()
+    {
+        if (session == null || cachedPlayer == null)
+        {
+            return;
+        }
+
+        float displayHz = 0f;
+        try
+        {
+            displayHz = (float)Screen.currentResolution.refreshRateRatio.value;
+        }
+        catch
+        {
+            displayHz = 0f;
+        }
+
+        session.SetTrialStartState(
+            cachedPlayer.LoadedBundleSha256,
+            cachedPlayer.LoadedBundleSizeBytes,
+            cachedPlayer.LoadedBundleSource,
+            ExperimentBuildInfo.Resolve(),
+            cachedPlayer.InteractiveMotionEnabled,
+            cachedPlayer.IsExperimentMonocular,
+            cachedPlayer.ScreenDistanceMeters,
+            cachedPlayer.HumanBoneLengthCorrectionEnabled,
+            displayHz);
     }
 
     private void ShowTrialPanel(ExperimentTrial trial)
@@ -468,6 +776,7 @@ public sealed class ExperimentController : MonoBehaviour
         phase = Phase.Trial;
         nextHeadPoseSampleTime = Time.realtimeSinceStartup;
         nextLogFlushTime = Time.realtimeSinceStartup + LogFlushIntervalSeconds;
+        perf.Reset();
 
         // 映像を隠さないよう小さく、画面の外側（既定は上）に置く。画面が取れないときの逃げは頭基準で上 0.6 m。
         // 見出し 1 行 + ボタン 1 つの縦の短いレイアウト（本文は空）。
@@ -483,7 +792,7 @@ public sealed class ExperimentController : MonoBehaviour
             ExperimentPanel.ButtonSpec.Create(ResolveTrialEndButtonLabel(), RequestTrialEnd, allowedNow),
         };
 
-        string title = trial.Describe(ExperimentPlan.TrialCount);
+        string title = trial.DescribeForParticipant(ExperimentPlan.TrialCount);
         if (TryResolvePanelAnchorOutsideScreen(trialPanelSide, trialPanelSizeMeters, trialPanelGapMeters, Vector2.zero, out Vector3 anchor))
         {
             panel.ShowAnchored(title, string.Empty, specs, anchor);
@@ -528,7 +837,14 @@ public sealed class ExperimentController : MonoBehaviour
 
         trialEndEnabled = true;
         panel.SetButtonState(0, TrialEndButtonLabel, true);
-        ExperimentLog.Operation("trial_end_enabled");
+        // **押せるようになった時点で動画が実際に何秒進んでいたかを残す。**70 秒は実時間で数える判断
+        // （2026-09-25 ユーザー指示）なので、一時停止・モーションの自動停止・ヘッドセット脱着の分だけ
+        // 実際の視聴は短い。解析でその差を見られるようにする。
+        ExperimentLog.Operation(
+            "trial_end_enabled",
+            session != null
+                ? $"video_played_sec={ExperimentCsv.Format(session.TrialVideoPlayedSeconds)}"
+                : null);
     }
 
     private void RequestTrialEnd()
@@ -542,9 +858,16 @@ public sealed class ExperimentController : MonoBehaviour
         trialEndRequested = true;
     }
 
-    private IEnumerator EndTrialRoutine(bool aborted)
+    private IEnumerator EndTrialRoutine(bool aborted, string abortReason)
     {
-        session.EndTrial(aborted);
+        // **アンロード中に phase を Trial のままにしない。**シーンの破棄と Resources.UnloadUnusedAssets は
+        // 実機で 1 秒以上かかり、その間「視聴を終了」のボタンが画面に残って押せてしまう。押しても
+        // 何も起きないので被験者が連打する（ログにも残らない。2026-09-25 の監査 F-4）。
+        phase = Phase.Loading;
+        session.EndTrial(aborted, abortReason);
+        PreparePanel(FullPanelSizeMeters, Vector2.zero, ExperimentPanel.DefaultLayout);
+        panel.Show("お待ちください", "次の画面を準備しています。", null);
+
         yield return UnloadTrialSceneRoutine();
         ShowWaitingPanel();
     }
@@ -600,6 +923,33 @@ public sealed class ExperimentController : MonoBehaviour
 
     // ── 操作チュートリアル ──────────────────────────────────────────────
 
+    // 被験者に見せる条件名。内部の enum 名（Monocular / StereoOnly / ModelReplaced）は出さない。
+    private static string DescribeDisplayModeForParticipant(ExperimentDisplayMode mode)
+    {
+        switch (mode)
+        {
+            case ExperimentDisplayMode.Monocular:
+                return "平面の動画";
+            case ExperimentDisplayMode.StereoOnly:
+                return "立体の動画";
+            default:
+                return "立体の動画 + 3D モデル";
+        }
+    }
+
+    private bool IsTutorialDoneForBlock(int blockIndex)
+    {
+        return blockIndex >= 0 && blockIndex < tutorialDoneForBlock.Length && tutorialDoneForBlock[blockIndex];
+    }
+
+    private void MarkTutorialDoneForBlock(int blockIndex)
+    {
+        if (blockIndex >= 0 && blockIndex < tutorialDoneForBlock.Length)
+        {
+            tutorialDoneForBlock[blockIndex] = true;
+        }
+    }
+
     // next がブロック先頭の試行で、そのブロックの前のチュートリアルがまだなら true。
     private bool ShouldRunTutorialBefore(ExperimentTrial next)
     {
@@ -611,9 +961,9 @@ public sealed class ExperimentController : MonoBehaviour
         switch (tutorialTiming)
         {
             case ExperimentTutorialTiming.BeforeFirstTrial:
-                return next.blockIndex == 0 && tutorialsCompleted == 0;
+                return next.blockIndex == 0 && !IsTutorialDoneForBlock(0);
             case ExperimentTutorialTiming.BeforeEachBlock:
-                return tutorialsCompleted <= next.blockIndex;
+                return !IsTutorialDoneForBlock(next.blockIndex);
             default:
                 return false;
         }
@@ -658,7 +1008,8 @@ public sealed class ExperimentController : MonoBehaviour
             case ExperimentDisplayMode.StereoOnly:
                 return "立体で見えることの説明のみ（操作は同じ）";
             default:
-                return "Model ボタンでモデルを替える";
+                // 2026-09-25 に 1 段階から 3 段階に増えたので文面も合わせる（監査で指摘）。
+                return "モデルが自分から動く例 / Model でモデルを替える / Settings で動きの切り替え";
         }
     }
 
@@ -670,9 +1021,10 @@ public sealed class ExperimentController : MonoBehaviour
         }
 
         ExperimentTrial next = session.NextTrial;
+        // 被験者も見る画面なので内部の enum 名は出さない（2026-09-25 の監査）。
         return next.blockIndex == 0
             ? "最初の試行の前"
-            : $"ブロック {next.blockIndex + 1}（{next.mode}）の前";
+            : $"{next.blockIndex + 1} 組目（{DescribeDisplayModeForParticipant(next.mode)}）の前";
     }
 
     private void BeginTutorial()
@@ -688,16 +1040,22 @@ public sealed class ExperimentController : MonoBehaviour
     // 実験者が待機画面で飛ばす。何を飛ばしたかは operations.csv に残す。
     private void SkipTutorialFromWaiting()
     {
-        if (phase != Phase.Waiting || session == null)
+        // **phase だけでは二重押しを止められない。**最後に ShowWaitingPanel() で Waiting に戻るので、
+        // 同じフレームに 2 発目のクリックが来ると（VR のレイは 1 フレームに複数回飛ぶことがある）
+        // もう一度ここを通り、ブロックごとの実施済みが 2 つ進んで次のブロックの練習が消えていた
+        // （2026-09-25 の監査 F-2）。押した瞬間にボタンを作り直すまでの間を bool で塞ぐ。
+        if (phase != Phase.Waiting || session == null || waitingActionInProgress)
         {
             return;
         }
 
+        waitingActionInProgress = true;
         int beforeBlock = session.HasNextTrial ? session.NextTrial.blockIndex : -1;
         session.RecordOperation("tutorial_skipped", $"before_block={beforeBlock}");
         session.FlushLogs();
-        tutorialsCompleted++;
+        MarkTutorialDoneForBlock(beforeBlock);
         ShowWaitingPanel();
+        waitingActionInProgress = false;
     }
 
     private IEnumerator RunTutorialRoutine()
@@ -711,10 +1069,12 @@ public sealed class ExperimentController : MonoBehaviour
 
         string bundleFileName = bundleCatalog.Resolve(ExperimentVideo.Tutorial);
         int beforeBlock = session != null && session.HasNextTrial ? session.NextTrial.blockIndex : 0;
+        tutorialBlockInProgress = beforeBlock;
         ExperimentDisplayMode tutorialMode = ResolveNextTutorialMode();
+        // 被験者が見る画面なので、内部の条件名と bundle のファイル名は出さない（2026-09-25 の監査）。
         panel.Show(
             "読み込み中",
-            $"チュートリアル（{tutorialMode}）\n{bundleFileName}\n\nそのままお待ちください。",
+            $"練習の準備をしています（{DescribeDisplayModeForParticipant(tutorialMode)}）。\n\nそのままお待ちください。",
             null);
 
         // チュートリアルは**次のブロックと同じ表示条件**で再生する（単眼なら単眼、置換ありなら置換あり）。
@@ -760,8 +1120,10 @@ public sealed class ExperimentController : MonoBehaviour
         ExperimentLog.Sink = tutorial;
 
         // 再生が始まるまで待つ。試行と違い、bundle が無ければ諦めて先へ進める。
+        // プレイヤー側が失敗を報告したら期限を待たない（2026-09-25）。
         float deadline = Time.realtimeSinceStartup + tutorialLoadTimeoutSeconds;
-        while (cachedPlayer != null && !cachedPlayer.IsVideoPlaying && Time.realtimeSinceStartup < deadline)
+        while (cachedPlayer != null && !cachedPlayer.IsVideoPlaying && !cachedPlayer.BundleLoadFailed &&
+               Time.realtimeSinceStartup < deadline)
         {
             yield return null;
         }
@@ -882,8 +1244,16 @@ public sealed class ExperimentController : MonoBehaviour
             default:
                 // A ボタンの一時停止・再開と Model の切り替えは、実際に操作しないと進まない
                 // （2026-09-11 指示。段階ごとの「スキップ」は置かない）。
-                // 実験者が飛ばしたいときは待機画面の「スキップ」でチュートリアル全体を飛ばす。
                 break;
+        }
+
+        // **どの段階でも押せる脱出口。** 以前は途中の段階でボタンが 0 個になり、操作が成立しない状況
+        // （つまみが掴めない・モデルを全部消した・コントローラの電池切れ）で永久に進めなかった。
+        // 復帰手段はアプリの強制終了だけで、その参加者のデータはそこで切れていた（2026-09-25 の監査）。
+        // 実験者用と明記して出す。押されたことは tutorial_end の detail に completed=0 と段階名で残る。
+        if (tutorial != null && !tutorial.IsDone)
+        {
+            specs.Add(ExperimentPanel.ButtonSpec.Create("実験者用: 練習を終える", RequestTutorialEnd));
         }
 
         return specs;
@@ -926,7 +1296,8 @@ public sealed class ExperimentController : MonoBehaviour
             tutorial = null;
         }
 
-        tutorialsCompleted++;
+        MarkTutorialDoneForBlock(tutorialBlockInProgress);
+        tutorialBlockInProgress = -1;
         ShowWaitingPanel();
     }
 
@@ -955,13 +1326,27 @@ public sealed class ExperimentController : MonoBehaviour
     // シーンを抜ける前に明示しておく）。
     private void ReturnToHome()
     {
-        FinishSessionIfRunning(true);
+        // 二重押し止め。**同期 LoadScene は使わない。**押した瞬間にフレームが止まり、画面が固まった
+        // まま数秒待たされる（HomeMenu が 2026-08-31 の実機指摘で非同期にしたのと同じ理由。
+        // ここだけ同期のままだった。2026-09-25 の監査 F-9）。
+        if (returningToHome)
+        {
+            return;
+        }
+
+        returningToHome = true;
+        FinishSessionIfRunning(true, "session_abort_by_experimenter");
         ExperimentSessionOverrides.EndSession();
         ExperimentTrialHandoff.Clear();
         HomeLaunchHandoff.Clear();
         Debug.Log("[Experiment] return to HomeScene");
-        SceneManager.LoadScene(homeSceneName, LoadSceneMode.Single);
+
+        PreparePanel(FullPanelSizeMeters, Vector2.zero, ExperimentPanel.DefaultLayout);
+        panel.Show("お待ちください", "入口の画面に戻ります。", null);
+        SceneManager.LoadSceneAsync(homeSceneName, LoadSceneMode.Single);
     }
+
+    private bool returningToHome;
 
     // ── 頭部姿勢ログ ────────────────────────────────────────────────────
 
@@ -987,6 +1372,34 @@ public sealed class ExperimentController : MonoBehaviour
         }
 
         session.RecordHeadPose(head.position, head.rotation);
+    }
+
+    // ── perf ログ（描画レート・動画の進み・コントローラの動き、1 秒窓）──────
+
+    private void SamplePerfIfDue()
+    {
+        if (!logPerf || session == null || !session.TrialInProgress || cachedPlayer == null)
+        {
+            return;
+        }
+
+        bool hasPointer = RuntimeXrRayPickReader.TryReadPointerPose(
+            xrDevices, out Vector3 pointerPosition, out Quaternion _, out bool triggerPressed);
+        bool hasButton = RuntimePauseInputReader.TryReadPrimaryButtonPressed(xrDevices, out bool buttonPressed);
+
+        if (perf.Push(
+                Time.unscaledDeltaTime,
+                cachedPlayer.CurrentVideoFrame,
+                cachedPlayer.CurrentVideoTimeSeconds,
+                cachedPlayer.IsVideoPlaying,
+                hasPointer,
+                pointerPosition,
+                hasPointer && triggerPressed,
+                hasButton && buttonPressed,
+                out ExperimentPerfAccumulator.Sample sample))
+        {
+            session.RecordPerf(sample, cachedPlayer.CurrentVideoFrame);
+        }
     }
 
     // ── 参照解決 ────────────────────────────────────────────────────────

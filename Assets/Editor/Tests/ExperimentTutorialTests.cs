@@ -53,18 +53,109 @@ public class ExperimentTutorialTests
         Assert.That(tutorial.Body, Does.Contain("立体"));
     }
 
+    // 置換ありは「自分から動く例を見る → モデルを替える → Motion を切り替える」の 3 段階。
+    // WatchMotion が先頭なのは、後ろに置くと（練習の発火間隔は 3〜6 秒）モデルを選んでいる最中に
+    // 先に発火して説明が一度も出ないため（2026-09-25 の監査 F1）。
     [Test]
-    public void ModelReplaced_SequenceIsChangeModelOnly()
+    public void ModelReplaced_SequenceIsWatchMotionChangeModelToggleMotion()
     {
-        ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
+        ExperimentTutorial.Step[] steps = ExperimentTutorial.ResolveSequence(ExperimentDisplayMode.ModelReplaced);
 
-        Assert.That(tutorial.StepCount, Is.EqualTo(1));
+        Assert.That(steps, Is.EqualTo(new[]
+        {
+            ExperimentTutorial.Step.WatchMotion,
+            ExperimentTutorial.Step.ChangeModel,
+            ExperimentTutorial.Step.ToggleMotion,
+            ExperimentTutorial.Step.Done,
+        }));
+
+        ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
+        Assert.That(tutorial.StepCount, Is.EqualTo(3));
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion));
+        Assert.That(tutorial.Body, Does.Contain("自分から"));
+
+        // モデルが自分から動いた（Random イベント）ことが「例を見せた」の合図。
+        tutorial.RecordInteraction(1, "random_Static", "subject=human");
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ChangeModel));
         Assert.That(tutorial.Body, Does.Contain("Model"));
 
         tutorial.RecordOperation("change_model", "track=1 prefab=x");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ToggleMotion));
+        Assert.That(tutorial.Body, Does.Contain("Settings"));
+
+        tutorial.RecordOperation("motion_toggle", "value=0");
         Assert.That(tutorial.IsDone, Is.True);
         Assert.That(tutorial.DescribeResult(), Is.EqualTo("completed=1 step=Done mode=ModelReplaced"));
+    }
+
+    // **その段階を表示している間の発火だけ数える。** 先回りで済ませると説明が出ないまま次へ進む。
+    [Test]
+    public void ModelReplaced_MotionBeforeTheStepIsShown_DoesNotCount()
+    {
+        ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
+
+        // まず 1 段階目（WatchMotion）を済ませ、2 段階目（ChangeModel）に居る状態を作る。
+        tutorial.RecordInteraction(1, "random_Static", null);
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ChangeModel));
+
+        // ChangeModel の最中にもう一度発火しても、後ろの段階を勝手に済ませない。
+        tutorial.RecordInteraction(1, "random_Dynamic", null);
+        tutorial.RecordOperation("change_model", "track=1 prefab=x");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ToggleMotion));
+        Assert.That(tutorial.IsDone, Is.False);
+    }
+
+    // Motion の切り替えは**例を見た後**だけ数える。戻し方の案内（ON に戻す）で 3 段階目を
+    // 消費してしまうと、切り替えの練習が一度も出ない（同監査 F3）。
+    [Test]
+    public void ModelReplaced_MotionTurnedOffBeforeTheExample_TellsHowToTurnItBackOnWithoutConsumingTheStep()
+    {
+        ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
+        int changed = 0;
+        tutorial.Changed += () => changed++;
+
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion));
+
+        changed = 0;
+        tutorial.RecordOperation("motion_toggle", "value=0");
+
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion));
+        Assert.That(tutorial.Body, Does.Contain("ON に戻して"));
+        Assert.That(changed, Is.EqualTo(1), "文面が変わるのでパネルを作り直す");
+
+        // ON に戻すと元の待ちの文面へ。ここまでの切り替えは 3 段階目には数えない。
+        tutorial.RecordOperation("motion_toggle", "value=1");
+        Assert.That(tutorial.Body, Does.Contain("自分から"));
+
+        tutorial.RecordInteraction(1, "random_Dynamic", "subject=human");
+        tutorial.RecordOperation("change_model", "track=1 prefab=x");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ToggleMotion), "切り替えの練習は残っている");
+
+        tutorial.RecordOperation("motion_toggle", "value=0");
+        Assert.That(tutorial.IsDone, Is.True);
+    }
+
+    // モデルを全部「表示しない」にすると動く対象が無くなり、待っても永久に進まなかった（同監査 D1）。
+    // 文面で戻し方を出す。
+    [Test]
+    public void ModelReplaced_AllModelsHidden_TellsHowToShowOneAgain()
+    {
+        ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
+
+        tutorial.RecordOperation("model_assigned", "track=1 category=person prefab=01_Female");
+        tutorial.RecordOperation("model_assigned", "track=2 category=animal prefab=36_LabradorDog");
+        Assert.That(tutorial.Body, Does.Contain("自分から"));
+
+        tutorial.RecordOperation("change_model", "track=1 category=person index=-1 prefab=(none)");
+        Assert.That(tutorial.Body, Does.Contain("自分から"), "1 体でも残っていれば待てばよい");
+
+        tutorial.RecordOperation("change_model", "track=2 category=animal index=-1 prefab=(none)");
+        Assert.That(tutorial.Body, Does.Contain("表示しない"));
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion));
+
+        // 1 体戻せば待ちの文面へ戻る。
+        tutorial.RecordOperation("change_model", "track=2 category=animal index=3 prefab=36_LabradorDog");
+        Assert.That(tutorial.Body, Does.Contain("自分から"));
     }
 
     [Test]
@@ -151,9 +242,15 @@ public class ExperimentTutorialTests
         tutorial.RecordOperation("resume", null);
         tutorial.RecordOperation("seek", "0.5");
         tutorial.RecordVideoLoop();
-        tutorial.RecordInteraction(1, "random_Static", null);
 
-        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ChangeModel));
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion));
+
+        // A（単眼）の練習中にモデルが動いたり Motion を触っても、列に無いので変わらない。
+        ExperimentTutorial monocular = new ExperimentTutorial(null, ExperimentDisplayMode.Monocular);
+        monocular.RecordInteraction(1, "random_Static", null);
+        monocular.RecordOperation("motion_toggle", "value=0");
+
+        Assert.That(monocular.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.PressButton));
     }
 
     [Test]

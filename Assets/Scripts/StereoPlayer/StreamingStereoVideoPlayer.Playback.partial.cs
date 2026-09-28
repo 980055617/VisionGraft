@@ -207,6 +207,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         GameObject instance = GetOrCreateTrackInstance(target.trackId, target.categoryId);
         if (instance == null)
         {
+            // モデルが「表示しない」になっている track。配置するものが無いのでここで打ち切るが、
+            // **走っている最中のモーションは片付ける。** 以前は下の TryApplyOwnedInteractiveMotion に
+            // 到達しないまま Random イベントが残り、動画が止まったままになった（2026-09-25 の監査 D10）。
+            StopInteractiveMotionForHiddenTrack(target.trackId);
             return;
         }
 
@@ -329,13 +333,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private GameObject GetOrCreateTrackInstance(uint trackId, byte categoryId)
     {
         GameObject prefab = ResolveTrackPrefab(trackId, categoryId);
-        return TrackInstanceLifecycle.GetOrCreate(
+        trackInstances.TryGetValue(trackId, out GameObject before);
+        GameObject instance = TrackInstanceLifecycle.GetOrCreate(
             trackId,
             prefab,
             trackInstances,
             trackPrefabSources,
             lockedModelLocalScaleByTrack,
             ref selectedManualRotationTrackId);
+        // 新しいインスタンスを作ったときだけ、実験ログに「この track にこのモデル」を残す。
+        if (instance != null && !ReferenceEquals(instance, before))
+        {
+            LogExperimentModelAssigned(trackId, categoryId, prefab);
+        }
+        return instance;
     }
 
 

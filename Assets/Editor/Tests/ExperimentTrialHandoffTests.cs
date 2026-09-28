@@ -116,6 +116,67 @@ public class ExperimentTrialHandoffTests
         Assert.That(monocular.StartMonocular, Is.True);
     }
 
+    // インタラクティブモーションは置換あり条件だけ ON（2026-09-25、論文側の依頼 §1）。
+    // ここが崩れると単眼・ステレオ条件で（モデルが無いのに）モーションの状態機械が走るか、
+    // 第 3 条件でモーション無しのデータが取れてしまう。
+    [Test]
+    public void InteractiveMotionEnabled_IsTrueOnlyForModelReplaced()
+    {
+        ExperimentTrialRequest monocular = new ExperimentTrialRequest(
+            "bundle_human.svb", ExperimentDisplayMode.Monocular, 0, ExperimentVideo.Human);
+        ExperimentTrialRequest stereoOnly = new ExperimentTrialRequest(
+            "bundle_human.svb", ExperimentDisplayMode.StereoOnly, 3, ExperimentVideo.Human);
+        ExperimentTrialRequest modelReplaced = new ExperimentTrialRequest(
+            "bundle_human.svb", ExperimentDisplayMode.ModelReplaced, 6, ExperimentVideo.Human);
+        ExperimentTrialRequest tutorialReplaced = new ExperimentTrialRequest(
+            "bundle_tutorial.svb", ExperimentDisplayMode.ModelReplaced, -1, ExperimentVideo.Tutorial, null, "36_LabradorDog", true);
+
+        Assert.That(monocular.InteractiveMotionEnabled, Is.False);
+        Assert.That(stereoOnly.InteractiveMotionEnabled, Is.False);
+        Assert.That(modelReplaced.InteractiveMotionEnabled, Is.True);
+        Assert.That(tutorialReplaced.InteractiveMotionEnabled, Is.True);
+    }
+
+    // 置換あり条件だけ被験者が Settings の Motion で切り替えられる（2026-09-25 のユーザー指示で
+    // 同日午前の「全条件で固定」を取り消した）。単眼・ステレオはモデルが出ないので固定のまま。
+    [Test]
+    public void LockInteractiveMotion_IsFalseOnlyForModelReplaced()
+    {
+        ExperimentTrialRequest monocular = new ExperimentTrialRequest(
+            "bundle_human.svb", ExperimentDisplayMode.Monocular, 0, ExperimentVideo.Human);
+        ExperimentTrialRequest stereoOnly = new ExperimentTrialRequest(
+            "bundle_human.svb", ExperimentDisplayMode.StereoOnly, 3, ExperimentVideo.Human);
+        ExperimentTrialRequest modelReplaced = new ExperimentTrialRequest(
+            "bundle_human.svb", ExperimentDisplayMode.ModelReplaced, 6, ExperimentVideo.Human);
+        ExperimentTrialRequest tutorialReplaced = new ExperimentTrialRequest(
+            "bundle_tutorial.svb", ExperimentDisplayMode.ModelReplaced, -1, ExperimentVideo.Tutorial, null, "36_LabradorDog", true);
+
+        Assert.That(monocular.LockInteractiveMotion, Is.True);
+        Assert.That(stereoOnly.LockInteractiveMotion, Is.True);
+        Assert.That(modelReplaced.LockInteractiveMotion, Is.False);
+        Assert.That(tutorialReplaced.LockInteractiveMotion, Is.False);
+    }
+
+    // 練習で必ず 1 回は自発的な動きを見せたいので、置換ありのチュートリアルだけ発火間隔を短くする。
+    // 本番の試行（12 / 24 秒）には掛けない。
+    [Test]
+    public void TutorialInteractiveMotionInterval_AppliesOnlyToTheReplacedTutorial()
+    {
+        ExperimentTrialRequest tutorialReplaced = new ExperimentTrialRequest(
+            "bundle_tutorial.svb", ExperimentDisplayMode.ModelReplaced, -1, ExperimentVideo.Tutorial, null, "36_LabradorDog", true);
+        ExperimentTrialRequest tutorialMonocular = new ExperimentTrialRequest(
+            "bundle_tutorial.svb", ExperimentDisplayMode.Monocular, -1, ExperimentVideo.Tutorial, null, "36_LabradorDog", true);
+        ExperimentTrialRequest trialReplaced = new ExperimentTrialRequest(
+            "bundle_human.svb", ExperimentDisplayMode.ModelReplaced, 6, ExperimentVideo.Human);
+
+        Assert.That(tutorialReplaced.UseTutorialInteractiveMotionInterval, Is.True);
+        Assert.That(tutorialMonocular.UseTutorialInteractiveMotionInterval, Is.False);
+        Assert.That(trialReplaced.UseTutorialInteractiveMotionInterval, Is.False);
+        Assert.That(
+            ExperimentTrialRequest.TutorialInteractiveMotionMinIntervalSeconds,
+            Is.LessThan(ExperimentTrialRequest.TutorialInteractiveMotionMaxIntervalSeconds));
+    }
+
     [Test]
     public void Request_KeepsTrialMetadata()
     {

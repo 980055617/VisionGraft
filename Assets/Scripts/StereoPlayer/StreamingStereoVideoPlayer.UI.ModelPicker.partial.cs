@@ -499,8 +499,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         // 開いたときに止めた（PauseForManualRotationEdit）ぶんを戻す。戻さないと、被験者が
         // 自分で A ボタンを押すまで静止画のままになる（2026-09-25 の監査 F-4）。
-        // 一時停止の操作ログは出さない方針に合わせ、ここも出さない（チュートリアルの段階を誤進行させない）。
-        if (modelPickerWasPlayingBeforeOpen && vp != null && !vp.isPlaying)
+        // 手動の pause / resume とは action 名を分ける（チュートリアルの段階を誤進行させない）。
+        // Random モーションが動画を止めている最中なら戻さない。戻すとモーション中に動画が動き、
+        // 「モーション中は動画が止まる」という第 3 条件の前提が破れる（2026-09-29 の監査）。
+        // その場合はモーションの終わりに代わりに戻す。
+        if (modelPickerWasPlayingBeforeOpen && vp != null && !vp.isPlaying && !TryDeferVideoResumeToRandomMotionEnd())
         {
             RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
             UpdatePauseButtonLabel();
@@ -1132,6 +1135,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void RecreateTrackInstanceForModelSelection(uint trackId)
     {
+        // 走行中のモーションは新しいインスタンスへ持ち越さない。持ち越すと Human は破棄済みの Animator を
+        // 見たまま bind pose で滑り、動画の一時停止も宙に浮く（2026-09-29 の監査）。非表示と同じ後始末。
+        StopInteractiveMotionForHiddenTrack(trackId);
+
         if (trackInstances.TryGetValue(trackId, out GameObject existing) && existing != null)
         {
             SceneObjectWriter.DestroyObject(existing);

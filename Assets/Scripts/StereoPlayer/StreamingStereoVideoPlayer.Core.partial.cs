@@ -26,7 +26,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (paused)
         {
             FlushTrackCustomizationSaveNow();
+            return;
         }
+
+        // 休止中も Time.realtimeSinceStartup は進む。戻した最初のフレームで「フレームが進んでいない時間」に
+        // 休止時間が丸ごと乗り、DetectStalledPlayback が偽の詰まりとして Stop → Prepare → シークをやり直して
+        // 1 秒ほど黒くなる（2026-09-29 の監査）。計測をやり直す。
+        stallLastFrame = -1L;
+        stallSinceRealtime = -1f;
     }
 
 
@@ -161,24 +168,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 実験の指示「この category の track だけ読む」（null / 空 = 全部）。
     // TryReadFrameObjects で落とすので、表示・pick・ピッカー・深度較正のすべてがこの絞り込みを見る。
     // public なのはバッチ検証（BatchPlaybackLogger の -onlyCategory）が play mode 前に流し込むため。
-    // シーンには書き込まない（Inspector にも出さない）。
-    [HideInInspector] public string experimentOnlyCategory;
+    // **シーンには書き込まない**: [HideInInspector] は Inspector に出さないだけで serialize は止めないので
+    // [NonSerialized] を付ける（付けないと TrialScene を保存した瞬間に焼き込まれる。2026-09-29 の監査）。
+    [System.NonSerialized] public string experimentOnlyCategory;
 
     // 実験の指示「animal の既定モデルはこの prefab 名」。prefab 一覧はフレームを跨いで読まれるので、
     // 最初に animal track を置くときに index へ解決する（ApplyExperimentPreferredAnimalModelOnce）。
-    [HideInInspector] public string experimentPreferredAnimalModelName;
+    [System.NonSerialized] public string experimentPreferredAnimalModelName;
 
     // 実験の指示「model_selection.json とセッション上書きを読まない」。
-    [HideInInspector] public bool experimentSkipTrackCustomizationRestore;
+    [System.NonSerialized] private bool experimentSkipTrackCustomizationRestore;
 
-    // 実験の単眼条件: 除去前ステレオ動画の**左目映像を両目に**出す（両眼視差なし）。
-    // Screens.cs の ApplyStereoUvSettings が右目の板にも左半分の UV を割り当てる。
-    // startInNormalMode と組で使う（Monocular は normal mode の一種）。
-    [HideInInspector] public bool experimentMonocular;
+    // 実験の単眼条件: 除去前ステレオ動画の左目映像を 1 枚の板に出し、両目でその 1 枚を見る（右の板は消す）。
+    // Screens.cs の SetupScreensAndMaterials / PlaceScreens。startInNormalMode と組で使う（Monocular は normal mode の一種）。
+    [System.NonSerialized] private bool experimentMonocular;
 
-    // 実験の指示「インタラクティブモーションの ON/OFF は条件で固定し、被験者に変えさせない」（2026-09-25）。
-    // true の間は Settings パネルに Motion の Toggle ボタンを作らず、値の表示だけにする。
-    [HideInInspector] public bool experimentLockInteractiveMotion;
+    // Settings パネルの Motion トグルを出さずに固定するか。単眼・ステレオ（モデルが出ない）は固定、
+    // 置換ありは被験者が切り替えられる（2026-09-25 のユーザー指示。ExperimentTrialRequest.LockInteractiveMotion）。
+    [System.NonSerialized] private bool experimentLockInteractiveMotion;
 
 
     private bool IsCategoryExcludedByExperiment(byte categoryId)

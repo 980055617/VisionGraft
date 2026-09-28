@@ -345,8 +345,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 返さず、毎フレームの「いま指しているか」には使えないため。
     private bool IsPointerOnRuntimePanel(Vector3 origin, Vector3 direction)
     {
+        // コントロールバーと実験のパネル（ExperimentPanel）も除外する。以前は Model / Settings だけだったので、
+        // バーの Pause / Model や「視聴を終了」を指したトリガーが、25° の角度フォールバックでモデルを
+        // 「掴んだ」と誤認し、動画が止まって pause_auto と change_rotation が残った（2026-09-29 の監査）。
         return IsPointerOnPanelRect(origin, direction, runtimeModelPickerRoot, runtimeModelPickerOpen) ||
-               IsPointerOnPanelRect(origin, direction, runtimeSettingsRoot, runtimeSettingsOpen);
+               IsPointerOnPanelRect(origin, direction, runtimeSettingsRoot, runtimeSettingsOpen) ||
+               IsPointerOnPanelRect(origin, direction, runtimeControlsRoot, runtimeControlsRoot != null && runtimeControlsRoot.activeInHierarchy) ||
+               IsPointerOnPanelRect(origin, direction, ExperimentPanel.ActiveRoot, ExperimentPanel.ActiveRoot != null && ExperimentPanel.ActiveRoot.activeInHierarchy);
     }
 
 

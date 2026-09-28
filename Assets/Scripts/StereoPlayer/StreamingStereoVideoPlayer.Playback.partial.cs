@@ -164,6 +164,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 Debug.Log($"[HIDE] track={kv.Key} ({kv.Value.name}) hidden: not in this frame");
             }
             SceneObjectWriter.ApplyActive(kv.Value, false);
+            // このフレームに居ない track の Random モーションは片付ける。Random イベント中にシークやキー送りで
+            // 対象の居ない区間へ飛ぶと、モーションが Owned のまま評価されず、動画の一時停止のカウンタが 1 のまま
+            // 残って以後 Random が二度と発火しなかった（2026-09-29 の監査）。
+            StopRandomInteractiveMotionForAbsentTrack(kv.Key);
         }
     }
 

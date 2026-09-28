@@ -749,7 +749,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (runtimeProgressDragWasPlaying)
         {
             runtimeProgressDragWasPlaying = false;
-            RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
+            // Random モーションが動画を止めている最中なら再開しない（止める権利はモーション側にある）。
+            // モーションが終わるときに代わりに戻す（DeferVideoResumeToRandomMotionEnd）。
+            if (!TryDeferVideoResumeToRandomMotionEnd())
+            {
+                RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
+            }
         }
     }
 
@@ -872,6 +877,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (vp == null)
         {
             Debug.LogWarning("[Playback] toggle ignored: VideoPlayer が無い");
+            return;
+        }
+
+        // 読み込み中（url が空・Prepare 前）は何もしない。url の無い VideoPlayer に Play を掛けると
+        // errorReceived → FailBundleLoad で試行が「読み込み失敗」になりうる（2026-09-29 の監査）。
+        if (!vp.isPrepared)
+        {
+            Debug.Log("[Playback] toggle ignored: まだ Prepare が終わっていない");
             return;
         }
 

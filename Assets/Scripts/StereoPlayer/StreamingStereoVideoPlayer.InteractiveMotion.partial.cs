@@ -204,6 +204,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // **動画が止まっている間は発火させない。**止まっている動画を「中断」する意味は無く、しかも誰が
+        // 止めたか（被験者の A / Model パネル / シークバーの掴み）を知らずに発火すると、そちらの再開処理と
+        // モーションの一時停止が衝突して、モーション中に動画が動き出したり、パネルが開いたまま再生が
+        // 始まったりした（2026-09-29 の監査）。次の発火時刻はそのまま持ち越す。
+        if (vp == null || !vp.isPlaying)
+        {
+            return;
+        }
+
         RuntimeClock.TickContext tick = GetRuntimeTickContext();
         InteractiveMotionSchedule.Decision decision = InteractiveMotionSchedule.ResolveRandomTrigger(
             enableInteractiveMotion,
@@ -349,6 +358,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
     }
 
+    // Model パネルを閉じる・シークバーを離すときに「本当は再開したいが Random モーションが動画を止めている」
+    // 場合に立てる。モーションが終わるときに代わりに再開する（誰が止めたかの所有者を持たせる）。
+    private bool deferredVideoResumeAfterRandomMotion;
+
+    // Random モーションが動画を止めている最中なら、再開をモーションの終わりへ回して true を返す。
+    private bool TryDeferVideoResumeToRandomMotionEnd()
+    {
+        if (!IsRandomInteractiveMotionInProgress())
+        {
+            return false;
+        }
+
+        deferredVideoResumeAfterRandomMotion = true;
+        Debug.Log("[MOTION] video resume deferred until the random event ends");
+        return true;
+    }
+
     private void EndRandomInteractiveMotionVideoPause(uint trackId)
     {
         activeRandomInteractiveMotionCount = Mathf.Max(0, activeRandomInteractiveMotionCount - 1);
@@ -358,28 +384,76 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         float seconds = Mathf.Max(0f, interactiveMotionAudioFadeSeconds);
-        motionAudioFade.BeginFadeIn(seconds);
-        // 従来どおり、止まっていれば戻す（フェードで止めた場合も、フェードが終わる前に手動で止まっていた場合も）。
-        if (!vp.isPlaying)
+        // フェードアウトの途中（まだ止めていない）でイベントが終わった（Motion OFF・非表示・モデル差し替え）:
+        // 止める予定を取り消して音量だけ戻す。取り消さないと 0.5 秒後に Tick が動画を止め、
+        // イベントが無いのに動画が止まって音量 0 のままになる（2026-09-29、別セッションの指摘）。
+        if (motionAudioFade.CurrentPhase == InteractiveMotionAudioFade.Phase.FadingOut)
         {
-            RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
-            UpdatePauseButtonLabel();
-            float paused = randomMotionVideoPauseStartedAt >= 0f ? Time.unscaledTime - randomMotionVideoPauseStartedAt : 0f;
-            randomMotionVideoPauseStartedAt = -1f;
+            motionAudioFade.BeginFadeIn(seconds);
+        }
+        // 止めたのが自分（PauseVideoForInteractiveMotion が実際に止めた）か、止めた側から再開を預かったか。
+        // それ以外（被験者が A で止めた・パネルが止めて開いたまま）は戻さない。以前は「止まっていれば戻す」だったので、
+        // パネルが開いたまま再生が始まる・被験者の停止が勝手に解ける、が起きた（2026-09-29 の監査）。
+        bool pausedByMotion = randomMotionVideoPauseStartedAt >= 0f;
+        float paused = pausedByMotion ? Time.unscaledTime - randomMotionVideoPauseStartedAt : 0f;
+        randomMotionVideoPauseStartedAt = -1f;
+        bool shouldResume = pausedByMotion || deferredVideoResumeAfterRandomMotion;
+        deferredVideoResumeAfterRandomMotion = false;
+
+        if (pausedByMotion)
+        {
+            // begin と必ず対にする（再開しない経路でも）。
             Debug.Log($"[MOTION] video pause end track={trackId} paused={paused:F2}s");
             ExperimentLog.Interaction(trackId, "video_pause_end", $"paused_sec={ExperimentCsv.Format(paused)}");
         }
+
+        if (!shouldResume || vp.isPlaying)
+        {
+            // 手動で再開済みなら音量は TickInteractiveMotionAudioFade が戻す。
+            if (seconds <= 0f)
+            {
+                TickInteractiveMotionAudioFade();
+            }
+            return;
+        }
+
+        // Model パネルを開いている間は戻さない。閉じるときに戻す（開く前に再生中だった扱いにする）。
+        if (runtimeModelPickerOpen)
+        {
+            modelPickerWasPlayingBeforeOpen = true;
+            Debug.Log($"[MOTION] video resume handed to the model panel track={trackId}");
+            return;
+        }
+
+        // シークバーを掴んでいる間も同じ（離すときに戻す）。
+        if (runtimeProgressDragNotifier != null && runtimeProgressDragNotifier.IsDragging)
+        {
+            runtimeProgressDragWasPlaying = true;
+            Debug.Log($"[MOTION] video resume handed to the seek drag track={trackId}");
+            return;
+        }
+
+        motionAudioFade.BeginFadeIn(seconds);
+        RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
+        UpdatePauseButtonLabel();
         if (seconds <= 0f)
         {
             TickInteractiveMotionAudioFade();
         }
     }
 
-    // フェードアウトが終わったときに呼ばれる。手動で止められていたら何もしない（従来どおり）。
+    // フェードアウトが終わったときに呼ばれる。既に止まっていたら（被験者の A・パネル）止めた側の所有なので
+    // 触らず、記録だけ残す。
     private void PauseVideoForInteractiveMotion()
     {
-        if (vp == null || !vp.isPlaying)
+        if (vp == null)
         {
+            return;
+        }
+        if (!vp.isPlaying)
+        {
+            Debug.Log($"[MOTION] video already paused by someone else track={motionAudioFadeTrackId}");
+            ExperimentLog.Interaction(motionAudioFadeTrackId, "video_pause_begin", "already_paused=1");
             return;
         }
         RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Pause);
@@ -2181,7 +2255,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         StopHumanClipPlayback(trackId);
     }
 
-    // モデルを消された track の後片付け。走っていないときは何もしない（毎フレーム呼ばれる経路なので）。
+    // モデルを消された・作り直された track の後片付け。走っていないときは何もしない（毎フレーム呼ばれる経路なので）。
     private void StopInteractiveMotionForHiddenTrack(uint trackId)
     {
         if (!interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) ||
@@ -2192,6 +2266,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         Debug.Log($"[MOTION] stop track={trackId}: モデルが非表示になったので中断（動画の一時停止も解く）");
+        StopInteractiveMotion(trackId);
+    }
+
+    // このフレームに居ない track の Random モーションだけ片付ける（System = frame-out の walk は対象外。
+    // それは「居なくなった track を歩かせる」ものなので、居ないことを理由に止めてはいけない）。
+    private void StopRandomInteractiveMotionForAbsentTrack(uint trackId)
+    {
+        if (!interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) ||
+            state == null ||
+            state.stage == InteractiveEventStage.Inactive ||
+            state.triggerSource != InteractiveTriggerSource.Random)
+        {
+            return;
+        }
+
+        Debug.Log($"[MOTION] stop track={trackId}: このフレームに居ないので Random イベントを中断（動画の一時停止も解く）");
         StopInteractiveMotion(trackId);
     }
 

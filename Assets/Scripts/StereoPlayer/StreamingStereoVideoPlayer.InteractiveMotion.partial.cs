@@ -562,7 +562,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             motionAudioFade.BeginFadeIn(Mathf.Max(0f, interactiveMotionAudioFadeSeconds));
         }
-        InteractiveMotionAudioFade.Step step = motionAudioFade.Tick(Time.unscaledDeltaTime);
+        // **1 フレームで進める量に上限を置く。**ヘッドセットを外して戻した最初のフレームの
+        // unscaledDeltaTime は休止時間（数十秒）を含むので、フェード中だとその 1 tick で終端まで飛ぶ
+        // （フェードアウト中なら即座に動画が止まり、フェードイン中なら音量が一気に戻る）。
+        // 丸めておけば、外している間に始まったフェードも戻したあと滑らかに続く
+        // （2026-09-29、別セッション visiongraft-af の査読）。読み込みや GC で 1 フレームが伸びたときも同じ。
+        InteractiveMotionAudioFade.Step step = motionAudioFade.Tick(Mathf.Min(Time.unscaledDeltaTime, 0.1f));
         if (step.applyVolume)
         {
             SetDirectAudioVolumeForFade(step.volume);

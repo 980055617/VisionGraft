@@ -79,8 +79,9 @@ public class ExperimentTutorialTests
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion));
         Assert.That(tutorial.Body, Does.Contain("動いています"));
 
-        // 動き終わって動画の一時停止が解けたところで「例を見せた」。
-        tutorial.RecordInteraction(1, "video_pause_end", "paused_sec=3.2");
+        // 動きが終わったところで「例を見せた」。判定は motion_end（動画の一時停止の解除ではない。
+        // 被験者が A で戻したときの video_pause_end でも来てしまうため。2026-09-29 の 4 回目の監査）。
+        tutorial.RecordInteraction(1, "motion_end", "reason=completed");
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ChangeModel));
         Assert.That(tutorial.Body, Does.Contain("Model"));
 
@@ -101,7 +102,7 @@ public class ExperimentTutorialTests
 
         // まず 1 段階目（WatchMotion）を済ませ、2 段階目（ChangeModel）に居る状態を作る。
         tutorial.RecordInteraction(1, "random_Static", null);
-        tutorial.RecordInteraction(1, "video_pause_end", "paused_sec=2");
+        tutorial.RecordInteraction(1, "motion_end", "reason=completed");
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ChangeModel));
 
         // ChangeModel の最中にもう一度発火しても、後ろの段階を勝手に済ませない。
@@ -134,7 +135,7 @@ public class ExperimentTutorialTests
         Assert.That(tutorial.Body, Does.Contain("自分から"));
 
         tutorial.RecordInteraction(1, "random_Dynamic", "subject=human");
-        tutorial.RecordInteraction(1, "video_pause_end", "paused_sec=4");
+        tutorial.RecordInteraction(1, "motion_end", "reason=completed");
         tutorial.RecordOperation("change_model", "track=1 prefab=x");
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ToggleMotion), "切り替えの練習は残っている");
 
@@ -241,32 +242,59 @@ public class ExperimentTutorialTests
         Assert.That(changed, Is.EqualTo(4));
     }
 
-    // フェードアウト中に A で止められると video_pause_end が来ない。2 回目の発火で 1 回目は終わっているので済ませる。
+    // 途中で止まった動き（Motion OFF・モデル非表示・差し替え・track が居なくなった）は「例を見た」に数えない。
+    // 文面は待ちに戻る（2026-09-29 の 4 回目の監査）。
     [Test]
-    public void ModelReplaced_SecondMotionWithoutPauseEnd_CompletesWatchMotion()
+    public void ModelReplaced_MotionStoppedEarly_DoesNotCountAsTheExample()
     {
         ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
+        int changed = 0;
+        tutorial.Changed += () => changed++;
 
         tutorial.RecordInteraction(1, "random_Static", null);
-        tutorial.RecordInteraction(1, "video_pause_begin", "already_paused=1");
-        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion));
+        Assert.That(tutorial.Body, Does.Contain("動いています"));
+        Assert.That(changed, Is.EqualTo(1));
 
+        tutorial.RecordInteraction(1, "motion_end", "reason=stopped");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion), "見ていないので済みにしない");
+        Assert.That(tutorial.Body, Does.Contain("自分から"), "待ちの文面に戻る");
+        Assert.That(changed, Is.EqualTo(2));
+
+        // もう一度動いて終われば済む。
         tutorial.RecordInteraction(1, "random_Dynamic", null);
-        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ChangeModel));
-
-        // 段階が進んだ後の video_pause_end は何も変えない。
-        tutorial.RecordInteraction(1, "video_pause_end", "paused_sec=1");
+        tutorial.RecordInteraction(1, "motion_end", "reason=completed");
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ChangeModel));
     }
 
-    // video_pause_end だけが先に来ても（例を見ていない）段階は進まない。
+    // 動きの開始（random_*）を受けていなければ motion_end だけでは進まない。
+    // 被験者が A で戻したときの video_pause_end でも進まない。
     [Test]
-    public void ModelReplaced_PauseEndWithoutMotion_DoesNotCount()
+    public void ModelReplaced_EndWithoutTheMotionStarting_DoesNotCount()
     {
         ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
 
-        tutorial.RecordInteraction(1, "video_pause_end", "paused_sec=1");
+        tutorial.RecordInteraction(1, "motion_end", "reason=completed");
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion));
+
+        tutorial.RecordInteraction(1, "random_Static", null);
+        tutorial.RecordInteraction(1, "video_pause_end", "paused_sec=1 released_by=manual_resume");
+        Assert.That(
+            tutorial.CurrentStep,
+            Is.EqualTo(ExperimentTutorial.Step.WatchMotion),
+            "被験者が A で戻しただけ。モデルはまだ動いている");
+        Assert.That(tutorial.Body, Does.Contain("動いています"));
+    }
+
+    // 掴み・パネルで止まった（pause_auto）ときも「A ボタンで再開して」の案内を出す。
+    [Test]
+    public void ModelReplaced_PausedByPanelOrGrab_TellsToResume()
+    {
+        ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
+
+        tutorial.RecordOperation("pause_auto", "cause=grab");
+        Assert.That(tutorial.Body, Does.Contain("A ボタンを押して再開"));
+
+        tutorial.RecordOperation("resume_auto", "cause=grab_end");
         Assert.That(tutorial.Body, Does.Contain("自分から"));
     }
 

@@ -133,9 +133,15 @@ public sealed class ExperimentLogWriter : IDisposable
         }
     }
 
+    // ファイルごとの列名。**開いたときに書く**（ResolveWriter）。ここで覚えておかないと、最初に開けなかった
+    // ファイルを試行の切れ目で開き直したときにヘッダ無しの CSV になり、解析側が 1 行目を列名として読む
+    // （2026-09-29 の 4 回目の監査）。
+    private readonly Dictionary<string, string[]> headerColumns = new Dictionary<string, string[]>();
+
     private void WriteHeader(string fileName, params string[] columns)
     {
-        AppendRow(fileName, columns);
+        headerColumns[fileName] = columns;
+        ResolveWriter(fileName);
         Flush();
     }
 
@@ -162,6 +168,10 @@ public sealed class ExperimentLogWriter : IDisposable
             string path = Path.Combine(SessionDirectory, fileName);
             StreamWriter writer = new StreamWriter(path, false, new UTF8Encoding(false));
             writers[fileName] = writer;
+            if (headerColumns.TryGetValue(fileName, out string[] columns) && columns != null)
+            {
+                writer.WriteLine(ExperimentCsv.BuildRow(columns));
+            }
             return writer;
         }
         catch (Exception ex)

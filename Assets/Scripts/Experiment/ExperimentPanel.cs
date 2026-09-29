@@ -34,11 +34,21 @@ public sealed class ExperimentPanel
         }
     }
 
-    // 2 度押しの猶予と、1 度目を押したあとの文言。2 度目は 1 度目から ConfirmMinGapSeconds 以上あとでないと
-    // 数えない（トリガーの二重発火は数十 ms なので、それを「確認した」と取らないため）。
+    // 2 度押しの猶予。2 度目は 1 度目から ConfirmMinGapSeconds 以上あとでないと数えない
+    // （トリガーの二重発火は数十 ms なので、それを「確認した」と取らないため）。
     public const float ConfirmWindowSeconds = 3f;
     public const float ConfirmMinGapSeconds = 0.4f;
-    public const string ConfirmLabel = "もう一度押す";
+    // **1 度目で文言を「もう一度押す」に変えてはいけない。**被験者が見るパネル（練習の各段階・読み込み中）にも
+    // 実験者用のボタンが乗っているので、指示文に読めるものを出すと被験者がその通りに押して練習が終わる
+    // （2026-09-29 の 4 回目の監査）。文言は変えず、1 度目のあいだだけ色を変えて実験者に知らせる。
+    private static readonly Color ConfirmArmedNormalColor = new Color(0.62f, 0.38f, 0.12f, 0.98f);
+    private static readonly Color ConfirmArmedHighlightedColor = new Color(0.80f, 0.52f, 0.18f, 1f);
+
+    // ボタンの地色。**Image は白にして色はここに置く。**ColorTint は Image の色に掛け算されるので、
+    // 両方に同じ色を入れると二乗されてほぼ黒になり、押せない状態（disabled）と見分けが付かなくなる
+    // （2026-09-29 の 3 回目の監査）。
+    private static readonly Color ButtonNormalColor = new Color(0.22f, 0.26f, 0.34f, 0.96f);
+    private static readonly Color ButtonHighlightedColor = new Color(0.30f, 0.35f, 0.44f, 0.98f);
 
     private const float CanvasWidth = 1200f;
     private const float CanvasHeight = 900f;
@@ -190,6 +200,12 @@ public sealed class ExperimentPanel
         Button button = buttons[index];
         buttonDesiredInteractable[index] = interactable;
         buttonLabels[index] = label;
+        // 文言を変えるなら 2 度押しの待ちも解く（見た目と状態が食い違わないように）。
+        if (buttonConfirmArmedAt[index] >= 0f)
+        {
+            buttonConfirmArmedAt[index] = -1f;
+            ApplyConfirmArmedTint(button, false);
+        }
         // 作り直し直後の抑止中なら、抑止が明けたときに反映される。
         if (buttonsArmAtRealtime < 0f)
         {
@@ -228,14 +244,11 @@ public sealed class ExperimentPanel
             }
 
             buttonConfirmArmedAt[i] = -1f;
-            if (buttons[i] != null)
-            {
-                SetButtonLabel(buttons[i], buttonLabels[i]);
-            }
+            ApplyConfirmArmedTint(buttons[i], false);
         }
     }
 
-    // 2 度押しのボタンが押された。1 度目は文言を変えて待つ、猶予内（最短間隔より後）の 2 度目で実行する。
+    // 2 度押しのボタンが押された。1 度目は色を変えて待つ、猶予内（最短間隔より後）の 2 度目で実行する。
     private void HandleConfirmClick(int index, Action onClick)
     {
         if (index < 0 || index >= buttons.Count || buttons[index] == null)
@@ -254,12 +267,31 @@ public sealed class ExperimentPanel
             }
 
             buttonConfirmArmedAt[index] = -1f;
+            ApplyConfirmArmedTint(buttons[index], false);
             onClick?.Invoke();
             return;
         }
 
         buttonConfirmArmedAt[index] = now;
-        SetButtonLabel(buttons[index], ConfirmLabel);
+        ApplyConfirmArmedTint(buttons[index], true);
+        Debug.Log($"[Experiment] 実験者用のボタン（{buttonLabels[index]}）の 1 度目。{ConfirmWindowSeconds:0} 秒以内にもう一度押すと実行します");
+    }
+
+    // 2 度押しの 1 度目のあいだだけボタンの地を橙色にする。**Image の色を染めるのでは足りない**
+    // （ColorTint は Image の色に掛け算するだけなので、暗い地色より明るくはできない。Color32 で 1.0 に丸められる）。
+    // ColorBlock 側を差し替える。
+    private static void ApplyConfirmArmedTint(Button button, bool armed)
+    {
+        if (button == null)
+        {
+            return;
+        }
+
+        ColorBlock colors = button.colors;
+        colors.normalColor = armed ? ConfirmArmedNormalColor : ButtonNormalColor;
+        colors.highlightedColor = armed ? ConfirmArmedHighlightedColor : ButtonHighlightedColor;
+        colors.selectedColor = colors.highlightedColor;
+        UiComponentWriter.ApplySelectableColors(button, colors);
     }
 
     // 押せないボタンは文字も落とす。ColorTint は背景（targetGraphic）にしか掛からず、白い文字が
@@ -626,8 +658,8 @@ public sealed class ExperimentPanel
 
         Button button = RuntimeUiElementFactory.AddButton(obj);
         ColorBlock colors = button.colors;
-        colors.normalColor = new Color(0.22f, 0.26f, 0.34f, 0.96f);
-        colors.highlightedColor = new Color(0.30f, 0.35f, 0.44f, 0.98f);
+        colors.normalColor = ButtonNormalColor;
+        colors.highlightedColor = ButtonHighlightedColor;
         colors.pressedColor = new Color(0.16f, 0.20f, 0.28f, 1f);
         colors.selectedColor = colors.highlightedColor;
         colors.disabledColor = new Color(0.18f, 0.18f, 0.18f, 0.6f);

@@ -457,7 +457,7 @@ public class ExperimentTutorialAuditTests
         Assert.That(tutorial.DescribeResult(), Is.EqualTo("completed=0 step=WatchMotion mode=ModelReplaced"));
 
         tutorial.RecordInteraction(1, "random_Static", null);
-        tutorial.RecordInteraction(1, "video_pause_end", "paused_sec=2");
+        tutorial.RecordInteraction(1, "motion_end", "reason=completed");
         Assert.That(tutorial.Title, Is.EqualTo("練習 2/3"));
         Assert.That(tutorial.DescribeResult(), Is.EqualTo("completed=0 step=ChangeModel mode=ModelReplaced"));
     }

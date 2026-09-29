@@ -285,6 +285,12 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                 SetDone(Step.PausePlayback);
                 SetVideoPausedByParticipant(true);
                 break;
+            case "pause_auto":
+                // パネル・編集・モデルを掴んだことで止まった。被験者から見れば「止まっている」のは同じなので、
+                // 置換ありの練習では A ボタンで戻す案内を出す（2026-09-29 の 4 回目の監査。以前はこの経路で
+                // 止まると案内が出ず、モーションは再生中しか発火しないので永久に待つことがあった）。
+                SetVideoPausedByParticipant(true);
+                break;
             case "resume":
                 // 止めていないのに resume だけ来ることはないはずだが、来ても数えない。
                 if (completed.Contains(Step.PausePlayback))
@@ -316,6 +322,11 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                 bool enabled = detail == null || detail.Contains("value=1");
                 bool hintChanges = enabled != motionEnabled && CurrentStep == Step.WatchMotion;
                 motionEnabled = enabled;
+                if (!enabled)
+                {
+                    // OFF にすると走っていたモーションも止まる（StopAllInteractiveMotion）。「動いています」を残さない。
+                    motionExampleRunning = false;
+                }
                 if (completed.Contains(Step.WatchMotion))
                 {
                     SetDone(Step.ToggleMotion);
@@ -340,26 +351,46 @@ public sealed class ExperimentTutorial : IExperimentLogSink
         // モデルが自分から動き始めた（Random イベント。frame-out も一応受けるが、現行の再生経路では
         // 発火しないことを 2026-09-25 の監査で確認した。予備として残す）。
         // **その段階を表示している間の発火だけ数える。** 先回りで済ませると説明が出ないまま次へ進む。
-        // 済ませるのは動き終わってから（video_pause_end）。2 回目の発火が来たら 1 回目は終わっているので済ませる
-        // （被験者がフェードアウト中に A で止めた場合は video_pause_end が出ない。その保険）。
         if (kind.StartsWith("random_", StringComparison.Ordinal) || kind == "system_frameout")
         {
-            if (motionExampleRunning)
+            if (!motionExampleRunning)
             {
-                motionExampleRunning = false;
-                SetDone(Step.WatchMotion);
-                return;
+                motionExampleRunning = true;
+                Changed?.Invoke();
             }
-
-            motionExampleRunning = true;
-            Changed?.Invoke();
             return;
         }
 
-        if (motionExampleRunning && kind == "video_pause_end")
+        // **済ませるのは動きが終わってから。** 発火した瞬間に次の段階へ進めると、モデルが動いている最中に
+        // パネルが差し替わって説明に目を取られ、肝心の例を見ない。
+        // 判定に使うのは motion_end（プレイヤーが動きの終わりに必ず 1 行出す）。以前は video_pause_end を
+        // 見ていたが、被験者が A で戻したときの `released_by=manual_resume` でも来るので、動いている最中に
+        // 進んでしまった（2026-09-29 の 4 回目の監査）。
+        if (kind != "motion_end")
         {
-            motionExampleRunning = false;
+            return;
+        }
+
+        bool wasRunning = motionExampleRunning;
+        motionExampleRunning = false;
+        // **開始（random_*）を見ていない終わりは数えない。**前の段階で発火したものの終わりや、
+        // 試行を閉じるときの打ち切りで済ませてしまわないため。
+        if (!wasRunning)
+        {
+            return;
+        }
+
+        if (detail != null && detail.Contains("reason=completed"))
+        {
             SetDone(Step.WatchMotion);
+            return;
+        }
+
+        // 途中で止まった（Motion OFF・モデル非表示・差し替え・track がフレームから消えた）。
+        // 例を見たことにはしないので、もう一度待たせる。
+        if (wasRunning)
+        {
+            Changed?.Invoke();
         }
     }
 

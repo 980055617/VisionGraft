@@ -209,17 +209,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // モーションの一時停止が衝突して、モーション中に動画が動き出したり、パネルが開いたまま再生が
         // 始まったりした（2026-09-29 の監査）。
         //
-        // 止まっている間も次の発火時刻は最短間隔ぶん先へ押しておく。持ち越すだけだと、長く止めていた
-        // （Model パネルを開いて選んでいた等）あとに再開した瞬間、期限切れの発火が同じフレームで起きて
-        // 「戻したらすぐまた止まる」になる（2026-09-29 の 3 回目の監査）。
+        // 止まっている間は次の発火時刻を**そのフレームぶん先へずらす**（残り時間を保つ）。持ち越すだけだと、
+        // 長く止めていた（Model パネルを開いて選んでいた等）あとに再開した瞬間、期限切れの発火が同じフレームで
+        // 起きて「戻したらすぐまた止まる」になる（2026-09-29 の 3 回目の監査）。
+        // **最短間隔に切り上げてはいけない。**一時停止のたびに次の発火が「再開からちょうど 12 秒」に
+        // 固定され、12〜24 秒の一様乱数という前提が崩れる（2026-09-29 の 4 回目の監査）。
         if (vp == null || !vp.isPlaying)
         {
-            float pausedNow = GetRuntimeTickContext().now;
-            float minInterval = Mathf.Max(0.1f, interactiveMotionMinIntervalSeconds);
-            if (state.nextTriggerTime < pausedNow + minInterval)
-            {
-                state.nextTriggerTime = pausedNow + minInterval;
-            }
+            RuntimeClock.TickContext paused = GetRuntimeTickContext();
+            state.nextTriggerTime += paused.deltaTime;
             return;
         }
 
@@ -239,6 +237,26 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         StartRandomInteractiveMotion(trackId, obj, tick.now);
+    }
+
+    // Motion を OFF から ON に戻したとき用。OFF の間はスケジュールを進めていないので、そのままだと
+    // 期限切れの発火が次のフレームで起きる。全 track の次の発火を最短間隔ぶん先へ押す。
+    private void DelayAllInteractiveMotionTriggersByMinimumInterval()
+    {
+        float now = GetRuntimeTickContext().now;
+        float minInterval = Mathf.Max(0.1f, interactiveMotionMinIntervalSeconds);
+        foreach (KeyValuePair<uint, InteractiveMotionState> kv in interactiveMotionByTrack)
+        {
+            if (kv.Value == null)
+            {
+                continue;
+            }
+
+            if (kv.Value.nextTriggerTime < now + minInterval)
+            {
+                kv.Value.nextTriggerTime = now + minInterval;
+            }
+        }
     }
 
     private float RandomInteractiveInterval()
@@ -346,6 +364,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 実験ログに「何秒止めたか」を残す（2026-09-25、第 3 条件の duration_sec を解釈するため）。
     private float randomMotionVideoPauseStartedAt = -1f;
 
+    // ヘッドセットを外した時刻（実時間）。外していた時間は「モーションで止めていた時間」から除く。
+    private float appPausedAtUnscaledTime = -1f;
+
+    private void NoteAppResumeForRandomMotionPause()
+    {
+        if (appPausedAtUnscaledTime < 0f)
+        {
+            return;
+        }
+
+        float pausedFor = Mathf.Max(0f, Time.unscaledTime - appPausedAtUnscaledTime);
+        appPausedAtUnscaledTime = -1f;
+        if (randomMotionVideoPauseStartedAt >= 0f)
+        {
+            randomMotionVideoPauseStartedAt += pausedFor;
+        }
+    }
+
     // 止める前後の音量フェード（2026-09-28、実機のユーザー指摘「急に音が消えると驚く」）。
     // 動画はフェードアウトが終わってから止める（モデルの動きはフェードの開始と同時に始まる）。
     // 再開は先に Play してから同じ時間でフェードイン。秒数は interactiveMotionAudioFadeSeconds（0 なら即時）。
@@ -414,8 +450,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         StopAllInteractiveMotion();
     }
 
-    private void EndRandomInteractiveMotionVideoPause(uint trackId)
+    // reason: "completed"（動きが最後まで進んだ）か "stopped"（Motion OFF・非表示・差し替え・track 不在・試行終了）。
+    private void EndRandomInteractiveMotionVideoPause(uint trackId, string reason = "completed")
     {
+        // **「モデルの動きが終わった」を必ず 1 行残す。**以前は動画を止めて戻したときの video_pause_end しか
+        // 無く、被験者が先に A で止めていた場合（already_paused=1）や途中で止めた場合は終わりが記録されなかった。
+        // 練習の「1 回動くまで見ていてください」もこの行で完了を判定する（2026-09-29 の 4 回目の監査）。
+        ExperimentLog.Interaction(trackId, "motion_end", $"reason={reason}");
+
         activeRandomInteractiveMotionCount = Mathf.Max(0, activeRandomInteractiveMotionCount - 1);
         if (activeRandomInteractiveMotionCount != 0 || vp == null)
         {
@@ -2294,7 +2336,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             RestoreRigidWheels(state);
             if (wasRandomActive)
             {
-                EndRandomInteractiveMotionVideoPause(trackId);
+                EndRandomInteractiveMotionVideoPause(trackId, "stopped");
             }
         }
         StopHumanClipPlayback(trackId);

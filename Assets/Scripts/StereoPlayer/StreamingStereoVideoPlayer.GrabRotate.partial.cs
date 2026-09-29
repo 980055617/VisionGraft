@@ -20,6 +20,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private float grabRotateStartPitch;
     private float grabRotateStartRoll;
     private bool prevGrabTriggerPressed;
+    // 掴みの押下として数える前に一度離させる（試行をまたいで引きっぱなし・パネル操作のトリガー）。
+    private bool grabTriggerNeedsRelease;
+    // 掴むために動画を止めたか。離したときに戻すため（Model パネルの modelPickerWasPlayingBeforeOpen と同じ作り）。
+    private bool grabRotatePausedVideo;
     private float grabRotateLoggedAt;
     private float grabRotateStartedAt;
     private string grabRotateEndReason = "";
@@ -56,7 +60,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             EndGrabRotate("掴む対象がまだ無い");
             SetPointerRayVisible(false);
-            prevGrabTriggerPressed = false;
+            // **押していない扱いにしてはいけない。**引いたままの指で試行をまたぐと、モデルが出た最初の
+            // フレームに「押した瞬間」が立ち、勝手にモデルを掴んで動画が止まる（2026-09-29 の 4 回目の監査）。
+            // 一度離すまで押下を数えない。
+            grabTriggerNeedsRelease = true;
             return;
         }
 
@@ -65,7 +72,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             EndGrabRotate("bundle ピッカーが開いた");
             SetPointerRayVisible(false);
-            prevGrabTriggerPressed = false;
+            grabTriggerNeedsRelease = true;
             return;
         }
 
@@ -79,7 +86,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (!grabRotateActive)
             {
                 SetPointerRayVisible(false);
-                prevGrabTriggerPressed = false;
+                // 読めなかったフレームを「離した」と見なさない（上と同じ理由）。
+                grabTriggerNeedsRelease = true;
             }
 
             return;
@@ -107,11 +115,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // （「視聴を終了」「次へ」）は両方閉じているときにこそ押されるので、門があると判定自体が走らず、
         // バーの「Model」を指したトリガーが 25° の角度フォールバックでモデルを掴み、動画が止まったまま
         // パネルが開く（2026-09-29 の 3 回目の監査。前日の修正は判定の中身だけ広げて門を残していた）。
-        if (IsPointerOnRuntimePanel(origin, rotation * Vector3.forward))
+        //
+        // **掴んでいる最中には見ない。**掴んだあと手を動かす途中でレイがバーやパネルの板を横切るたびに
+        // 掴みが切れていた（板は画面のすぐ下・すぐ上にある）。判定が要るのは「このトリガーはパネル操作か」を
+        // 決める押し始めだけ（2026-09-29 の 4 回目の監査）。
+        if (!grabRotateActive && IsPointerOnRuntimePanel(origin, rotation * Vector3.forward))
         {
-            EndGrabRotate("パネルを指している");
             SetPointerRayVisible(false);
             prevGrabTriggerPressed = triggerPressed;
+            // パネルを押すためのトリガーなので、離すまで掴みの押下として数えない。
+            grabTriggerNeedsRelease = true;
             return;
         }
 
@@ -120,6 +133,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         bool pressedThisFrame = triggerPressed && !prevGrabTriggerPressed;
         prevGrabTriggerPressed = triggerPressed;
+
+        // 一度離すまで押下を数えない（別の用途で引かれていたトリガー）。
+        if (grabTriggerNeedsRelease)
+        {
+            if (triggerPressed)
+            {
+                return;
+            }
+
+            grabTriggerNeedsRelease = false;
+        }
 
         if (!triggerPressed)
         {
@@ -266,7 +290,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         Debug.Log($"[GRAB] 対象は track={trackId}（{how}）");
 
-        PauseForManualRotationEdit();
+        // 掴んでいる間は動画を止める（向きを合わせるため）。**離したら戻す。**戻さないと、被験者が
+        // モデルの方を向いてトリガーを引いただけで動画が止まったままになり、自分で A を押すまで静止画で、
+        // 置換ありの練習では「1 回動くまで見ていてください」のまま永久に進まなかった（2026-09-29 の 4 回目の監査）。
+        grabRotatePausedVideo = PauseForManualRotationEdit("grab");
 
         grabRotateActive = true;
         grabRotateStartedAt = Time.unscaledTime;
@@ -339,6 +366,41 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             $"track={grabRotateTrackId} op=grab yaw={ExperimentCsv.Format(yaw)} " +
             $"pitch={ExperimentCsv.Format(pitch)} roll={ExperimentCsv.Format(roll)} " +
             $"frame={GetCurrentPlaybackFrame()}");
+
+        ResumeVideoAfterGrabRotate();
+    }
+
+    // 掴むために止めた動画を戻す。Random モーションが止めている最中ならモーションの終わりへ預ける
+    // （止める権利はモーション側にある）。パネルが開いているならそちらが閉じるときに戻す。
+    private void ResumeVideoAfterGrabRotate()
+    {
+        if (!grabRotatePausedVideo)
+        {
+            return;
+        }
+
+        grabRotatePausedVideo = false;
+        if (vp == null || vp.isPlaying)
+        {
+            return;
+        }
+
+        // Model パネルを開いている間は戻さない（モデルを選んでいる最中に動き出すと選べない）。
+        // 閉じるときに戻る。Settings は動画を止めない作りなので、開いていても戻してよい。
+        if (runtimeModelPickerOpen)
+        {
+            modelPickerWasPlayingBeforeOpen = true;
+            return;
+        }
+
+        if (TryDeferVideoResumeToRandomMotionEnd())
+        {
+            return;
+        }
+
+        RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
+        UpdatePauseButtonLabel();
+        ExperimentLog.Operation("resume_auto", "cause=grab_end");
     }
 
 

@@ -871,7 +871,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             runtimeModelPickerPageIndex = ResolveRuntimeModelPickerPageForCurrentSelection();
             Debug.Log($"[Pick] track={bestTrack}（{how}） pixel={pick.pixel} eye={pick.eye}");
             // 実験ログ: 対象を選んだ事象（どの track を、どの方法で、画面のどこを指して）。2026-09-25。
-            ExperimentLog.Operation("select_track", $"track={bestTrack} how={how} u={pick.pixel.x} v={pick.pixel.y}");
+            ExperimentLog.Operation(
+                "select_track",
+                $"track={bestTrack} how={how} u={ExperimentCsv.Format(pick.pixel.x)} v={ExperimentCsv.Format(pick.pixel.y)}");
             UpdateRuntimeModelPickerUiState();
         }
     }

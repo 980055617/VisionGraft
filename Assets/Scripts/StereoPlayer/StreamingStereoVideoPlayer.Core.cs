@@ -733,10 +733,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public AnimationClip[] humanWalkClips;
     public AnimalGesturePose[] animalStaticGestureClips;
     public AnimalGesturePose[] animalWalkClips;
-    public float interactiveMotionMinIntervalSeconds = 6f;
-    public float interactiveMotionMaxIntervalSeconds = 14f;
+    public float interactiveMotionMinIntervalSeconds = 12f;
+    public float interactiveMotionMaxIntervalSeconds = 24f;
     [FormerlySerializedAs("interactiveMotionDurationSeconds")]
-    public float staticAnimationDurationSeconds = 5.5f;
+    public float staticAnimationDurationSeconds = 2.4f;
     [FormerlySerializedAs("interactiveMotionBlendSeconds")]
     public float interactiveHandoffBlendSeconds = 0.8f;
     public float humanApproachStopDistanceMeters = 0.6f;

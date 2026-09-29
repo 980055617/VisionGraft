@@ -340,6 +340,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             StopAllInteractiveMotion();
         }
+        else
+        {
+            // OFF の間はスケジュールを進めないので、そのまま ON に戻すと期限切れの発火が次のフレームで
+            // 起きる（「ON にしたらすぐ止まる」）。最短間隔ぶん先へ押す（2026-09-29 の 4 回目の監査）。
+            DelayAllInteractiveMotionTriggersByMinimumInterval();
+        }
         UpdateRuntimeInteractiveMotionUiState();
         ExperimentLog.Operation("motion_toggle", $"value={(enableInteractiveMotion ? 1 : 0)}");
     }
@@ -534,14 +540,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
 
 
-    private void PauseForManualRotationEdit()
+    // 戻り値: この呼び出しが実際に動画を止めたか（既に止まっていたら false）。
+    // 掴んで回す側は、自分が止めたときだけ離したときに戻す（ResumeVideoAfterGrabRotate）。
+    // cause: 何のために止めたか。解析で「掴みで止まった」と「パネル・編集で止まった」を分けられるように
+    // 分けてある（2026-09-29 の 4 回目の監査。以前は全部 panel_or_edit）。
+    private bool PauseForManualRotationEdit(string cause = "panel_or_edit")
     {
         RuntimePlaybackController.Command command = RuntimePlaybackController.ResolvePauseForEditCommand(
             vp != null,
             vp != null && vp.isPlaying);
         if (command == RuntimePlaybackController.Command.None)
         {
-            return;
+            return false;
         }
 
         RuntimePlaybackController.Apply(vp, command);
@@ -550,7 +560,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // **自動で止めたことも記録する。**手動の pause / resume しか残っていなかったので、
         // operations.csv だけでは「動画が止まっていた合計時間」が出せなかった（2026-09-25 の監査 M-4）。
         // action 名を分けてあるので、チュートリアルの段階検出（pause / resume を見る）は誤進行しない。
-        ExperimentLog.Operation("pause_auto", "cause=panel_or_edit");
+        ExperimentLog.Operation("pause_auto", $"cause={cause}");
+        return true;
     }
 
 
@@ -751,6 +762,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 // 掴んでいる間は「Pause」（実際は停止中）、モーションから再開を預かって離した後は
                 // 「Resume」（実際は再生中）のまま次の操作まで残った（2026-09-29 の 3 回目の監査）。
                 UpdatePauseButtonLabel();
+                // 記録にも残す。残さないと operations.csv だけで再生状態を追ったときに、つまみを掴んでいた
+                // 間の停止が見えず、預けた再開（resume_auto cause=random_motion_end）が対無しで現れる
+                // （2026-09-29 の 4 回目の監査）。action 名が pause / resume ではないので練習の段階は進まない。
+                ExperimentLog.Operation("pause_auto", "cause=seek_drag");
             }
 
             return;
@@ -766,6 +781,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             {
                 RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
                 UpdatePauseButtonLabel();
+                ExperimentLog.Operation("resume_auto", "cause=seek_drag");
             }
         }
     }
@@ -921,6 +937,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             ReleaseRandomMotionVideoPauseOwnership("manual_resume");
         }
+
+        // 掴みで止めたぶんも同じ。被験者が自分で触った時点で再生状態の持ち主は被験者になる。
+        // 手放さないと「掴んで止める → A で戻す → A で止める → トリガーを離す」で、最後の停止が
+        // 勝手に解けた（2026-09-29 の 4 回目の監査。自分で入れた戻し処理の穴）。
+        grabRotatePausedVideo = false;
 
         // 再生に戻したら編集用のパネルは畳む。モデル変更も向き調整も
         // 一時停止して行う操作なので、再生中に開いたままだと視界を塞ぐだけ

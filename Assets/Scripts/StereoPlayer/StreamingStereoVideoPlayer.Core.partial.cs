@@ -26,6 +26,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (paused)
         {
             FlushTrackCustomizationSaveNow();
+            appPausedAtUnscaledTime = Time.unscaledTime;
             return;
         }
 
@@ -34,6 +35,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 1 秒ほど黒くなる（2026-09-29 の監査）。計測をやり直す。
         stallLastFrame = -1L;
         stallSinceRealtime = -1f;
+        // モーションが動画を止めている最中に外されたら、その時間は「モーションで止まっていた時間」ではない。
+        // 引かないと interactions.csv の paused_sec に装着外の時間が丸ごと乗る（2026-09-29 の 4 回目の監査）。
+        NoteAppResumeForRandomMotionPause();
     }
 
 
@@ -103,6 +107,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (w <= 0 || h <= 0)
         {
             RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
+            hasPlaybackStarted = true;
             return;
         }
 
@@ -126,6 +131,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         EnsureRuntimeControls();
 
         RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
+        hasPlaybackStarted = true;
         UpdatePauseButtonLabel();
         vp.prepareCompleted -= OnPrepared;
     }
@@ -361,6 +367,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         get { return vp != null && vp.isPlaying; }
     }
+
+
+    // 一度でも再生を始めたか。ExperimentController が「読み込みが終わった」の判定に使う。
+    // `IsVideoPlaying` だけで待つと、Prepare が終わって Play した直後に被験者が A を押した場合に
+    // 読み込み中のまま期限切れになり、その試行が捨てられた（2026-09-29 の 4 回目の監査）。
+    public bool HasPlaybackStarted
+    {
+        get { return hasPlaybackStarted; }
+    }
+
+    private bool hasPlaybackStarted;
 
 
     // perf.csv 用。動画の現在フレーム（Prepare 前は -1）。
@@ -748,6 +765,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 }
             }
 
+            // **再センタリングを記録に残す。**被験者が Meta ボタンで Reset View すると頭部姿勢の座標が
+            // 1 フレームで飛び、画面も動く。行が無いと解析でその不連続の理由が追えなかった
+            // （2026-09-29 の 4 回目の監査）。この行が実機のログに出るかどうかで、Quest の Reset View が
+            // trackingOriginUpdated を出すのか（= パネルの置き直しが効いているのか）も判る。
+            Transform resetHead = GetViewOrHeadTransform();
+            ExperimentLog.Operation(
+                "reset_view",
+                resetHead != null
+                    ? $"head_x={ExperimentCsv.Format(resetHead.position.x)} head_y={ExperimentCsv.Format(resetHead.position.y)} " +
+                      $"head_z={ExperimentCsv.Format(resetHead.position.z)} head_yaw={ExperimentCsv.Format(resetHead.eulerAngles.y)}"
+                    : "head=none");
             RecenterScreensToCurrentFacing();
         }
         finally

@@ -14,7 +14,7 @@ public class ExperimentPerfSeekJumpTests
     private static bool Push(ExperimentPerfAccumulator acc, float dt, long frame, double time,
         out ExperimentPerfAccumulator.Sample sample, bool playing = true)
     {
-        return acc.Push(dt, frame, time, playing, false, Vector3.zero, false, false, out sample);
+        return acc.Push(dt, frame, time, playing, false, Vector3.zero, false, false, 0, out sample);
     }
 
     // 前へ飛ばしたぶん（10 秒）は「進んだ」にも「コマ落ち」にも入れず、回数だけ数える。

@@ -760,6 +760,10 @@ public static class ExperimentUiFont
         {
         }
 
+        // Unity 6 では "Arial.ttf" は "LegacyRuntime.ttf" に改名済みで、この 2 段目は必ず null になる
+        // （＝ font が null の Text は何も描かない）。残してあるのは旧バージョンで開いたときのため
+        // （2026-09-30 の 5 回目の監査）。
+        Debug.LogError("[Experiment] LegacyRuntime.ttf を取得できません。UI の文字が出ない可能性があります");
         try
         {
             cached = Resources.GetBuiltinResource<Font>("Arial.ttf");

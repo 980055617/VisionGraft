@@ -132,6 +132,16 @@ public sealed class HomeMenu : MonoBehaviour
         int frames = 0;
 
         AsyncOperation op = SceneManager.LoadSceneAsync(sceneName, LoadSceneMode.Single);
+        if (op == null)
+        {
+            // Build Settings にそのシーンが無い。ボタン 0 個の「読み込み中」のまま固まるので入口へ戻す
+            // （2026-09-30 の 5 回目の監査。ExperimentController.ReturnToHome と同じ扱い）。
+            Debug.LogError($"[Home] シーンをロードできません: {sceneName}（Build Settings を確認）");
+            loading = false;
+            ShowMenu();
+            yield break;
+        }
+
         while (op != null && !op.isDone)
         {
             yield return null;

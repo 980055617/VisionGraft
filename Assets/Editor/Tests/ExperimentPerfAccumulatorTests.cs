@@ -5,9 +5,11 @@ using UnityEngine;
 public class ExperimentPerfAccumulatorTests
 {
     private static bool Push(ExperimentPerfAccumulator acc, float dt, long frame, double time, bool playing,
-        out ExperimentPerfAccumulator.Sample sample, Vector3? pointer = null, bool trigger = false, bool button = false)
+        out ExperimentPerfAccumulator.Sample sample, Vector3? pointer = null, bool trigger = false, bool button = false,
+        int deviceCode = 2)
     {
-        return acc.Push(dt, frame, time, playing, pointer.HasValue, pointer ?? Vector3.zero, trigger, button, out sample);
+        return acc.Push(
+            dt, frame, time, playing, pointer.HasValue, pointer ?? Vector3.zero, trigger, button, deviceCode, out sample);
     }
 
     // 1 秒窓が閉じるまで false、閉じたら 1 回だけ true。

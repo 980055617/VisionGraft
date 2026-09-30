@@ -185,7 +185,7 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                         "モデルは好きなものに替えられます。\n" +
                         "下のバーの「Model」ボタンを押し、\n" +
                         "一覧から選んでください。\n" +
-                        "（「表示しない」は選ばないでください）";
+                        "（「表示しない」と「編集」は使いません）";
                 case Step.WatchMotion:
                     // モデルを全部消されていると、そもそも動く対象が無い。戻し方を先に出す。
                     if (sawModelEvent && tracksWithVisibleModel.Count == 0)
@@ -229,11 +229,15 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                         "動きます。動くあいだ動画は止まります。\n" +
                         "1 回動くまで見ていてください。";
                 case Step.ToggleMotion:
+                    // Settings には Screen Dist（動画の画面までの距離）も並んでいる。動かされると
+                    // 見かけの大きさと両眼視差が変わって条件が崩れるので、触らないよう明示する
+                    // （記録は残るが統制はできない。2026-09-30 の 5 回目の監査）。
                     return
                         "いまの動きは ON / OFF を\n" +
                         "切り替えられます。下のバーの\n" +
-                        "「Settings」を開き、Motion の\n" +
-                        "Toggle を押してみてください。";
+                        "「Settings」を開き、「Motion」の\n" +
+                        "「Toggle」を押してください。\n" +
+                        "（「Screen Dist」は触らないで）";
                 default:
                     return ResolveDoneBody();
             }
@@ -247,21 +251,29 @@ public sealed class ExperimentTutorial : IExperimentLogSink
             case ExperimentDisplayMode.Monocular:
                 // 本番の「視聴を終了」は最短視聴時間が過ぎるまで押せないが、残り時間も
                 // その説明も画面には出さない（実験者が口頭で伝える。2026-09-11 指示）。
+                // 「押すと次の動画に進みます」は事実と違う（待機画面に戻り、もう一度「この動画を開始」を
+                // 押す必要がある）。本番でもボタンの位置が同じであることを伝える（2026-09-30 の 5 回目の監査）。
                 return
                     "動画は何回でも好きなだけ見られます。\n" +
-                    "見終わったら、画面の上のこのボタン\n" +
-                    "「視聴を終了」を押すと次の動画に\n" +
-                    "進みます。押して練習を終えてください。";
+                    "見終わったら、画面の上の\n" +
+                    "「視聴を終了」を押してください。\n" +
+                    "本番の動画でも同じ場所に出ます。\n" +
+                    "押すと練習が終わります。";
             case ExperimentDisplayMode.StereoOnly:
+                // **「操作はこれまでと同じです」と書かない。**群 B ではこの直前が置換ありで、
+                // 立体のみのブロックでは「Model」ボタンも Settings の Motion の切り替えも消える
+                // （2026-09-30 の 5 回目の監査）。両群で真になる書き方にする。
                 return
-                    "次の 3 本の動画は\n" +
-                    "立体（奥行きあり）で見えます。\n" +
-                    "操作はこれまでと同じです。\n" +
-                    "上の「視聴を終了」を押すと始まります。";
+                    "次の 3 本は立体（奥行きあり）で\n" +
+                    "見えます。\n" +
+                    "操作は A ボタンと下のつまみです。\n" +
+                    "見終わったら画面の上の\n" +
+                    "「視聴を終了」を押してください。";
             default:
                 return
                     "操作は以上です。モデルの動きは\n" +
-                    "Settings でいつでも切り替えられます。\n" +
+                    "下のバーの「Settings」で\n" +
+                    "いつでも切り替えられます。\n" +
                     "見終わったら画面の上の\n" +
                     "「視聴を終了」を押してください。";
         }

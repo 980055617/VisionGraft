@@ -263,17 +263,22 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
     // perf.csv の 1 行（1 秒窓）。動画が進んだ秒数を試行の合計にも足す。
     public void RecordPerf(ExperimentPerfAccumulator.Sample sample, long videoFrame)
     {
-        if (!trialInProgress)
+        // 練習中も残す（2026-09-30 の 5 回目の監査）。行の trial_index は TrialIndexForLog なので
+        // 練習は −1 になる。**CurrentTrialIndex を直書きすると練習の行が直前の試行番号になる。**
+        if (!trialInProgress && !tutorialInProgress)
         {
             return;
         }
 
-        trialVideoPlayedSeconds += sample.videoTimeAdvancedSec;
+        if (trialInProgress)
+        {
+            trialVideoPlayedSeconds += sample.videoTimeAdvancedSec;
+        }
 
         writer?.AppendRow(
             ExperimentLogWriter.PerfFileName,
             ParticipantId,
-            ExperimentCsv.Format(CurrentTrialIndex),
+            ExperimentCsv.Format(TrialIndexForLog),
             ExperimentCsv.FormatTimestamp(DateTime.Now),
             ExperimentCsv.Format(TrialElapsedSeconds),
             ExperimentCsv.Format(CurrentVideoTimeSeconds),
@@ -405,7 +410,7 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
 
     public void RecordHeadPose(Vector3 position, Quaternion rotation)
     {
-        if (!trialInProgress)
+        if (!trialInProgress && !tutorialInProgress)
         {
             return;
         }
@@ -413,7 +418,7 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
         writer?.AppendRow(
             ExperimentLogWriter.HeadPoseFileName,
             ParticipantId,
-            ExperimentCsv.Format(CurrentTrialIndex),
+            ExperimentCsv.Format(TrialIndexForLog),
             ExperimentCsv.FormatTimestamp(DateTime.Now),
             ExperimentCsv.Format(TrialElapsedSeconds),
             ExperimentCsv.Format(CurrentVideoTimeSeconds),

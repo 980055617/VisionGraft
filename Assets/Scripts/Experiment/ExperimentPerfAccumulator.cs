@@ -57,6 +57,8 @@ public sealed class ExperimentPerfAccumulator
     private double videoTimeAdvanced;
     private bool hasLastPointer;
     private Vector3 lastPointer;
+    // 前フレームに姿勢を読んだコントローラ（RuntimeXrRayPickReader の HandLeft / HandRight / HandUnknown）。
+    private int lastPointerDeviceCode;
     private float controllerMoved;
     private int triggerFrames;
     private int buttonFrames;
@@ -68,6 +70,7 @@ public sealed class ExperimentPerfAccumulator
         lastVideoFrame = -1;
         lastVideoTime = double.NaN;
         hasLastPointer = false;
+        lastPointerDeviceCode = 0;
     }
 
     // 毎フレーム呼ぶ。窓が閉じたら true を返し、sample にその窓の集計を入れる。
@@ -80,6 +83,7 @@ public sealed class ExperimentPerfAccumulator
         Vector3 pointerPosition,
         bool triggerPressed,
         bool buttonPressed,
+        int pointerDeviceCode,
         out Sample sample)
     {
         sample = default;
@@ -140,11 +144,16 @@ public sealed class ExperimentPerfAccumulator
 
         if (hasPointerPose)
         {
-            if (hasLastPointer)
+            // **手が切り替わったフレームは距離に足さない。**姿勢の読み取り口は「トリガーを引いている方」を
+            // 返すので、左右を押し分けるたびに両手の間隔（数十 cm）が「移動」として積まれ、
+            // ctrl_moved_m が実際の手の動きではなくトリガーを押した回数に比例して膨らんでいた
+            // （2026-09-30 の 5 回目の監査）。
+            if (hasLastPointer && pointerDeviceCode == lastPointerDeviceCode)
             {
                 controllerMoved += Vector3.Distance(lastPointer, pointerPosition);
             }
             lastPointer = pointerPosition;
+            lastPointerDeviceCode = pointerDeviceCode;
             hasLastPointer = true;
         }
         else

@@ -184,6 +184,13 @@ public sealed class ExperimentLogWriter : IDisposable
 
     private readonly HashSet<string> failedFiles = new HashSet<string>();
 
+    // セッション開始時に 1 本でも開けなかったか。開けないまま進むと記録が残らないので、
+    // ExperimentController がパネルで知らせる（2026-09-30 の 5 回目の監査）。
+    public bool HasFailedFiles
+    {
+        get { return failedFiles.Count > 0; }
+    }
+
     // 開けなかったファイルをもう一度だけ試す。試行・練習の切れ目で呼ぶ（ExperimentSession）。
     // 一時的な失敗（ストレージの一瞬の不調）でセッションの残り全部を失わないため。失敗が続くなら
     // 試行ごとに 1 回ずつエラーが出るだけで、以前のように 15 Hz で例外が続くことはない。

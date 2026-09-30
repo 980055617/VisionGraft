@@ -24,6 +24,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private bool grabTriggerNeedsRelease;
     // 掴むために動画を止めたか。離したときに戻すため（Model パネルの modelPickerWasPlayingBeforeOpen と同じ作り）。
     private bool grabRotatePausedVideo;
+    // 掴み始めた手（RuntimeXrRayPickReader.HandLeft / HandRight）。掴んでいる間はこの手だけを読む。
+    private int grabRotateHandCode;
     private float grabRotateLoggedAt;
     private float grabRotateStartedAt;
     private string grabRotateEndReason = "";
@@ -76,8 +78,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // 掴んでいる間は掴んだ手だけを読む。指定しないと「トリガーを引いている方」を返す実装なので、
+        // 掴んだまま反対の手のトリガーを引くと基準の姿勢が入れ替わり、その 1 フレームでモデルが
+        // 両手の姿勢差ぶん飛ぶ（2026-09-30 の 5 回目の監査）。
         bool hasPointer = RuntimeXrRayPickReader.TryReadPointerPose(
-            xrInputDevices, out Vector3 pointerLocal, out Quaternion pointerLocalRotation, out bool triggerPressed);
+            xrInputDevices,
+            grabRotateActive ? grabRotateHandCode : RuntimeXrRayPickReader.HandUnknown,
+            out Vector3 pointerLocal,
+            out Quaternion pointerLocalRotation,
+            out bool triggerPressed,
+            out int pointerHandCode);
 
         // **1 フレームの読み取り失敗で離さない。** コントローラの列挙は時々空を返す。
         // 掴んでいる最中に落とすと、実機では「掴んだ瞬間に離れる」ように見える。
@@ -153,7 +163,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (pressedThisFrame && !grabRotateActive)
         {
-            TryBeginGrabRotate(origin, rotation);
+            TryBeginGrabRotate(origin, rotation, pointerHandCode);
             return;
         }
 
@@ -276,7 +286,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private void TryBeginGrabRotate(Vector3 origin, Quaternion rotation)
+    private void TryBeginGrabRotate(Vector3 origin, Quaternion rotation, int beganWithHandCode)
     {
         Vector3 direction = rotation * Vector3.forward;
 
@@ -297,6 +307,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         grabRotateActive = true;
         grabRotateStartedAt = Time.unscaledTime;
+        grabRotateHandCode = beganWithHandCode;
         grabRotateTrackId = trackId;
         grabRotateStartPointerRotation = rotation;
         GetManualRotationForTrack(trackId, out grabRotateStartYaw, out grabRotateStartPitch, out grabRotateStartRoll);
@@ -354,10 +365,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         grabRotateActive = false;
         grabRotateEndReason = reason;
-        PersistManualYaw(grabRotateTrackId);
-        UpdateRuntimeTrackRotationUiState();
 
         GetManualRotationForTrack(grabRotateTrackId, out float yaw, out float pitch, out float roll);
+
+        // **向きが動いていないなら記録も保存もしない。**対象を選ぶつもりでトリガーを一瞬引いただけでも
+        // change_rotation が 1 行出ていたので、「実際に向きを変えた回数」と行数が合わなかった
+        // （2026-09-30 の 5 回目の監査）。閾値は掴みのノイズより大きく、意図した回転より小さい 0.5°。
+        const float GrabRotateNoiseDegrees = 0.5f;
+        if (Mathf.Abs(Mathf.DeltaAngle(grabRotateStartYaw, yaw)) < GrabRotateNoiseDegrees &&
+            Mathf.Abs(Mathf.DeltaAngle(grabRotateStartPitch, pitch)) < GrabRotateNoiseDegrees &&
+            Mathf.Abs(Mathf.DeltaAngle(grabRotateStartRoll, roll)) < GrabRotateNoiseDegrees)
+        {
+            Debug.Log($"[GRAB] 離した track={grabRotateTrackId}（向きは変わらず。記録しない） 理由={grabRotateEndReason}");
+            ResumeVideoAfterGrabRotate();
+            return;
+        }
+
+        PersistManualYaw(grabRotateTrackId);
+        UpdateRuntimeTrackRotationUiState();
         Debug.Log(
             $"[GRAB] 離した track={grabRotateTrackId} yaw={yaw:F1} pitch={pitch:F1} roll={roll:F1} " +
             $"理由={grabRotateEndReason} 掴んでいた時間={(Time.unscaledTime - grabRotateStartedAt):F2}秒");
@@ -385,11 +410,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // **自由視聴では戻さない。**掴んで回すのは「あるフレームで向きを決めて手動キーを置く」ための操作で、
+        // 離すたびに動画が進むと次に掴んだときは別のフレームになり、キーが意図しない位置に載る
+        // （2026-09-30 の 5 回目の監査）。戻す必要があるのは被験者実験だけ
+        // （練習 C 1/3 は動画が動いていないとモデルが動かず永久に進まない）。
+        if (!startedAsExperimentTrial)
+        {
+            return;
+        }
+
         // Model パネルを開いている間は戻さない（モデルを選んでいる最中に動き出すと選べない）。
         // 閉じるときに戻る。Settings は動画を止めない作りなので、開いていても戻してよい。
         if (runtimeModelPickerOpen)
         {
             modelPickerWasPlayingBeforeOpen = true;
+            return;
+        }
+
+        // つまみを掴んでいる最中も戻さない（離すときに戻る）。2026-09-30 の 5 回目の監査。
+        if (runtimeProgressDragNotifier != null && runtimeProgressDragNotifier.IsDragging)
+        {
+            runtimeProgressDragWasPlaying = true;
             return;
         }
 

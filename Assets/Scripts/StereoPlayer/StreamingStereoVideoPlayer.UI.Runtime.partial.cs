@@ -281,7 +281,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         ExperimentLog.Operation(
             "change_rotation",
             $"track={trackId} op=delete_key frame={GetCurrentPlaybackFrame()} " +
-            $"yaw={removedYaw} scale={removedScale}");
+            $"yaw={ExperimentCsv.Format(removedYaw)} scale={ExperimentCsv.Format(removedScale)}");
     }
 
 
@@ -370,7 +370,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         string text = enableInteractiveMotion ? "ON" : "OFF";
         if (experimentLockInteractiveMotion)
         {
-            text += " (fixed)";
+            // 空白を入れると "OFF (fixed)" が 182 px になり、180 px の値セルで 2 行に折れて
+            // 2 行目が消える（"OFF" だけになる）。詰めれば 172 px で 1 行（2026-09-30 の 5 回目の監査）。
+            text += "(fixed)";
         }
         UiComponentWriter.ApplyTextContent(runtimeInteractiveMotionValueText, text);
     }
@@ -556,6 +558,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         RuntimePlaybackController.Apply(vp, command);
         UpdatePauseButtonLabel();
+
+        // **止めたものには持ち主を持たせる。** Model パネルを開いている間の編集操作（回転リセット・Del・
+        // 大きさ・キー送り・「表示しない」・対象の切り替え）で止めたぶんは、パネルを閉じるときに戻す。
+        // 以前はこの 7 経路に戻す担当が誰も居らず、被験者が A を押すまで静止画のままになりえた
+        // （2026-09-30 の 5 回目の監査）。掴み（cause=grab）は自前で戻すので触らない。
+        if (runtimeModelPickerOpen && cause != "grab")
+        {
+            modelPickerWasPlayingBeforeOpen = true;
+        }
 
         // **自動で止めたことも記録する。**手動の pause / resume しか残っていなかったので、
         // operations.csv だけでは「動画が止まっていた合計時間」が出せなかった（2026-09-25 の監査 M-4）。
@@ -782,6 +793,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
                 UpdatePauseButtonLabel();
                 ExperimentLog.Operation("resume_auto", "cause=seek_drag");
+                // 再生に戻したら編集パネルは畳む（2026-08-28 の規則）。ここだけ抜けていて、
+                // Model パネルが開いたまま動画が進んだ（2026-09-30 の 5 回目の監査）。
+                CloseEditPanelsForResume();
             }
         }
     }
@@ -938,10 +952,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             ReleaseRandomMotionVideoPauseOwnership("manual_resume");
         }
 
-        // 掴みで止めたぶんも同じ。被験者が自分で触った時点で再生状態の持ち主は被験者になる。
+        // 掴み・つまみで止めたぶんも同じ。被験者が自分で触った時点で再生状態の持ち主は被験者になる。
         // 手放さないと「掴んで止める → A で戻す → A で止める → トリガーを離す」で、最後の停止が
         // 勝手に解けた（2026-09-29 の 4 回目の監査。自分で入れた戻し処理の穴）。
+        // **つまみ側も同じ**（2026-09-30 の 5 回目の監査）: トリガーでつまみを掴んだまま親指で A を
+        // 押す操作は片手でできるので、単眼・ステレオでも起きる。Model パネルの旗は
+        // CloseEditPanelsForResume が閉じるときに消費するので触らない。
         grabRotatePausedVideo = false;
+        runtimeProgressDragWasPlaying = false;
 
         // 再生に戻したら編集用のパネルは畳む。モデル変更も向き調整も
         // 一時停止して行う操作なので、再生中に開いたままだと視界を塞ぐだけ
@@ -954,6 +972,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         UpdatePauseButtonLabel();
     }
 
+
+
+    // 試行・練習を閉じるときに ExperimentController が呼ぶ。開いたままのパネルと掴みを閉じて、
+    // `panel_open` / `pause_auto` に対の行を出させる。呼ばないと、パネルを開いたまま「視聴を終了」を
+    // 押した試行の記録が「最後まで開きっぱなし・止まりっぱなし」に見えた（2026-09-30 の 5 回目の監査）。
+    // 動画はアンロードまでの 1 秒ほど再生に戻るが、モーションの停止（StopAllInteractiveMotionForExperimentEnd）
+    // でも同じことが起きるので新しい事象ではない。
+    public void CloseRuntimePanelsForExperimentEnd()
+    {
+        // 沈静待ちの screen_dist を先に書き切る（Sink が外れる前に）。
+        FlushPendingExperimentScreenDistLog(true);
+        EndGrabRotate("試行の終わり");
+        // つまみを掴んだままシーンが壊れるときに、解体中の OnDisable が再生を戻さないようにする。
+        runtimeProgressDragWasPlaying = false;
+        CloseEditPanelsForResume();
+    }
 
 
     private void CloseEditPanelsForResume()

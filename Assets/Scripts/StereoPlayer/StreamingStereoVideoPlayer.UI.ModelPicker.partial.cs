@@ -503,6 +503,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // Random モーションが動画を止めている最中なら戻さない。戻すとモーション中に動画が動き、
         // 「モーション中は動画が止まる」という第 3 条件の前提が破れる（2026-09-29 の監査）。
         // その場合はモーションの終わりに代わりに戻す。
+        // つまみを掴んでいる最中なら戻さない（スクラブしている裏で動画が走り出す）。離すときに戻る
+        // （2026-09-30 の 5 回目の監査。モーション側 InteractiveMotion の預け方と揃えた）。
+        if (modelPickerWasPlayingBeforeOpen && vp != null && !vp.isPlaying &&
+            runtimeProgressDragNotifier != null && runtimeProgressDragNotifier.IsDragging)
+        {
+            runtimeProgressDragWasPlaying = true;
+            modelPickerWasPlayingBeforeOpen = false;
+        }
+
         if (modelPickerWasPlayingBeforeOpen && vp != null && !vp.isPlaying && !TryDeferVideoResumeToRandomMotionEnd())
         {
             RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);

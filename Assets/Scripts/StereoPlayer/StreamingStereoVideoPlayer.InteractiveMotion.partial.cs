@@ -40,6 +40,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public byte lastCategoryId;
 
         public float nextTriggerTime;
+        // 直前の tick で動画が止まっていたか（再開直後の猶予に使う）。
+        public bool wasPausedLastTick;
         public float phaseStartTime;
         public float phaseDuration;
         public float handoffStartTime;
@@ -218,7 +220,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             RuntimeClock.TickContext paused = GetRuntimeTickContext();
             state.nextTriggerTime += paused.deltaTime;
+            state.wasPausedLastTick = true;
             return;
+        }
+
+        // 止まっている間に残り時間が 0 近くまで来ていると、戻した直後に発火して「戻したらすぐまた止まる」
+        // になる。切り上げ（最短間隔まで飛ばす）は分布を歪めるので、再開直後だけ短い猶予を入れる
+        // （2026-09-30 の 5 回目の監査）。
+        if (state.wasPausedLastTick)
+        {
+            state.wasPausedLastTick = false;
+            RuntimeClock.TickContext resumed = GetRuntimeTickContext();
+            float earliest = resumed.now + ResumeGraceSeconds;
+            if (state.nextTriggerTime < earliest)
+            {
+                state.nextTriggerTime = earliest;
+            }
         }
 
         RuntimeClock.TickContext tick = GetRuntimeTickContext();
@@ -258,6 +275,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
         }
     }
+
+    // 一時停止から戻った直後に発火させない猶予（秒）。
+    private const float ResumeGraceSeconds = 2f;
 
     private float RandomInteractiveInterval()
     {
@@ -450,13 +470,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         StopAllInteractiveMotion();
     }
 
+    // **「モデルの動きが終わった」を必ず 1 行残す。**以前は動画を止めて戻したときの video_pause_end しか
+    // 無く、被験者が先に A で止めていた場合（already_paused=1）や途中で止めた場合は終わりが記録されなかった。
+    // 練習の「1 回動くまで見ていてください」もこの行で完了を判定する（2026-09-29 の 4 回目の監査）。
+    // source: random（ランダム発火）か system（frame-out 起因）。
+    private void LogInteractiveMotionEnd(uint trackId, string reason, string source)
+    {
+        ExperimentLog.Interaction(trackId, "motion_end", $"reason={reason} source={source}");
+    }
+
     // reason: "completed"（動きが最後まで進んだ）か "stopped"（Motion OFF・非表示・差し替え・track 不在・試行終了）。
     private void EndRandomInteractiveMotionVideoPause(uint trackId, string reason = "completed")
     {
-        // **「モデルの動きが終わった」を必ず 1 行残す。**以前は動画を止めて戻したときの video_pause_end しか
-        // 無く、被験者が先に A で止めていた場合（already_paused=1）や途中で止めた場合は終わりが記録されなかった。
-        // 練習の「1 回動くまで見ていてください」もこの行で完了を判定する（2026-09-29 の 4 回目の監査）。
-        ExperimentLog.Interaction(trackId, "motion_end", $"reason={reason}");
+        LogInteractiveMotionEnd(trackId, reason, "random");
 
         activeRandomInteractiveMotionCount = Mathf.Max(0, activeRandomInteractiveMotionCount - 1);
         if (activeRandomInteractiveMotionCount != 0 || vp == null)
@@ -1280,6 +1306,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (state.triggerSource == InteractiveTriggerSource.Random)
             {
                 EndRandomInteractiveMotionVideoPause(trackId);
+            }
+            else
+            {
+                // frame-out 起因（system_frameout）は動画を止めないので一時停止の後始末は要らないが、
+                // **終わりの行は出す。**出さないと `system_frameout` が対無しで残り、練習 C 1/3 は
+                // これを「動き始めた」と数えるので「動いています」が永久に消えない
+                // （2026-09-30 の 5 回目の監査。現行の再生経路では発火しないが、将来生かしたときに効く）。
+                LogInteractiveMotionEnd(trackId, "completed", "system");
             }
         }
     }

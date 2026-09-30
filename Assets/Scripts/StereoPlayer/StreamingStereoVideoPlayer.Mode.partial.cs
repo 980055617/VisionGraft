@@ -37,7 +37,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        pendingModeSwitchResume = vp.isPlaying;
         pendingModeSwitchTimeSeconds = vp.time;
 
         isNormalMode = normalMode;
@@ -46,6 +45,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             HideAllTrackInstancesAndProxies();
             StopAllInteractiveMotion();
         }
+
+        // **再開の判定は StopAllInteractiveMotion の後に取る。**モーションが動画を止めている最中は
+        // vp.isPlaying が false で、直後の StopAll が再生に戻すので、先に取ると切り替え後に
+        // 止まったままになっていた（2026-09-30 の 5 回目の監査）。被験者実験では Display ボタンを
+        // 作らないので自由視聴だけの経路。
+        pendingModeSwitchResume = vp.isPlaying;
 
         Debug.Log(
             $"[Mode] switch normal={isNormalMode} url={targetUrl} " +

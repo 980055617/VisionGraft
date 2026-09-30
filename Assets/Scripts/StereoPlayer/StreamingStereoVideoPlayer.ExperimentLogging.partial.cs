@@ -115,14 +115,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         experimentScreenDistChangedAt = Time.unscaledTime;
     }
 
-    private void FlushPendingExperimentScreenDistLog()
+    // force: 試行・練習を閉じる直前に呼ぶ。沈静（0.5 秒）を待っている間に試行が終わると、
+    // ExperimentLog.Sink が外れたあとに書こうとして**行が丸ごと捨てられ**、その試行を最終的に何 m で
+    // 見たのかが復元できなかった（2026-09-30 の 5 回目の監査。panel_reanchored と同じ形の穴）。
+    private void FlushPendingExperimentScreenDistLog(bool force = false)
     {
         if (!experimentScreenDistLogPending)
         {
             return;
         }
 
-        if (Time.unscaledTime - experimentScreenDistChangedAt < ExperimentScreenDistLogSettleSeconds)
+        if (!force && Time.unscaledTime - experimentScreenDistChangedAt < ExperimentScreenDistLogSettleSeconds)
         {
             return;
         }

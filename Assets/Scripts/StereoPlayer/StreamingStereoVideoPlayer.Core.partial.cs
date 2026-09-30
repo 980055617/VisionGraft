@@ -106,8 +106,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (w <= 0 || h <= 0)
         {
+            // 画面も UI も作れていない異常系。**ここで「再生が始まった」を立てない。**立てると
+            // ExperimentController が読み込み待ちを抜けてしまい、黒いまま試行が進む。立てなければ
+            // load_timeout で aborted として残り、実験者に「やり直す / 飛ばす」が出る
+            // （2026-09-30 の 5 回目の監査）。
             RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
-            hasPlaybackStarted = true;
             return;
         }
 

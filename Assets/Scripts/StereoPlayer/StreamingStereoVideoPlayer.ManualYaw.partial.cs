@@ -318,30 +318,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return true;
         }
 
-        selectedManualRotationTrackId = -1;
-        EnsureSelectedManualRotationTrack();
-        if (TryGetSelectedManualRotationTrack(out uint ensuredId) &&
-            trackInstances.TryGetValue(ensuredId, out GameObject ensured) &&
-            ensured != null && ensured.activeInHierarchy)
-        {
-            trackId = ensuredId;
-            instance = ensured;
-            return true;
-        }
-
-        foreach (KeyValuePair<uint, GameObject> kv in trackInstances)
-        {
-            if (kv.Value == null || !kv.Value.activeInHierarchy)
-            {
-                continue;
-            }
-
-            trackId = kv.Key;
-            instance = kv.Value;
-            selectedManualRotationTrackId = (int)kv.Key;
-            return true;
-        }
-
+        // **ここで選択中の track を書き換えてはいけない。**ガイドを出すためだけの解決なのに
+        // `selectedManualRotationTrackId` を別の track へ動かしていたので、Model パネルの編集タブで
+        // 「表示しない」にした track を選んでいると、毎フレーム別のモデルへ選択が奪われ、
+        // パネルの表示（回転・大きさ）と、リセット・Del・スライダーが効く対象が食い違った
+        // （2026-09-30 の 5 回目の監査）。**選んだ track のモデルが出ていないならガイドを出さない。**
         return false;
     }
 

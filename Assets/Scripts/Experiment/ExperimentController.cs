@@ -176,6 +176,12 @@ public sealed class ExperimentController : MonoBehaviour
     // 実験者用のボタンで途中終了した練習のブロック（-1 = 無い）。待機画面で「やり直すか飛ばすか」を出す。
     private int tutorialEscapedForBlock = -1;
 
+    // アンケートの案内をどの試行の前で出したか（-1 = まだ）。ブロックの区切りでは待機系の画面が
+    // 2 回以上出る（練習の待機 → 練習 → 待機、練習を飛ばす、途中で終えて戻る、読み込み失敗でやり直す）ので、
+    // 同じ区切りでは最初の 1 回だけ出す。以前は 2 本目以降の毎回と、区切りでは練習の前後に 2 回出ていた
+    // （2026-10-01 ユーザー指摘「3 本見終わってから 1 回」）。
+    private int questionnaireCuedBeforeTrialIndex = -1;
+
     // panel_reanchored の記録は動きが止まってから 1 行（Screen Dist のスライダー中は 3 cm ごとに置き直すので、
     // そのたびに書くと 1 秒に 30 行になる。2026-09-29 の 3 回目の監査）。置き直し自体は即時。
     private bool reanchorLogPending;
@@ -556,6 +562,7 @@ public sealed class ExperimentController : MonoBehaviour
         System.Array.Clear(tutorialDoneForBlock, 0, tutorialDoneForBlock.Length);
         tutorialBlockInProgress = -1;
         tutorialEscapedForBlock = -1;
+        questionnaireCuedBeforeTrialIndex = -1;
         sessionCompleted = false;
         sessionMinimumViewingSeconds = ResolveTrialMinimumViewingSeconds();
 
@@ -627,9 +634,9 @@ public sealed class ExperimentController : MonoBehaviour
             $"参加者 ID: {session.ParticipantId}\n" +
             $"次: {next.DescribeForParticipant(ExperimentPlan.TrialCount)}\n\n" +
             // ログの保存先はここに出さない（被験者が知る必要はない。2026-09-11 指示）。Debug.Log には残る。
-            (session.CurrentTrialIndex >= 0
-                ? "実験者の合図でヘッドセットを外し、\nアンケートに答えてください。\n" +
-                  "戻ったら「この動画を開始」を押してください。"
+            // アンケートの案内はブロックの区切り（3 本見終わった直後）だけ。同じ区切りでは 1 回だけ。
+            (TakeQuestionnaireCue()
+                ? BuildQuestionnaireCue("「この動画を開始」")
                 : "実験者の合図があったら\n「この動画を開始」を押してください。");
 
         List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
@@ -640,6 +647,32 @@ public sealed class ExperimentController : MonoBehaviour
         };
 
         panel.Show("待機中", body, specs);
+    }
+
+    // アンケートの案内を出すか。**3 本（1 ブロック）見終わった直後の最初の待機系の画面で 1 回だけ**
+    // （2026-10-01 ユーザー指示）。出したら覚えるので、同じ区切りで 2 回目以降に呼ぶと false。
+    private bool TakeQuestionnaireCue()
+    {
+        if (session == null || !session.IsQuestionnaireDueBeforeNextTrial)
+        {
+            return false;
+        }
+
+        int nextTrialIndex = session.NextTrial.trialIndex;
+        if (questionnaireCuedBeforeTrialIndex == nextTrialIndex)
+        {
+            return false;
+        }
+
+        questionnaireCuedBeforeTrialIndex = nextTrialIndex;
+        return true;
+    }
+
+    // 待機系の画面に出すアンケートの案内。buttonPhrase は次に押すボタン（「この動画を開始」等）。
+    private static string BuildQuestionnaireCue(string buttonPhrase)
+    {
+        return "実験者の合図でヘッドセットを外し、\nアンケートに答えてください。\n" +
+               $"戻ったら{buttonPhrase}を押してください。";
     }
 
     private void BeginNextTrial()
@@ -1318,11 +1351,13 @@ public sealed class ExperimentController : MonoBehaviour
         phase = Phase.Finished;
         PreparePanel(FullPanelSizeMeters, Vector2.zero, ExperimentPanel.DefaultLayout);
 
+        // 最後のブロック（7〜9 本目）のアンケートはここで案内する。ほかのブロックと同じく
+        // 「3 本見終わってから 1 回」（2026-10-01 ユーザー指示）。
         string body =
             $"参加者 ID: {session.ParticipantId}\n" +
-            $"全 {ExperimentPlan.TrialCount} 本の動画が終わりました。\n" +
-            "お疲れさまでした。\n\n" +
-            "（実験者: 最後のアンケートを回収してください）";
+            $"全 {ExperimentPlan.TrialCount} 本の動画が終わりました。\n\n" +
+            "実験者の合図でヘッドセットを外し、\n最後のアンケートに答えてください。\n\n" +
+            "お疲れさまでした。";
 
         // 次の参加者に移るための戻り道。以前はボタンが無く、アプリの再起動が要った。
         List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
@@ -1416,8 +1451,10 @@ public sealed class ExperimentController : MonoBehaviour
             $"次: 操作の練習 ― {DescribeTutorialPosition()}\n" +
             $"内容: {DescribeTutorialContent(mode)}\n\n" +
             escapedNote +
-            (session.CurrentTrialIndex >= 0
-                ? "アンケートの記入が終わったら、実験者の合図で\n真ん中の「練習を開始」を押してください。"
+            // 2・3 ブロック目の前の練習は、ちょうどブロックを見終えた直後に出る。アンケートの案内はここで 1 回出し、
+            // 練習のあとに出る待機画面では繰り返さない（TakeQuestionnaireCue）。途中で終えて戻ってきたときも出さない。
+            (TakeQuestionnaireCue()
+                ? BuildQuestionnaireCue("真ん中の「練習を開始」")
                 : "実験者の合図があったら\n真ん中の「練習を開始」を押してください。") +
             // 押し方を教えるのは練習 1/4 だが、そこへ入るにはこの画面のボタンを押す必要がある。
             // 最初に押させる画面に押し方が無かった（2026-09-30 の 5 回目の監査）。

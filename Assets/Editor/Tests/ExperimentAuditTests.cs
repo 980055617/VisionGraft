@@ -426,6 +426,65 @@ public class ExperimentSessionCsvTests
     }
 }
 
+public class ExperimentQuestionnaireTimingTests
+{
+    // **アンケートは 3 本（1 ブロック）見終わってから 1 回**（2026-10-01 ユーザー指示）。
+    // 以前は 2 本目以降の毎回、待機画面にアンケートの案内が出ていた。9 本のうち案内が要るのは
+    // 4 本目と 7 本目の前だけ（最後のブロックの分は終了画面で案内する）。
+    [TestCase(ExperimentGroup.A, 1)]
+    [TestCase(ExperimentGroup.B, 4)]
+    public void QuestionnaireIsDueOnlyRightAfterEachBlockOfThree(ExperimentGroup group, int pattern)
+    {
+        ExperimentSession session = new ExperimentSession("P01", group, pattern, null, () => 0d, () => 0f);
+        List<int> dueBeforeTrial = new List<int>();
+        try
+        {
+            for (int i = 0; i < ExperimentPlan.TrialCount; i++)
+            {
+                if (session.IsQuestionnaireDueBeforeNextTrial)
+                {
+                    dueBeforeTrial.Add(session.NextTrial.trialIndex);
+                }
+
+                session.BeginTrial(i, "bundle.svb");
+                session.EndTrial(false);
+            }
+        }
+        finally
+        {
+            ExperimentLog.Sink = null;
+        }
+
+        Assert.That(dueBeforeTrial, Is.EqualTo(new[] { 3, 6 }), "4 本目と 7 本目の前だけ（0 始まりで 3 と 6）");
+        Assert.That(session.HasNextTrial, Is.False);
+        Assert.That(session.IsQuestionnaireDueBeforeNextTrial, Is.False, "最後のブロックの後は終了画面が案内する");
+    }
+
+    // ブロックの最後の動画が読み込みに失敗してやり直すときは、まだブロックを見終えていない。
+    [Test]
+    public void RetryOfTheLastVideoInABlock_DoesNotAskForTheQuestionnaireYet()
+    {
+        ExperimentSession session = new ExperimentSession("P01", ExperimentGroup.A, 1, null, () => 0d, () => 0f);
+        try
+        {
+            session.BeginTrial(0, "bundle.svb");
+            session.EndTrial(false);
+            session.BeginTrial(1, "bundle.svb");
+            session.EndTrial(false);
+            session.BeginTrial(2, "bundle.svb");
+            session.EndTrial(true, "load_timeout");
+            Assert.That(session.IsQuestionnaireDueBeforeNextTrial, Is.True, "3 本目まで来た（失敗でもブロックの区切り）");
+
+            Assert.That(session.RetryCurrentTrial(), Is.True);
+            Assert.That(session.IsQuestionnaireDueBeforeNextTrial, Is.False, "3 本目をやり直すので、まだ区切りではない");
+        }
+        finally
+        {
+            ExperimentLog.Sink = null;
+        }
+    }
+}
+
 public class ExperimentTrialParticipantDescribeTests
 {
     // 被験者が見る表記には動画名も条件名も入らない。

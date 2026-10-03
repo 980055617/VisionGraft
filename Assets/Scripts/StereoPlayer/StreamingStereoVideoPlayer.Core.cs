@@ -260,6 +260,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 詳細は AnimalSmalFkApplier.accumulateSmalParentBend。
     public bool accumulateSmalParentBend = true;
 
+    // SMAL body_pose の平滑の半減期（秒）。詳細は AnimalSmalFkApplier.smalSmoothHalfLifeSec。
+    // 既定 0.12 は従来の定数と同じ（2026-10-02 に検証用に外へ出しただけで挙動は変えていない）。
+    public float smalSmoothHalfLifeSec = 0.12f;
+
     // 向きの切り分け用。詳細は AnimalSmalFkApplier.forceRootYawFix。
     public int forceRootYawFix;
 
@@ -313,6 +317,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 「途中でキャラを替えたら大きさが変わった」の再現用。実機ではピッカーからしか
     // できない操作なので、Editor で同じ経路（RecreateTrackInstanceForModelSelection）を踏む。
     public string batchSwapModelSpec = "";
+    // 検証用（batchmode のみ、2026-10-02）: animal の骨の割り当て（AnimalBoneMappingOverride）を上書きする。
+    // 書式 "<prefab 名に含む文字列>|frontLUpper=LeftShoulder01;frontLLower=front_l_upper;..."（| が無ければ全 animal）。
+    // 空なら何もしない。適用は ApplyBatchAnimalBoneOverride（Playback.partial.cs）。
+    public string batchAnimalBoneOverrideSpec = "";
 
     // バッチ検証専用。設定パネルを開いた状態で始める。
     // パネルの配置は目で見るしか確認できず、実機では VR に入らないと開けない。

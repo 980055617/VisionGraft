@@ -349,8 +349,65 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (instance != null && !ReferenceEquals(instance, before))
         {
             LogExperimentModelAssigned(trackId, categoryId, prefab);
+            ApplyBatchAnimalBoneOverride(instance, categoryId, prefab);
         }
         return instance;
+    }
+
+
+    // 検証用（batchmode のみ）: batchAnimalBoneOverrideSpec の骨の割り当てを新しい animal インスタンスに付ける。
+    // リグのキャッシュ（AnimalPoseApplier.GetOrBuildAnimalRigCache）は最初の姿勢適用で bind を採るので、
+    // それより前（インスタンスを作った直後）でないと効かない。キャッシュは Animator があればその Transform、
+    // 無ければインスタンスの root から GetComponentInChildren で探すので、同じ位置に付ける。
+    private void ApplyBatchAnimalBoneOverride(GameObject instance, byte categoryId, GameObject prefab)
+    {
+        if (!Application.isBatchMode || string.IsNullOrEmpty(batchAnimalBoneOverrideSpec) ||
+            instance == null || !IsCategoryAnimal(categoryId))
+        {
+            return;
+        }
+
+        string spec = batchAnimalBoneOverrideSpec;
+        int bar = spec.IndexOf('|');
+        if (bar >= 0)
+        {
+            string filter = spec.Substring(0, bar);
+            spec = spec.Substring(bar + 1);
+            if (prefab == null || prefab.name.IndexOf(filter, System.StringComparison.Ordinal) < 0)
+            {
+                return;
+            }
+        }
+
+        Animator animator = instance.GetComponentInChildren<Animator>();
+        GameObject host = animator != null ? animator.gameObject : instance;
+        AnimalBoneMappingOverride ov = host.GetComponentInChildren<AnimalBoneMappingOverride>();
+        if (ov == null)
+        {
+            ov = host.AddComponent<AnimalBoneMappingOverride>();
+        }
+
+        foreach (string pair in spec.Split(';'))
+        {
+            int eq = pair.IndexOf('=');
+            if (eq <= 0)
+            {
+                continue;
+            }
+
+            string key = pair.Substring(0, eq).Trim();
+            string value = pair.Substring(eq + 1).Trim();
+            System.Reflection.FieldInfo field = typeof(AnimalBoneMappingOverride).GetField(key);
+            if (field == null || field.FieldType != typeof(string))
+            {
+                Debug.LogWarning($"[BONEOVERRIDE] 不明なキー '{key}'");
+                continue;
+            }
+
+            field.SetValue(ov, value);
+        }
+
+        Debug.Log($"[BONEOVERRIDE] {(prefab != null ? prefab.name : "?")} host={host.name} <- {spec}");
     }
 
 

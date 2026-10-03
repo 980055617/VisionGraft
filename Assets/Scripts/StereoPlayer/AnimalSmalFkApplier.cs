@@ -63,6 +63,10 @@ public sealed partial class AnimalPoseApplier
     // 詳細は Docs/smpl-retargeting.md「Animal の FK は親の姿勢を積んでいない」。
     public bool accumulateSmalParentBend = true;
 
+    // SMAL body_pose の平滑の半減期（秒）。0 で平滑なし。既定 0.12 は 2026-06-16 の雑音対策の値。
+    // プレイヤーの同名フィールドが毎フレーム代入するので、変えるならプレイヤー側を変える。
+    public float smalSmoothHalfLifeSec = 0.12f;
+
     // 向きの切り分け用（2026-09-10）。0 = 自動判定、1 = 常に 180 度、-1 = 常に 0 度。
     // rootYawFix は kpForward との内積で 0/180 を一度だけ決めて固定するので、
     // その判定が正しいかを外から確かめる口が無かった。
@@ -297,10 +301,11 @@ public sealed partial class AnimalPoseApplier
         // (no multi-sample run on the same limb, as a real gait would show). That noise,
         // applied raw, looks like high-frequency jitter rather than motion - visually
         // reads as "frozen/stuck" even though the Transforms are moving a lot. Smooth it.
-        const float SmalSmoothHalfLifeSec = 0.12f;
+        // 半減期はプレイヤーの smalSmoothHalfLifeSec（既定 0.12）が毎フレーム代入する（2026-10-02 に検証用に外へ出した）。
+        float halfLife = smalSmoothHalfLifeSec;
         float dt = Time.deltaTime;
-        float smoothAlpha = SmalSmoothHalfLifeSec > 0f
-            ? 1f - Mathf.Exp(-dt * 0.693147f / SmalSmoothHalfLifeSec)
+        float smoothAlpha = halfLife > 0f
+            ? 1f - Mathf.Exp(-dt * 0.693147f / halfLife)
             : 1f;
 
         Quaternion[] tw = state.tw;
@@ -537,7 +542,7 @@ public sealed partial class AnimalPoseApplier
                 // 平滑化値が **実ボーンには一度も使われていなかった**（git log -S で確認）。
                 // smalLocal を使っていたのは BONE MISSING 分岐（仮想 spine 1-6）だけ。
                 // つまり「生の body_pose はジッタで止まって見えるから平滑化する」という
-                // SmalSmoothHalfLifeSec の宣言コメントの意図が、駆動される 12 関節に
+                // 平滑化（smalSmoothHalfLifeSec、300 行付近の宣言コメント）の意図が、駆動される 12 関節に
                 // 届いていなかった。meta.bin 実測でも 27-30 秒で単発 40-43 度の飛びがある
                 // （中央は 0.2-0.4 度）。Docs/smpl-retargeting.md「Animal の棚卸し」参照。
                 // 標準の運動連鎖では、ボーンの世界方向は R[j] * rest方向。

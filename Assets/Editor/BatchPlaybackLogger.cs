@@ -27,6 +27,13 @@ public static class BatchPlaybackLogger
     // -captureMotion 秒おきにイベント中（Owned / HandoffBlend）の絵を m00000.png… で撮る。
     private const string KeyForceMotionAt = "BatchPlaybackLogger.ForceMotionAt";
     private const string KeyCaptureMotionEvery = "BatchPlaybackLogger.CaptureMotionEvery";
+    // 区間を絞った毎フレーム記録（2026-10-02）: -diagWindows "285-340,895-985" の内側でだけ診断ログを出す。
+    // 全編を -diagEveryN 1 で回すと Debug.Log の負荷で動画が飛ぶ（0→38）ので、見たい区間だけにする。
+    // -noStackTrace true は Debug.Log のスタックトレースを切ってログ 1 行の負荷を下げる。
+    private const string KeyDiagWindows = "BatchPlaybackLogger.DiagWindows";
+    private const string KeyDiagEveryN = "BatchPlaybackLogger.DiagEveryN";
+    private const string KeyDiagMeshParts = "BatchPlaybackLogger.DiagMeshParts";
+    private const string KeyNoStackTrace = "BatchPlaybackLogger.NoStackTrace";
 
     public static void Run()
     {
@@ -81,6 +88,14 @@ public static class BatchPlaybackLogger
         bool? headAim = null;
         int? animalIndex = null;
         int? elseIndex = null;     // Else の既定モデル index（2026-09-18、車の絵を撮るため）
+        // Human の既定モデル index（2026-10-02、モデル間比較用）。-remember false と組で使う
+        // （-remember true だと model_selection.json の track 指定が優先される）。
+        int? humanIndex = null;
+        string diagWindows = null;
+        bool noStackTrace = false;
+        // Animal の動きの切り分け用（2026-10-02）: SMAL の平滑の半減期と、骨の割り当ての上書き。
+        float smalHalfLife = -1f;
+        string animalBoneOverride = null;
         bool? elseFrameOutMotion = null;
         bool? animalFastTrack = null;
         bool? keepScaleContinuousShot = null;
@@ -164,6 +179,12 @@ public static class BatchPlaybackLogger
             if (args[i] == "-headAim" && bool.TryParse(args[i + 1], out bool vHa)) headAim = vHa;
             if (args[i] == "-animalIndex" && int.TryParse(args[i + 1], out int vAi)) animalIndex = vAi;
             if (args[i] == "-elseIndex" && int.TryParse(args[i + 1], out int vEi)) elseIndex = vEi;
+            if (args[i] == "-humanIndex" && int.TryParse(args[i + 1], out int vHi)) humanIndex = vHi;
+            if (args[i] == "-diagWindows") diagWindows = args[i + 1];
+            if (args[i] == "-noStackTrace") bool.TryParse(args[i + 1], out noStackTrace);
+            if (args[i] == "-smalHalfLife") float.TryParse(args[i + 1], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out smalHalfLife);
+            if (args[i] == "-animalBoneOverride") animalBoneOverride = args[i + 1];
             if (args[i] == "-elseFrameOutMotion" && bool.TryParse(args[i + 1], out bool vEm)) elseFrameOutMotion = vEm;
             if (args[i] == "-animalFastTrack" && bool.TryParse(args[i + 1], out bool vAf)) animalFastTrack = vAf;
             if (args[i] == "-keepScaleContinuousShot" && bool.TryParse(args[i + 1], out bool vKs)) keepScaleContinuousShot = vKs;
@@ -310,6 +331,9 @@ public static class BatchPlaybackLogger
                 if (headAim.HasValue) { p.SetHeadAimFromModelForward(headAim.Value); }
                 if (animalIndex.HasValue) { p.selectedAnimalIndex = animalIndex.Value; }
                 if (elseIndex.HasValue) { p.selectedElseIndex = elseIndex.Value; }
+                if (humanIndex.HasValue) { p.selectedHumanIndex = humanIndex.Value; }
+                if (smalHalfLife >= 0f) { p.smalSmoothHalfLifeSec = smalHalfLife; }
+                if (!string.IsNullOrEmpty(animalBoneOverride)) { p.batchAnimalBoneOverrideSpec = animalBoneOverride; }
                 if (elseFrameOutMotion.HasValue) { p.elseFrameOutFollowMotion = elseFrameOutMotion.Value; }
                 if (animalFastTrack.HasValue) { p.depthRefineFastTrackForAnimal = animalFastTrack.Value; }
                 if (keepScaleContinuousShot.HasValue) { p.keepScaleAcrossContinuousShotBoundary = keepScaleContinuousShot.Value; }
@@ -441,29 +465,8 @@ public static class BatchPlaybackLogger
                 if (boneRatioTarget > 0f) { p.projectedBoneRatioTarget = boneRatioTarget; }
                 if (diagLogs)
                 {
-                    int every = Mathf.Max(1, diagEveryN);
-                    p.logPlacementMeasurement = true;
-                    p.logPlacementMeasurementEveryNFrames = every;
-                    // 頂点投影（[MESH2D]）。[PLACE] と同じ間隔でだけ走る。
-                    p.logMeshProjection = true;
-                    p.logMeshProjectionParts = meshParts;
-                    p.logHumanOtherGap = true;
-                    p.logHumanOtherGapEveryNFrames = every;
-                    p.logDepthRefineStages = true;
-                    p.logPenetrationResolve = true;
-                    p.logDepthAffineFit = true;
-                    p.logOtherDepthFollow = true;
-                    p.logBodyAnchorAlign = true;
-                    p.logHorizontalPlacement = true;
-                    p.logElseChainPlacement = true;
-                    p.logAnimalBoneVsKeypoint = true;
-                    p.logOtherDepthFollowEveryNFrames = every;
-                    p.logBoneVsKeypoint = true;
-                    p.logBoneVsKeypointEveryNFrames = every;
-                    // [POSE] = 表示中のモデルの骨を投影して元映像の keypoint と比べる。
-                    // 左右が入れ替わっていないかは、これの dx の符号で判る。
-                    p.logHumanPoseError = true;
-                    p.logHumanPoseErrorEveryNFrames = every;
+                    // -diagWindows があるときは区間に入るまで切っておく（Tick の ApplyDiagWindows が開閉する）。
+                    SetDiagFlags(p, string.IsNullOrEmpty(diagWindows), Mathf.Max(1, diagEveryN), meshParts);
                 }
                 EditorUtility.SetDirty(p);
                 n++;
@@ -471,6 +474,18 @@ public static class BatchPlaybackLogger
             Debug.Log($"[BATCH] boneRatioTarget={boneRatioTarget} diagLogs={diagLogs} applied to {n}");
         }
 
+        SessionState.SetString(KeyDiagWindows, diagLogs ? (diagWindows ?? string.Empty) : string.Empty);
+        SessionState.SetInt(KeyDiagEveryN, Mathf.Max(1, diagEveryN));
+        SessionState.SetBool(KeyDiagMeshParts, meshParts);
+        SessionState.SetBool(KeyNoStackTrace, noStackTrace);
+        if (!string.IsNullOrEmpty(diagWindows) || noStackTrace)
+        {
+            Debug.Log($"[BATCH] diagWindows='{diagWindows}' noStackTrace={noStackTrace} humanIndex={(humanIndex.HasValue ? humanIndex.Value.ToString() : "scene")}");
+        }
+        if (smalHalfLife >= 0f || !string.IsNullOrEmpty(animalBoneOverride))
+        {
+            Debug.Log($"[BATCH] smalHalfLife={(smalHalfLife >= 0f ? smalHalfLife.ToString(System.Globalization.CultureInfo.InvariantCulture) : "scene")} animalBoneOverride='{animalBoneOverride}'");
+        }
         SessionState.SetString(KeyCaptureFrames, captureFrames ?? string.Empty);
         SessionState.SetString(KeyHeadShift, headShift ?? string.Empty);
         SessionState.SetInt(KeyTargetFps, targetFps);
@@ -735,6 +750,65 @@ public static class BatchPlaybackLogger
         UnityEngine.Object.DestroyImmediate(rt);
     }
 
+    // -diagLogs が立てる診断フラグ一式。区間の開閉（ApplyDiagWindows）も同じ集合を切り替える。
+    private static void SetDiagFlags(StreamingStereoVideoPlayer p, bool on, int every, bool meshParts)
+    {
+        p.logPlacementMeasurement = on;
+        p.logPlacementMeasurementEveryNFrames = every;
+        // 頂点投影（[MESH2D]）。[PLACE] と同じ間隔でだけ走る。
+        p.logMeshProjection = on;
+        p.logMeshProjectionParts = on && meshParts;
+        p.logHumanOtherGap = on;
+        p.logHumanOtherGapEveryNFrames = every;
+        p.logDepthRefineStages = on;
+        p.logPenetrationResolve = on;
+        p.logDepthAffineFit = on;
+        p.logOtherDepthFollow = on;
+        p.logBodyAnchorAlign = on;
+        p.logHorizontalPlacement = on;
+        p.logElseChainPlacement = on;
+        p.logAnimalBoneVsKeypoint = on;
+        p.logOtherDepthFollowEveryNFrames = every;
+        p.logBoneVsKeypoint = on;
+        p.logBoneVsKeypointEveryNFrames = every;
+        // [POSE] = 表示中のモデルの骨を投影して元映像の keypoint と比べる。
+        // 左右が入れ替わっていないかは、これの dx の符号で判る。
+        p.logHumanPoseError = on;
+        p.logHumanPoseErrorEveryNFrames = every;
+    }
+
+    private static int diagWindowState = -1;   // -1 未適用 / 0 区間外 / 1 区間内
+
+    // 現在の動画フレームが -diagWindows のどれかに入っているときだけ診断ログを出す。
+    // 状態が変わった tick でだけフラグを書き換える。
+    private static void ApplyDiagWindows()
+    {
+        string spec = SessionState.GetString(KeyDiagWindows, string.Empty);
+        if (string.IsNullOrEmpty(spec)) { return; }
+
+        var vp = UnityEngine.Object.FindFirstObjectByType<UnityEngine.Video.VideoPlayer>();
+        var player = UnityEngine.Object.FindFirstObjectByType<StreamingStereoVideoPlayer>();
+        if (vp == null || player == null) { return; }
+        long cur = vp.frame;
+
+        bool inside = false;
+        foreach (string raw in spec.Split(','))
+        {
+            string part = raw.Trim();
+            int dash = part.IndexOf('-');
+            if (dash <= 0) { continue; }
+            if (!long.TryParse(part.Substring(0, dash), out long from)) { continue; }
+            if (!long.TryParse(part.Substring(dash + 1), out long to)) { continue; }
+            if (cur >= from && cur <= to) { inside = true; break; }
+        }
+
+        int state = inside ? 1 : 0;
+        if (state == diagWindowState) { return; }
+        diagWindowState = state;
+        SetDiagFlags(player, inside, SessionState.GetInt(KeyDiagEveryN, 1), SessionState.GetBool(KeyDiagMeshParts, false));
+        Debug.Log($"[BATCH] diagWindow {(inside ? "open" : "close")} at vp.frame={cur}");
+    }
+
     private static void Tick()
     {
         if (!SessionState.GetBool(KeyRunning, false))
@@ -763,6 +837,11 @@ public static class BatchPlaybackLogger
             AudioListener.volume = 0f;
             EditorUtility.audioMasterMute = true;
             ApplyTargetFrameRate();
+            if (SessionState.GetBool(KeyNoStackTrace, false))
+            {
+                Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.None);
+                Debug.Log("[BATCH] stack traces off for LogType.Log");
+            }
             startedAt = EditorApplication.timeSinceStartup;
             Debug.Log("[BATCH] playmode started at " + startedAt.ToString("F2"));
             return;
@@ -773,6 +852,7 @@ public static class BatchPlaybackLogger
             startedAt = EditorApplication.timeSinceStartup;
         }
 
+        ApplyDiagWindows();
         TryCaptureFrames();
         TryForceMotionAndCaptureMotion();
 

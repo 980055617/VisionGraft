@@ -9,7 +9,9 @@ using UnityEngine;
 // AnimalGesturePose, not a new code path.
 internal static class AnimalGesturePosePlayer
 {
-    internal static void ApplyToRigCache(AnimalGesturePose clip, float normalizedTime, AnimalRigCache cache)
+    // onCanonicalLimbs: 四肢の点を、脚の割り当ての表で付け替えた役の骨ではなく正規名の骨（cache.gestureCanonicalLimbs）に乗せる
+    // （2026-10-04。資産は正規名の骨の局所軸で作ってあるので、役が 1 本上の骨へ移ると同じ回転が別の向きに効く）。
+    internal static void ApplyToRigCache(AnimalGesturePose clip, float normalizedTime, AnimalRigCache cache, bool onCanonicalLimbs = false)
     {
         if (clip == null || clip.pointCurves == null || cache == null)
         {
@@ -24,7 +26,9 @@ internal static class AnimalGesturePosePlayer
                 continue;
             }
 
-            Transform bone = ResolveBone(pointCurve.point, cache);
+            Transform bone = onCanonicalLimbs && cache.gestureCanonicalLimbs.TryGetValue(pointCurve.point, out Transform canonical)
+                ? canonical
+                : ResolveBone(pointCurve.point, cache);
             if (bone == null)
             {
                 continue;

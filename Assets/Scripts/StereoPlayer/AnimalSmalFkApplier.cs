@@ -66,6 +66,10 @@ public sealed partial class AnimalPoseApplier
     // SMAL body_pose の平滑の半減期（秒）。0 で平滑なし。既定 0.12 は 2026-06-16 の雑音対策の値。
     // プレイヤーの同名フィールドが毎フレーム代入するので、変えるならプレイヤー側を変える。
     public float smalSmoothHalfLifeSec = 0.12f;
+    // body_pose（関節 1〜34）だけの平滑の半減期（秒）。負なら smalSmoothHalfLifeSec と同じ（従来）。
+    // 根（worldFk0）は smalSmoothHalfLifeSec のまま。体に対する脚の形の改善は body_pose の平滑だけで決まり
+    // （根の平滑 0 は体全体の向きを 10〜14° 変えるだけ）、2026-10-02 の A/B で確かめた。
+    public float smalBodyPoseSmoothHalfLifeSec = -1f;
 
     // 向きの切り分け用（2026-09-10）。0 = 自動判定、1 = 常に 180 度、-1 = 常に 0 度。
     // rootYawFix は kpForward との内積で 0/180 を一度だけ決めて固定するので、
@@ -131,6 +135,40 @@ public sealed partial class AnimalPoseApplier
     // +0.169 -> -0.113（Labrador）。つまり**頭ボーンの rest 軸は SMAL の頭関節の軸と
     // 体レベルの写像では対応しない**。診断としては重要な否定的結果。
     public bool headUseBodyFrameMap;
+
+    // 既定 OFF（2026-10-04、調査役 AM の B / C / A2）。プレイヤーの同名フィールドが毎フレーム代入する。
+    // bodyFrameNeckHead: 首（15）と頭（16）を、根と同じ「体の写像」で共役する（B）。
+    //   根の写像は鏡映 D_x を含む（globalOrient を行 1 反転で読むので Q = D_y·R·D_x）。SMAL の回転 X は
+    //   mirX(X) = (x, −y, −z, w) にしてから K = SmalDataAxisCorrection·rootYawFix·modelOrientFix で共役する:
+    //     tw = worldFk0 · K⁻¹ · mirX(X) · K · boneBindWorld（X: 首は振り FromTo(s, A·s)、頭は連鎖の回転 A[16] そのもの）
+    //   今の首は jointFrameMap を world の FromTo で作っていて、体の向きで写像が回る（AM の D1）。
+    //   2026-09-11 の headUseBodyFrameMap（悪化）は K に SmalDataAxisCorrection が無く鏡映も無かった（全軸で 89〜90° ずれ、AM の am18）。
+    // bodyFrameKeepFittedHead: B のうち、当てはめ表にあるモデル（00_Dog・Labrador）の頭は今のまま（B′）。
+    // bodyFrameLimbs: 四肢と尾（7, 8, 11, 12, 17, 18, 21, 22, 25, 26）も同じ写像で（C）。今の 2 軸 jointFrameMap は正則な回転で、
+    //   鏡映を含む根と組むと左右が反転して写る（AM の D3）。過去に否定された S 共役（2026-09-10）の再提案なので、採否は絵で。
+    // passiveBoneUnityParent: 受け身の骨（肉球・つま先・尾の先）を SMAL の親関節の tw ではなく実際の Unity の親に付ける（A2）。
+    public bool bodyFrameNeckHead;
+    public bool bodyFrameKeepFittedHead;
+    public bool bodyFrameLimbs;
+    // bodyFrameLimbs のうち前肢（7, 8, 11, 12）と尾（25, 26）だけに掛ける（反論役 C-AM: 後肢の変化は別に判断してもらう）。
+    public bool bodyFrameLimbsFrontAndTailOnly;
+    public bool passiveBoneUnityParent;
+    // 首の中間の骨に首の回転を配る（2026-10-04、反論役 C-DM の U-c、既定 OFF）。ApplySmalNeckChain を参照。
+    public bool smalDriveNeckChain;
+    // 方向の転写（2026-10-04 第 3 ラウンド、調査役 FKQ の (c)、既定 OFF）。駆動する関節の骨の向きを、SMAL の FK の骨の向き
+    // （smalAccum · s）そのものにする。写像は根と同じ物理的な写像（鏡映 D_x → K⁻¹ → worldFk0）で、bind の向きから最小回転で向ける。
+    //   相対転写（今の方式・B・C）は bind の形を保つが、モデルの rest と SMAL の rest のずれ（Labrador で 10〜57°）がそのまま残る。
+    //   (c) はそのずれを捨ててデータの向きに合わせる（元動画の 2D に対する誤差 今 53° / CB 36° / (c) 21°、Labrador・29 区間）。
+    //   代わりに骨を bind から大きく回す（尾で最大 90〜114°）ので、メッシュのねじれは絵で確かめる（09-06 に bind の正規化で否定された帯と同種）。
+    //   首と頭は「当てはめ済みの頭 ＋ 首の中間の骨がある ＋ smalDriveNeckChain」のときだけ（首→頭の局所の折れを鎖で配るため）。
+    // smalAbsoluteDirectionHeadTailOnly: (c) を首・頭（上の条件つき）と尾の付け根・中ほど（25・26）だけに絞る。
+    public bool smalAbsoluteDirection;
+    public bool smalAbsoluteDirectionHeadTailOnly;
+    // F2（2026-10-04、MAP。プレイヤーの animalFrontLimbBodyLateralSecondary が毎フレーム代入）: 前肢 7, 8, 11, 12 の 2 軸写像の副軸を
+    // 首から体の横へ。2 軸の写像は鏡映を持たない回転なので、SMAL の体の左（rest 骨格で左の脚の y > 0）と Unity の体の「右」を組むと
+    // 前後・上下が保たれ、左右は今の首の副軸と同じく鏡映になる（今の約束を変えない）。
+    public bool frontLimbBodyLateralSecondary;
+    private static readonly Vector3 SmalBodyLeft = new Vector3(0f, 1f, 0f);
 
     // jointFrameMap をロールまで拘束した 2 軸版で作る（2026-08-28）。
     // 詳細は jointFrameMap を組んでいるところのコメント。
@@ -277,6 +315,34 @@ public sealed partial class AnimalPoseApplier
         return state;
     }
 
+    // 四肢の上下と尾の付け根・中（AM の C で体の写像に替える関節）。
+    private static bool IsSmalLimbOrTailJoint(int joint)
+    {
+        return joint == 7 || joint == 8 || joint == 11 || joint == 12 ||
+               joint == 17 || joint == 18 || joint == 21 || joint == 22 ||
+               joint == 25 || joint == 26;
+    }
+
+    // smalAbsoluteDirection（FKQ の (c)）を掛ける関節か。首と頭は「当てはめ済みの頭 ＋ 首の中間の骨 ＋ smalDriveNeckChain」が
+    // そろうときだけ（当てはめ表に無い頭は照準が局所 +Z の代用で、(c) にすると bind から 108〜164° 回る、FKQ の a06）。
+    private bool IsSmalAbsoluteDirectionJoint(AnimalRigCache cache, int joint)
+    {
+        bool neckOrHead = joint == 15 || joint == 16;
+        if (smalAbsoluteDirectionHeadTailOnly && !(neckOrHead || joint == 25 || joint == 26))
+        {
+            return false;
+        }
+
+        if (!neckOrHead)
+        {
+            return true;
+        }
+
+        bool hasNeckChain = cache.neck != null && cache.neck.parent != null && cache.neck.parent != cache.spine &&
+                            cache.neck.parent.name.IndexOf("neck", System.StringComparison.OrdinalIgnoreCase) >= 0;
+        return smalDriveNeckChain && hasNeckChain && HasBakedHeadFit(cache);
+    }
+
     private static Quaternion ExtractYawOnly(Quaternion rotation)
     {
         Vector3 forward = Vector3.ProjectOnPlane(rotation * Vector3.forward, Vector3.up);
@@ -306,6 +372,10 @@ public sealed partial class AnimalPoseApplier
         float dt = Time.deltaTime;
         float smoothAlpha = halfLife > 0f
             ? 1f - Mathf.Exp(-dt * 0.693147f / halfLife)
+            : 1f;
+        float bodyHalfLife = smalBodyPoseSmoothHalfLifeSec >= 0f ? smalBodyPoseSmoothHalfLifeSec : halfLife;
+        float bodySmoothAlpha = bodyHalfLife > 0f
+            ? 1f - Mathf.Exp(-dt * 0.693147f / bodyHalfLife)
             : 1f;
 
         Quaternion[] tw = state.tw;
@@ -462,7 +532,7 @@ public sealed partial class AnimalPoseApplier
             }
 
             Quaternion smalLocal = state.smoothingInitialized
-                ? Quaternion.Slerp(state.smoothedLocal[joint], rawLocal, smoothAlpha)
+                ? Quaternion.Slerp(state.smoothedLocal[joint], rawLocal, bodySmoothAlpha)
                 : rawLocal;
             state.smoothedLocal[joint] = smalLocal;
 
@@ -491,7 +561,7 @@ public sealed partial class AnimalPoseApplier
                 // parent's current world rotation (applied earlier in this same topological
                 // walk), so parentTW * bindLoc is the world-space equivalent of setting
                 // bone.localRotation = bindLoc under that parent.
-                tw[joint] = parentTW * bindLoc;
+                tw[joint] = (passiveBoneUnityParent && bone.parent != null ? bone.parent.rotation : parentTW) * bindLoc;
                 TransformWriter.ApplyWorldRotation(bone, tw[joint]);
                 continue;
             }
@@ -595,6 +665,15 @@ public sealed partial class AnimalPoseApplier
                     //  runtime は耳ベースの 2 軸基底を使っており、式が食い違っていた）
                     jointFrameMap = Quaternion.FromToRotation(smalRestDir, unityRestDirWorld);
                 }
+                else if (frontLimbBodyLateralSecondary && (joint == 7 || joint == 8 || joint == 11 || joint == 12)
+                    && cache.bodyRightBindWorld.sqrMagnitude > 0.5f
+                    && TryBuildDirectionBasis(smalRestDir, SmalBodyLeft, out Quaternion smalBasisLat)
+                    && TryBuildDirectionBasis(unityRestDirWorld, worldFk0 * cache.bodyRightBindWorld, out Quaternion unityBasisLat))
+                {
+                    // F2（既定 OFF、上の宣言を参照）。首の副軸は bind の首の向きが後ろ（Puma）・横（Hyena 等）・上腕と反平行（GSD 等）の
+                    // モデルで裏返り・回転・縮退していた。体の横は 52 体すべての前肢関節で |up|² ≥ 0.767（MAP の map04 / map05）。
+                    jointFrameMap = unityBasisLat * Quaternion.Inverse(smalBasisLat);
+                }
                 else if (!useTwoAxisJointFrameMap
                     || !TryGetRollRef(joint, out int rollRefJoint)
                     || !SmalRestDirByJoint.TryGetValue(rollRefJoint, out Vector3 smalRollRefDir)
@@ -659,7 +738,29 @@ public sealed partial class AnimalPoseApplier
                     Debug.Log($"[SMAL-FK-DBG] REST-CHECK model={cache.root?.name} joint={joint} smalRestDir={smalRestDir:F3} unityRestDirWorld={unityRestDirWorld:F3} restDirAngleDeg={restDirAngleDeg:F1} (150+=FromToRotation軸不定の疑いあり)");
                 }
 
-                if (headFitted && TryGetBakedHeadRot(cache, out Quaternion headRotC))
+                bool bodyFrameJoint =
+                    (bodyFrameNeckHead && (joint == 15 || (joint == 16 && !(bodyFrameKeepFittedHead && headFitted)))) ||
+                    (bodyFrameLimbs && IsSmalLimbOrTailJoint(joint) &&
+                     !(bodyFrameLimbsFrontAndTailOnly && (joint == 17 || joint == 18 || joint == 21 || joint == 22)));
+                if (smalAbsoluteDirection && IsSmalAbsoluteDirectionJoint(cache, joint))
+                {
+                    // 既定 OFF（FKQ の (c)）。上の宣言のコメントを参照。
+                    Quaternion kMapAbs = SmalDataAxisCorrection * state.rootYawFix * modelOrientFix;
+                    Vector3 smalDirAbs = smalAccum[joint] * smalRestDir;
+                    Vector3 targetAbs = worldFk0 * (Quaternion.Inverse(kMapAbs) * new Vector3(-smalDirAbs.x, smalDirAbs.y, smalDirAbs.z));
+                    tw[joint] = Quaternion.FromToRotation(unityRestDirWorld, targetAbs.normalized) * restWorldRot;
+                }
+                else if (bodyFrameJoint)
+                {
+                    // 既定 OFF（AM の B / C）。上の宣言のコメントを参照。
+                    Quaternion bodyX = joint == 16
+                        ? smalAccum[joint]
+                        : Quaternion.FromToRotation(smalRestDir, (smalAccum[joint] * smalRestDir).normalized);
+                    Quaternion kMap = SmalDataAxisCorrection * state.rootYawFix * modelOrientFix;
+                    Quaternion mirroredX = new Quaternion(bodyX.x, -bodyX.y, -bodyX.z, bodyX.w);
+                    tw[joint] = worldFk0 * Quaternion.Inverse(kMap) * mirroredX * kMap * boneBindWorld;
+                }
+                else if (headFitted && TryGetBakedHeadRot(cache, out Quaternion headRotC))
                 {
                     // **頭は「globalOrient を含む連鎖 × 定数」で直接置く**（2026-09-11）。
                     //
@@ -697,7 +798,8 @@ public sealed partial class AnimalPoseApplier
                 // direction from, see ADR-0001/0002). Rather than guess with an unvalidated
                 // correction, just carry the rest pose through (no body_pose contribution) -
                 // these bones still follow their parent's sway via parentTW * bindLoc.
-                tw[joint] = parentTW * bindLoc;
+                // passiveBoneUnityParent（既定 OFF、AM の A2）: 実際の Unity の親に付ける（尾の先は SMAL の親と食い違う）。
+                tw[joint] = (passiveBoneUnityParent && bone.parent != null ? bone.parent.rotation : parentTW) * bindLoc;
             }
 
             if (!IsFiniteQ(tw[joint]))
@@ -785,6 +887,12 @@ public sealed partial class AnimalPoseApplier
                 Debug.DrawRay(bone.position, bone.forward * 0.2f, Color.blue, 0f, false);
         }
 
+        // 既定 OFF（2026-10-04、C-DM の U-c）: 首の中間の骨（Neck01・Neck02）に首の回転を配る。
+        if (smalDriveNeckChain)
+        {
+            ApplySmalNeckChain(cache, worldFk0, tw);
+        }
+
         state.smoothingInitialized = true;
 
         if (debugLog)
@@ -824,6 +932,69 @@ public sealed partial class AnimalPoseApplier
     // 主軸と副軸から基底を作る。副軸は主軸に直交化してから使う。
     // 2 つが平行に近いときは基底が定まらないので false を返し、呼び出し側が
     // 従来の FromToRotation にフォールバックする。
+    // 首の鎖（既定 OFF、smalDriveNeckChain）。joint 15 は cache.neck（首の鎖の先端の骨）だけに当たり、その手前の中間の骨
+    // （Labrador・Lynx の Neck01・Neck02）は根に剛体で付いたまま。SMAL の首は肩の付け根から頭までなので、その回転が首の先端の
+    // 短い区間にしか乗らない（Lynx で首の鎖の長さの 16%、C-DM）。neck の剛体からのずれ Δ = tw[15]·(worldFk0·bindRotWorld[neck])⁻¹ を
+    // 中間の骨へ根の側から Δ^(k/(n+1)) で配り（各骨の今の world 回転 = 根に剛体の姿勢 に左から掛ける）、そのあと neck と head を
+    // tw のとおりに書き直す（中間の骨を回すと子の world 回転も動くため）。中間の骨は、名前に "neck" を含む cache.neck の祖先。
+    private static void ApplySmalNeckChain(AnimalRigCache cache, Quaternion worldFk0, Quaternion[] tw)
+    {
+        if (cache.neck == null || !cache.bindRotWorld.TryGetValue(cache.neck, out Quaternion neckBind) || !IsFiniteQ(tw[15]))
+        {
+            return;
+        }
+
+        var chain = new System.Collections.Generic.List<Transform>(4);
+        for (Transform t = cache.neck.parent;
+             t != null && t != cache.spine && t.name.IndexOf("neck", System.StringComparison.OrdinalIgnoreCase) >= 0;
+             t = t.parent)
+        {
+            chain.Add(t);
+        }
+
+        if (chain.Count == 0)
+        {
+            return;
+        }
+
+        chain.Reverse();
+        Quaternion delta = tw[15] * Quaternion.Inverse(worldFk0 * neckBind);
+        // 積の四元数は符号が任意（q と −q は同じ回転）。w < 0 のまま Slerp(identity, Δ, k) に渡すと遠回りして、
+        // 50° のずれが中間の骨で 100° 以上の折れになった（2026-10-04、G15 の初回）。近回りの側へそろえる。
+        if (delta.w < 0f)
+        {
+            delta = new Quaternion(-delta.x, -delta.y, -delta.z, -delta.w);
+        }
+
+        // 基準は「根に剛体の姿勢」= 親（Spine4、誰も書かない）× bind の局所を積んだもの。今の回転を基準にすると、
+        // Animal のリグは毎 tick bind に戻さないので前の tick に掛けた分が積み重なって暴走した（2026-10-04、G16）。
+        var before = new Quaternion[chain.Count];
+        Quaternion rigid = chain[0].parent != null ? chain[0].parent.rotation : Quaternion.identity;
+        for (int i = 0; i < chain.Count; i++)
+        {
+            if (!cache.neckChainBindLocal.TryGetValue(chain[i], out Quaternion bindLocal))
+            {
+                bindLocal = chain[i].localRotation;
+                cache.neckChainBindLocal[chain[i]] = bindLocal;
+            }
+
+            rigid = rigid * bindLocal;
+            before[i] = rigid;
+        }
+
+        for (int i = 0; i < chain.Count; i++)
+        {
+            float w = (i + 1f) / (chain.Count + 1f);
+            TransformWriter.ApplyWorldRotation(chain[i], Quaternion.Slerp(Quaternion.identity, delta, w) * before[i]);
+        }
+
+        TransformWriter.ApplyWorldRotation(cache.neck, tw[15]);
+        if (cache.head != null && IsFiniteQ(tw[16]))
+        {
+            TransformWriter.ApplyWorldRotation(cache.head, tw[16]);
+        }
+    }
+
     private static bool TryBuildDirectionBasis(Vector3 primary, Vector3 secondary, out Quaternion basis)
     {
         basis = Quaternion.identity;

@@ -1697,7 +1697,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             hasSmalPose = hasSmalPose,
             smalPose = smalPose,
             gestureOverlayClip = gestureOverlayClip,
-            gestureOverlayNormalizedTime = gestureOverlayNormalizedTime
+            gestureOverlayNormalizedTime = gestureOverlayNormalizedTime,
+            gestureOnCanonicalLimbs = animalGestureOnCanonicalLimbs
         });
 
         // AnimalPoseApplier re-aligns and low-pass-filters the root from the solved bone

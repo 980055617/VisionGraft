@@ -170,7 +170,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         float zPlacement = screenDist - eps - popout;
         zPlacement = Mathf.Max(zPlacement, Mathf.Max(0.001f, MinDistanceFromHeadMeters));
-        zPlacement = Mathf.Min(zPlacement, screenDist - 0.0001f);
+        // popout は 0 以上なので、この式の値はもともとスクリーンより手前（上限は実質効いていない）。
+        // ⑧・⑨ と同じ上限を使うのは揃えるためだけ（ResolveDepthUpperLimitMeters）。
+        zPlacement = Mathf.Min(zPlacement, ResolveDepthUpperLimitMeters(screenDist));
         return Mathf.Max(0.001f, zPlacement);
     }
 

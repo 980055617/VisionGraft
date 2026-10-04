@@ -13,6 +13,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         var cache = new HumanoidRigCache();
+        cache.avatarName = animator.avatar != null ? animator.avatar.name : null;
 
         // First collect all bone transforms
         foreach (HumanBodyBones boneId in System.Enum.GetValues(typeof(HumanBodyBones)))
@@ -45,6 +46,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 cache.bones[HumanBodyBones.UpperChest] = leftShoulderBone.parent;
             }
         }
+
+        // シルエット相当の投影点は既定姿勢で測る。下の muscles=0 は膝・肘が曲がった姿勢なので、その前に呼ぶ。
+        CaptureHumanoidSilhouetteFrame(animator, cache);
 
         // Sample T-pose using HumanPoseHandler so bindRotLocal reflects true bind rotations,
         // not the animated pose that may be playing at cache-creation time.
@@ -95,9 +99,91 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             ComputeHandBindCorrection(cache, HumanBodyBones.RightLowerArm, HumanBodyBones.RightHand);
         }
 
+        // T ポーズを使うフラグが立っているときだけ採る（既定の経路では avatar.humanDescription を読まない。Quest の IL2CPP で
+        // 読めるかは未確認なので、既定の挙動に関わらないようにする）。
+        if (fkReferenceFromAvatarTPose || handFkFromForearmFrame || footAimAtModelRestDirection)
+        {
+            CaptureAvatarTPoseWorld(animator, cache);
+        }
+
         cache.ready = cache.bones.Count > 0;
         humanoidCaches[animator] = cache;
         return cache;
+    }
+
+    // Avatar の T ポーズの world 回転を採る（2026-10-04、fkReferenceFromAvatarTPose 用）。transform は動かさず、
+    // skeleton の局所回転（SkeletonBone.rotation = T ポーズの局所回転）を Animator の Transform から階層に沿って積む。
+    // skeleton に無い中間の Transform は今の局所回転を使う。muscles=0 の基準（bindRotWorld）との差をログに出す:
+    // 棚卸し（2026-10-04、16 体）では体幹 0°、上腕 48.6°、前腕・手 114.5°、大腿 30°、脛・足・つま先 50°（world）。
+    private static void CaptureAvatarTPoseWorld(Animator animator, HumanoidRigCache cache)
+    {
+        cache.tposeRotWorld.Clear();
+        if (animator == null || animator.avatar == null || !animator.avatar.isHuman)
+        {
+            return;
+        }
+
+        SkeletonBone[] skeleton;
+        try
+        {
+            skeleton = animator.avatar.humanDescription.skeleton;
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogWarning($"[TPOSE] {animator.name}: humanDescription を読めない（muscles=0 のまま）: {ex.Message}");
+            return;
+        }
+        if (skeleton == null || skeleton.Length == 0)
+        {
+            Debug.LogWarning($"[TPOSE] {animator.name}: humanDescription.skeleton が空（muscles=0 のまま）");
+            return;
+        }
+
+        var localTpose = new System.Collections.Generic.Dictionary<string, Quaternion>(skeleton.Length);
+        foreach (SkeletonBone sb in skeleton)
+        {
+            if (!localTpose.ContainsKey(sb.name))
+            {
+                localTpose[sb.name] = sb.rotation;
+            }
+        }
+
+        Transform root = animator.transform;
+        var chain = new System.Collections.Generic.List<Transform>(16);
+        foreach (var kv in cache.bones)
+        {
+            if (kv.Value == null)
+            {
+                continue;
+            }
+
+            chain.Clear();
+            for (Transform t = kv.Value; t != null && t != root; t = t.parent)
+            {
+                chain.Add(t);
+            }
+
+            Quaternion world = root.rotation;
+            for (int i = chain.Count - 1; i >= 0; i--)
+            {
+                world = world * (localTpose.TryGetValue(chain[i].name, out Quaternion local) ? local : chain[i].localRotation);
+            }
+
+            cache.tposeRotWorld[kv.Key] = world;
+        }
+
+        var sbLog = new System.Text.StringBuilder();
+        foreach (HumanBodyBones b in new[] { HumanBodyBones.Hips, HumanBodyBones.Spine, HumanBodyBones.Head, HumanBodyBones.LeftShoulder,
+                     HumanBodyBones.LeftUpperArm, HumanBodyBones.LeftLowerArm, HumanBodyBones.LeftHand,
+                     HumanBodyBones.LeftUpperLeg, HumanBodyBones.LeftLowerLeg, HumanBodyBones.LeftFoot, HumanBodyBones.LeftToes })
+        {
+            if (cache.tposeRotWorld.TryGetValue(b, out Quaternion tp) && cache.bindRotWorld.TryGetValue(b, out Quaternion m0))
+            {
+                sbLog.Append($" {b}={Quaternion.Angle(tp, m0):F1}");
+            }
+        }
+
+        Debug.Log($"[TPOSE] model={animator.name} avatar={animator.avatar.name} bones={cache.tposeRotWorld.Count} angle(tp,m0):{sbLog}");
     }
 
     private static void ComputeHandBindCorrection(HumanoidRigCache cache, HumanBodyBones elbowBoneId, HumanBodyBones handBoneId)

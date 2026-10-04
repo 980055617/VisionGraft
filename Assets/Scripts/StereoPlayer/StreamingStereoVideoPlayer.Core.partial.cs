@@ -54,6 +54,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         UnsubscribeVideoPlayerEvents();
         UnbindRuntimeControls();
         DisposeInteractiveMotion();
+        CloseBoneWorldDump();
     }
 
 

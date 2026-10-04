@@ -121,6 +121,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // （Docs/smpl-retargeting.md 調査ログ 2026-08-07）。
     public bool enableKeypointAimAt = true;
 
+    // AimAt の目標を meta.bin の SMPL（平滑なし）から作る。**既定 OFF（2026-10-03、試作）。**
+    // keypoints3d は生成側で因果 EMA（新しい値の重み 0.2）済みで、速い動き（2 Hz）が 0.54 倍に縮み
+    // 約 0.1 s 遅れる。区間の向きを「関節の world 回転 × bundle から推定した rest 方向」で作る。
+    // AimAt 自体は残す（目標だけ差し替える）。詳細は HumanSmplAim.partial.cs。
+    public bool aimAtTargetFromSmpl = false;
+    // SMPL の回転の時間平滑を、Slerp の EMA（半減期 0.05 s、遅れ約 40 ms）から前後 2 フレームの
+    // 中心 5tap [1,4,6,4,1]/16（遅れ 0）に替える。**既定 OFF。** aimAtTargetFromSmpl と組で使う
+    // （片方だけだと四肢と胴の遅れがずれる）。
+    public bool centeredSmplRotationFilter = false;
+    // 診断: SMPL の目標と keypoint の目標の角度を [SMPLAIM] に出す。
+    public bool logSmplAimTarget = false;
+    [Min(1)] public int logSmplAimTargetEveryNFrames = 1;
+
 
     [Header("Other Proxy")]
     public bool showOtherProxyBoxes = true;
@@ -187,6 +200,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // Humanoid 以外では ⑧・スケール再ロック・投影下端合わせが動かない。
     // 2026-08-26 に、これらが Animal で一度も動いていなかったことが判明したため追加。
     public bool projectGenericRigBones = true;
+    // Generic リグの投影からスキンのウェイトが 0 のボーン（IK ターゲット・attach 等）を外す。
+    // **既定 OFF（2026-10-03、試作）。** 詳細は ProjectionWeights.partial.cs。
+    public bool excludeUnweightedProjectionBones = false;
+
+    // スケールロック・⑧・⑦ が測る投影の上端・下端を、Humanoid ではシルエット相当（眼・Jaw を外し、
+    // 頭頂と足裏の代理点を足す）にする。**既定 OFF（2026-10-03、試作）。** bbox は髪の上〜靴底なので、
+    // 関節で測ると骨格が人より 1.13〜1.20 倍大きく置かれ、その量がリグと姿勢で変わる。
+    // aimAtTargetFromSmpl と同時か後に使う（単独だと、大きさで隠れていた動きの縮みが目立つ）。
+    // 詳細は SilhouetteExtent.partial.cs。
+    public bool useSilhouetteProjectionExtent = false;
+    // 診断: 代理点の距離と、Editor では BakeMesh で測ったメッシュの上端・下端を [SILHOUETTE] に 1 回出す。
+    public bool logSilhouetteExtent = false;
 
     // ⑧ が合わせる相手を「bbox 高」から「見切れを補った推定全高」に変えるか。
     // bbox は可視部分だけなので、見切れフレームで bbox 高に合わせるとモデルが縮む。
@@ -229,6 +254,94 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // OFF なら animal は τ の平滑化だけで動く。human は従来どおり速追従あり。
     public bool depthRefineFastTrackForAnimal = false;
 
+    // Animal の接近を scale でも追う（C4-T）。**既定 OFF（2026-10-03、試作）。10/1 の「⑧・範囲・shot 内の scale は変えない」
+    // を開き直す変更。** 詳細は AnimalScaleTrend.partial.cs。
+    public bool animalScaleFollowApproachTrend = false;
+    // 目標高と 1/tz を平均する窓の半幅（frame）。15 = ±0.5 s。
+    [Min(1)] public int animalScaleTrendWindowFrames = 15;
+    // 不感帯（倍率）。1.25 = ±25% の内側は scale を動かさず ⑧ に任せる。
+    [Min(1.01f)] public float animalScaleTrendDeadZone = 1.25f;
+    // animal の ⑧ の平滑の時定数（秒）。0 以下なら projectedDepthSmoothingSeconds と同じ（従来）。C4-T の試算は 0.6。
+    public float animalDepthRefineSmoothingSeconds = 0f;
+    // スケールのロック時の測り直し（RefineLockedScaleFromProjectedBones）の基準を、bbox 高ではなく
+    // ±animalScaleTrendWindowFrames で平滑した目標高にする（B1、animal のみ）。**既定 OFF。**
+    public bool refineLockedScaleAgainstSmoothedTarget = false;
+    // animal の ⑧ の奥行きの上限（m）。0 以下ならスクリーン距離（従来）。C4-T の試算は 2.0
+    // （動画の犬は自分の視差でスクリーンより奥 1.03〜1.25 m に見えている）。
+    public float animalDepthRefineMaxDepthMeters = 0f;
+    // 診断: C4-T の倍率を [SCALETREND] に出す（倍率が 1 でないフレームと、logPlacementMeasurementEveryNFrames ごと）。
+    public bool logAnimalScaleTrend = false;
+
+    // 奥行きの上限（スクリーン距離）を外す。**既定 OFF（2026-10-03、試作、ユーザー指示）。**
+    // 上限は 3 月の設計（モデルをスクリーンの手前に飛び出させる、当時はスクリーンが奥のモデルを隠した）の名残で、
+    // 8/20 にスクリーンを背景描画（ZWrite Off）にしてからは描画上の理由が無い。人が「スクリーンより奥」に写る区間
+    // （bundle_human f240〜899）では ⑧ が深度を上限に貼り付け、モデルが 1 割前後大きく見えていた。
+    // ⑧（人・動物）・⑨（Else の追従）・めり込み解消・最初の配置の 4 か所を同時に外す（片方だけ外すと人とボールがずれる）。
+    public bool allowDepthBehindScreen = false;
+    // 外したときの安全上限（スクリーン距離の倍数）。⑧ の比のガード（3.0）より奥へは行かない目安。
+    [Min(1f)] public float depthBehindScreenMaxFactor = 3f;
+    // animal の ⑧ の深度の基準を root ではなく骨格（投影に使うボーン）の重心にする。**既定 OFF（2026-10-03、試作）。**
+    // ⑧ は「投影高 ∝ 1/深度」で z × ratio と一手で動かすので、root が体から離れていると狙いを越える
+    // （39_Lynx は root が体の約 0.5 m 奥にあると見ると、上限あり・なしの両方の結果が説明できる）。Humanoid は従来どおり Hips。
+    public bool animalDepthReferenceFromBody = false;
+
+    // 検証用（既定 空 = OFF、2026-10-04）: 姿勢と配置が全部終わった時点の骨の world の位置・回転を、tick ごとに
+    // このファイルへ JSON 1 行で書き出す（BoneWorldDump.partial.cs）。割り当て（SMPL / SMAL → モデルの骨）の再調査で、
+    // オフラインの移植と runtime の骨の向きを突き合わせるため。Debug.Log には出さない（負荷で動画が飛ぶ）。
+    public string boneWorldDumpPath = "";
+    // 書き出す動画フレームの区間（例 "590-660,830-880"）。空なら全フレーム。
+    public string boneWorldDumpWindows = "";
+
+    // 足の AimAt の点を揃える（2026-10-04、調査役 HM の F1、既定 OFF）。FootTip.partial.cs を参照。
+    // footAimAtToeTipProxy = 骨側も「Foot → 足先の代理点」にする（AimAt は残す）、skipFootAimAt = 足だけ AimAt を掛けない。
+    public bool footAimAtToeTipProxy = false;
+    public bool skipFootAimAt = false;
+    // UpperChest の無いモデル（A・B 系 12 体）で、Chest を spine3（joint 9）までの累積で書く（2026-10-04、HM の F2、既定 OFF）。
+    // 今は Chest を joint 6 で書いたきりで、spine3 の曲げ（p95 16°）が胸から上に入らない。
+    public bool chestUsesSpine3WhenNoUpperChest = false;
+    // FK の基準を Avatar の T ポーズにする（HM の F3 (a) / LM の H-1）と、手を前腕の枠と SMPL の手首で FK する
+    // （HM の F3 (e) / LM の H-2）。2026-10-04、既定 OFF。H-1 だけだと手と前腕の相対ねじれが悪化するので組で使う。
+    public bool fkReferenceFromAvatarTPose = false;
+    public bool handFkFromForearmFrame = false;
+    // 30 fps の姿勢を tick の時刻（vp.clockTime）で隣り合う 2 フレームから補間する（2026-10-04、調査役 TM の案 A を
+    // 反論役 C-TM の修正つきで、既定 OFF）。Human は centeredSmplRotationFilter と組のときだけ。PoseInterpolation.partial.cs を参照。
+    public bool interpolatePoseBetweenFrames = false;
+    // 足の AimAt の目標を「SMPL の足首の回転 × そのモデルの T ポーズの足の向き」にする（2026-10-04、反論役 C-HM の案 3、既定 OFF）。
+    // FootTip.partial.cs を参照。T ポーズ（Avatar の skeleton）を使うので、モデルの立ち足（ヒールの形）が保たれる。
+    public bool footAimAtModelRestDirection = false;
+    // HMR2 の向き（crop 基準）を crop の中心への視線の向きへ回す（2026-10-04、調査役 HM の F4、既定 OFF）。ViewRay.partial.cs を参照。
+    public bool alignSmplToViewRay = false;
+    // Animal の視線の向き（2026-10-04、反論役 C-DM、既定 OFF）。meta.bin の SMAL の globalOrient は AniMer の切り抜きカメラ基準
+    // （AniMer の pred_smal_params と 0.00〜0.03° で一致）なので、Human の alignSmplToViewRay と同じ R_ray を掛ける。
+    public bool alignSmalToViewRay = false;
+    // Animal の根（globalOrient）だけを前後 2 フレームの中心 5tap で平滑する（2026-10-04、C-DM、既定 OFF）。根の tick ごとの EMA
+    // （smalSmoothHalfLifeSec 0.12）は走り・跳躍の胴の上下を約半分に削り、0 にすると 1 tick で最大 39° 跳ぶ。-smalHalfLife 0 と組で使う。
+    public bool centeredSmalRootFilter = false;
+    // Animal の body_pose（SMAL 関節 1〜34）も前後 2 フレームの中心 5tap で平滑する（2026-10-04、第 3 ラウンド、既定 OFF）。
+    // bundle は全フレームを先に読めるので、中心の窓でも表示は遅れない。tick ごとの EMA（smalBodyPoseSmoothHalfLifeSec、既定は根と同じ 0.12）は
+    // 走りの脚の振れを削って遅らせ、0 にすると 30 fps の推定の揺れがそのまま出る（R3 の書き出し: 走りで 1 tick の最大 46〜63°）。
+    // smalBodyPoseSmoothHalfLifeSec=0 と組で使う。PoseInterpolation.partial.cs の BuildCenteredSmalBodyPose。
+    public bool centeredSmalBodyPoseFilter = false;
+    // 首の中間の骨（cache.neck と背骨の間の Neck01・Neck02 など）に首の回転を配る（2026-10-04、C-DM）。AnimalSmalFkApplier を参照。
+    // **既定 ON（2026-10-04 第 3 ラウンド、bodyFrameNeckHead と組）。** 猫のうずくまりの頭の下がりがデータ比 33% → 73%。52 体中 44 体に
+    // 首の鎖があり、鎖の骨に脚がぶら下がるリグは無い（反論役 DEC の dec05）。
+    public bool smalDriveNeckChain = true;
+    // 方向の転写（2026-10-04 第 3 ラウンド、調査役 FKQ の (c)、既定 OFF）。SMAL の骨の向きそのものに合わせる（bind の形は捨てる）。
+    // 詳細は AnimalSmalFkApplier の同名フィールド。採否はメッシュのねじれを含めて絵で。
+    public bool smalAbsoluteDirection = false;
+    public bool smalAbsoluteDirectionHeadTailOnly = false;
+
+    // Animal の首・頭・四肢を根と同じ体の写像で共役する（2026-10-04、調査役 AM の B / B′ / C）と、受け身の骨を
+    // 実際の Unity の親に付ける（A2）。詳細は AnimalSmalFkApplier の同名フィールド。
+    // **bodyFrameNeckHead だけ既定 ON（2026-10-04 第 3 ラウンド）。** 伏せの寄り（f338-410）で今の頭（Labrador の当てはめ済みの頭）は鼻が真上を
+    // 向くが、B は頭がおもちゃへ下がる。猫（Lynx）も B で頭が猫と同じく下がる（頭の誤差 39° → 8°）。ただし B は Labrador の鼻を SMAL より常に
+    // 約 36° 上げる（bind の差。座りで 10〜15° 上げすぎ）。ほかは既定 OFF。
+    public bool bodyFrameNeckHead = true;
+    public bool bodyFrameKeepFittedHead = false;
+    public bool bodyFrameLimbs = false;
+    public bool bodyFrameLimbsFrontAndTailOnly = false;
+    public bool passiveBoneUnityParent = false;
+
     // ⑧ の平滑化を tick ではなく**動画フレーム**で刻む。**既定 ON。**
     //
     // OFF（従来）だと表示レートで結果が変わる。実測（2026-09-09）:
@@ -263,6 +376,35 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // SMAL body_pose の平滑の半減期（秒）。詳細は AnimalSmalFkApplier.smalSmoothHalfLifeSec。
     // 既定 0.12 は従来の定数と同じ（2026-10-02 に検証用に外へ出しただけで挙動は変えていない）。
     public float smalSmoothHalfLifeSec = 0.12f;
+    // body_pose（SMAL 関節 1〜34）だけの平滑の半減期（秒）。**負なら smalSmoothHalfLifeSec と同じ（従来）。**
+    // 2026-10-03 の試作: 根（worldFk0、体全体の向き）は 0.12 のまま、脚の形だけ 0.03 にする。
+    // 走りの脚の振れを 0.12 は 3 割前後しか残さない（歩様 2.3〜3.3 Hz）。詳細は AnimalSmalFkApplier.smalBodyPoseSmoothHalfLifeSec。
+    public float smalBodyPoseSmoothHalfLifeSec = -1f;
+    // 36_LabradorDog の脚の骨の割り当てを 1 本上へ直す（LionStyleFull リネームで SMAL の肩・股関節が肘・膝に当たり、
+    // 上腕・大腿が一度も動いていなかった）。**既定 OFF（2026-10-03、試作）。** Labrador だけに効く。
+    // 同じリネームの 39_Lynx に入れると前肢の 2 軸基底が縮退して曲げの平面が約 89° 回るので対象外。
+    public bool fixLabradorLegMapping = false;
+    // 脚の骨の割り当ての修正（2026-10-04、第 3 ラウンドの調査役 MAP）。AnimalLegMappingFix.Table（prefab 名から数字の接頭辞を外した名前で
+    // 完全一致）の組を新しい animal インスタンスに付ける。21 体は脚の骨が 1 本下にずれ、2 体は肉球・つま先の親が食い違っていた。
+    // 27_GermanShepherd は尾の付け根の役が首の手前の骨に当たっていた（DEF-spine のフォールバックの前後の取り違え）ので、尾の行もある（2026-10-04）。
+    // fixLabradorLegMapping はこの表の LabradorDog 行と同じ（表が優先）。**animalFrontLimbBodyLateralSecondary と同時に使う**
+    // （割り当てだけ直すと首の副軸で Moose・Goat・Mink・Fox の前肢上が前後逆、Lynx・Racoon・EuropeanBadger が縮退）。
+    // **既定 ON（2026-10-04、ユーザー「一応入れよう」）。** ゲート（MAP の map_gate_corr、θ = 矢状面の角の相関）で表の 22 体すべて
+    // 予測どおり +0.95 以上（後肢は予測の範囲）、解剖学的な上腕・大腿が動き出すことを確かめた。実験の Labrador・Lynx の後脚は
+    // これで元動画と同じ向きに振れる（修正前は θ −1.00）。
+    public bool fixAnimalLegMapping = true;
+    // 前肢（SMAL 7, 8, 11, 12）の 2 軸 jointFrameMap の副軸を、首（neck → head の bind 方向）から体の横（SMAL の体の左 ↔ Unity の体の右）に
+    // 替える（F2、MAP）。首の bind 方向が後ろ向き（48_Puma: 前肢が前後逆）・横向き（Hyena 等: 26〜74° 回る）・上腕と反平行（GSD 等: 縮退）の
+    // モデルで写像が壊れていた。体の横は 52 体すべての前肢関節で縮退しない。首が健全なモデルでの差は中央 3.3°。
+    // **既定 ON（2026-10-04、fixAnimalLegMapping と同時）。** ゲート: 48_Puma は今の既定で前肢 θ −1.00 → +1.00、27_GermanShepherd 等の
+    // 縮退していた 6 体と Hyena・MountainGoat も +1.00、健全な Labrador は F2 の有無で θ の差 0.00。16_Deer1 は F2 で悪くなったので対象から外した
+    // （AnimalLegMappingFix.FrontLimbBodyLateralExcluded）。
+    public bool animalFrontLimbBodyLateralSecondary = true;
+    // インタラクティブモーションの動物の四肢のジェスチャ（PawRaise・SampleWalk）を、脚の割り当ての表で付け替えた役の骨ではなく
+    // 正規名の骨（front_r_upper など、実験で使っていた骨）に乗せる（2026-10-04、査読役の指摘 A と M1 の絵）。資産は正規名の骨の局所軸で
+    // 作ってあり、表で役が 1 本上の骨（解剖学的な上腕）へ移ると、PawRaise が「肉球を上げる」から「肩で脚を後ろへ振る」になった。
+    // **既定 ON**（fixAnimalLegMapping と組。表に無いモデルは何も変わらない）。OFF にすると表の役の骨に乗る。
+    public bool animalGestureOnCanonicalLimbs = true;
 
     // 向きの切り分け用。詳細は AnimalSmalFkApplier.forceRootYawFix。
     public int forceRootYawFix;
@@ -319,7 +461,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public string batchSwapModelSpec = "";
     // 検証用（batchmode のみ、2026-10-02）: animal の骨の割り当て（AnimalBoneMappingOverride）を上書きする。
     // 書式 "<prefab 名に含む文字列>|frontLUpper=LeftShoulder01;frontLLower=front_l_upper;..."（| が無ければ全 animal）。
-    // 空なら何もしない。適用は ApplyBatchAnimalBoneOverride（Playback.partial.cs）。
+    // 空なら何もしない。適用は ApplyAnimalBoneOverride（Playback.partial.cs）。
     public string batchAnimalBoneOverrideSpec = "";
 
     // バッチ検証専用。設定パネルを開いた状態で始める。

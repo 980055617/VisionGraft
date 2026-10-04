@@ -24,6 +24,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public readonly Quaternion[] smoothedSmplLocal = new Quaternion[22];
         public bool smoothingInitialized = false;
         public int debugFrameCount = 0;
+        // 直前の FK の worldGlobalOrient（smplFk には bodyFk が残る）。SMPL 目標の AimAt が使う（HumanSmplAim.partial.cs）。
+        public Quaternion lastWorldGlobalOrient = Quaternion.identity;
+        public bool hasLastFk;
     }
 
     // meta.bin SMPL cache: populated per-frame during TryReadFrameObjects
@@ -182,6 +185,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 : (SmplSmoothHalfLifeSec > 0f
                     ? 1f - Mathf.Exp(-dt * 0.693147f / SmplSmoothHalfLifeSec)
                     : 1f);
+            // 中心 5tap に替えたときは EMA を重ねない（呼び出し側の BuildCenteredSmplPose が平滑済みの回転を渡す）。
+            if (centeredSmplRotationFilter)
+            {
+                smoothAlpha = 1f;
+            }
 
             Quaternion[] fk = state.smplFk;
             fk[0] = Quaternion.identity;
@@ -299,6 +307,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 if (!cache.bones.TryGetValue(boneId, out Transform bone) || bone == null)
                 {
                     if (debugLog) Debug.Log($"[SMPL-FK-DBG] joint={joint}({boneId}) BONE MISSING smplLocal={smplLocal.eulerAngles} bodyFk={bodyFk[joint].eulerAngles}");
+                    // 既定 OFF（2026-10-04、調査役 HM の F2）: UpperChest の無いモデルでは、Chest は joint 6 で書いたきりで
+                    // spine3（joint 9）の曲げが胸から上に入らない（首・肩は子 joint が world で書くので、位置が spine3 の分だけずれる）。
+                    // Chest を spine3 までの累積で書き直す。子の Neck・Shoulder は 12・13・14 で後から world で書くので順序上は安全。
+                    if (chestUsesSpine3WhenNoUpperChest && joint == 9 &&
+                        cache.bones.TryGetValue(HumanBodyBones.Chest, out Transform chestBone) && chestBone != null &&
+                        TryGetHumanFkBindWorld(cache, HumanBodyBones.Chest, out Quaternion chestBindW))
+                    {
+                        Quaternion chestWorld = ResolveHumanSmplTargetWorldRotation(worldGlobalOrient, bodyFk[joint], chestBindW);
+                        if (IsFinite(chestWorld))
+                        {
+                            TransformWriter.ApplyWorldRotation(chestBone, chestWorld);
+                            appliedAny = true;
+                        }
+                    }
                     continue;
                 }
 
@@ -313,7 +335,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
                 // bindRotWorld が無ければ姿勢を決められないのでこの bone は触らない
                 // （bodyFk は積算済みなので子 joint には影響しない）
-                if (!cache.bindRotWorld.TryGetValue(boneId, out Quaternion bindW) || !IsFinite(bindW))
+                if (!TryGetHumanFkBindWorld(cache, boneId, out Quaternion bindW))
                     continue;
 
                 Quaternion targetWorld = ResolveHumanSmplTargetWorldRotation(worldGlobalOrient, bodyFk[joint], bindW);
@@ -339,6 +361,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
                 appliedAny = true;
             }
+            state.lastWorldGlobalOrient = worldGlobalOrient;
+            state.hasLastFk = true;
             state.smoothingInitialized = true;
             return appliedAny;
         }
@@ -414,6 +438,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (!EnableHumanSmplMotion || cache == null || !cache.ready) return;
         if (!humanSmplRetargetStateByCache.TryGetValue(cache, out HumanSmplRetargetState state) || state == null) return;
         if (!state.smoothingInitialized) return;
+        if (TryApplyHandFromForearmFrame(cache)) return;
 
         ApplyHandFkWithCanonicalParent(cache, state, HumanBodyBones.LeftHand,  smplHandJoint: 20,
             jointsWorld, jointVis, idxElbow: SmplLeftElbow,  idxWrist: SmplLeftWrist);
@@ -431,16 +456,80 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         int idxElbow,
         int idxWrist)
     {
+        if (!TrackedJointPoints.TryGet(jointsWorld, vis, idxElbow, out Vector3 posElbow)) return;
+        if (!TrackedJointPoints.TryGet(jointsWorld, vis, idxWrist, out Vector3 posWrist))  return;
+
+        // canonical 親フレーム: forward = elbow→wrist、up = worldUp 投影。キャラクター固有値を一切含まない。
+        ApplyHandFkWithCanonicalArmDirection(cache, state, handBoneId, smplHandJoint, posWrist - posElbow);
+    }
+
+    // FK の基準（bindW）。fkReferenceFromAvatarTPose（既定 OFF、2026-10-04、HM の F3 (a) / LM の H-1）なら Avatar の T ポーズ、
+    // それ以外は muscles=0（bindRotWorld）。SMPL のゼロ姿勢は T ポーズなので、基準を揃えると FK だけで出る四肢の向きのずれが
+    // 29〜113° → 3〜7°（LM、16 体）になり、AimAt が直す量が減る（AimAt は残す）。体幹は 0° 差なので胴は変わらない。
+    private bool TryGetHumanFkBindWorld(HumanoidRigCache cache, HumanBodyBones boneId, out Quaternion bindW)
+    {
+        if (fkReferenceFromAvatarTPose && cache.tposeRotWorld.TryGetValue(boneId, out bindW) && IsFinite(bindW))
+        {
+            return true;
+        }
+
+        return cache.bindRotWorld.TryGetValue(boneId, out bindW) && IsFinite(bindW);
+    }
+
+    // 既定 OFF（2026-10-04、HM の F3 (e) / LM の H-2）: 手 = AimAt 後の前腕 × 前腕の基準⁻¹ × SMPL の手首の局所回転 × 手の基準。
+    // FK の hand = W·F18·R20·B_hand と forearm = W·F18·B_forearm から W·F18 = forearm·B_forearm⁻¹ を消した式で、
+    // 手は AimAt 後の実際の前腕に付いて動き、SMPL の手首のねじれも入る（canonical 枠は前腕のねじれを捨て、前腕が鉛直に近いと
+    // 1 フレームで最大 178° 回っていた、HM）。基準は TryGetHumanFkBindWorld（T ポーズと組で使う。muscles=0 だと 19.7° / 42° ずれる）。
+    private bool TryApplyHandFromForearmFrame(HumanoidRigCache cache)
+    {
+        // T ポーズが採れていない（Quest で avatar.humanDescription が読めなかった等）ときは使わない。基準が muscles=0 に落ちると
+        // 手が 19.7° / 42° ずれるので、従来の canonical 枠の経路に戻す（2026-10-04、第 3 ラウンド）。
+        if (!handFkFromForearmFrame || cache == null || cache.tposeRotWorld.Count == 0)
+        {
+            return false;
+        }
+
+        if (!humanSmplRetargetStateByCache.TryGetValue(cache, out HumanSmplRetargetState state) || state == null || !state.smoothingInitialized)
+        {
+            return true;
+        }
+
+        ApplyHandFromForearmFrame(cache, state, HumanBodyBones.LeftHand, HumanBodyBones.LeftLowerArm, 20);
+        ApplyHandFromForearmFrame(cache, state, HumanBodyBones.RightHand, HumanBodyBones.RightLowerArm, 21);
+        return true;
+    }
+
+    private void ApplyHandFromForearmFrame(HumanoidRigCache cache, HumanSmplRetargetState state,
+        HumanBodyBones handId, HumanBodyBones forearmId, int smplHandJoint)
+    {
+        if (!cache.bones.TryGetValue(handId, out Transform hand) || hand == null) return;
+        if (!cache.bones.TryGetValue(forearmId, out Transform forearm) || forearm == null) return;
+        if (!TryGetHumanFkBindWorld(cache, forearmId, out Quaternion forearmBind)) return;
+        if (!TryGetHumanFkBindWorld(cache, handId, out Quaternion handBind)) return;
+
+        Quaternion wristLocal = state.smoothedSmplLocal[smplHandJoint];
+        if (!IsFinite(wristLocal)) return;
+
+        Quaternion tw = forearm.rotation * Quaternion.Inverse(forearmBind) * wristLocal * handBind;
+        if (!IsFinite(tw)) return;
+
+        TransformWriter.ApplyWorldRotation(hand, tw);
+    }
+
+    // 前腕の向き（armDir）を受け取って手の world 回転を決める。keypoint 版（上）と SMPL 目標版
+    // （HumanSmplAim.partial.cs の TryApplyHandFkAfterSmplAimAt）で共有する。
+    private static void ApplyHandFkWithCanonicalArmDirection(
+        HumanoidRigCache cache,
+        HumanSmplRetargetState state,
+        HumanBodyBones handBoneId,
+        int smplHandJoint,
+        Vector3 armDir)
+    {
         if (!cache.bones.TryGetValue(handBoneId, out Transform handBone) || handBone == null) return;
 
         Quaternion smplLocal = state.smoothedSmplLocal[smplHandJoint];
         if (!IsFinite(smplLocal)) return;
 
-        if (!TrackedJointPoints.TryGet(jointsWorld, vis, idxElbow, out Vector3 posElbow)) return;
-        if (!TrackedJointPoints.TryGet(jointsWorld, vis, idxWrist, out Vector3 posWrist))  return;
-
-        // canonical 親フレーム: forward = elbow→wrist、up = worldUp 投影。キャラクター固有値を一切含まない。
-        Vector3 armDir = (posWrist - posElbow);
         if (armDir.sqrMagnitude < 0.0001f) return;
         armDir.Normalize();
 
@@ -655,11 +744,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             jointsWorld, vis, SmplRightKnee, SmplRightAnkle);
 
         // Left foot direction: joint 7 (LeftAnkle) → joint 10 (LeftToes)
-        TryApplySmplArmSegment(cache, HumanBodyBones.LeftFoot, HumanBodyBones.LeftToes,
+        // 足は目標と骨で点が違う（目標 = 親指の先、骨 = 指の付け根）ので、足だけ FootTip.partial.cs を通す。
+        TryApplySmplFootSegment(cache, HumanBodyBones.LeftFoot, HumanBodyBones.LeftToes,
             jointsWorld, vis, SmplLeftAnkle, SmplLeftFoot);
 
         // Right foot direction: joint 8 (RightAnkle) → joint 11 (RightToes)
-        TryApplySmplArmSegment(cache, HumanBodyBones.RightFoot, HumanBodyBones.RightToes,
+        TryApplySmplFootSegment(cache, HumanBodyBones.RightFoot, HumanBodyBones.RightToes,
             jointsWorld, vis, SmplRightAnkle, SmplRightFoot);
     }
 
@@ -667,15 +757,31 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         HumanBodyBones proxBone, HumanBodyBones distBone,
         Vector3[] jointsWorld, byte[] vis, int idxA, int idxB)
     {
-        if (!cache.bones.TryGetValue(proxBone, out Transform proxT) || proxT == null) return;
-        if (!cache.bones.TryGetValue(distBone, out Transform distT) || distT == null) return;
         if (!TrackedJointPoints.TryGet(jointsWorld, vis, idxA, out Vector3 posA)) return;
         if (!TrackedJointPoints.TryGet(jointsWorld, vis, idxB, out Vector3 posB)) return;
 
-        Vector3 targetDir = (posB - posA).normalized;
+        ApplyHumanoidSegmentDirection(cache, proxBone, distBone, posB - posA);
+    }
+
+    // proxBone→distBone の向きを targetDir に回す（向きだけ。位置は合わせない）。
+    // keypoint 版（上）と SMPL 目標版（HumanSmplAim.partial.cs）で共有する。
+    private static void ApplyHumanoidSegmentDirection(HumanoidRigCache cache,
+        HumanBodyBones proxBone, HumanBodyBones distBone, Vector3 targetDirection)
+    {
+        if (!cache.bones.TryGetValue(proxBone, out Transform proxT) || proxT == null) return;
+        if (!cache.bones.TryGetValue(distBone, out Transform distT) || distT == null) return;
+
+        RotateSegmentToward(proxT, distT.position - proxT.position, targetDirection);
+    }
+
+    // proxT の今の向き currentDirection を targetDirection へ最小回転で回す（ApplyHumanoidSegmentDirection と、
+    // 骨側の点を子の骨以外にする足の AimAt（FootTip.partial.cs）で共有する）。
+    private static void RotateSegmentToward(Transform proxT, Vector3 currentDirection, Vector3 targetDirection)
+    {
+        Vector3 targetDir = targetDirection.normalized;
         if (targetDir.sqrMagnitude < 0.0001f) return;
 
-        Vector3 currentDir = (distT.position - proxT.position).normalized;
+        Vector3 currentDir = currentDirection.normalized;
         if (currentDir.sqrMagnitude < 0.0001f) return;
 
         float dot = Vector3.Dot(currentDir, targetDir);

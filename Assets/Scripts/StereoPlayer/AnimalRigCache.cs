@@ -42,5 +42,15 @@ internal sealed class AnimalRigCache
     public readonly Dictionary<Transform, Quaternion> bindRotLocal = new Dictionary<Transform, Quaternion>();
     public readonly Dictionary<Transform, Quaternion> bindRotWorld = new Dictionary<Transform, Quaternion>();
     public readonly Dictionary<Transform, Transform> aimChildByBone = new Dictionary<Transform, Transform>();
+    // 首の中間の骨（smalDriveNeckChain、2026-10-04）の bind の局所回転。最初に見たとき（まだ誰も書いていない）に控える。
+    public readonly Dictionary<Transform, Quaternion> neckChainBindLocal = new Dictionary<Transform, Quaternion>();
+    // 捕捉時の world での「体の右」（F2、animalFrontLimbBodyLateralSecondary の副軸の Unity 側。2026-10-04、MAP）。
+    // modelForwardLocal を水平にしたものと modelUpLocal から Cross(up, 前) で作り、root.TransformDirection で捕捉時の root の回転を含める
+    // （boneBindWorld と同じ系。Labrador は捕捉時に root が 1.4° 回っている）。
+    public Vector3 bodyRightBindWorld;
+    // 四肢のジェスチャ（AnimalGesturePosePlayer）を乗せる正規名の骨（front_r_upper など）。脚の割り当ての表（AnimalBoneMappingOverride）で
+    // 役の骨が正規名の骨と違うモデルだけ入る（2026-10-04）。ジェスチャの資産は正規名の骨の局所軸で作ってあり、表で役が 1 本上の骨へ移ると
+    // 同じ局所回転が別の向きに効く（PawRaise が「肉球を上げる」から「肩で脚を後ろへ振る」になった。Labrador・Lynx、M1）。
+    public readonly Dictionary<AnimalGesturePoint, Transform> gestureCanonicalLimbs = new Dictionary<AnimalGesturePoint, Transform>();
     public bool ready;
 }

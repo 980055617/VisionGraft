@@ -171,7 +171,7 @@ public sealed partial class AnimalPoseApplier
             return;
         }
 
-        AnimalGesturePosePlayer.ApplyToRigCache(request.gestureOverlayClip, request.gestureOverlayNormalizedTime, cache);
+        AnimalGesturePosePlayer.ApplyToRigCache(request.gestureOverlayClip, request.gestureOverlayNormalizedTime, cache, request.gestureOnCanonicalLimbs);
     }
 
     // SMAL FK needs confident front/rear and left/right identification of all four leg
@@ -1531,6 +1531,11 @@ public sealed partial class AnimalPoseApplier
         cache.tailMid = ResolveBone(bones, boneOverride?.tailMid, AnimalRigDefinition.TailMid);
         cache.tailTip = ResolveBone(bones, boneOverride?.tailTip, AnimalRigDefinition.TailTip);
         ResolveAnimalModelBasis(root, cache, settings);
+        CaptureBodyRightBindWorld(root, cache);
+        if (boneOverride != null)
+        {
+            CaptureGestureCanonicalLimbs(bones, cache);
+        }
         CaptureBindHeadYaw(cache);
 
         if (cache.spine != null && cache.neck != null)
@@ -1643,6 +1648,61 @@ public sealed partial class AnimalPoseApplier
         Check("tailBase", cache.tailBase);
         Check("tailMid", cache.tailMid);
         Check("tailTip", cache.tailTip);
+    }
+
+    // F2（animalFrontLimbBodyLateralSecondary、2026-10-04、MAP）の副軸の Unity 側 = 捕捉時の world での体の右。
+    // TryApplyAnimalSmalFk の modelOrientFix と同じく前を水平にしてから Cross(up, 前)（Unity の左手系の数値で「右」）。
+    // 脚の割り当ての表で役の骨が変わったモデルについて、四肢のジェスチャを今までどおり正規名の骨に乗せるための控え（2026-10-04）。
+    // 正規名の骨が見つからない、または役の骨と同じなら控えない（表に無いモデルは何も変わらない）。
+    private void CaptureGestureCanonicalLimbs(Transform[] bones, AnimalRigCache cache)
+    {
+        cache.gestureCanonicalLimbs.Clear();
+        AddGestureCanonical(cache, AnimalGesturePoint.FrontLeftPaw, FindAnimalBone(bones, AnimalRigDefinition.LeftFrontPaw), cache.leftFrontPaw);
+        AddGestureCanonical(cache, AnimalGesturePoint.FrontRightPaw, FindAnimalBone(bones, AnimalRigDefinition.RightFrontPaw), cache.rightFrontPaw);
+        AddGestureCanonical(cache, AnimalGesturePoint.RearLeftPaw, FindAnimalBone(bones, AnimalRigDefinition.LeftRearPaw), cache.leftRearPaw);
+        AddGestureCanonical(cache, AnimalGesturePoint.RearRightPaw, FindAnimalBone(bones, AnimalRigDefinition.RightRearPaw), cache.rightRearPaw);
+        AddGestureCanonical(cache, AnimalGesturePoint.FrontLeftUpper, FindAnimalBone(bones, AnimalRigDefinition.LeftFrontUpper), cache.leftFrontUpper);
+        AddGestureCanonical(cache, AnimalGesturePoint.FrontRightUpper, FindAnimalBone(bones, AnimalRigDefinition.RightFrontUpper), cache.rightFrontUpper);
+        AddGestureCanonical(cache, AnimalGesturePoint.RearLeftUpper, FindAnimalBone(bones, AnimalRigDefinition.LeftRearUpper), cache.leftRearUpper);
+        AddGestureCanonical(cache, AnimalGesturePoint.RearRightUpper, FindAnimalBone(bones, AnimalRigDefinition.RightRearUpper), cache.rightRearUpper);
+        AddGestureCanonical(cache, AnimalGesturePoint.FrontLeftLower, FindAnimalBone(bones, AnimalRigDefinition.LeftFrontLower), cache.leftFrontLower);
+        AddGestureCanonical(cache, AnimalGesturePoint.FrontRightLower, FindAnimalBone(bones, AnimalRigDefinition.RightFrontLower), cache.rightFrontLower);
+        AddGestureCanonical(cache, AnimalGesturePoint.RearLeftLower, FindAnimalBone(bones, AnimalRigDefinition.LeftRearLower), cache.leftRearLower);
+        AddGestureCanonical(cache, AnimalGesturePoint.RearRightLower, FindAnimalBone(bones, AnimalRigDefinition.RightRearLower), cache.rightRearLower);
+    }
+
+    private static void AddGestureCanonical(AnimalRigCache cache, AnimalGesturePoint point, Transform canonical, Transform role)
+    {
+        if (canonical != null && canonical != role)
+        {
+            cache.gestureCanonicalLimbs[point] = canonical;
+        }
+    }
+
+    private static void CaptureBodyRightBindWorld(Transform root, AnimalRigCache cache)
+    {
+        cache.bodyRightBindWorld = Vector3.zero;
+        if (root == null)
+        {
+            return;
+        }
+
+        // F2 を使わないモデル（AnimalLegMappingFix.FrontLimbBodyLateralExcluded）は体の右を採らない（零のままなら F2 の分岐に入らず、首の副軸のまま）。
+        ReplaceableModel model = root.GetComponentInParent<ReplaceableModel>();
+        if (model != null && AnimalLegMappingFix.FrontLimbBodyLateralExcluded.Contains(AnimalLegMappingFix.Key(model.sourcePrefabName)))
+        {
+            return;
+        }
+
+        Vector3 fRaw = cache.modelForwardLocal.sqrMagnitude > 0.001f ? cache.modelForwardLocal.normalized : Vector3.back;
+        Vector3 fFlat = new Vector3(fRaw.x, 0f, fRaw.z);
+        Vector3 fLoc = fFlat.sqrMagnitude > 0.001f ? fFlat.normalized : fRaw;
+        Vector3 uLoc = cache.modelUpLocal.sqrMagnitude > 0.001f ? cache.modelUpLocal.normalized : Vector3.up;
+        Vector3 rLoc = Vector3.Cross(uLoc, fLoc);
+        if (rLoc.sqrMagnitude > 1e-6f)
+        {
+            cache.bodyRightBindWorld = root.TransformDirection(rLoc).normalized;
+        }
     }
 
     private static void ResolveAnimalModelBasis(Transform root, AnimalRigCache cache, AnimalPoseSettings settings)

@@ -296,6 +296,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         LogHorizontalPlacementIfEnabled(target, instance, screen, frame);
         LogAnimalBoneVsKeypointIfEnabled(target, instance, screen, frame);
         LogBoneVsKeypointIfEnabled(target, instance, screen, frame);
+        DumpBoneWorldIfEnabled(target, instance, screen, frame);
     }
 
 
@@ -349,44 +350,84 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (instance != null && !ReferenceEquals(instance, before))
         {
             LogExperimentModelAssigned(trackId, categoryId, prefab);
-            ApplyBatchAnimalBoneOverride(instance, categoryId, prefab);
+            ApplyAnimalBoneOverride(instance, categoryId, prefab);
         }
         return instance;
     }
 
 
-    // 検証用（batchmode のみ）: batchAnimalBoneOverrideSpec の骨の割り当てを新しい animal インスタンスに付ける。
+    // 36_LabradorDog の脚の骨を 1 本上へ直す割り当て（fixLabradorLegMapping、2026-10-03）。2026-10-02 の A/B の d・e と同じ。
+    // バッチの指定と違って先頭に "prefab|" を付けない（この経路は絞り込みを外さずに分割するので、付けると最初のキーが
+    // "36_LabradorDog|frontLUpper" になり必ず失敗していた。2026-10-04 の査読で発見。表が先に当たるので既定では効いていなかった）。
+    private const string LabradorLegMappingFixSpec =
+        "frontLUpper=LeftShoulder01;frontLLower=front_l_upper;frontLPaw=front_l_lower;" +
+        "frontRUpper=RightShoulder01;frontRLower=front_r_upper;frontRPaw=front_r_lower;" +
+        "rearLUpper=LeftPelvis;rearLLower=rear_l_upper;rearLPaw=rear_l_lower;rearLToe=rear_l_paw;" +
+        "rearRUpper=RightPelvis;rearRLower=rear_r_upper;rearRPaw=rear_r_lower;rearRToe=rear_r_paw";
+
+    // 新しい animal インスタンスに脚の骨の割り当ての上書き（AnimalBoneMappingOverride）を付ける。優先順位:
+    //   1. バッチの指定（batchmode のみ、-animalBoneOverride "prefab|key=value;..."。filter は部分一致なので完全な prefab 名を渡す）
+    //   2. fixAnimalLegMapping（2026-10-04、MAP の監査）なら AnimalLegMappingFix.Table（prefab 名から数字の接頭辞を外して完全一致）
+    //   3. fixLabradorLegMapping（10/03 の Labrador だけの試作。表の LabradorDog 行と同じ）
+    // **組の骨名が 1 つでも無ければ組ごと使わない**（ResolveBone は上書きがあると正規名に戻らないので、前肢上・後肢上が null になると
+    // IsAnimalRigReadyForSmalFk が偽になり SMAL FK が止まって keypoint 経路に落ちる。見た目が大きく変わる）。
     // リグのキャッシュ（AnimalPoseApplier.GetOrBuildAnimalRigCache）は最初の姿勢適用で bind を採るので、
     // それより前（インスタンスを作った直後）でないと効かない。キャッシュは Animator があればその Transform、
     // 無ければインスタンスの root から GetComponentInChildren で探すので、同じ位置に付ける。
-    private void ApplyBatchAnimalBoneOverride(GameObject instance, byte categoryId, GameObject prefab)
+    private void ApplyAnimalBoneOverride(GameObject instance, byte categoryId, GameObject prefab)
     {
-        if (!Application.isBatchMode || string.IsNullOrEmpty(batchAnimalBoneOverrideSpec) ||
-            instance == null || !IsCategoryAnimal(categoryId))
+        if (instance == null || !IsCategoryAnimal(categoryId))
         {
             return;
         }
 
-        string spec = batchAnimalBoneOverrideSpec;
-        int bar = spec.IndexOf('|');
-        if (bar >= 0)
+        string spec = null;
+        string source = null;
+        if (Application.isBatchMode && !string.IsNullOrEmpty(batchAnimalBoneOverrideSpec))
         {
-            string filter = spec.Substring(0, bar);
-            spec = spec.Substring(bar + 1);
-            if (prefab == null || prefab.name.IndexOf(filter, System.StringComparison.Ordinal) < 0)
+            spec = batchAnimalBoneOverrideSpec;
+            source = "batch";
+            int bar = spec.IndexOf('|');
+            if (bar >= 0)
             {
-                return;
+                string filter = spec.Substring(0, bar);
+                spec = spec.Substring(bar + 1);
+                if (prefab == null || prefab.name.IndexOf(filter, System.StringComparison.Ordinal) < 0)
+                {
+                    spec = null;
+                }
             }
+        }
+
+        if (spec == null && fixAnimalLegMapping && prefab != null &&
+            AnimalLegMappingFix.Table.TryGetValue(AnimalLegMappingFix.Key(prefab.name), out string tableSpec))
+        {
+            spec = tableSpec;
+            source = "table";
+        }
+
+        if (spec == null && fixLabradorLegMapping && prefab != null &&
+            prefab.name.IndexOf("36_LabradorDog", System.StringComparison.Ordinal) >= 0)
+        {
+            spec = LabradorLegMappingFixSpec;
+            source = "labrador";
+        }
+
+        if (string.IsNullOrEmpty(spec))
+        {
+            return;
         }
 
         Animator animator = instance.GetComponentInChildren<Animator>();
         GameObject host = animator != null ? animator.gameObject : instance;
-        AnimalBoneMappingOverride ov = host.GetComponentInChildren<AnimalBoneMappingOverride>();
-        if (ov == null)
+
+        var names = new HashSet<string>(System.StringComparer.Ordinal);
+        foreach (Transform t in host.GetComponentsInChildren<Transform>(true))
         {
-            ov = host.AddComponent<AnimalBoneMappingOverride>();
+            names.Add(t.name);
         }
 
+        var pairs = new List<KeyValuePair<System.Reflection.FieldInfo, string>>();
         foreach (string pair in spec.Split(';'))
         {
             int eq = pair.IndexOf('=');
@@ -398,16 +439,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             string key = pair.Substring(0, eq).Trim();
             string value = pair.Substring(eq + 1).Trim();
             System.Reflection.FieldInfo field = typeof(AnimalBoneMappingOverride).GetField(key);
-            if (field == null || field.FieldType != typeof(string))
+            if (field == null || field.FieldType != typeof(string) || !names.Contains(value))
             {
-                Debug.LogWarning($"[BONEOVERRIDE] 不明なキー '{key}'");
-                continue;
+                Debug.LogWarning($"[BONEOVERRIDE] {(prefab != null ? prefab.name : "?")}: '{key}={value}' が無いので脚の割り当ての修正を使わない（source={source}）");
+                return;
             }
 
-            field.SetValue(ov, value);
+            pairs.Add(new KeyValuePair<System.Reflection.FieldInfo, string>(field, value));
         }
 
-        Debug.Log($"[BONEOVERRIDE] {(prefab != null ? prefab.name : "?")} host={host.name} <- {spec}");
+        AnimalBoneMappingOverride ov = host.GetComponentInChildren<AnimalBoneMappingOverride>();
+        if (ov == null)
+        {
+            ov = host.AddComponent<AnimalBoneMappingOverride>();
+        }
+
+        foreach (var kv in pairs)
+        {
+            kv.Key.SetValue(ov, kv.Value);
+        }
+
+        Debug.Log($"[BONEOVERRIDE] {(prefab != null ? prefab.name : "?")} host={host.name} source={source} <- {spec}");
     }
 
 
@@ -618,11 +670,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float scaleTargetHeightMeters = targetHeightMeters;
         float scaleBBoxH = bboxHAdjusted;
         float scaleAnchorZ = obj.anchorZ;
+        bool lockingNow = lockScale && !lockedModelLocalScaleByTrack.ContainsKey(obj.trackId);
+        int scaleReferenceFrame = GetCurrentPlaybackFrame();
         if (lockScale && TryResolveShotStartScaleReference(obj.trackId, out MetaObj shotStartObj))
         {
             scaleBBoxH = shotStartObj.bboxH;
             scaleAnchorZ = shotStartObj.anchorZ;
             scaleTargetHeightMeters = ComputeTargetHeightMeters(scaleBBoxH, scaleAnchorZ);
+            scaleReferenceFrame = shotBoundaries.GetStartFrame(lastAppliedShotIndex);
+        }
+
+        // C4-T（animalScaleFollowApproachTrend）の倍率の基準フレーム。ロックした回だけ書く。
+        if (lockingNow)
+        {
+            RecordScaleLockReferenceFrame(obj.trackId, scaleReferenceFrame);
         }
 
         Vector3 desiredScale = TrackModelPlacement.ResolveDesiredLocalScale(new TrackModelPlacement.ScaleRequest(
@@ -652,9 +713,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             //
             // ResolveDesiredLocalScale はこの分岐では userScale を掛けていない
             // （掛けているのは焦点距離が取れないフォールバック分岐だけ）ので、二重にならない。
+            // C4-T の倍率も手動倍率と同じくロックの外側で掛ける。⑧ は手動倍率だけを割り戻すので、
+            // この倍率で伸びたぶんは ⑧ が奥へ押し戻さない（接近を scale で追う狙いどおり）。
+            Vector3 lockedOrDesired = lockScale ? GetOrLockModelLocalScale(obj.trackId, desiredScale) : desiredScale;
+            float trendFactor = ResolveAnimalScaleTrendFactor(obj, GetCurrentPlaybackFrame(), lockedOrDesired.x);
             TrackPlacementWriter.ApplyLocalScaleWithGroundAlignment(
                 instance.transform,
-                (lockScale ? GetOrLockModelLocalScale(obj.trackId, desiredScale) : desiredScale) * userScale,
+                lockedOrDesired * (userScale * trendFactor),
                 model != null && model.anchor == null && model.alignToGround,
                 model != null ? model.baseBottomOffsetLocal : 0f);
             Vector3 lossy = instance.transform.lossyScale;
@@ -767,9 +832,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 平滑化を最後に進めた動画フレーム。tick ではなく動画フレームで刻むため。
     private readonly Dictionary<uint, int> smoothedDepthRatioFrameByTrack = new Dictionary<uint, int>();
 
-    private float SmoothProjectedDepthRatio(uint trackId, float ratio, bool allowFastTrack = true)
+    private float SmoothProjectedDepthRatio(uint trackId, float ratio, bool allowFastTrack = true, float tauOverride = -1f)
     {
-        float tau = Mathf.Max(0f, projectedDepthSmoothingSeconds);
+        // tauOverride > 0: animal だけ時定数を替える（animalDepthRefineSmoothingSeconds、2026-10-03）。
+        float tau = tauOverride > 0f ? tauOverride : Mathf.Max(0f, projectedDepthSmoothingSeconds);
         if (tau <= 0.0001f)
         {
             smoothedProjectedDepthRatioByTrack[trackId] = ratio;
@@ -972,6 +1038,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return true;
     }
 
+    // 奥行きの上限。既定はスクリーンのすぐ手前（3 月の設計の名残。8/20 からスクリーンは背景描画なので描画上は不要）。
+    // allowDepthBehindScreen（既定 OFF、2026-10-03）なら screenDist × depthBehindScreenMaxFactor まで許す。
+    // ⑧・⑨・めり込み解消・最初の配置の 4 か所が同じ値を使う（片方だけ外すと人とボールの前後がずれる）。
+    private float ResolveDepthUpperLimitMeters(float screenDist)
+    {
+        return allowDepthBehindScreen
+            ? screenDist * Mathf.Max(1f, depthBehindScreenMaxFactor)
+            : screenDist - 0.0001f;
+    }
+
     // ⑧ が深度を解くときの「体の位置」。
     //
     // Humanoid の Hips を使う。[DEPTH9]（Else を人の骨格基準で置く段）も ref=Hips なので
@@ -991,6 +1067,26 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 cache.bones.TryGetValue(HumanBodyBones.Hips, out Transform hips) && hips != null)
             {
                 return hips.position;
+            }
+        }
+        else if (animalDepthReferenceFromBody)
+        {
+            // 既定 OFF（2026-10-03）: Generic リグは投影に使うボーン（excludeUnweightedProjectionBones なら補助ボーン抜き）の重心。
+            var bones = ResolveProjectionBones(instance, animator);
+            Vector3 sum = Vector3.zero;
+            int n = 0;
+            for (int i = 0; i < bones.Count; i++)
+            {
+                if (bones[i].Value != null)
+                {
+                    sum += bones[i].Value.position;
+                    n++;
+                }
+            }
+
+            if (n > 0)
+            {
+                return sum / n;
             }
         }
 
@@ -1015,7 +1111,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return false;
         }
 
-        if (!TryProjectBonesToEyeHeight(instance, screen, out _, out _, out float projectedH, out _, out _) ||
+        if (!TryProjectBonesToEyeHeight(instance, screen, out _, out _, out float projectedH, out _, out _, useSilhouetteProjectionExtent) ||
             projectedH <= 0.0001f)
         {
             return false;
@@ -1082,18 +1178,28 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 一気に 135mm 動いて跳ねる（2026-08-20 実測、1 フレーム変化 max 22mm → 206mm）。
         ratio = ClampRatioPreservingOtherOrder(obj, camLocal.z, ratio);
         // animal は姿勢で骨格の投影高が急に変わるので、速追従（1 frame で奥行きが飛ぶ）は掛けない（2026-09-18）。
-        bool allowFastTrack = depthRefineFastTrackForAnimal || !IsCategoryAnimal(obj.categoryId);
-        ratio = SmoothProjectedDepthRatio(obj.trackId, ratio, allowFastTrack);
+        bool isAnimal = IsCategoryAnimal(obj.categoryId);
+        bool allowFastTrack = depthRefineFastTrackForAnimal || !isAnimal;
+        float tauOverride = isAnimal && animalDepthRefineSmoothingSeconds > 0f ? animalDepthRefineSmoothingSeconds : -1f;
+        ratio = SmoothProjectedDepthRatio(obj.trackId, ratio, allowFastTrack, tauOverride);
 
         float beforeZ = camLocal.z;
         float ratioZ = camLocal.z * ratio * Mathf.Max(0.1f, projectedDepthScaleK);
         float screenDist = Mathf.Max(0.001f, screenDistanceMeters);
         // スクリーンより手前に収める制約も**体**に掛ける。root に掛けると root が
         // screenDist で止まるだけで、体はそのぶん奥（3.0m 設定で 5.45m）に残る。
+        // allowDepthBehindScreen（既定 OFF）なら全カテゴリでスクリーンより奥を許す。
+        // animal だけ別に上限を指定することもできる（animalDepthRefineMaxDepthMeters、既定 0 = 従来どおりスクリーン）。
+        float upperZ = ResolveDepthUpperLimitMeters(screenDist);
+        if (isAnimal && animalDepthRefineMaxDepthMeters > upperZ)
+        {
+            upperZ = animalDepthRefineMaxDepthMeters;
+        }
+
         float targetZ = Mathf.Clamp(
             ratioZ,
             Mathf.Max(0.001f, MinDistanceFromHeadMeters),
-            screenDist - 0.0001f);
+            upperZ);
 
         if (logDepthRefineStages)
         {
@@ -1151,7 +1257,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        if (!TryProjectBonesToEyeHeight(instance, screen, out _, out _, out float projectedH, out _, out _) ||
+        if (!TryProjectBonesToEyeHeight(instance, screen, out _, out _, out float projectedH, out _, out _, useSilhouetteProjectionExtent) ||
             projectedH <= 0.0001f)
         {
             return;
@@ -1173,7 +1279,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        float ratio = projectedH / bboxH;
+        // B1（refineLockedScaleAgainstSmoothedTarget、animal のみ、既定 OFF）: 基準を ±W frame で平滑した目標高にする。
+        // ロックしたフレームの bbox が姿勢や検出で一時的に伸び縮みしていると、その値が shot の間ずっと残るため。
+        float refineTargetH = bboxH;
+        if (refineLockedScaleAgainstSmoothedTarget && IsCategoryAnimal(obj.categoryId) &&
+            TryGetAnimalTrendSmoothedTargetHeight(obj.trackId, GetCurrentPlaybackFrame(), out float smoothedTargetH))
+        {
+            refineTargetH = smoothedTargetH;
+        }
+
+        float ratio = projectedH / refineTargetH;
 
         // bbox が画面端で切れている、検出が破綻している等でこの範囲を外れたら補正しない。
         // 誤った基準を焼き付けると shot の間ずっと残るため、疑わしいときは何もしない方が安全。
@@ -1373,7 +1488,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 足首が bbox 下端から 15% 浮く（2026-08-07 実測）。
         // ボーンが取れないモデルでは従来どおり AABB 下端にフォールバックする。
         float bottomV = projectedBottomV;
-        if (TryProjectBonesToEyeHeight(instance, screen, out _, out float boneBottomV, out _, out _, out _))
+        if (TryProjectBonesToEyeHeight(instance, screen, out _, out float boneBottomV, out _, out _, out _, useSilhouetteProjectionExtent))
         {
             bottomV = boneBottomV;
         }

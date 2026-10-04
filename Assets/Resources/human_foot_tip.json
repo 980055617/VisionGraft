@@ -1,0 +1,21 @@
+{
+  "note": "toe-tip proxy per avatar, Foot local space (inv2 F1 2026-10-04, baked by foot_tip_bake.cs)",
+  "models": [
+    { "avatar": "npc_hmn_01fAvatar", "model": "00_Female_A_01", "LeftFoot": [-0.28338, -0.02085, -0.011492], "RightFoot": [0.283381, 0.023373, 0.004524] },
+    { "avatar": "npc_hmn_01fAvatar", "model": "01_Female_A_02", "LeftFoot": [-0.28338, -0.02085, -0.011492], "RightFoot": [0.283381, 0.023373, 0.004524] },
+    { "avatar": "npc_hmn_01fAvatar", "model": "02_Female_A_03", "LeftFoot": [-0.28338, -0.02085, -0.011492], "RightFoot": [0.283381, 0.023373, 0.004524] },
+    { "avatar": "npc_hmn_01fAvatar", "model": "03_Female_B_01", "LeftFoot": [-0.28338, -0.02085, -0.011492], "RightFoot": [0.283381, 0.023373, 0.004524] },
+    { "avatar": "npc_hmn_01fAvatar", "model": "04_Female_B_02", "LeftFoot": [-0.28338, -0.02085, -0.011492], "RightFoot": [0.283381, 0.023373, 0.004524] },
+    { "avatar": "npc_hmn_01fAvatar", "model": "05_Female_B_03", "LeftFoot": [-0.28338, -0.02085, -0.011492], "RightFoot": [0.283381, 0.023373, 0.004524] },
+    { "avatar": "characterAvatar", "model": "07_Human_Beta", "LeftFoot": [-0.012131, 0.197794, 0.072565], "RightFoot": [0.012131, 0.197794, 0.072565] },
+    { "avatar": "npc_hmn_01mAvatar", "model": "08_Male_A_01", "LeftFoot": [-0.274634, -0.039009, 0.005242], "RightFoot": [0.274634, 0.035507, -0.016983] },
+    { "avatar": "npc_hmn_01mAvatar", "model": "09_Male_A_02", "LeftFoot": [-0.274634, -0.039009, 0.005242], "RightFoot": [0.274634, 0.035507, -0.016983] },
+    { "avatar": "npc_hmn_01mAvatar", "model": "10_Male_A_03", "LeftFoot": [-0.274634, -0.039009, 0.005242], "RightFoot": [0.274634, 0.035507, -0.016983] },
+    { "avatar": "npc_hmn_01mAvatar", "model": "11_Male_B_01", "LeftFoot": [-0.274634, -0.039009, 0.005242], "RightFoot": [0.274634, 0.035507, -0.016983] },
+    { "avatar": "npc_hmn_01mAvatar", "model": "12_Male_B_02", "LeftFoot": [-0.274634, -0.039009, 0.005242], "RightFoot": [0.274634, 0.035507, -0.016983] },
+    { "avatar": "npc_hmn_01mAvatar", "model": "13_Male_B_03", "LeftFoot": [-0.274634, -0.039009, 0.005242], "RightFoot": [0.274634, 0.035507, -0.016983] },
+    { "avatar": "rp_carla_rigged_001_u3dAvatar", "model": "14_Female_Carla", "LeftFoot": [0.13689, -0.158112, 0.01084], "RightFoot": [-0.129377, 0.157015, -0.005054] },
+    { "avatar": "rp_claudia_rigged_002_u3dAvatar", "model": "15_Female_Claudia", "LeftFoot": [0.144459, -0.153103, 0.003428], "RightFoot": [-0.139101, 0.142764, 0.000029] },
+    { "avatar": "rp_eric_rigged_001_u3dAvatar", "model": "16_Male_Eric", "LeftFoot": [0.115721, -0.233055, -0.000365], "RightFoot": [-0.11272, 0.231813, 0.008208] }
+  ]
+}

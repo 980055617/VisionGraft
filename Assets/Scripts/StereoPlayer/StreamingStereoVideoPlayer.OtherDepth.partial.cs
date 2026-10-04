@@ -99,10 +99,11 @@ public partial class StreamingStereoVideoPlayer
             float targetZ = wantsFront ? frontSurface : backSurface;
 
             float screenDist = Mathf.Max(0.001f, screenDistanceMeters);
+            // 上限は ⑧ と同じ（allowDepthBehindScreen なら人がスクリーンより奥にいてもボールが付いていける）。
             targetZ = Mathf.Clamp(
                 targetZ,
                 Mathf.Max(0.001f, MinDistanceFromHeadMeters),
-                screenDist - 0.0001f);
+                ResolveDepthUpperLimitMeters(screenDist));
 
             if (Mathf.Abs(targetZ - otherCam.z) <= 0.0001f)
             {
@@ -317,10 +318,11 @@ public partial class StreamingStereoVideoPlayer
             // 人だけ固定で p10-p90 幅 79.5 → 126.5mm、球だけ固定で 101.0mm に悪化）。
             targetZ = skeletonCam.z - SmoothOtherDepthGap(other.trackId, skeletonCam.z - targetZ);
 
+            // 上限は ⑧ と同じ（allowDepthBehindScreen なら人に付いてスクリーンより奥へも行ける）。
             targetZ = Mathf.Clamp(
                 targetZ,
                 Mathf.Max(0.001f, MinDistanceFromHeadMeters),
-                screenDist - 0.0001f);
+                ResolveDepthUpperLimitMeters(screenDist));
 
             // ⑨ の適用結果は [PLACE] には出ない（[PLACE] は各 track の ApplyMetaTarget 内で
             // 出力されるが、⑨ は全 track の処理が終わったあとに走るため）。

@@ -1082,6 +1082,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // ボーン配列。詳細は Core.cs の projectGenericRigBones を参照。
     private readonly System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, Transform>>
         projectionBoneBuffer = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, Transform>>(128);
+    private static readonly System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, Transform>>
+        EmptyProjectionBones = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, Transform>>(0);
 
     private System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, Transform>>
         ResolveProjectionBones(GameObject instance, Animator animator)
@@ -1122,7 +1124,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
             for (int b = 0; b < bones.Length; b++)
             {
-                if (bones[b] != null)
+                // excludeUnweightedProjectionBones（既定 OFF、2026-10-03）: メッシュを動かさない補助ボーンを外す。
+                if (bones[b] != null && (!excludeUnweightedProjectionBones || IsSkinWeightedBone(skinned[r], b)))
                 {
                     projectionBoneBuffer.Add(
                         new System.Collections.Generic.KeyValuePair<string, Transform>(bones[b].name, bones[b]));
@@ -1153,6 +1156,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return projectionBoneBuffer;
     }
 
+    // silhouetteExtent: Humanoid のとき眼・Jaw を外し頭頂・足裏の代理点を足して測る（2026-10-03、
+    // useSilhouetteProjectionExtent。スケールロック・⑧・⑦ だけが渡す。[PLACE] と [DEPTH9] は従来の全ボーン）。
     private bool TryProjectBonesToEyeHeight(
         GameObject instance,
         Transform screen,
@@ -1160,7 +1165,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         out float bottomV,
         out float heightPixels,
         out string topBoneName,
-        out string bottomBoneName)
+        out string bottomBoneName,
+        bool silhouetteExtent = false)
     {
         topV = 0f;
         bottomV = 0f;
@@ -1182,9 +1188,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         //
         // 総当たりは TryResolveNearestHumanBone が既に採っている方式。
         Animator animator = instance.GetComponentInChildren<Animator>(true);
+        bool useSilhouette = silhouetteExtent && TryBuildSilhouetteProjectionPoints(animator, silhouettePointBuffer);
         System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, Transform>> boneList =
-            ResolveProjectionBones(instance, animator);
-        if (boneList.Count == 0)
+            useSilhouette ? null : ResolveProjectionBones(instance, animator);
+        if (!useSilhouette && boneList.Count == 0)
         {
             return false;
         }
@@ -1199,6 +1206,35 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float minV = float.MaxValue;
         float maxV = float.MinValue;
         bool hasAny = false;
+        if (useSilhouette)
+        {
+            foreach (var point in silhouettePointBuffer)
+            {
+                Vector3 camPoint = worldToCam * (point.Value - camOrigin);
+                if (!PinholePlacementSpace.TryProjectCamLocalToEyePixel(manifest, camPoint, fx, fy, out Vector2 px))
+                {
+                    continue;
+                }
+
+                if (px.y < minV)
+                {
+                    minV = px.y;
+                    topBoneName = point.Key;
+                }
+
+                if (px.y > maxV)
+                {
+                    maxV = px.y;
+                    bottomBoneName = point.Key;
+                }
+
+                hasAny = true;
+            }
+
+            // 下の全ボーンのループは回さない。
+            boneList = EmptyProjectionBones;
+        }
+
         foreach (var pair in boneList)
         {
             Transform bone = pair.Value;

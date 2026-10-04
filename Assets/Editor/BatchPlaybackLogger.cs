@@ -13,7 +13,7 @@ using UnityEngine;
 //
 // -nographics は付けないこと（VideoPlayer がフレームを進めないと meta が読まれない）。
 // ドメインリロードを越えて状態を持ち越すため SessionState を使う。
-public static class BatchPlaybackLogger
+public static partial class BatchPlaybackLogger
 {
     private const string KeyRunning = "BatchPlaybackLogger.Running";
     private const string KeyDeadline = "BatchPlaybackLogger.Deadline";
@@ -23,10 +23,18 @@ public static class BatchPlaybackLogger
     private const string KeyTargetFps = "BatchPlaybackLogger.TargetFps";
     private const string KeyCaptureDir = "BatchPlaybackLogger.CaptureDir";
     private const string KeyCaptureWidth = "BatchPlaybackLogger.CaptureWidth";
+    // 骨を注視する補助カメラの絵（2026-10-04、-captureViews）。CaptureAuxViews を参照。
+    private const string KeyCaptureViews = "BatchPlaybackLogger.CaptureViews";
+    // 動画の時計をゲーム時間で進める（2026-10-04、-videoGameTime、撮影があるときは既定 ON）。ApplyVideoGameTime を参照。
+    private const string KeyVideoGameTime = "BatchPlaybackLogger.VideoGameTime";
     // インタラクティブモーションの確認用（2026-09-25）: 動画時刻が -forceMotionAt 秒に達したら 1 回だけ強制発火し、
     // -captureMotion 秒おきにイベント中（Owned / HandoffBlend）の絵を m00000.png… で撮る。
     private const string KeyForceMotionAt = "BatchPlaybackLogger.ForceMotionAt";
     private const string KeyCaptureMotionEvery = "BatchPlaybackLogger.CaptureMotionEvery";
+    // -forceMotionKind static|dynamic（既定 dynamic）と -forceStaticClip <名前の一部>（2026-10-04）: 強制発火の種類と、static のときの
+    // 動物のジェスチャ（animalStaticGestureClips を名前で 1 つに絞る。絞らないと 4 つから乱数で選ばれ、新旧で同じジェスチャを比べられない）。
+    private const string KeyForceMotionKind = "BatchPlaybackLogger.ForceMotionKind";
+    private const string KeyForceStaticClip = "BatchPlaybackLogger.ForceStaticClip";
     // 区間を絞った毎フレーム記録（2026-10-02）: -diagWindows "285-340,895-985" の内側でだけ診断ログを出す。
     // 全編を -diagEveryN 1 で回すと Debug.Log の負荷で動画が飛ぶ（0→38）ので、見たい区間だけにする。
     // -noStackTrace true は Debug.Log のスタックトレースを切ってログ 1 行の負荷を下げる。
@@ -96,6 +104,9 @@ public static class BatchPlaybackLogger
         // Animal の動きの切り分け用（2026-10-02）: SMAL の平滑の半減期と、骨の割り当ての上書き。
         float smalHalfLife = -1f;
         string animalBoneOverride = null;
+        // プレイヤーの公開フィールドを名前で上書きする（2026-10-03）。"aimAtTargetFromSmpl=true;centeredSmplRotationFilter=true"。
+        // 既定 OFF の試作フラグを足すたびに引数を増やさずに済む。名前が合わなければ警告を出す（黙って無視しない）。
+        string setFields = null;
         bool? elseFrameOutMotion = null;
         bool? animalFastTrack = null;
         bool? keepScaleContinuousShot = null;
@@ -131,9 +142,19 @@ public static class BatchPlaybackLogger
         bool? motion = null;
         string captureFrames = null;
         float forceMotionAt = -1f;
+        string forceMotionKind = "dynamic";
+        string forceStaticClip = string.Empty;
         float captureMotionEvery = 0f;
         string captureDir = null;
         int captureWidth = 3840;
+        string captureViews = null;
+        bool? videoGameTime = null;
+        // tick ごとの連番撮影（2026-10-04）。BatchPlaybackLogger.Record.cs を参照。
+        string recordFrames = null;
+        string recordDir = null;
+        int recordFps = 72;
+        int recordWidth = 1280;
+        string recordViews = null;
         for (int i = 0; i < args.Length - 1; i++)
         {
             if (args[i] == "-screenDistance") float.TryParse(args[i + 1], out screenDistance);
@@ -185,6 +206,7 @@ public static class BatchPlaybackLogger
             if (args[i] == "-smalHalfLife") float.TryParse(args[i + 1], System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out smalHalfLife);
             if (args[i] == "-animalBoneOverride") animalBoneOverride = args[i + 1];
+            if (args[i] == "-setFields") setFields = args[i + 1];
             if (args[i] == "-elseFrameOutMotion" && bool.TryParse(args[i + 1], out bool vEm)) elseFrameOutMotion = vEm;
             if (args[i] == "-animalFastTrack" && bool.TryParse(args[i + 1], out bool vAf)) animalFastTrack = vAf;
             if (args[i] == "-keepScaleContinuousShot" && bool.TryParse(args[i + 1], out bool vKs)) keepScaleContinuousShot = vKs;
@@ -211,9 +233,18 @@ public static class BatchPlaybackLogger
             if (args[i] == "-motion" && bool.TryParse(args[i + 1], out bool vMo)) motion = vMo;
             if (args[i] == "-captureFrames") captureFrames = args[i + 1];
             if (args[i] == "-forceMotionAt") float.TryParse(args[i + 1], out forceMotionAt);
+            if (args[i] == "-forceMotionKind") forceMotionKind = args[i + 1];
+            if (args[i] == "-forceStaticClip") forceStaticClip = args[i + 1];
             if (args[i] == "-captureMotion") float.TryParse(args[i + 1], out captureMotionEvery);
             if (args[i] == "-captureDir") captureDir = args[i + 1];
             if (args[i] == "-captureWidth") int.TryParse(args[i + 1], out captureWidth);
+            if (args[i] == "-captureViews") captureViews = args[i + 1];
+            if (args[i] == "-videoGameTime" && bool.TryParse(args[i + 1], out bool vVg)) videoGameTime = vVg;
+            if (args[i] == "-recordFrames") recordFrames = args[i + 1];
+            if (args[i] == "-recordDir") recordDir = args[i + 1];
+            if (args[i] == "-recordFps") int.TryParse(args[i + 1], out recordFps);
+            if (args[i] == "-recordWidth") int.TryParse(args[i + 1], out recordWidth);
+            if (args[i] == "-recordViews") recordViews = args[i + 1];
         }
 
         // バックグラウンド実行なので動画の音を鳴らさない（user の常設要望）。
@@ -370,6 +401,16 @@ public static class BatchPlaybackLogger
                 + " motion=" + (motion.HasValue ? motion.Value.ToString() : "scene"));
         }
 
+        if (!string.IsNullOrEmpty(setFields))
+        {
+            foreach (var p in UnityEngine.Object.FindObjectsByType<StreamingStereoVideoPlayer>(
+                         FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                ApplySetFields(p, setFields);
+                EditorUtility.SetDirty(p);
+            }
+        }
+
         // 検証用 bundle を差し替える（シーンには保存しない）。
         if (!string.IsNullOrEmpty(bundleName))
         {
@@ -491,7 +532,12 @@ public static class BatchPlaybackLogger
         SessionState.SetInt(KeyTargetFps, targetFps);
         SessionState.SetString(KeyCaptureDir, captureDir ?? string.Empty);
         SessionState.SetInt(KeyCaptureWidth, captureWidth);
+        SessionState.SetString(KeyCaptureViews, captureViews ?? string.Empty);
+        SessionState.SetBool(KeyVideoGameTime, videoGameTime ?? (!string.IsNullOrEmpty(captureFrames) || !string.IsNullOrEmpty(recordFrames)));
+        StoreRecordArgs(recordFrames, recordDir, recordFps, recordWidth, recordViews);
         SessionState.SetFloat(KeyForceMotionAt, forceMotionAt);
+        SessionState.SetString(KeyForceMotionKind, forceMotionKind);
+        SessionState.SetString(KeyForceStaticClip, forceStaticClip);
         SessionState.SetFloat(KeyCaptureMotionEvery, captureMotionEvery);
         SessionState.SetBool(KeyRunning, true);
         SessionState.SetBool(KeyStarted, false);
@@ -683,9 +729,215 @@ public static class BatchPlaybackLogger
             rt.Release();
             UnityEngine.Object.DestroyImmediate(rt);
             captured.Add(want);
+            CaptureAuxViews(cam, dir, want);
             if (resumeVideo) { vp.Play(); }
             Debug.Log($"[CAPTURE] frame={want} (vp={cur}) -> {path}");
         }
+    }
+
+    // -captureViews "Hips:2.2:90:25;LeftHand:0.35:0:30"（2026-10-04）: 撮るたびに、骨を注視する補助カメラで追加の絵を撮る。
+    // 正面（メインカメラ）の絵だけでは、胴の前後の傾きや手指・肉球が見えないので足した。
+    // 各指定 = 骨:距離:方位:fov[:仰角]
+    //   骨   = HumanBodyBones 名（最初に見つかった Humanoid）か Transform 名。"モデル名の一部/骨" でモデルを絞れる
+    //          （Animator かインスタンスの root の名前で絞る。animal の root は Track_0 のような名前）
+    //   距離 = モデルの大きさ（Renderer の bounds の最大辺）の倍数
+    //   方位 = 「骨 → メインカメラ」の水平方向を world の上向きまわりに回す角度（0 = メインカメラ側、+90 = 視聴者から見て左側）
+    //   fov  = 縦の画角（度）、仰角 = 上から見下ろす角度（度、省略 0）
+    // 出力は f00605_Hips_90.png のように、メインの絵と同じフォルダへ。
+    private static void CaptureAuxViews(Camera mainCam, string dir, long frame)
+    {
+        string spec = SessionState.GetString(KeyCaptureViews, string.Empty);
+        if (string.IsNullOrEmpty(spec) || mainCam == null) { return; }
+
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var style = System.Globalization.NumberStyles.Float;
+        foreach (string raw in spec.Split(';'))
+        {
+            string[] p = raw.Trim().Split(':');
+            // 方位に "front" を書くと、メインカメラではなく体の前後軸（骨 → 同じ root の head の水平方向）を基準に、頭の側から見る。
+            bool bodyFront = p.Length >= 3 && p[2] == "front";
+            float azimuth = 0f;
+            if (p.Length < 4 ||
+                !float.TryParse(p[1], style, inv, out float distFactor) ||
+                (!bodyFront && !float.TryParse(p[2], style, inv, out azimuth)) ||
+                !float.TryParse(p[3], style, inv, out float fov))
+            {
+                continue;
+            }
+
+            float elevation = 0f;
+            if (p.Length >= 5) { float.TryParse(p[4], style, inv, out elevation); }
+            if (!TryResolveAuxViewTarget(p[0], out Transform target, out float modelSize))
+            {
+                Debug.Log($"[CAPVIEW] '{p[0]}' が見つからない（frame={frame}）");
+                continue;
+            }
+
+            Vector3 toCam = mainCam.transform.position - target.position;
+            toCam.y = 0f;
+            if (toCam.sqrMagnitude < 1e-8f)
+            {
+                toCam = -mainCam.transform.forward;
+                toCam.y = 0f;
+            }
+
+            Vector3 dirH = Quaternion.AngleAxis(azimuth, Vector3.up) * toCam.normalized;
+            if (bodyFront && TryFindSiblingBone(target, "head", out Transform headBone))
+            {
+                Vector3 fwd = headBone.position - target.position;
+                fwd.y = 0f;
+                if (fwd.sqrMagnitude > 1e-8f)
+                {
+                    dirH = fwd.normalized;
+                }
+            }
+            float el = elevation * Mathf.Deg2Rad;
+            Vector3 viewDir = (dirH * Mathf.Cos(el) + Vector3.up * Mathf.Sin(el)).normalized;
+            float dist = Mathf.Max(0.01f, distFactor * modelSize);
+
+            // メインカメラのリグ（XR Origin）配下の表示（コントローラの輪など）が寄りの絵に写り込むので、
+            // 撮る間だけ隠す。対象のモデルがリグ配下にあるときは隠さない。
+            var hidden = new List<Renderer>();
+            Transform rig = mainCam.transform.root;
+            if (rig != null && !target.IsChildOf(rig))
+            {
+                foreach (Renderer r in rig.GetComponentsInChildren<Renderer>())
+                {
+                    if (r.enabled) { r.enabled = false; hidden.Add(r); }
+                }
+            }
+
+            var go = new GameObject("CapViewCamera");
+            try
+            {
+                Camera cam = go.AddComponent<Camera>();
+                cam.CopyFrom(mainCam);
+                cam.enabled = false;
+                cam.stereoTargetEye = StereoTargetEyeMask.None;
+                cam.transform.SetPositionAndRotation(
+                    target.position + viewDir * dist,
+                    Quaternion.LookRotation(-viewDir, Vector3.up));
+                cam.fieldOfView = fov;
+                cam.nearClipPlane = Mathf.Max(0.001f, dist * 0.05f);
+                cam.farClipPlane = 100f;
+
+                const int W = 1280;
+                const int H = 960;
+                var rt = new RenderTexture(W, H, 24) { antiAliasing = 8 };
+                RenderTexture prevActive = RenderTexture.active;
+                cam.targetTexture = rt;
+                cam.Render();
+                RenderTexture.active = rt;
+                var tex = new Texture2D(W, H, TextureFormat.RGB24, false);
+                tex.ReadPixels(new Rect(0, 0, W, H), 0, 0);
+                tex.Apply();
+                cam.targetTexture = null;
+                RenderTexture.active = prevActive;
+                string label = p[0].Replace('/', '-');
+                string path = Path.Combine(dir, $"f{frame:D5}_{label}_{(bodyFront ? "front" : Mathf.RoundToInt(azimuth).ToString())}.png");
+                File.WriteAllBytes(path, tex.EncodeToPNG());
+                UnityEngine.Object.DestroyImmediate(tex);
+                rt.Release();
+                UnityEngine.Object.DestroyImmediate(rt);
+                Debug.Log($"[CAPVIEW] frame={frame} target={target.name} dist={dist:F3}m az={azimuth} el={elevation} fov={fov} " +
+                          $"hidden={hidden.Count} under '{(rig != null ? rig.name : "-")}' -> {path}");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+                foreach (Renderer r in hidden)
+                {
+                    if (r != null) { r.enabled = true; }
+                }
+            }
+        }
+    }
+
+    // target と同じインスタンス（最上位の Track_N か Animator の root）の中から名前の一致する骨を探す。
+    private static bool TryFindSiblingBone(Transform target, string name, out Transform bone)
+    {
+        bone = null;
+        Transform root = target;
+        while (root.parent != null && !root.name.StartsWith("Track_", StringComparison.Ordinal))
+        {
+            root = root.parent;
+        }
+
+        foreach (Transform t in root.GetComponentsInChildren<Transform>())
+        {
+            if (t.name == name) { bone = t; return true; }
+        }
+
+        return false;
+    }
+
+    private static bool TryResolveAuxViewTarget(string spec, out Transform target, out float modelSize)
+    {
+        target = null;
+        modelSize = 1f;
+        string filter = null;
+        string boneName = spec;
+        int slash = spec.IndexOf('/');
+        if (slash > 0)
+        {
+            filter = spec.Substring(0, slash);
+            boneName = spec.Substring(slash + 1);
+        }
+
+        // 探す root の候補: 絞り込みがあれば、その名前の GameObject（animal のインスタンスは Animator を持たず
+        // root が Track_0 のような名前なので、Animator だけを探すと見つからない）と、名前が一致する Animator。
+        var roots = new List<Transform>();
+        if (filter != null)
+        {
+            GameObject named = GameObject.Find(filter);
+            if (named != null) { roots.Add(named.transform); }
+        }
+
+        foreach (Animator animator in UnityEngine.Object.FindObjectsByType<Animator>(FindObjectsSortMode.None))
+        {
+            if (filter == null ||
+                animator.name.IndexOf(filter, StringComparison.Ordinal) >= 0 ||
+                animator.transform.root.name.IndexOf(filter, StringComparison.Ordinal) >= 0)
+            {
+                roots.Add(animator.transform);
+            }
+        }
+
+        bool isHumanBone = Enum.TryParse(boneName, out HumanBodyBones humanBone) && humanBone != HumanBodyBones.LastBone;
+        foreach (Transform root in roots)
+        {
+            Transform found = null;
+            Animator animator = root.GetComponentInChildren<Animator>();
+            if (isHumanBone && animator != null && animator.isHuman)
+            {
+                found = animator.GetBoneTransform(humanBone);
+            }
+
+            if (found == null)
+            {
+                foreach (Transform t in root.GetComponentsInChildren<Transform>())
+                {
+                    if (t.name == boneName) { found = t; break; }
+                }
+            }
+
+            if (found == null) { continue; }
+
+            bool hasBounds = false;
+            Bounds b = default(Bounds);
+            foreach (Renderer r in root.GetComponentsInChildren<Renderer>())
+            {
+                if (!r.enabled) { continue; }
+                if (!hasBounds) { b = r.bounds; hasBounds = true; }
+                else { b.Encapsulate(r.bounds); }
+            }
+
+            target = found;
+            modelSize = hasBounds ? Mathf.Max(b.size.x, Mathf.Max(b.size.y, b.size.z)) : 1f;
+            return true;
+        }
+
+        return false;
     }
 
     private static bool forcedMotion;
@@ -708,8 +960,29 @@ public static class BatchPlaybackLogger
         if (forceAt >= 0f && !forcedMotion && vp.isPlaying && vp.time >= forceAt)
         {
             forcedMotion = true;
-            player.DebugForceInteractiveMotion(true);
-            Debug.Log($"[BATCH] forceMotionAt {forceAt}s → DebugForceInteractiveMotion(dynamic) at videoTime={vp.time:F2}");
+            bool dynamicKind = SessionState.GetString(KeyForceMotionKind, "dynamic") != "static";
+            string clipFilter = SessionState.GetString(KeyForceStaticClip, string.Empty);
+            if (!dynamicKind && !string.IsNullOrEmpty(clipFilter) && player.animalStaticGestureClips != null)
+            {
+                var kept = new List<AnimalGesturePose>();
+                foreach (AnimalGesturePose clip in player.animalStaticGestureClips)
+                {
+                    if (clip != null && clip.name.IndexOf(clipFilter, StringComparison.Ordinal) >= 0) { kept.Add(clip); }
+                }
+
+                if (kept.Count > 0)
+                {
+                    player.animalStaticGestureClips = kept.ToArray();
+                }
+                else
+                {
+                    Debug.LogWarning($"[BATCH] -forceStaticClip '{clipFilter}' に合うジェスチャが無いので絞らない");
+                }
+            }
+
+            player.DebugForceInteractiveMotion(dynamicKind);
+            Debug.Log($"[BATCH] forceMotionAt {forceAt}s → DebugForceInteractiveMotion({(dynamicKind ? "dynamic" : "static")}) at videoTime={vp.time:F2}" +
+                (dynamicKind ? string.Empty : $" clips={string.Join(",", Array.ConvertAll(player.animalStaticGestureClips ?? new AnimalGesturePose[0], c => c != null ? c.name : "null"))}"));
         }
 
         if (every <= 0f || !player.IsAnyInteractiveMotionActive()) { return; }
@@ -750,6 +1023,50 @@ public static class BatchPlaybackLogger
         UnityEngine.Object.DestroyImmediate(rt);
     }
 
+    // -setFields "name=value;name=value" をプレイヤーの公開フィールドへ書く（bool / int / float / string / enum）。
+    private static void ApplySetFields(StreamingStereoVideoPlayer p, string spec)
+    {
+        foreach (string pair in spec.Split(';'))
+        {
+            int eq = pair.IndexOf('=');
+            if (eq <= 0)
+            {
+                continue;
+            }
+
+            string key = pair.Substring(0, eq).Trim();
+            string value = pair.Substring(eq + 1).Trim();
+            System.Reflection.FieldInfo field = typeof(StreamingStereoVideoPlayer).GetField(
+                key, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            if (field == null)
+            {
+                Debug.LogWarning($"[BATCH] setFields: 不明なフィールド '{key}'（無視しない: 綴りを確認すること）");
+                continue;
+            }
+
+            object parsed = null;
+            System.Type t = field.FieldType;
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            if (t == typeof(bool) && bool.TryParse(value, out bool b)) parsed = b;
+            else if (t == typeof(int) && int.TryParse(value, System.Globalization.NumberStyles.Integer, inv, out int iv)) parsed = iv;
+            else if (t == typeof(float) && float.TryParse(value, System.Globalization.NumberStyles.Float, inv, out float fv)) parsed = fv;
+            else if (t == typeof(string)) parsed = value;
+            else if (t.IsEnum)
+            {
+                try { parsed = Enum.Parse(t, value, true); } catch { parsed = null; }
+            }
+
+            if (parsed == null)
+            {
+                Debug.LogWarning($"[BATCH] setFields: '{key}' に '{value}' を書けない（型 {t.Name}）");
+                continue;
+            }
+
+            field.SetValue(p, parsed);
+            Debug.Log($"[BATCH] setFields {key}={parsed}");
+        }
+    }
+
     // -diagLogs が立てる診断フラグ一式。区間の開閉（ApplyDiagWindows）も同じ集合を切り替える。
     private static void SetDiagFlags(StreamingStereoVideoPlayer p, bool on, int every, bool meshParts)
     {
@@ -775,6 +1092,33 @@ public static class BatchPlaybackLogger
         // 左右が入れ替わっていないかは、これの dx の符号で判る。
         p.logHumanPoseError = on;
         p.logHumanPoseErrorEveryNFrames = every;
+    }
+
+    private static bool videoGameTimeLogged;
+
+    // -videoGameTime（2026-10-04、撮影があるときは既定 ON）: 動画の時計を実時間（UnscaledGameTime）からゲーム時間へ替え、
+    // 1 tick で進む時間の上限を 1 動画フレーム（1/30 秒）にする。
+    // 撮影は 1 枚（補助カメラ込みで 5 枚なら約 1.3 秒）止まるので、実時間の時計だとその分だけ動画が先へ飛び
+    // （2026-10-04: f605 を撮った直後の f620 の指定が vp=645 で撮られ、ファイル名は f00620 のままだった）、
+    // 次の指定フレームを取り逃がすか、別のフレームを指定の名前で保存してしまう。ゲーム時間なら止まっている間は進まない。
+    // 実機は実時間の時計のまま（RuntimePlaybackController.ConfigureForApiPlayback）。バッチの撮影の再現性のためだけの切り替え。
+    private static void ApplyVideoGameTime()
+    {
+        if (!SessionState.GetBool(KeyVideoGameTime, false)) { return; }
+
+        var vp = UnityEngine.Object.FindFirstObjectByType<UnityEngine.Video.VideoPlayer>();
+        if (vp == null) { return; }
+
+        Time.maximumDeltaTime = 1f / 30f;
+        if (vp.timeUpdateMode != UnityEngine.Video.VideoTimeUpdateMode.GameTime)
+        {
+            vp.timeUpdateMode = UnityEngine.Video.VideoTimeUpdateMode.GameTime;
+            if (!videoGameTimeLogged)
+            {
+                videoGameTimeLogged = true;
+                Debug.Log("[BATCH] videoGameTime: VideoPlayer.timeUpdateMode=GameTime, maximumDeltaTime=1/30");
+            }
+        }
     }
 
     private static int diagWindowState = -1;   // -1 未適用 / 0 区間外 / 1 区間内
@@ -837,6 +1181,7 @@ public static class BatchPlaybackLogger
             AudioListener.volume = 0f;
             EditorUtility.audioMasterMute = true;
             ApplyTargetFrameRate();
+            ApplyRecordTimestep();
             if (SessionState.GetBool(KeyNoStackTrace, false))
             {
                 Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.None);
@@ -852,8 +1197,10 @@ public static class BatchPlaybackLogger
             startedAt = EditorApplication.timeSinceStartup;
         }
 
+        ApplyVideoGameTime();
         ApplyDiagWindows();
         TryCaptureFrames();
+        TryRecordFrames();
         TryForceMotionAndCaptureMotion();
 
         double elapsed = EditorApplication.timeSinceStartup - startedAt;

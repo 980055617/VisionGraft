@@ -18,4 +18,6 @@ public struct AnimalPoseRequest
     // AnimalGesturePosePlayer.ApplyToRigCache.
     public AnimalGesturePose gestureOverlayClip;
     public float gestureOverlayNormalizedTime;
+    // 四肢のジェスチャを正規名の骨に乗せる（StreamingStereoVideoPlayer.animalGestureOnCanonicalLimbs、2026-10-04）。
+    public bool gestureOnCanonicalLimbs;
 }

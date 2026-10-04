@@ -13,6 +13,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // 既定 OFF（2026-10-04、ViewRay.partial.cs）: HMR2 の向きは crop 基準なので、crop の中心への視線の向きへ回す。
+        Quaternion viewRay = Quaternion.identity;
+        bool useViewRay = alignSmplToViewRay && TryResolveViewRayRotation(obj, out viewRay);
+        if (useViewRay)
+        {
+            ApplyViewRayToPersonJoints(ref pose, screen, viewRay);
+        }
+
         HumanSmplPose smplPose = default(HumanSmplPose);
         bool hasHumanSmplPose = TryGetHumanSmplPose(frame, obj.trackId, out smplPose);
 
@@ -35,7 +43,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             smplPose.camRotation = Quaternion.identity;
             if (TryGetPinholeBasis(screen, out _, out Quaternion smplCamRot) && IsFinite(smplCamRot))
             {
-                smplPose.camRotation = smplCamRot;
+                smplPose.camRotation = useViewRay ? smplCamRot * viewRay : smplCamRot;
             }
         }
 
@@ -57,17 +65,40 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Vector3 cameraForward = smplPose.camRotation * Vector3.forward;
             AlignHumanoidHipsToSmplRoot(instance.transform, cache, GetSmoothedSmplRootWorld(cache, pose.rootWorld, pose.camOrigin, cameraForward));
 
+            // 既定 OFF（2026-10-03）: SMPL の回転を前後 2 フレームの中心 5tap で平滑する（Slerp の EMA の代わり）。
+            if (centeredSmplRotationFilter)
+            {
+                smplPose = BuildCenteredSmplPose(frame, obj.trackId, smplPose);
+            }
+
+            // 既定 OFF（2026-10-04、PoseInterpolation.partial.cs）: tick の時刻で隣り合う 2 フレームを補間する。E と組のときだけ。
+            if (centeredSmplRotationFilter && TryResolvePoseInterpolation(frame, out int interpA, out int interpB, out float interpW))
+            {
+                smplPose = InterpolateCenteredSmplPose(obj.trackId, interpA, interpB, interpW, smplPose);
+            }
+
             TryApplyHumanSmplRotationOverlay(cache, smplPose);
             if (enableKeypointAimAt)
             {
-                // keypoint(jointsWorld) の 2 点間ベクトルで各 bone の向きを直接整合する。
-                // 向きだけを合わせ、位置は合わせない点に注意（付け根のずれはそのまま手先に出る）。
-                TryApplySmplArmsFromJointPositions(cache, pose.jointsWorld, pose.jointVis);
-                TryApplySmplLegsFromJointPositions(cache, pose.jointsWorld, pose.jointVis);
-                // 手の FK は AimAt で前腕方向が統一された後に適用する。
-                // FK ループ内では親の bodyFk[] がキャラクター固有のため、AimAt 後の bone.rotation を
-                // 親とすることで全キャラクター間で手の向きを一致させる。
-                TryApplyHandFkAfterAimAt(cache, pose.jointsWorld, pose.jointVis);
+                // 既定 OFF（2026-10-03）: 目標の向きを生成側で平滑された keypoints ではなく SMPL から作る。
+                // d_rest を推定できない track（短い等）は従来の keypoint の AimAt に落ちる。
+                Vector3[] smplAimRest = aimAtTargetFromSmpl ? GetSmplAimRestDirections(obj.trackId) : null;
+                if (smplAimRest != null &&
+                    TryApplySmplLimbsFromSmplTarget(cache, smplAimRest, pose.jointsWorld, pose.jointVis, frame))
+                {
+                    TryApplyHandFkAfterSmplAimAt(cache, smplAimRest);
+                }
+                else
+                {
+                    // keypoint(jointsWorld) の 2 点間ベクトルで各 bone の向きを直接整合する。
+                    // 向きだけを合わせ、位置は合わせない点に注意（付け根のずれはそのまま手先に出る）。
+                    TryApplySmplArmsFromJointPositions(cache, pose.jointsWorld, pose.jointVis);
+                    TryApplySmplLegsFromJointPositions(cache, pose.jointsWorld, pose.jointVis);
+                    // 手の FK は AimAt で前腕方向が統一された後に適用する。
+                    // FK ループ内では親の bodyFk[] がキャラクター固有のため、AimAt 後の bone.rotation を
+                    // 親とすることで全キャラクター間で手の向きを一致させる。
+                    TryApplyHandFkAfterAimAt(cache, pose.jointsWorld, pose.jointVis);
+                }
             }
             // enableKeypointAimAt = false のときは手も FK ループ内で適用済み（純 FK）。
             // 骨盤基準配置後にキャラのモデル脚長と SMPL 脚長の差を Y オフセットで吸収する。
@@ -201,7 +232,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             smalPose.camRotation = Quaternion.identity;
             if (TryGetPinholeBasis(screen, out _, out Quaternion smalCamRot) && IsFinite(smalCamRot))
             {
-                smalPose.camRotation = smalCamRot;
+                // 既定 OFF（2026-10-04、ViewRay.partial.cs）: AniMer の向きは切り抜きカメラ基準なので、視線の向きへ回す。
+                smalPose.camRotation = alignSmalToViewRay && TryResolveViewRayRotation(obj, out Quaternion smalViewRay)
+                    ? smalCamRot * smalViewRay
+                    : smalCamRot;
                 if (frame % 30 == 0)
                     Debug.Log($"[SMAL-PIPE] frame={frame} hasSmalPose=true camRot={smalCamRot.eulerAngles:F1}");
             }
@@ -209,6 +243,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         else if (frame % 30 == 0)
         {
             Debug.Log($"[SMAL-PIPE] frame={frame} hasSmalPose=false (SMAL path skipped, keypoint path runs)");
+        }
+
+        // 既定 OFF（2026-10-04、C-DM）: 根だけを前後 2 フレームの中心 5tap で平滑する（PoseInterpolation.partial.cs）。
+        if (hasSmalPose && centeredSmalRootFilter)
+        {
+            smalPose.globalOrient = BuildCenteredSmalGlobalOrient(frame, obj.trackId, smalPose.globalOrient);
+        }
+
+        // 既定 OFF（2026-10-04、第 3 ラウンド）: body_pose も中心 5tap で平滑する（遅れない平滑。smalBodyPoseSmoothHalfLifeSec=0 と組）。
+        if (hasSmalPose && centeredSmalBodyPoseFilter)
+        {
+            smalPose = BuildCenteredSmalBodyPose(frame, obj.trackId, smalPose);
+        }
+
+        // 既定 OFF（2026-10-04、PoseInterpolation.partial.cs）: tick の時刻で隣り合う 2 フレームの SMAL を補間する。
+        if (hasSmalPose && TryResolvePoseInterpolation(frame, out int interpA, out int interpB, out float interpW))
+        {
+            smalPose = InterpolateSmalPose(obj.trackId, interpA, interpB, interpW, smalPose);
         }
 
         if (enableJointSmoothing)
@@ -233,10 +285,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         animalPoseApplier.disableSmalBendForDiag = disableSmalBendForDiag;
         animalPoseApplier.accumulateSmalParentBend = accumulateSmalParentBend;
         animalPoseApplier.smalSmoothHalfLifeSec = smalSmoothHalfLifeSec;
+        animalPoseApplier.smalBodyPoseSmoothHalfLifeSec = smalBodyPoseSmoothHalfLifeSec;
         animalPoseApplier.forceRootYawFix = forceRootYawFix;
         animalPoseApplier.excludeHeadFromChain = excludeHeadFromChain;
         animalPoseApplier.headAimFromModelForward = headAimFromModelForward;
         animalPoseApplier.headUseBodyFrameMap = headUseBodyFrameMap;
+        animalPoseApplier.bodyFrameNeckHead = bodyFrameNeckHead;
+        animalPoseApplier.bodyFrameKeepFittedHead = bodyFrameKeepFittedHead;
+        animalPoseApplier.bodyFrameLimbs = bodyFrameLimbs;
+        animalPoseApplier.bodyFrameLimbsFrontAndTailOnly = bodyFrameLimbsFrontAndTailOnly;
+        animalPoseApplier.passiveBoneUnityParent = passiveBoneUnityParent;
+        animalPoseApplier.smalDriveNeckChain = smalDriveNeckChain;
+        animalPoseApplier.smalAbsoluteDirection = smalAbsoluteDirection;
+        animalPoseApplier.frontLimbBodyLateralSecondary = animalFrontLimbBodyLateralSecondary;
+        animalPoseApplier.smalAbsoluteDirectionHeadTailOnly = smalAbsoluteDirectionHeadTailOnly;
         animalPoseApplier.useTwoAxisJointFrameMap = useTwoAxisJointFrameMap;
         animalPoseApplier.enableAnimalHeadPose = enableAnimalHeadPose;
         animalPoseApplier.enableAnimalKeypointAimAt = enableAnimalKeypointAimAt;

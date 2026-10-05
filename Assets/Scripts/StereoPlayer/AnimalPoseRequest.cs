@@ -20,4 +20,6 @@ public struct AnimalPoseRequest
     public float gestureOverlayNormalizedTime;
     // 四肢のジェスチャを正規名の骨に乗せる（StreamingStereoVideoPlayer.animalGestureOnCanonicalLimbs、2026-10-04）。
     public bool gestureOnCanonicalLimbs;
+    // 頭のジェスチャを解剖学的な軸で回す（StreamingStereoVideoPlayer.animalGestureAnatomicalHeadAxes、2026-10-05）。
+    public bool gestureAnatomicalHeadAxes;
 }

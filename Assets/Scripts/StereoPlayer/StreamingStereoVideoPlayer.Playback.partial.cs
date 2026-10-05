@@ -427,7 +427,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             names.Add(t.name);
         }
 
-        var pairs = new List<KeyValuePair<System.Reflection.FieldInfo, string>>();
+        // フィールドへの代入は AnimalLegMappingFix.TrySetOverrideField（switch）。反射は使わない（IL2CPP のストリップで黙って効かなくなる危険）。
+        var pairs = new List<KeyValuePair<string, string>>();
         foreach (string pair in spec.Split(';'))
         {
             int eq = pair.IndexOf('=');
@@ -438,14 +439,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
             string key = pair.Substring(0, eq).Trim();
             string value = pair.Substring(eq + 1).Trim();
-            System.Reflection.FieldInfo field = typeof(AnimalBoneMappingOverride).GetField(key);
-            if (field == null || field.FieldType != typeof(string) || !names.Contains(value))
+            if (!AnimalLegMappingFix.IsOverrideKey(key) || !names.Contains(value))
             {
                 Debug.LogWarning($"[BONEOVERRIDE] {(prefab != null ? prefab.name : "?")}: '{key}={value}' が無いので脚の割り当ての修正を使わない（source={source}）");
                 return;
             }
 
-            pairs.Add(new KeyValuePair<System.Reflection.FieldInfo, string>(field, value));
+            pairs.Add(new KeyValuePair<string, string>(key, value));
         }
 
         AnimalBoneMappingOverride ov = host.GetComponentInChildren<AnimalBoneMappingOverride>();
@@ -456,7 +456,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         foreach (var kv in pairs)
         {
-            kv.Key.SetValue(ov, kv.Value);
+            AnimalLegMappingFix.TrySetOverrideField(ov, kv.Key, kv.Value);
         }
 
         Debug.Log($"[BONEOVERRIDE] {(prefab != null ? prefab.name : "?")} host={host.name} source={source} <- {spec}");

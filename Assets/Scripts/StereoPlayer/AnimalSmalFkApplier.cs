@@ -894,6 +894,8 @@ public sealed partial class AnimalPoseApplier
         }
 
         state.smoothingInitialized = true;
+        // 首・頭をこの tick に書き直した印（インタラクティブモーションの頭の向けは、これが今の frame のときだけ掛ける。2026-10-04）。
+        cache.smalFkWrittenFrame = Time.frameCount;
 
         if (debugLog)
         {

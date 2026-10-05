@@ -45,6 +45,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public float phaseStartTime;
         public float phaseDuration;
         public float handoffStartTime;
+        // ランダムのイベントが始まった時刻（動物の頭を視聴者へ向ける重みの立ち上がりに使う、2026-10-04）。
+        public float eventStartTime;
 
         public Vector3 originPosition;
         public Quaternion originRotation = Quaternion.identity;
@@ -637,6 +639,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.subject = isAnimal ? InteractiveMotionSubject.Animal : InteractiveMotionSubject.Person;
         state.triggerSource = InteractiveTriggerSource.Random;
         state.kind = kind;
+        state.eventStartTime = now;
         BeginRandomInteractiveMotionVideoPause(trackId);
         state.originPosition = state.hasLiveSample ? state.livePosition : Vector3.zero;
         state.originRotation = state.hasLiveSample ? state.liveRotation : Quaternion.identity;
@@ -1639,7 +1642,43 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             gestureOverlayNormalizedTime = state.phaseDuration > 0.0001f ? Mathf.Clamp01(elapsed / state.phaseDuration) : 0f;
         }
 
-        ApplyAnimalPoseRequest(instance, pose, state.cachedAnimalHasSmalPose, state.cachedAnimalSmalPose, state.gesturePosition, state.gestureRotation, tick, gestureOverlayClip, gestureOverlayNormalizedTime);
+        ApplyAnimalPoseRequest(instance, pose, state.cachedAnimalHasSmalPose, state.cachedAnimalSmalPose, state.gesturePosition, state.gestureRotation, tick, gestureOverlayClip, gestureOverlayNormalizedTime,
+            ResolveAnimalLookAtViewerWeight(state, tick.now), UsesAnimalLookAtViewer(state));
+    }
+
+    // 動物の頭を視聴者へ向けるか（animalGestureLookAtViewer、2026-10-04）。ランダムのイベントだけ（システムのフレームアウトは向けない）。
+    // 向けるイベントでは、重みが 0 の tick もジェスチャを置き直しの後に足す経路に揃える（tick ごとに経路が変わると、体を振る
+    // ジェスチャ（Root 点）が効いたり消えたりする）。
+    private bool UsesAnimalLookAtViewer(InteractiveMotionState state)
+    {
+        return animalGestureLookAtViewer && state != null && state.triggerSource == InteractiveTriggerSource.Random;
+    }
+
+    // 向ける重み。開始から animalLookAtViewerBlendSeconds で 0 → 1。
+    // 動的なイベントの歩いて戻る間: 体の向き基準（animalLookAtViewerBodyRelative、既定）では、歩いて戻る始めの同じ秒数で 0 にする。
+    // 戻り始めに root の向きは 1 tick で 180° 切り替わり（BeginWalkBackPhase → phaseToRotation）、体は SMAL の平滑で約 0.4 秒かけて回る。
+    // 角度だけで抜くと、凍結した頭が視聴者と反対側にあるとき、頭が体の前を約 7 tick で横切った（scratchpad/rev2/lookat_body_relative.py の 3）。
+    // 頭の向き基準（OFF）では従来どおり、歩いて戻る間も 1 のまま最後の同じ秒数で 0 にする（ジェスチャの最後で抜くと、座りで発火したとき
+    // 頭が一瞬上を向いた。判定役、2026-10-04）。
+    // 静的なイベントの終わりは、ハンドオフ（ApplyInteractiveHandoffBlendIfActive）が骨の局所回転を追従の姿勢へ混ぜるので、そこで自然に抜ける。
+    private float ResolveAnimalLookAtViewerWeight(InteractiveMotionState state, float now)
+    {
+        if (!UsesAnimalLookAtViewer(state))
+        {
+            return 0f;
+        }
+
+        float blend = Mathf.Max(0.01f, animalLookAtViewerBlendSeconds);
+        float weight = Mathf.Clamp01(RuntimeClock.ResolveElapsed(now, state.eventStartTime) / blend);
+        if (state.kind == InteractiveEventKind.Dynamic && state.dynamicPhase == InteractiveDynamicPhase.WalkBack)
+        {
+            float elapsedInPhase = RuntimeClock.ResolveElapsed(now, state.phaseStartTime);
+            weight *= animalLookAtViewerBodyRelative
+                ? 1f - Mathf.Clamp01(elapsedInPhase / blend)
+                : Mathf.Clamp01((state.phaseDuration - elapsedInPhase) / blend);
+        }
+
+        return Mathf.SmoothStep(0f, 1f, weight);
     }
 
     private void ApplyMovingAnimalPose(GameObject instance, InteractiveMotionState state, Vector3 position, Quaternion rotation, RuntimeClock.TickContext tick)
@@ -1650,6 +1689,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // 静止の経路（ApplyFrozenPoseAndGesture）と同じく、FK の前にも root を置く（2026-10-05）。SMAL の FK は root の向き（instanceRootYaw）を読んで
+        // world の回転を解くので、置くのが FK の後（ApplyAnimalPoseRequest）だけだと、向きが切り替わる tick（歩き始め・歩いて戻る始めの phaseToRotation）は
+        // 前の向きで解いた体を root ごと回してしまい、体が 1 tick だけ反転した（歩いて戻る始めで 180°、歩き始めで 30〜61°。M9・M10 の record_pose.csv）。
+        TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(position, rotation, instance.transform.localScale));
         AnimalPoseWorldData pose = RemapAnimalPoseRigid(state.cachedAnimalPose, state.cachedAnimalBasePosition, state.cachedAnimalBaseRotation, position, rotation);
 
         if (tick.frameCount % 90 == 0)
@@ -1678,11 +1721,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             float clipDuration = Mathf.Max(0.0001f, state.animalWalkClip.duration);
             loopTime = (elapsed % clipDuration) / clipDuration;
         }
-        ApplyAnimalPoseRequest(instance, pose, state.cachedAnimalHasSmalPose, state.cachedAnimalSmalPose, position, rotation, tick, state.animalWalkClip, loopTime);
+        ApplyAnimalPoseRequest(instance, pose, state.cachedAnimalHasSmalPose, state.cachedAnimalSmalPose, position, rotation, tick, state.animalWalkClip, loopTime,
+            ResolveAnimalLookAtViewerWeight(state, tick.now), UsesAnimalLookAtViewer(state));
     }
 
-    private void ApplyAnimalPoseRequest(GameObject instance, AnimalPoseWorldData pose, bool hasSmalPose, AnimalSmalPose smalPose, Vector3 targetPosition, Quaternion targetRotation, RuntimeClock.TickContext tick, AnimalGesturePose gestureOverlayClip, float gestureOverlayNormalizedTime)
+    private void ApplyAnimalPoseRequest(GameObject instance, AnimalPoseWorldData pose, bool hasSmalPose, AnimalSmalPose smalPose, Vector3 targetPosition, Quaternion targetRotation, RuntimeClock.TickContext tick, AnimalGesturePose gestureOverlayClip, float gestureOverlayNormalizedTime, float lookAtViewerWeight = 0f, bool lookAtViewerPath = false)
     {
+        // 頭を視聴者へ向けるイベントでは、ジェスチャを Apply の中ではなく、root を置き直して頭を向けた後に足す
+        // （向ける回転は最終の root の位置・向きで計算しないと置き直しでずれ、ジェスチャを先に足すと首振りを打ち消してしまう）。
+        // 経路は重みではなくイベント単位で決める（重みが 0 の tick も同じ経路。ApplyLookAtViewer は重み 0 なら何もしない）。
+        bool lookAtViewer = lookAtViewerPath;
         Animator animator = instance.GetComponentInChildren<Animator>();
         DisableAnimalAnimatorPlayback(animator);
         animalPoseApplier.Apply(new AnimalPoseRequest
@@ -1696,9 +1744,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             enableBoneApply = enableBoneApply,
             hasSmalPose = hasSmalPose,
             smalPose = smalPose,
-            gestureOverlayClip = gestureOverlayClip,
+            gestureOverlayClip = lookAtViewer ? null : gestureOverlayClip,
             gestureOverlayNormalizedTime = gestureOverlayNormalizedTime,
-            gestureOnCanonicalLimbs = animalGestureOnCanonicalLimbs
+            gestureOnCanonicalLimbs = animalGestureOnCanonicalLimbs,
+            gestureAnatomicalHeadAxes = animalGestureAnatomicalHeadAxes
         });
 
         // AnimalPoseApplier re-aligns and low-pass-filters the root from the solved bone
@@ -1706,6 +1755,26 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // the root explicitly; the limb/head/tail bones are children, so this only rigidly
         // carries the already-solved pose along with it, it does not undo their solving.
         TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(targetPosition, targetRotation, instance.transform.localScale));
+
+        if (lookAtViewer)
+        {
+            Transform viewer = GetViewOrHeadTransform();
+            if (viewer != null)
+            {
+                animalPoseApplier.ApplyLookAtViewer(instance.transform, viewer.position, lookAtViewerWeight, new AnimalPoseApplier.LookAtViewerSettings
+                {
+                    bodyRelative = animalLookAtViewerBodyRelative,
+                    bodyMaxYawDegrees = animalLookAtViewerBodyMaxYawDegrees,
+                    maxPitchDegrees = animalLookAtViewerMaxPitchDegrees,
+                    maxDegrees = animalLookAtViewerMaxDegrees,
+                    maxYawDegrees = animalLookAtViewerMaxYawDegrees,
+                    neckShare = animalLookAtViewerNeckShare
+                });
+            }
+
+            animalPoseApplier.ApplyGestureOverlayAfterPlacement(instance.transform, gestureOverlayClip, gestureOverlayNormalizedTime, animalGestureOnCanonicalLimbs,
+                animalGestureAnatomicalHeadAxes);
+        }
     }
 
     private static AnimalPoseWorldData RemapAnimalPoseRigid(AnimalPoseWorldData basePose, Vector3 basePosition, Quaternion baseRotation, Vector3 newPosition, Quaternion newRotation)

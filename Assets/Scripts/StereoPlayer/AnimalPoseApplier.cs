@@ -79,6 +79,418 @@ public sealed partial class AnimalPoseApplier
         }
     }
 
+    // 頭を視聴者へ向ける設定（StreamingStereoVideoPlayer の animalLookAtViewer* をそのまま渡す）。
+    public struct LookAtViewerSettings
+    {
+        public bool bodyRelative;          // 体の向き基準（既定）。false なら頭の向き基準（2026-10-04 の方式）
+        public float bodyMaxYawDegrees;    // 体の向き基準: 体の前からの視聴者の方位の上限（超えたら 40° かけて重み 0）、頭の目標の方位の上限
+        public float maxPitchDegrees;      // 体の向き基準: 頭の目標の仰角の上限（±）
+        public float maxDegrees;           // 頭の向き基準: 回す角度の上限
+        public float maxYawDegrees;        // 頭の向き基準: 鼻と視聴者の水平の角度の上限
+        public float neckShare;
+    }
+
+    // インタラクティブモーション: 頭の鼻先を視聴者へ向ける（2026-10-04、StreamingStereoVideoPlayer.animalGestureLookAtViewer）。
+    // **root を最終の位置・向きへ置き直した後に呼ぶ**（向ける回転は world で計算するので、その後に root を動かすとずれる）。
+    // SMAL の FK がこの frame に首・頭を書き直したときだけ掛ける（cache.smalFkWrittenFrame。書き直されない tick に掛けると積み重なる）。
+    // 鼻先は頭の子孫の顔の骨から（ResolveHeadNoseLocal）。回転は「横（world の上まわり）→ 縦」に分けて作る（最小回転だと頭が傾く）。
+    // 体の向き基準（既定、ApplyLookAtViewerBodyRelative）と、頭の向き基準（以下: 回すのは最大 maxDegrees まで、鼻と視聴者の水平の角度が
+    // maxYawDegrees を超えたら 40° かけて重みを 0）。首に neckShare、残りを頭に配り、首を回した後に頭の位置から目標を計算し直す。
+    // world の回転は TransformWriter.ApplyWorldRotation で書く。
+    public void ApplyLookAtViewer(Transform instanceRoot, Vector3 viewerWorld, float weight, LookAtViewerSettings settings)
+    {
+        if (weight <= 0.001f || !TryGetRigCacheForInstance(instanceRoot, out AnimalRigCache cache) || cache.head == null ||
+            cache.smalFkWrittenFrame != Time.frameCount || !ResolveHeadNoseLocal(cache))
+        {
+            return;
+        }
+
+        Vector3 nose0 = (cache.head.rotation * cache.headNoseLocal).normalized;
+        Transform neck = cache.neck != null && cache.neck != cache.head && cache.head.IsChildOf(cache.neck) ? cache.neck : null;
+        float neckShare = settings.neckShare;
+        if (settings.bodyRelative && TryGetBodyForward(cache, out Vector3 bodyForward))
+        {
+            // 体がほぼ垂直（前の水平が定まらない）なら頭の向き基準に戻す
+            Vector3 bodyFlat = Vector3.ProjectOnPlane(bodyForward, Vector3.up);
+            if (bodyFlat.magnitude >= LookAtMinFlat * bodyForward.magnitude)
+            {
+                ApplyLookAtViewerBodyRelative(cache, neck, viewerWorld, weight, bodyFlat.normalized, nose0, settings);
+                return;
+            }
+        }
+
+        float maxDegrees = settings.maxDegrees;
+        float maxYawDegrees = settings.maxYawDegrees;
+        Vector3 want = ResolveLookAtDirection(nose0, viewerWorld - cache.head.position, weight, maxDegrees, maxYawDegrees);
+        if (want.sqrMagnitude < 0.5f)
+        {
+            return;
+        }
+
+        if (neck != null && neckShare > 0f)
+        {
+            // 首の分も「横 → 縦」で作る（合成した回転を Slerp で割ると傾きが入り、頭の YawThenPitch はそれを消さずに残した: 最大 4〜7°。2 回目の査読）
+            Quaternion neckDelta = YawThenPitch(nose0, Vector3.Slerp(nose0, want, Mathf.Clamp01(neckShare)).normalized);
+            TransformWriter.ApplyWorldRotation(neck, neckDelta * neck.rotation);
+            // 首を回すと頭の位置も動くので、目標を計算し直す（基準の鼻先は向ける前のまま）
+            want = ResolveLookAtDirection(nose0, viewerWorld - cache.head.position, weight, maxDegrees, maxYawDegrees);
+            if (want.sqrMagnitude < 0.5f)
+            {
+                return;
+            }
+        }
+
+        Vector3 nose1 = (cache.head.rotation * cache.headNoseLocal).normalized;
+        TransformWriter.ApplyWorldRotation(cache.head, YawThenPitch(nose1, want) * cache.head.rotation);
+        LevelHeadRoll(cache, want, weight);
+    }
+
+    // 視聴者へ向けた頭の傾き（鼻の軸まわり）を、weight の分だけ水平に戻す（2026-10-05、判定役: Labrador が 10〜15° 首を傾けたまま見ていた）。
+    // 傾きは凍結した姿勢（データ）から引き継いだもので、視聴者を見るときは真っすぐのほうが自然（首をかしげるのはジェスチャ HeadTilt が上から足す）。
+    // 頭の左右の軸は、bind のときの体の右（cache.bodyRightBindWorld）を頭ローカルにしたもの。取れないモデル（F2 の対象外の 16_Deer1 など）と、
+    // 鼻がほぼ真上・真下のとき（水平の左右が定まらない）は何もしない。
+    // weight: 体の向き基準では方位で落とした後の重み w を渡す（元のイベントの重みを渡すと、w が 0 になる境目で傾きの戻しが 1 tick で消え、
+    // 凍結した傾きの分だけ頭が跳んだ。査読、2026-10-05。頭の向き基準は切り替えの再現のため元の重みのまま）。
+    // upright: 揃える水平を「近い側」ではなく「頭の上（鼻 × 右）が world の上を向く側」にする（体の向き基準）。近い側だと、凍結した傾きが 90° を超えると
+    // 上下逆さで水平に揃った（89° → 0°、91° → 180°。査読）。どちらが上かは bind の姿勢（頭ローカルの鼻・体の右・world の上）で決める。決められないモデルは近い側。
+    private static void LevelHeadRoll(AnimalRigCache cache, Vector3 nose, float weight, bool upright = false)
+    {
+        if (cache.bodyRightBindWorld.sqrMagnitude < 0.5f || !cache.bindRotWorld.TryGetValue(cache.head, out Quaternion headBind))
+        {
+            return;
+        }
+
+        Vector3 level = Vector3.Cross(Vector3.up, nose);
+        if (level.sqrMagnitude < 0.07f)
+        {
+            return;
+        }
+
+        Vector3 right = cache.head.rotation * (Quaternion.Inverse(headBind) * cache.bodyRightBindWorld);
+        Vector3 rightOnPlane = Vector3.ProjectOnPlane(right, nose);
+        if (rightOnPlane.sqrMagnitude < 1e-6f)
+        {
+            return;
+        }
+
+        level.Normalize();
+        float side = upright ? UprightLevelSide(cache, headBind) : 0f;
+        if (side != 0f ? side < 0f : Vector3.Dot(rightOnPlane, level) < 0f)
+        {
+            level = -level;
+        }
+
+        float roll = Vector3.SignedAngle(rightOnPlane, level, nose);
+        TransformWriter.ApplyWorldRotation(cache.head, Quaternion.AngleAxis(roll * Mathf.Clamp01(weight), nose) * cache.head.rotation);
+    }
+
+    // 頭の右を +level（= cross(上, 鼻)）と -level のどちらに揃えると頭の上が world の上を向くか。1 なら +level、-1 なら -level、0 なら決められない。
+    // cross(鼻, +level) は常に上を向く（y = 1 − 鼻の y²）。bind の姿勢で cross(鼻, 右) が頭の上（world の上を頭ローカルにしたもの）と同じ向きなら +level。
+    private static float UprightLevelSide(AnimalRigCache cache, Quaternion headBind)
+    {
+        Quaternion inv = Quaternion.Inverse(headBind);
+        Vector3 r = inv * cache.bodyRightBindWorld;
+        Vector3 u = inv * Vector3.up;
+        Vector3 c = Vector3.Cross(cache.headNoseLocal, r);
+        if (c.sqrMagnitude < 1e-6f || u.sqrMagnitude < 1e-6f)
+        {
+            return 0f;
+        }
+
+        float d = Vector3.Dot(c.normalized, u.normalized);
+        return Mathf.Abs(d) < 0.3f ? 0f : Mathf.Sign(d);
+    }
+
+    // 向ける前の鼻先 nose から、視聴者の向き toViewer へ weight だけ寄せた向き（回すのは最大 maxDegrees）。向けないなら zero。
+    // 重みは水平の角度で落とす: 視聴者が体の後ろ側（鼻と視聴者の水平の向きの差が maxYawDegrees を超える）なら 40° かけて 0（歩いて戻る間に頭が反らないように）。
+    // 縦の差（伏せで鼻が下・視聴者が上）は落とさない（3 次元の角度で落とすと、伏せで発火したとき向けがまったく効かなかった。判定役、2026-10-04）。
+    private static Vector3 ResolveLookAtDirection(Vector3 nose, Vector3 toViewer, float weight, float maxDegrees, float maxYawDegrees)
+    {
+        if (toViewer.sqrMagnitude < 1e-8f)
+        {
+            return Vector3.zero;
+        }
+
+        toViewer.Normalize();
+        float angle = Vector3.Angle(nose, toViewer);
+        Vector3 noseFlat = Vector3.ProjectOnPlane(nose, Vector3.up);
+        Vector3 toFlat = Vector3.ProjectOnPlane(toViewer, Vector3.up);
+        float yawAngle = noseFlat.sqrMagnitude > 0.01f && toFlat.sqrMagnitude > 0.01f ? Vector3.Angle(noseFlat, toFlat) : 0f;
+        float w = Mathf.Clamp01(weight) * (1f - Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(maxYawDegrees, maxYawDegrees + 40f, yawAngle)));
+        if (w <= 0.001f)
+        {
+            return Vector3.zero;
+        }
+
+        Vector3 target = angle > maxDegrees && angle > 0.001f ? Vector3.Slerp(nose, toViewer, maxDegrees / angle) : toViewer;
+        return Vector3.Slerp(nose, target, w).normalized;
+    }
+
+    // from を to へ向ける回転を「world の上まわりの横 → 横に寝た軸まわりの縦」で作る（最小回転の FromTo は鼻の軸まわりに頭を傾けることがある）。
+    // ただし鼻がほぼ真上・真下（水平成分が cos 75° 未満）のときと、横の回転が 3 次元の角度より 60° 以上大きいとき（頭が垂直を越えて反っている・
+    // 水平成分がほぼ逆向き）は、横の向きが定まらず逆さのまま向いたり 1 フレームで反転したりするので、最小回転（FromTo）に戻す（2 回目の査読）。
+    // 頭の向き基準だけが使う。鼻がほぼ真上・真下で方位の差が 120° を超えると、この FromTo も頭を上下逆さにする（2026-10-05 の査読。体の向き基準は向けないことで避けた）。
+    private static Quaternion YawThenPitch(Vector3 from, Vector3 to)
+    {
+        Vector3 fromFlat = Vector3.ProjectOnPlane(from, Vector3.up);
+        Vector3 toFlat = Vector3.ProjectOnPlane(to, Vector3.up);
+        const float minFlat = 0.26f;
+        if (fromFlat.magnitude < minFlat * from.magnitude || toFlat.magnitude < minFlat * to.magnitude ||
+            Vector3.Angle(fromFlat, toFlat) > Vector3.Angle(from, to) + 60f)
+        {
+            return Quaternion.FromToRotation(from, to);
+        }
+
+        Quaternion yaw = Quaternion.FromToRotation(fromFlat, toFlat);
+        return Quaternion.FromToRotation(yaw * from, to) * yaw;
+    }
+
+    // 向きの水平成分がこれ未満（cos 75°）なら、水平の方位が定まらないとみなす。
+    private const float LookAtMinFlat = 0.26f;
+
+    // 体の向き基準で頭を視聴者へ向ける（2026-10-05、M8 の実測から）。
+    // 伏せの犬は頭を体の真横へ向けたまま凍結していて、FaceViewer・歩きで体が視聴者を向くと頭が視聴者から 100〜180° それる。頭の向き基準では
+    // それを「視聴者が後ろ」と判定して重みを落とし、回す量の上限 90° でも残った。ここでは:
+    //   - 重み: 視聴者の方位を体の前から測り、bodyMaxYawDegrees を超えたら 40° かけて 0（視聴者が本当に体の後ろのときだけ抜く）
+    //   - 目標: 視聴者の向き。体の前からの方位は ±bodyMaxYawDegrees、仰角は ±maxPitchDegrees に収める
+    //   - 回し方: 鼻と目標を「体の前からの方位・仰角」で表し、その差を横（world の上まわり）→ 縦で回す。方位の差は ±180 を回り込まないので、
+    //     頭は体の前を通って回る（重みが途中の tick も体の後ろを通らない）。凍結した姿勢の中では鼻の方位は変わらないので左右が tick ごとに入れ替わらない
+    //   - 首に neckShare、首を回した後に頭の位置から目標を計算し直し、残りを頭で合わせる
+    //   - 頭の傾きは、方位で落とした後の重み w の分だけ、上下が正しい側の水平へ戻す（LevelHeadRoll の upright）
+    //   - **凍結した鼻がほぼ真上・真下（水平から 75° 超）なら向けない**（顎しか無いモデルと同じ扱い）。方位が定まらず、最小回転（FromTo）で向けると
+    //     頭が体の横〜後ろを向いているときに上下逆さになり、重みの入り際にも最大 30° 跳んだ（査読、2026-10-05）。凍結した姿勢の中では鼻の仰角は root の yaw で変わらないので、
+    //     イベントの途中で向ける / 向けないが切り替わることはない
+    // 移植と検算: scratchpad/rev2/lookat_body_relative.py（鼻が真上・真下でないとき、重み 1 で鼻先の誤差 0.0000°、首なしの傾きの変化 0.000°、体の前を通る）。
+    // 査読の厳密な移植: scratchpad/review_lookat/cs_port.py。
+    private static void ApplyLookAtViewerBodyRelative(AnimalRigCache cache, Transform neck, Vector3 viewerWorld, float weight, Vector3 bodyFlat, Vector3 nose0, LookAtViewerSettings settings)
+    {
+        if (!TryGetBearing(bodyFlat, nose0, out float noseYaw) ||
+            !TryResolveBodyRelativeAim(bodyFlat, viewerWorld - cache.head.position, weight, settings, out float w, out float aimYaw, out float aimPitch))
+        {
+            return;
+        }
+
+        float nosePitch = ElevationDegrees(nose0);
+        float wantYaw = noseYaw + w * (aimYaw - noseYaw);
+        float wantPitch = nosePitch + w * (aimPitch - nosePitch);
+        float share = Mathf.Clamp01(settings.neckShare);
+        if (neck != null && share > 0f)
+        {
+            Quaternion neckDelta = YawPitchDelta(nose0, share * (wantYaw - noseYaw), share * (wantPitch - nosePitch));
+            TransformWriter.ApplyWorldRotation(neck, neckDelta * neck.rotation);
+            if (!TryResolveBodyRelativeAim(bodyFlat, viewerWorld - cache.head.position, weight, settings, out w, out aimYaw, out aimPitch))
+            {
+                return;
+            }
+
+            wantYaw = noseYaw + w * (aimYaw - noseYaw);
+            wantPitch = nosePitch + w * (aimPitch - nosePitch);
+        }
+
+        // 首を回した後の鼻は、元の鼻と目標の仰角の間に収まる（目標は ±maxPitchDegrees）ので、既定値では真上・真下にならない（査読で 22913 件中 0 件）。
+        // maxPitchDegrees を 75° より大きくしたときだけ最小回転に落ちる。
+        Vector3 nose1 = (cache.head.rotation * cache.headNoseLocal).normalized;
+        Vector3 want = DirectionFromBearing(bodyFlat, wantYaw, wantPitch);
+        Quaternion headDelta = TryGetBearing(bodyFlat, nose1, out float nose1Yaw)
+            ? YawPitchDelta(nose1, wantYaw - nose1Yaw, wantPitch - ElevationDegrees(nose1))
+            : Quaternion.FromToRotation(nose1, want);
+        TransformWriter.ApplyWorldRotation(cache.head, headDelta * cache.head.rotation);
+        LevelHeadRoll(cache, want, w, true);
+    }
+
+    // 体の向き基準の重みと目標（体の前からの方位 aimYaw・仰角 aimPitch、度）。重みが 0 なら false。
+    private static bool TryResolveBodyRelativeAim(Vector3 bodyFlat, Vector3 toViewer, float weight, LookAtViewerSettings settings, out float w, out float aimYaw, out float aimPitch)
+    {
+        w = 0f;
+        aimYaw = 0f;
+        aimPitch = 0f;
+        if (toViewer.sqrMagnitude < 1e-8f)
+        {
+            return false;
+        }
+
+        Vector3 flat = Vector3.ProjectOnPlane(toViewer, Vector3.up);
+        float beta = flat.sqrMagnitude > 1e-10f ? Vector3.SignedAngle(bodyFlat, flat, Vector3.up) : 0f;
+        float maxYaw = settings.bodyMaxYawDegrees;
+        w = Mathf.Clamp01(weight) * (1f - Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(maxYaw, maxYaw + 40f, Mathf.Abs(beta))));
+        aimYaw = Mathf.Clamp(beta, -maxYaw, maxYaw);
+        aimPitch = Mathf.Clamp(ElevationDegrees(toViewer), -settings.maxPitchDegrees, settings.maxPitchDegrees);
+        return w > 0.001f;
+    }
+
+    // v の水平の方位（bodyFlat からの符号付きの角度、world の上まわり）。水平成分が小さければ false。
+    private static bool TryGetBearing(Vector3 bodyFlat, Vector3 v, out float yaw)
+    {
+        Vector3 flat = Vector3.ProjectOnPlane(v, Vector3.up);
+        if (flat.magnitude < LookAtMinFlat * v.magnitude)
+        {
+            yaw = 0f;
+            return false;
+        }
+
+        yaw = Vector3.SignedAngle(bodyFlat, flat, Vector3.up);
+        return true;
+    }
+
+    private static float ElevationDegrees(Vector3 v)
+    {
+        float m = v.magnitude;
+        return m > 1e-8f ? Mathf.Asin(Mathf.Clamp(v.y / m, -1f, 1f)) * Mathf.Rad2Deg : 0f;
+    }
+
+    private static Vector3 DirectionFromBearing(Vector3 bodyFlat, float yaw, float pitch)
+    {
+        Vector3 flat = Quaternion.AngleAxis(yaw, Vector3.up) * bodyFlat;
+        float p = pitch * Mathf.Deg2Rad;
+        return (flat * Mathf.Cos(p) + Vector3.up * Mathf.Sin(p)).normalized;
+    }
+
+    // nose を world の上まわりに dYaw、続けて横に寝た軸（水平の向きと上の外積）まわりに dPitch 回す回転。dPitch が正なら上へ。
+    private static Quaternion YawPitchDelta(Vector3 nose, float dYaw, float dPitch)
+    {
+        Quaternion yaw = Quaternion.AngleAxis(dYaw, Vector3.up);
+        Vector3 flat = Vector3.ProjectOnPlane(yaw * nose, Vector3.up);
+        if (flat.sqrMagnitude < 1e-10f)
+        {
+            return yaw;
+        }
+
+        return Quaternion.AngleAxis(dPitch, Vector3.Cross(flat.normalized, Vector3.up)) * yaw;
+    }
+
+    // インタラクティブモーション: root を置き直して頭を視聴者へ向けた後に、ジェスチャを足す（ApplyGestureOverlay と同じもの）。
+    // Apply がジェスチャを足す地点まで来た frame だけ（cache.gestureOverlayFrame。HEAD では Apply が早く返るとジェスチャも足さなかった）。
+    public void ApplyGestureOverlayAfterPlacement(Transform instanceRoot, AnimalGesturePose clip, float normalizedTime, bool onCanonicalLimbs, bool anatomicalHeadAxes = false)
+    {
+        if (clip == null || !TryGetRigCacheForInstance(instanceRoot, out AnimalRigCache cache) || cache.gestureOverlayFrame != Time.frameCount)
+        {
+            return;
+        }
+
+        AnimalGesturePosePlayer.ApplyToRigCache(clip, normalizedTime, cache, onCanonicalLimbs, ResolveHeadGestureRemap(cache, anatomicalHeadAxes));
+    }
+
+    // 頭のジェスチャ（HeadShake・HeadTiltAndTailWag の頭の点）を、頭の骨の局所軸ではなくモデルの解剖学的な軸で回すための写像（2026-10-05）。
+    // 資産は Labrador と同じ局所軸の意味で作ってある（局所 Z = 頭の上 → forward の曲線で横に首を振る、局所 Y ≈ 鼻）。モデルによって頭の骨の局所軸は違い、
+    // Lynx は視聴者へ向けて傾きを水平に戻した後でも、鼻に垂直な面で局所 Z が上から 45〜48° 傾いていて、首振りが斜め（横と頷きの中間）になった（M10。Labrador は 8〜10°）。
+    // 写像 = 頭ローカルで「+Z → 頭の上、+Y → 鼻」へ回す回転（LookRotation(上, 鼻)）。ジェスチャの回転 R は M × R × M⁻¹ にして掛ける。
+    // 頭の上 = cross(鼻, 体の右)（体の右 = bind のときの体の右 cache.bodyRightBindWorld を頭ローカルにしたもの、LevelHeadRoll と同じ）を、bind で world の上を向く側に。
+    // 鼻（顔の骨）か体の右が取れないモデル、上下が決められないモデルは null（従来どおり局所軸）。モデルごとに 1 回だけ求めてキャッシュする。
+    private static Quaternion? ResolveHeadGestureRemap(AnimalRigCache cache, bool enabled)
+    {
+        if (!enabled || cache == null || cache.head == null)
+        {
+            return null;
+        }
+
+        if (!cache.headGestureRemapResolved)
+        {
+            cache.headGestureRemapResolved = true;
+            cache.headGestureRemapValid = false;
+            if (ResolveHeadNoseLocal(cache) && cache.bodyRightBindWorld.sqrMagnitude >= 0.5f &&
+                cache.bindRotWorld.TryGetValue(cache.head, out Quaternion headBind))
+            {
+                float side = UprightLevelSide(cache, headBind);
+                Vector3 r = Quaternion.Inverse(headBind) * cache.bodyRightBindWorld;
+                Vector3 up = Vector3.Cross(cache.headNoseLocal, r) * side;
+                if (side != 0f && up.sqrMagnitude > 1e-6f)
+                {
+                    cache.headGestureRemap = Quaternion.LookRotation(up.normalized, cache.headNoseLocal);
+                    cache.headGestureRemapValid = true;
+                }
+            }
+
+            Debug.Log($"[GESTURE-HEAD] {(cache.root != null ? cache.root.name : "?")} anatomicalHeadAxes=" +
+                      (cache.headGestureRemapValid ? $"on remap={Quaternion.Angle(Quaternion.identity, cache.headGestureRemap):F1}deg up={cache.headGestureRemap * Vector3.forward:F3}" : "off（鼻か体の右が取れない）"));
+        }
+
+        return cache.headGestureRemapValid ? cache.headGestureRemap : (Quaternion?)null;
+    }
+
+    private bool TryGetRigCacheForInstance(Transform instanceRoot, out AnimalRigCache cache)
+    {
+        cache = null;
+        Transform rigRoot = instanceRoot != null ? (instanceRoot.GetComponentInChildren<Animator>()?.transform ?? instanceRoot) : null;
+        return rigRoot != null && animalRigCaches.TryGetValue(rigRoot, out cache) && cache != null;
+    }
+
+    // 頭ローカルの鼻先方向を、頭の子孫の顔の骨から一度だけ求める（2026-10-04）。優先: 鼻の骨（LeftNose / RightNose など、名前に nose）の中点
+    // → 舌の骨（tongue）→ 唇・口（lip / mouth / muzzle / snout）→ 当てはめ済みの頭（animal_head_fit.json、00_Dog・Labrador）の FK の照準。どれも無ければ向けない。
+    // 顔の骨は FK が動かさないので、いつ求めても頭に対して同じ。animal_head_aim.json は耳・角・唇の端を指していて使えない（Lynx で 85°、査読役）。
+    // 顔の骨の調べ: 鼻 32 体、舌・唇 12 体、顎だけ 3 体（16_Deer1・21_Donkey1.0・29_Goat1、向けない）。scratchpad/inv3/size/face_bones_survey.py
+    private static readonly string[][] HeadNoseTokenGroups =
+    {
+        new[] { "nose" },
+        new[] { "tongue" },
+        new[] { "lip", "mouth", "muzzle", "snout" },
+    };
+
+    private static bool ResolveHeadNoseLocal(AnimalRigCache cache)
+    {
+        if (cache.headNoseResolved)
+        {
+            return cache.headNoseValid;
+        }
+
+        cache.headNoseResolved = true;
+        cache.headNoseValid = false;
+        Transform head = cache.head;
+        if (head == null)
+        {
+            return false;
+        }
+
+        Transform[] desc = head.GetComponentsInChildren<Transform>(true);
+        foreach (string[] tokens in HeadNoseTokenGroups)
+        {
+            Vector3 sum = Vector3.zero;
+            int count = 0;
+            foreach (Transform t in desc)
+            {
+                if (t == head) { continue; }
+                string n = t.name.ToLowerInvariant();
+                foreach (string token in tokens)
+                {
+                    if (n.Contains(token)) { sum += t.position; count++; break; }
+                }
+            }
+
+            if (count > 0)
+            {
+                Vector3 local = head.InverseTransformDirection(sum / count - head.position);
+                if (local.sqrMagnitude > 1e-10f)
+                {
+                    cache.headNoseLocal = local.normalized;
+                    cache.headNoseValid = true;
+                    cache.headNoseSource = tokens[0] + "(" + count + ")";
+                    Debug.Log($"[LOOKAT] {(cache.root != null ? cache.root.name : "?")} nose={cache.headNoseSource} local={cache.headNoseLocal:F3}{BodyForwardLogText(cache)}");
+                    return true;
+                }
+            }
+        }
+
+        if (HasBakedHeadFit(cache) && cache.bindDirLocal.TryGetValue(head, out Vector3 fit) && fit.sqrMagnitude > 1e-8f)
+        {
+            cache.headNoseLocal = fit.normalized;
+            cache.headNoseValid = true;
+            cache.headNoseSource = "head_fit";
+            Debug.Log($"[LOOKAT] {(cache.root != null ? cache.root.name : "?")} nose=head_fit local={cache.headNoseLocal:F3}{BodyForwardLogText(cache)}");
+            return true;
+        }
+
+        cache.headNoseSource = "none";
+        Debug.Log($"[LOOKAT] {(cache.root != null ? cache.root.name : "?")} nose=none（顔の骨が無いので頭を視聴者へ向けない）");
+        return false;
+    }
+
+    // [LOOKAT] のログに体の前（spine ローカル）を足す。オフラインの移植で体の向き基準を再現するため（spine の world の回転に掛ける）。
+    private static string BodyForwardLogText(AnimalRigCache cache)
+    {
+        return TryGetBodyForwardSpineLocal(cache, out Vector3 local)
+            ? $" bodyFwdSpineLocal={local.x:F4},{local.y:F4},{local.z:F4} spine={cache.spine.name}"
+            : " bodyFwdSpineLocal=none";
+    }
+
     // There is no Humanoid-Avatar-style standard for which local axis an animal's nose points
     // along, so unlike Human (where local +Z reliably is the facing direction),
     // instanceRoot.rotation's own +Z cannot be assumed to be the nose. cache.spine.forward is
@@ -91,26 +503,45 @@ public sealed partial class AnimalPoseApplier
     {
         Transform rigRoot = instanceRoot != null ? (instanceRoot.GetComponentInChildren<Animator>()?.transform ?? instanceRoot) : null;
         if (rigRoot != null && animalRigCaches.TryGetValue(rigRoot, out AnimalRigCache cache) &&
-            cache != null && cache.spine != null)
+            cache != null && TryGetBodyForward(cache, out noseWorldDirection))
         {
-            // Compute model-accurate nose direction: spine.rotation * Inv(spineBindWorld) * modelForwardLocal.
-            // For Dog (bindSpineW=identity, modelForwardLocal=-Z) this equals -spine.forward (old hardcoded value).
-            // For other models where the spine bone is not aligned with the nose at T-pose, this correctly
-            // remaps modelForwardLocal through the spine's current rotation.
-            if (cache.bindRotWorld.TryGetValue(cache.spine, out Quaternion spineBindWorld) &&
-                cache.modelForwardLocal.sqrMagnitude > 0.000001f)
-            {
-                noseWorldDirection = cache.spine.rotation * (Quaternion.Inverse(spineBindWorld) * cache.modelForwardLocal);
-            }
-            else
-            {
-                noseWorldDirection = -cache.spine.forward;
-            }
             return true;
         }
 
         noseWorldDirection = Vector3.forward;
         return false;
+    }
+
+    // 体の前の向き（world）。TryGetCurrentNoseWorldDirection と頭を視聴者へ向ける体の向き基準（ApplyLookAtViewerBodyRelative）が使う。
+    private static bool TryGetBodyForward(AnimalRigCache cache, out Vector3 bodyForward)
+    {
+        if (!TryGetBodyForwardSpineLocal(cache, out Vector3 local))
+        {
+            bodyForward = Vector3.forward;
+            return false;
+        }
+
+        bodyForward = cache.spine.rotation * local;
+        return true;
+    }
+
+    // 体の前の向きを spine のローカルで。
+    private static bool TryGetBodyForwardSpineLocal(AnimalRigCache cache, out Vector3 local)
+    {
+        if (cache == null || cache.spine == null)
+        {
+            local = Vector3.back;
+            return false;
+        }
+
+        // Compute model-accurate nose direction: spine.rotation * Inv(spineBindWorld) * modelForwardLocal.
+        // For Dog (bindSpineW=identity, modelForwardLocal=-Z) this equals -spine.forward (old hardcoded value).
+        // For other models where the spine bone is not aligned with the nose at T-pose, this correctly
+        // remaps modelForwardLocal through the spine's current rotation.
+        local = cache.bindRotWorld.TryGetValue(cache.spine, out Quaternion spineBindWorld) && cache.modelForwardLocal.sqrMagnitude > 0.000001f
+            ? Quaternion.Inverse(spineBindWorld) * cache.modelForwardLocal
+            : Vector3.back;
+        return true;
     }
 
     public void Apply(AnimalPoseRequest request)
@@ -166,12 +597,20 @@ public sealed partial class AnimalPoseApplier
     // and so still only apply when pose.hasAnimalControl is true.
     private static void ApplyGestureOverlay(AnimalRigCache cache, AnimalPoseRequest request)
     {
-        if (request.gestureOverlayClip == null || cache == null)
+        if (cache == null)
         {
             return;
         }
 
-        AnimalGesturePosePlayer.ApplyToRigCache(request.gestureOverlayClip, request.gestureOverlayNormalizedTime, cache, request.gestureOnCanonicalLimbs);
+        // ジェスチャを足す地点まで来た印（ジェスチャを置き直しの後に足す経路は、これが今の frame のときだけ足す。2026-10-04）。
+        cache.gestureOverlayFrame = Time.frameCount;
+        if (request.gestureOverlayClip == null)
+        {
+            return;
+        }
+
+        AnimalGesturePosePlayer.ApplyToRigCache(request.gestureOverlayClip, request.gestureOverlayNormalizedTime, cache, request.gestureOnCanonicalLimbs,
+            ResolveHeadGestureRemap(cache, request.gestureAnatomicalHeadAxes));
     }
 
     // SMAL FK needs confident front/rear and left/right identification of all four leg
@@ -376,6 +815,20 @@ public sealed partial class AnimalPoseApplier
     {
         Transform rigRoot = animator != null ? animator.transform : instanceRoot;
         AnimalRigCache cache = GetOrBuildAnimalRigCache(rigRoot, instanceRoot, settings);
+        // ジェスチャを bind の局所の上に足す骨（FK が書かない骨・Animator の子の root）を、配置と FK より前に bind へ戻す（2026-10-04、2 回目の査読）。
+        // 戻さないと、FK が前の tick のジェスチャが残った root の下で胴の world 回転を書き、後で root を bind × G に置き直したときに
+        // 1 tick 分の差しか残らず、00_Dog・27_GermanShepherd の BodyShake（±10°）が 1° 未満に消えた。追従中は何もしない（bind のまま）。
+        if (cache != null)
+        {
+            foreach (KeyValuePair<Transform, Quaternion> kv in cache.gestureBindLocal)
+            {
+                if (kv.Key != null)
+                {
+                    kv.Key.localRotation = kv.Value;
+                }
+            }
+        }
+
         if (cache != null && cache.ready)
         {
             AlignAnimalRootToSkeleton(instanceRoot, cache, skeletonRoot, false, tick);
@@ -1536,6 +1989,8 @@ public sealed partial class AnimalPoseApplier
         {
             CaptureGestureCanonicalLimbs(bones, cache);
         }
+
+        CaptureGestureBindLocals(cache);
         CaptureBindHeadYaw(cache);
 
         if (cache.spine != null && cache.neck != null)
@@ -1676,6 +2131,33 @@ public sealed partial class AnimalPoseApplier
         if (canonical != null && canonical != role)
         {
             cache.gestureCanonicalLimbs[point] = canonical;
+        }
+    }
+
+    // ジェスチャを乗せる骨のうち FK が毎 tick 書き直さないものの bind の局所回転を控える（キャッシュを作る時点 = まだ誰も書いていない bind）。
+    // - 正規名の骨で、どの役にも入っていないもの（表の RollStyle の行の Fox・Beaver の front_*_lower など。役の骨は SMAL の FK が毎 tick 書く）
+    // - root が Animator の子のとき（00_Dog の "dog"）。インスタンスの root はインタラクティブモーション中に毎 tick 置き直されるので要らない
+    private static void CaptureGestureBindLocals(AnimalRigCache cache)
+    {
+        cache.gestureBindLocal.Clear();
+        var roles = new HashSet<Transform>
+        {
+            cache.spine, cache.neck, cache.head, cache.tailBase, cache.tailMid, cache.tailTip,
+            cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw, cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw,
+            cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, cache.leftRearToe,
+            cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, cache.rightRearToe,
+        };
+        foreach (Transform canonical in cache.gestureCanonicalLimbs.Values)
+        {
+            if (canonical != null && !roles.Contains(canonical))
+            {
+                cache.gestureBindLocal[canonical] = canonical.localRotation;
+            }
+        }
+
+        if (cache.root != null && cache.root.GetComponent<ReplaceableModel>() == null)
+        {
+            cache.gestureBindLocal[cache.root] = cache.root.localRotation;
         }
     }
 

@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Text.RegularExpressions;
 
 // 脚の骨の割り当てを、解剖学的な骨に直す表（2026-10-04、第 3 ラウンドの調査役 MAP の監査）。末尾に尾の役を直す行（GermanShepherd）もある。
 //
@@ -26,9 +25,57 @@ public static class AnimalLegMappingFix
         "Deer1",
     };
 
+    // prefab 名から先頭の「数字_」を外す（"36_LabradorDog" → "LabradorDog"）。数字が無い、または数字の後が "_" でなければそのまま。
     public static string Key(string prefabName)
     {
-        return string.IsNullOrEmpty(prefabName) ? string.Empty : Regex.Replace(prefabName, @"^\d+_", string.Empty);
+        if (string.IsNullOrEmpty(prefabName))
+        {
+            return string.Empty;
+        }
+
+        int i = 0;
+        while (i < prefabName.Length && prefabName[i] >= '0' && prefabName[i] <= '9')
+        {
+            i++;
+        }
+
+        return i > 0 && i < prefabName.Length && prefabName[i] == '_' ? prefabName.Substring(i + 1) : prefabName;
+    }
+
+    // AnimalBoneMappingOverride のフィールドへの代入。**反射（GetField / SetValue）を使わない**（2026-10-04、査読の指摘 C:
+    // 反射は Quest（IL2CPP）で初めて走る経路で、ストリップされると例外も出ずに割り当てだけ黙って効かなくなる。実機で確かめられないので無くした）。
+    public static bool IsOverrideKey(string key)
+    {
+        return TrySetOverrideField(null, key, null);
+    }
+
+    // ov が null なら名前の確認だけ。知らないキーなら false。
+    public static bool TrySetOverrideField(AnimalBoneMappingOverride ov, string key, string value)
+    {
+        switch (key)
+        {
+            case "spine": if (ov != null) { ov.spine = value; } return true;
+            case "neck": if (ov != null) { ov.neck = value; } return true;
+            case "head": if (ov != null) { ov.head = value; } return true;
+            case "tailBase": if (ov != null) { ov.tailBase = value; } return true;
+            case "tailMid": if (ov != null) { ov.tailMid = value; } return true;
+            case "tailTip": if (ov != null) { ov.tailTip = value; } return true;
+            case "frontLUpper": if (ov != null) { ov.frontLUpper = value; } return true;
+            case "frontLLower": if (ov != null) { ov.frontLLower = value; } return true;
+            case "frontLPaw": if (ov != null) { ov.frontLPaw = value; } return true;
+            case "frontRUpper": if (ov != null) { ov.frontRUpper = value; } return true;
+            case "frontRLower": if (ov != null) { ov.frontRLower = value; } return true;
+            case "frontRPaw": if (ov != null) { ov.frontRPaw = value; } return true;
+            case "rearLUpper": if (ov != null) { ov.rearLUpper = value; } return true;
+            case "rearLLower": if (ov != null) { ov.rearLLower = value; } return true;
+            case "rearLPaw": if (ov != null) { ov.rearLPaw = value; } return true;
+            case "rearLToe": if (ov != null) { ov.rearLToe = value; } return true;
+            case "rearRUpper": if (ov != null) { ov.rearRUpper = value; } return true;
+            case "rearRLower": if (ov != null) { ov.rearRLower = value; } return true;
+            case "rearRPaw": if (ov != null) { ov.rearRPaw = value; } return true;
+            case "rearRToe": if (ov != null) { ov.rearRToe = value; } return true;
+            default: return false;
+        }
     }
 
     private const string Lion =

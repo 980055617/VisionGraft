@@ -962,7 +962,9 @@ public static partial class BatchPlaybackLogger
             forcedMotion = true;
             bool dynamicKind = SessionState.GetString(KeyForceMotionKind, "dynamic") != "static";
             string clipFilter = SessionState.GetString(KeyForceStaticClip, string.Empty);
-            if (!dynamicKind && !string.IsNullOrEmpty(clipFilter) && player.animalStaticGestureClips != null)
+            // dynamic でも絞る: 歩いて近づいた後のジェスチャ（BeginGesturePhase）も animalStaticGestureClips から乱数で選ばれる
+            // （2026-10-04、絞らずに撮った lab_walk_3way は 3 本でジェスチャが違い、比べられなかった）。
+            if (!string.IsNullOrEmpty(clipFilter) && player.animalStaticGestureClips != null)
             {
                 var kept = new List<AnimalGesturePose>();
                 foreach (AnimalGesturePose clip in player.animalStaticGestureClips)
@@ -982,7 +984,7 @@ public static partial class BatchPlaybackLogger
 
             player.DebugForceInteractiveMotion(dynamicKind);
             Debug.Log($"[BATCH] forceMotionAt {forceAt}s → DebugForceInteractiveMotion({(dynamicKind ? "dynamic" : "static")}) at videoTime={vp.time:F2}" +
-                (dynamicKind ? string.Empty : $" clips={string.Join(",", Array.ConvertAll(player.animalStaticGestureClips ?? new AnimalGesturePose[0], c => c != null ? c.name : "null"))}"));
+                $" clips={string.Join(",", Array.ConvertAll(player.animalStaticGestureClips ?? new AnimalGesturePose[0], c => c != null ? c.name : "null"))}");
         }
 
         if (every <= 0f || !player.IsAnyInteractiveMotionActive()) { return; }

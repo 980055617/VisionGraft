@@ -405,6 +405,31 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 作ってあり、表で役が 1 本上の骨（解剖学的な上腕）へ移ると、PawRaise が「肉球を上げる」から「肩で脚を後ろへ振る」になった。
     // **既定 ON**（fixAnimalLegMapping と組。表に無いモデルは何も変わらない）。OFF にすると表の役の骨に乗る。
     public bool animalGestureOnCanonicalLimbs = true;
+    // 頭のジェスチャ（HeadShake・HeadTiltAndTailWag の頭の点）を、頭の骨の局所軸ではなくモデルの解剖学的な軸（頭の上・鼻・体の右）で回す（2026-10-05、**既定 ON**）。
+    // 資産は Labrador の局所軸の意味（局所 Z = 頭の上）で作ってあり、Lynx は局所 Z が頭の上から 45〜48° 傾いていて、首振りが斜め（頷き混じり）になった。
+    // Labrador は 10° 前後しか変わらない。鼻（顔の骨）か体の右が取れないモデルは従来どおり。詳細は AnimalPoseApplier.ResolveHeadGestureRemap。
+    public bool animalGestureAnatomicalHeadAxes = true;
+    // インタラクティブモーションの動物の頭を、ジェスチャ中と歩いて近づく間は視聴者へ向ける（2026-10-04、ユーザー「ユーザーを見て振ってほしい」）。
+    // ジェスチャは発火した瞬間の姿勢を土台にするので、B（bodyFrameNeckHead）では座っている瞬間に発火すると上を向いたまま視聴者へ歩いてきた。
+    // 頭の鼻先（頭の子孫の顔の骨: 鼻 → 舌 → 唇、無ければ当てはめ済みの頭。animal_head_aim.json は耳や角を指すので使わない）を視聴者の頭の位置へ向ける回転を、首に animalLookAtViewerNeckShare、残りを頭に配り、
+    // その上にジェスチャ（首振りなど）を足す。イベントの開始から animalLookAtViewerBlendSeconds で入る。**既定 ON**。姿勢追従（イベントの外）には効かない。
+    public bool animalGestureLookAtViewer = true;
+    // 向け方を体の向き基準にする（2026-10-05、**既定 ON**）。視聴者が体の前にいるか（体の前 = TryGetCurrentNoseWorldDirection の水平、FaceViewer・歩きと同じ）で
+    // 重みを落とし（animalLookAtViewerBodyMaxYawDegrees を超えたら 40° かけて 0）、頭の目標は体の前から ±animalLookAtViewerBodyMaxYawDegrees・
+    // 仰角 ±animalLookAtViewerMaxPitchDegrees に収め、横の回転は体の前を通す（体の前からの方位の差で作る）。歩いて戻る始めの animalLookAtViewerBlendSeconds で抜く。
+    // 頭の向き基準（OFF、2026-10-04 の方式）では、伏せの犬は頭を体の真横へ向けたまま凍結しているので、体が視聴者を向くと頭が視聴者から 100〜180° それ、
+    // 「視聴者が後ろ」と判定して重みを落とした・回す量の上限 90° で 20〜25° 残った（M8 の実測、Docs/interactive-motion-events.md）。
+    public bool animalLookAtViewerBodyRelative = true;
+    public float animalLookAtViewerBodyMaxYawDegrees = 100f;
+    public float animalLookAtViewerMaxPitchDegrees = 60f;
+    // 以下 2 つは頭の向き基準（animalLookAtViewerBodyRelative = false）のときだけ使う: 回す角度の上限（縦横合わせて）と、
+    // 鼻と視聴者の水平の角度の上限（超えたら 40° かけて重み 0）。140° の根拠にしたダンプ（2026-10-05）は、イベントが終わった後のハンドオフの tick だった
+    // （BoneWorldDump は追従の経路でしか書かない）。イベント中を測り直すと（M8）、静止の伏せで向ける前の頭は最大 123.5° それていて 100° なら重みは 0.37 まで落ち、
+    // 歩いたとき（145〜180°）は 140° でも落ちた。
+    public float animalLookAtViewerMaxDegrees = 90f;
+    public float animalLookAtViewerMaxYawDegrees = 140f;
+    public float animalLookAtViewerNeckShare = 0.4f;
+    public float animalLookAtViewerBlendSeconds = 0.35f;
 
     // 向きの切り分け用。詳細は AnimalSmalFkApplier.forceRootYawFix。
     public int forceRootYawFix;

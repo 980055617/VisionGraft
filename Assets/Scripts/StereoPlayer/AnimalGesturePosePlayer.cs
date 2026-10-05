@@ -11,7 +11,9 @@ internal static class AnimalGesturePosePlayer
 {
     // onCanonicalLimbs: 四肢の点を、脚の割り当ての表で付け替えた役の骨ではなく正規名の骨（cache.gestureCanonicalLimbs）に乗せる
     // （2026-10-04。資産は正規名の骨の局所軸で作ってあるので、役が 1 本上の骨へ移ると同じ回転が別の向きに効く）。
-    internal static void ApplyToRigCache(AnimalGesturePose clip, float normalizedTime, AnimalRigCache cache, bool onCanonicalLimbs = false)
+    // headRemap: 頭の点（HeadTip）の回転を、頭の骨の局所軸ではなくモデルの解剖学的な軸で掛けるための写像（頭ローカル、AnimalPoseApplier.TryGetHeadGestureRemap）。
+    // null なら従来どおり局所軸。
+    internal static void ApplyToRigCache(AnimalGesturePose clip, float normalizedTime, AnimalRigCache cache, bool onCanonicalLimbs = false, Quaternion? headRemap = null)
     {
         if (clip == null || clip.pointCurves == null || cache == null)
         {
@@ -39,7 +41,15 @@ internal static class AnimalGesturePosePlayer
             float rightDeg = EvaluateOrZero(pointCurve.right, normalizedTime);
             float upDeg = EvaluateOrZero(pointCurve.up, normalizedTime);
             float forwardDeg = EvaluateOrZero(pointCurve.forward, normalizedTime);
-            bone.localRotation = bone.localRotation * Quaternion.Euler(rightDeg, upDeg, forwardDeg);
+            // FK が毎 tick 書き直さない骨は bind の局所の上に足す（今の回転に掛けると積み重なって回り続ける。cache.gestureBindLocal、2026-10-04）。
+            Quaternion baseLocal = cache.gestureBindLocal.TryGetValue(bone, out Quaternion bindLocal) ? bindLocal : bone.localRotation;
+            Quaternion offset = Quaternion.Euler(rightDeg, upDeg, forwardDeg);
+            if (headRemap.HasValue && pointCurve.point == AnimalGesturePoint.HeadTip && bone == cache.head)
+            {
+                offset = headRemap.Value * offset * Quaternion.Inverse(headRemap.Value);
+            }
+
+            bone.localRotation = baseLocal * offset;
         }
     }
 

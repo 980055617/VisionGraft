@@ -34,6 +34,7 @@ public static partial class BatchPlaybackLogger
     private static int recordTick;
     private static bool recordDone;
     private static StreamWriter recordIndex;
+    private static StreamWriter recordPose;
     private static List<long[]> recordWindows;
     // 補助カメラの状態（区間ごとに作り直す）: 固定した水平方向・距離と、ゆっくり追う注視点。
     private static readonly Dictionary<string, Vector3> recordViewDir = new Dictionary<string, Vector3>();
@@ -155,6 +156,7 @@ public static partial class BatchPlaybackLogger
         RenderRecordView(cam, cam.transform.position, cam.transform.rotation, fov, cam.nearClipPlane, cam.farClipPlane,
             W, H, Path.Combine(dir, name + ".jpg"), null);
         RecordAuxViews(cam, dir, name);
+        WriteRecordPose(dir, name, cam);
 
         var inv = CultureInfo.InvariantCulture;
         recordIndex.WriteLine(string.Join(",", name, recordWindows[w][0].ToString(inv), recordTick.ToString(inv),
@@ -169,6 +171,48 @@ public static partial class BatchPlaybackLogger
         recordTick++;
     }
 
+    // tick ごとの頭・首・root の world の位置・回転と視聴者（main カメラ）の位置を record_pose.csv へ（2026-10-05）。
+    // 頭を視聴者へ向ける機能の検算用。鼻先は頭ローカルの鼻の方向（ログの [LOOKAT] local=）を掛けてオフラインで出す。
+    // BoneWorldDump は追従の経路の最後でしか書かないので、インタラクティブモーションのイベント中の tick が入らない。
+    private static void WriteRecordPose(string dir, string name, Camera cam)
+    {
+        if (recordPose == null)
+        {
+            recordPose = new StreamWriter(Path.Combine(dir, "record_pose.csv"), false, new System.Text.UTF8Encoding(false));
+            recordPose.WriteLine("name,frameCount,vx,vy,vz,hpx,hpy,hpz,hqx,hqy,hqz,hqw,nqx,nqy,nqz,nqw,rpx,rpy,rpz,rqx,rqy,rqz,rqw," +
+                "npx,npy,npz,spx,spy,spz,sqx,sqy,sqz,sqw");
+        }
+
+        if (!TryResolveAuxViewTarget("Track_0/head", out Transform head, out _))
+        {
+            return;
+        }
+
+        TryResolveAuxViewTarget("Track_0/neck", out Transform neck, out _);
+        TryResolveAuxViewTarget("Track_0/spine", out Transform spine, out _);
+        Transform root = head;
+        while (root.parent != null && !root.name.StartsWith("Track_", StringComparison.Ordinal))
+        {
+            root = root.parent;
+        }
+
+        var inv = CultureInfo.InvariantCulture;
+        var cols = new List<string> { name, Time.frameCount.ToString(inv) };
+        void V(Vector3 v) { cols.Add(v.x.ToString("F5", inv)); cols.Add(v.y.ToString("F5", inv)); cols.Add(v.z.ToString("F5", inv)); }
+        void Q(Quaternion q) { cols.Add(q.x.ToString("F6", inv)); cols.Add(q.y.ToString("F6", inv)); cols.Add(q.z.ToString("F6", inv)); cols.Add(q.w.ToString("F6", inv)); }
+        V(cam.transform.position);
+        V(head.position);
+        Q(head.rotation);
+        Q(neck != null ? neck.rotation : Quaternion.identity);
+        V(root.position);
+        Q(root.rotation);
+        // 首と背骨（体の前の向きを neck − spine の水平で近似する用）
+        V(neck != null ? neck.position : Vector3.zero);
+        V(spine != null ? spine.position : Vector3.zero);
+        Q(spine != null ? spine.rotation : Quaternion.identity);
+        recordPose.WriteLine(string.Join(",", cols));
+    }
+
     private static void FinishRecording(string reason)
     {
         recordDone = true;
@@ -177,6 +221,13 @@ public static partial class BatchPlaybackLogger
             recordIndex.Flush();
             recordIndex.Dispose();
             recordIndex = null;
+        }
+
+        if (recordPose != null)
+        {
+            recordPose.Flush();
+            recordPose.Dispose();
+            recordPose = null;
         }
 
         Debug.Log($"[REC] done ({reason}), stopping playmode");
@@ -236,6 +287,28 @@ public static partial class BatchPlaybackLogger
         {
             string key = raw.Trim();
             string[] p = key.Split(':');
+            // "viewer": 視聴者の目（main カメラの位置）からモデルを寄りで撮る（2026-10-04、頭が視聴者を見ているかを確かめる用）。
+            // 2 つ目 = 枠に入れる大きさ（モデルの大きさの倍数）、画角は距離から毎 tick 決める。6 つ目が "c" なら bounds の中心を見る。
+            if (p.Length >= 3 && p[2] == "viewer")
+            {
+                if (p.Length < 2 || !float.TryParse(p[1], style, inv, out float frameFactor) ||
+                    !TryResolveAuxViewTarget(p[0], out Transform vTarget, out float vSize))
+                {
+                    continue;
+                }
+
+                Vector3 vAim = p.Length >= 6 && p[5] == "c" ? ResolveModelBoundsCenter(vTarget) : vTarget.position;
+                Vector3 eye = mainCam.transform.position;
+                Vector3 look = vAim - eye;
+                if (look.sqrMagnitude < 1e-8f) { continue; }
+
+                float vDist = look.magnitude;
+                float vFov = Mathf.Clamp(2f * Mathf.Atan(0.5f * frameFactor * vSize / vDist) * Mathf.Rad2Deg, 2f, 90f);
+                RenderRecordView(mainCam, eye, Quaternion.LookRotation(look / vDist, Vector3.up), vFov,
+                    Mathf.Max(0.001f, vDist * 0.05f), 100f, 960, 720, Path.Combine(dir, $"{name}_{p[0].Replace('/', '-')}_viewer.jpg"), vTarget);
+                continue;
+            }
+
             bool bodyFront = p.Length >= 3 && p[2] == "front";
             // "side" / "side-": 体の真横（体の前後軸から +90° / −90°）。体の向きに合わせて毎 tick 回し、半減期 0.15 秒でならす
             // （区間の最初で固定すると、走って向きを変えた動物を後ろから撮ってしまい脚の振りが見えない）。

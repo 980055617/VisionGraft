@@ -53,11 +53,12 @@ public class ExperimentTutorialTests
         Assert.That(tutorial.Body, Does.Contain("立体"));
     }
 
-    // 置換ありは「自分から動く例を見る → モデルを替える → Motion を切り替える」の 3 段階。
+    // 置換ありは「自分から動く例を見る → モデルを替える → Motion を切り替える → 掴んで回す」の 4 段階。
     // WatchMotion が先頭なのは、後ろに置くと（練習の発火間隔は 3〜6 秒）モデルを選んでいる最中に
-    // 先に発火して説明が一度も出ないため（2026-09-25 の監査 F1）。
+    // 先に発火して説明が一度も出ないため（2026-09-25 の監査 F1）。掴んで回すは 2026-10-01 に追加し、
+    // Motion を切った後に置く（掴もうとしている最中に発火して邪魔しないため）。
     [Test]
-    public void ModelReplaced_SequenceIsWatchMotionChangeModelToggleMotion()
+    public void ModelReplaced_SequenceIsWatchMotionChangeModelToggleMotionGrabRotate()
     {
         ExperimentTutorial.Step[] steps = ExperimentTutorial.ResolveSequence(ExperimentDisplayMode.ModelReplaced);
 
@@ -66,11 +67,12 @@ public class ExperimentTutorialTests
             ExperimentTutorial.Step.WatchMotion,
             ExperimentTutorial.Step.ChangeModel,
             ExperimentTutorial.Step.ToggleMotion,
+            ExperimentTutorial.Step.GrabRotate,
             ExperimentTutorial.Step.Done,
         }));
 
         ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
-        Assert.That(tutorial.StepCount, Is.EqualTo(3));
+        Assert.That(tutorial.StepCount, Is.EqualTo(4));
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion));
         Assert.That(tutorial.Body, Does.Contain("自分から"));
 
@@ -90,8 +92,83 @@ public class ExperimentTutorialTests
         Assert.That(tutorial.Body, Does.Contain("Settings"));
 
         tutorial.RecordOperation("motion_toggle", "value=0");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.GrabRotate));
+        Assert.That(tutorial.Body, Does.Contain("トリガー"));
+
+        // 掴んで回して放した（GrabRotate.partial.cs の記録と同じ形）。
+        tutorial.RecordOperation("change_rotation", "track=1 op=grab yaw=35 pitch=0 roll=0 frame=120");
         Assert.That(tutorial.IsDone, Is.True);
         Assert.That(tutorial.DescribeResult(), Is.EqualTo("completed=1 step=Done mode=ModelReplaced"));
+    }
+
+    // 掴んで回すは**その段階を表示している間の、掴みによる回転だけ**数える。先回りで済ませると説明が
+    // 一度も出ない。Model パネルのボタンで向きを戻した記録（op=grab 以外）でも進めない。
+    [Test]
+    public void ModelReplaced_GrabRotate_CountsOnlyAGrabWhileTheStepIsShown()
+    {
+        ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
+
+        // 1 段階目の最中にうっかり掴んで回しても、4 段階目は済ませない。
+        tutorial.RecordOperation("change_rotation", "track=1 op=grab yaw=10 pitch=0 roll=0 frame=30");
+        tutorial.RecordInteraction(1, "random_Static", null);
+        tutorial.RecordInteraction(1, "motion_end", "reason=completed");
+        tutorial.RecordOperation("change_model", "track=1 prefab=x");
+        tutorial.RecordOperation("motion_toggle", "value=0");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.GrabRotate));
+
+        // 掴み以外の向きの変更では進まない。
+        tutorial.RecordOperation("change_rotation", "track=1 yaw=0 op=reset");
+        tutorial.RecordOperation("change_rotation", null);
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.GrabRotate));
+
+        tutorial.RecordOperation("change_rotation", "track=1 op=grab yaw=40 pitch=5 roll=0 frame=150");
+        Assert.That(tutorial.IsDone, Is.True);
+    }
+
+    // 掴む段階でモデルを全部「表示しない」にすると掴む対象が無い。戻し方を出し、戻したら元の文面へ。
+    [Test]
+    public void ModelReplaced_GrabRotate_AllModelsHidden_TellsHowToShowOneAgain()
+    {
+        ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
+        tutorial.RecordOperation("model_assigned", "track=1 category=person prefab=01_Female");
+        tutorial.RecordInteraction(1, "random_Static", null);
+        tutorial.RecordInteraction(1, "motion_end", "reason=completed");
+        tutorial.RecordOperation("change_model", "track=1 category=human index=2 prefab=02_Female");
+        tutorial.RecordOperation("motion_toggle", "value=0");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.GrabRotate));
+
+        int changed = 0;
+        tutorial.Changed += () => changed++;
+
+        tutorial.RecordOperation("change_model", "track=1 category=human index=-1 prefab=(none)");
+        Assert.That(tutorial.Body, Does.Contain("表示しない"));
+        Assert.That(changed, Is.EqualTo(1), "文面が変わるのでパネルを作り直す");
+
+        tutorial.RecordOperation("change_model", "track=1 category=human index=0 prefab=01_Female");
+        Assert.That(tutorial.Body, Does.Contain("トリガー"));
+        Assert.That(changed, Is.EqualTo(2));
+    }
+
+    // Motion がどういう機能か（自分から動く・OFF なら動画どおりに動くだけ）を練習の文面で説明する。
+    // 終わりの画面は、置換ありでできること 3 つ（替える・回す・切り替える）をまとめて言う（2026-10-01）。
+    [Test]
+    public void ModelReplaced_ToggleMotionAndDone_ExplainWhatEachFunctionDoes()
+    {
+        ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
+        tutorial.RecordInteraction(1, "random_Static", null);
+        tutorial.RecordInteraction(1, "motion_end", "reason=completed");
+        tutorial.RecordOperation("change_model", "track=1 prefab=x");
+
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ToggleMotion));
+        Assert.That(tutorial.Body, Does.Contain("自分から動く"));
+        Assert.That(tutorial.Body, Does.Contain("OFF にすると"));
+        Assert.That(tutorial.Body, Does.Contain("Screen Dist"));
+
+        tutorial.RecordOperation("motion_toggle", "value=0");
+        tutorial.RecordOperation("change_rotation", "track=1 op=grab yaw=35 pitch=0 roll=0 frame=120");
+        Assert.That(tutorial.IsDone, Is.True);
+        Assert.That(tutorial.Body, Does.Contain("掴んで回す"));
+        Assert.That(tutorial.Body, Does.Contain("Motion"));
     }
 
     // **その段階を表示している間の発火だけ数える。** 先回りで済ませると説明が出ないまま次へ進む。
@@ -140,7 +217,8 @@ public class ExperimentTutorialTests
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ToggleMotion), "切り替えの練習は残っている");
 
         tutorial.RecordOperation("motion_toggle", "value=0");
-        Assert.That(tutorial.IsDone, Is.True);
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.GrabRotate), "切り替えの段階が済んで、掴んで回すへ");
+        Assert.That(tutorial.IsDone, Is.False);
     }
 
     // モデルを全部「表示しない」にすると動く対象が無くなり、待っても永久に進まなかった（同監査 D1）。

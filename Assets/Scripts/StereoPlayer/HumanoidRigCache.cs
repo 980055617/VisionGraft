@@ -9,6 +9,12 @@ internal sealed class HumanoidRigCache
     // Avatar の T ポーズ（avatar.humanDescription.skeleton の局所回転を Animator から積んだもの）の world 回転（2026-10-04）。
     // bindRotWorld と同じ時点・同じ root の回転で採る。fkReferenceFromAvatarTPose のとき FK の基準に使う。
     public readonly Dictionary<HumanBodyBones, Quaternion> tposeRotWorld = new Dictionary<HumanBodyBones, Quaternion>();
+    // 指 30 本の T ポーズの局所回転（2026-10-08、J-12 の humanFingerRestFromAvatarTPose・humanFingersFromSmplHand 用）。tposeRotWorld[Humanoid の親]⁻¹ ×
+    // tposeRotWorld[指] を最初に使うときに作る（StreamingStereoVideoPlayer.HumanFingers.partial.cs）。T ポーズを採っていなければ null のまま。
+    public Dictionary<HumanBodyBones, Quaternion> fingerTposeRotLocal;
+    // [FINGER] の行を状態が変わったときだけ出すための控え（0 = まだ、1 = 使った、2 = 今の経路のまま）。
+    public int fingerRestLogState;
+    public int fingerSmplHandLogState;
     // T-pose での canonical 親フレームから手ボーンの bindRotWorld への補正量。
     // 手のFK式: canonicalParent * smplLocal * handBindCorrection
     // smplLocal=identity のとき bindRotWorld[hand] に一致し、キャラクター間の軸差を吸収する。

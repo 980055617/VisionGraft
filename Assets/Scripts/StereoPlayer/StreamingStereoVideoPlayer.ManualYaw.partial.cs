@@ -428,5 +428,71 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
     }
 
+    // 既定 ON（2026-10-08、全関節の監査 J-01 ② humanFollowManualRotation。2026-10-09 に採用）: 人の体に掛ける手動の回転。humanBindRootRelative（①）と組でだけ返す
+    // （① なしで手動の回転を持ったまま作り直すと bind に 2θ 入っており、ここで掛けるとさらに重なる）。手動の回転が無ければ false（今と同じ経路）。
+    // 既定は yaw だけ: ComposeOffset(yaw, 0, 0) = AngleAxis(yaw, 上)。保存した yaw は Euler(pitch, yaw, roll) の yaw で、pitch が ±90° の内側なら
+    // 回した前の向きの水平成分の角度に等しい（動物の FK が使う ExtractYawOnly(root) と同じ量）。
+    // humanFollowManualRotationAllAxes なら配置と同じ 3 軸（ApplyManualTrackYawOffset と同じ ComposeOffset(yaw, pitch, roll)）。
+    private bool loggedHumanFollowWithoutBindFix;
+
+    private bool TryResolveHumanFollowManualRotation(uint trackId, int frame, out Quaternion rotation)
+    {
+        rotation = Quaternion.identity;
+        if (!humanFollowManualRotation)
+        {
+            return false;
+        }
+
+        if (!humanBindRootRelative)
+        {
+            if (!loggedHumanFollowWithoutBindFix)
+            {
+                loggedHumanFollowWithoutBindFix = true;
+                Debug.LogWarning("[HUMAN-FOLLOW] humanFollowManualRotation は humanBindRootRelative と組でだけ効く（片方だけでは体に掛けない）");
+            }
+
+            return false;
+        }
+
+        float yawDeg = EvaluateManualYawOffsetDegForFrame(trackId, frame);
+        float pitchDeg = humanFollowManualRotationAllAxes ? EvaluateManualPitchDegForFrame(trackId, frame) : 0f;
+        float rollDeg = humanFollowManualRotationAllAxes ? EvaluateManualRollDegForFrame(trackId, frame) : 0f;
+        if (Mathf.Abs(yawDeg) < 0.001f && Mathf.Abs(pitchDeg) < 0.001f && Mathf.Abs(rollDeg) < 0.001f)
+        {
+            return false;
+        }
+
+        rotation = ManualRotationMath.ComposeOffset(yawDeg, pitchDeg, rollDeg);
+        return true;
+    }
+
+    // keypoints（pose.jointsWorld）を root（anchor = jointsCam の原点）まわりに回す。ViewRay.partial.cs の ApplyViewRayToPersonJoints と同じ形
+    // （rootWorld + R × camRotation × jointsCam を、ここでは rootWorld + R × (jointsWorld − rootWorld) で）。見えない関節は使われないので触らない。
+    private static void RotatePersonJointsAboutRoot(ref PersonPoseWorldData pose, Quaternion rotation)
+    {
+        if (pose.jointsWorld == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < pose.jointsWorld.Length; i++)
+        {
+            if (pose.jointVis != null && i < pose.jointVis.Length && pose.jointVis[i] == 0)
+            {
+                continue;
+            }
+
+            pose.jointsWorld[i] = pose.rootWorld + rotation * (pose.jointsWorld[i] - pose.rootWorld);
+        }
+    }
+
+    // このフレームに手動の回転（yaw・pitch・roll のどれか）があるか。ApplyManualTrackYawOffset と同じ 0.001° の閾値（それ未満なら配置も回さない）。
+    private bool HasManualRotationAtFrame(uint trackId, int frame)
+    {
+        return Mathf.Abs(EvaluateManualYawOffsetDegForFrame(trackId, frame)) >= 0.001f ||
+               Mathf.Abs(EvaluateManualPitchDegForFrame(trackId, frame)) >= 0.001f ||
+               Mathf.Abs(EvaluateManualRollDegForFrame(trackId, frame)) >= 0.001f;
+    }
+
 }
 

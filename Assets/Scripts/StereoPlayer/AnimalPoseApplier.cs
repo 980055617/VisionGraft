@@ -27,7 +27,9 @@ public sealed partial class AnimalPoseApplier
     // this, only the root smoothly catches up at the end of an interactive motion event while
     // the legs/spine/head/tail snap instantly into the live tracked pose the moment the
     // tracked pipeline writes it.
-    public void CaptureBoneLocalRotations(Transform instanceRoot, Dictionary<Transform, Quaternion> destination)
+    // includeNeckChain: 首の中間の骨（smalDriveNeckChain で FK が書く）も控える（2026-10-07、既定の姿勢から戻すイベントだけ。立ち姿と追従の差が大きく、
+    // 役の骨 20 本だけを混ぜると首の鎖がハンドオフの最初の tick で跳ぶため）。
+    public void CaptureBoneLocalRotations(Transform instanceRoot, Dictionary<Transform, Quaternion> destination, bool includeNeckChain = false)
     {
         Transform rigRoot = instanceRoot != null ? (instanceRoot.GetComponentInChildren<Animator>()?.transform ?? instanceRoot) : null;
         if (rigRoot == null || !animalRigCaches.TryGetValue(rigRoot, out AnimalRigCache cache) || cache == null)
@@ -55,6 +57,18 @@ public sealed partial class AnimalPoseApplier
         AddBoneLocalRotation(destination, cache.rightRearLower);
         AddBoneLocalRotation(destination, cache.rightRearPaw);
         AddBoneLocalRotation(destination, cache.rightRearToe);
+        if (includeNeckChain)
+        {
+            foreach (Transform chainBone in cache.neckChainBindLocal.Keys)
+            {
+                AddBoneLocalRotation(destination, chainBone);
+            }
+        }
+
+        // 尾の鎖の骨（smalTailFullChain で FK が書く中間の骨を含む、2026-10-07）。混ぜないと中間の骨だけハンドオフの最初の tick で跳ぶ。
+        AddSmalTailChainBoneLocalRotations(cache, destination);
+        // 前足（smalDriveFeet、2026-10-08）: FK が書いた前足（役の骨ではない front_x_paw など）も控える。書いていなければ何もしない。
+        AddSmalFrontFootBoneLocalRotations(cache, destination);
     }
 
     private static void AddBoneLocalRotation(Dictionary<Transform, Quaternion> destination, Transform bone)
@@ -147,7 +161,7 @@ public sealed partial class AnimalPoseApplier
 
     // 視聴者へ向けた頭の傾き（鼻の軸まわり）を、weight の分だけ水平に戻す（2026-10-05、判定役: Labrador が 10〜15° 首を傾けたまま見ていた）。
     // 傾きは凍結した姿勢（データ）から引き継いだもので、視聴者を見るときは真っすぐのほうが自然（首をかしげるのはジェスチャ HeadTilt が上から足す）。
-    // 頭の左右の軸は、bind のときの体の右（cache.bodyRightBindWorld）を頭ローカルにしたもの。取れないモデル（F2 の対象外の 16_Deer1 など）と、
+    // 頭の左右の軸は、bind のときの体の右（cache.bodyRightBindWorld）を頭ローカルにしたもの。取れないモデル（F2 の対象外。2026-10-09 に 16_Deer1 を外して今は無い）と、
     // 鼻がほぼ真上・真下のとき（水平の左右が定まらない）は何もしない。
     // weight: 体の向き基準では方位で落とした後の重み w を渡す（元のイベントの重みを渡すと、w が 0 になる境目で傾きの戻しが 1 tick で消え、
     // 凍結した傾きの分だけ頭が跳んだ。査読、2026-10-05。頭の向き基準は切り替えの再現のため元の重みのまま）。
@@ -566,6 +580,7 @@ public sealed partial class AnimalPoseApplier
         if (request.hasSmalPose && IsAnimalRigReadyForSmalFk(cache))
         {
             AlignAnimalRootToSkeleton(instanceRoot, cache, pose.rootWorld, true, tick);
+            smalDefaultPoseWeight = request.defaultPoseWeight;
             TryApplyAnimalSmalFk(cache, request.smalPose, request.settings, pose.jointsWorld, pose.jointVis, instanceRoot);
             if (enableAnimalKeypointAimAt)
             {
@@ -619,12 +634,13 @@ public sealed partial class AnimalPoseApplier
     // to the existing keypoint-IK pipeline (ADR-0002 decision 3, 2026-06-18). This is
     // deliberately stricter than the general cache.ready bone-apply gate, which also covers
     // the keypoint-IK path and stays lenient so partial rigs still get some bone apply there.
+    // 非四足モード（smalNonQuadrupedRig、2026-10-08、2026-10-09 に既定 ON）: 前肢の上の役が左右とも無いリグ（鳥、cache.smalNoFrontLimbs）は spine と後肢の上 2 本で通す。
+    // 前肢の関節 7〜14 は骨が無いので主ループの「骨なし」の分岐（計算だけ、何も書かない）に入る。smalNoFrontLimbs が false なら (A && B) || false で今と同じ。
     private static bool IsAnimalRigReadyForSmalFk(AnimalRigCache cache)
     {
         return cache != null
             && cache.spine != null
-            && cache.leftFrontUpper != null
-            && cache.rightFrontUpper != null
+            && ((cache.leftFrontUpper != null && cache.rightFrontUpper != null) || cache.smalNoFrontLimbs)
             && cache.leftRearUpper != null
             && cache.rightRearUpper != null;
     }
@@ -1943,6 +1959,37 @@ public sealed partial class AnimalPoseApplier
         return rigRoot != null && animalRigCaches.TryGetValue(rigRoot, out AnimalRigCache cache) ? cache : null;
     }
 
+    // 既定 ON（2026-10-08、全関節の監査 J-18 animalBindWithoutManualRotation。2026-10-09 に採用）。プレイヤーの TryApplyAnimalPosePipeline が、キャッシュがまだ無く
+    // 手動の回転があるフレームに Apply の直前で呼ぶ。インスタンスの root を手動の回転を除いた配置の回転に置いてリグのキャッシュ（bind）を作り、
+    // root を元の局所回転へ戻す。今は配置が root に「手動の回転 × 基底 × prefab」（ManualRotationMath.Apply は手動の回転を左から掛ける）を書いた後に bind を採るので、手動の回転 θ が bindRotWorld・
+    // spineToNeckBindDirWorld・bodyRightBindWorld に入り、SMAL の FK（rawWorldFk0 = ExtractYawOnly(root) × …）が root の yaw をもう一度掛ける
+    // （queue_syn1 の an_yawswap: bind が全 20 骨とも +y まわり 60.000°、体が回さない走り＋129.5°（p50）。rootYawFix の判定の dot0 も 0.992 → 0.511）。
+    // 回すのは Animator の Transform ではなくインスタンスの root（Animator が子にあるリグは CaptureGestureBindLocals がその局所回転を控えて
+    // 毎 tick 書き戻すので、そちらを回すと仮の回転が残る）。キャッシュを作る間に骨へ書くのは CaptureBindHeadYaw の首の鎖だけで、
+    // その軸（体の up）も root から作るので、書く局所回転は root の回転に依らない。
+    public void PrebuildRigCacheWithoutManualRotation(Transform instanceRoot, Animator animator, Quaternion rootRotationWithoutManual, AnimalPoseSettings settings)
+    {
+        Transform rigRoot = animator != null ? animator.transform : instanceRoot;
+        if (instanceRoot == null || rigRoot == null || animalRigCaches.ContainsKey(rigRoot))
+        {
+            return;
+        }
+
+        Quaternion savedLocalRotation = instanceRoot.localRotation;
+        float removedDegrees = Quaternion.Angle(instanceRoot.rotation, rootRotationWithoutManual);
+        TransformWriter.ApplyWorldRotation(instanceRoot, rootRotationWithoutManual);
+        try
+        {
+            GetOrBuildAnimalRigCache(rigRoot, instanceRoot, settings);
+        }
+        finally
+        {
+            TransformWriter.ApplyLocalRotation(instanceRoot, savedLocalRotation);
+        }
+
+        Debug.Log($"[ANIMAL-BIND] model={instanceRoot.name} bind を手動の回転を除いた配置の回転で採った（外した回転 {removedDegrees:F2}°）");
+    }
+
     private AnimalRigCache GetOrBuildAnimalRigCache(Transform root, Transform skinSearchRoot, AnimalPoseSettings settings)
     {
         if (root == null)
@@ -1983,7 +2030,18 @@ public sealed partial class AnimalPoseApplier
         cache.rightRearToe = ResolveBone(bones, boneOverride?.rearRToe, AnimalRigDefinition.RightRearToe);
         cache.tailMid = ResolveBone(bones, boneOverride?.tailMid, AnimalRigDefinition.TailMid);
         cache.tailTip = ResolveBone(bones, boneOverride?.tailTip, AnimalRigDefinition.TailTip);
+        // 既定 ON（2026-10-08、非四足モード smalNonQuadrupedRig。2026-10-09 に採用）: 名簿のモデルだけ、役を AnimalNonQuadrupedRig.Table の行で付け替え、cache.smalNonQuadruped・
+        // smalNoFrontLimbs を決める。役を決めた直後なので、この後に控える bind（modelForwardLocal・bindRotWorld/Local・bindDirLocal・胴の鎖など）は新しい役で採る。
+        ApplyNonQuadrupedRoles(cache, bones);
+        // 既定 OFF（2026-10-08、J-03 smalLegReferenceSkinPose）: 名簿のモデルだけ、脚の鎖の局所回転を skin 姿勢へ一度だけ書く。役の骨を決めた直後で、
+        // ResolveAnimalModelBasis・CaptureGestureBindLocals・PrimeAnimalBinds・EnsureGestureAnatomy より前なので、この後に控える bind
+        // （modelForwardLocal・bindRotWorld/Local・bindDirLocal・gestureBindLocal・肩甲骨の bind）はすべて skin の脚になる。OFF なら何もしない。
+        ApplyLegReferenceSkinPose(cache, bones);
+        // 既定 ON（2026-10-08、smalNonQuadrupedReferencePose。2026-10-09 に採用）: 非四足モードのモデルだけ、基準姿勢（Resources/animal_reference_pose.json）を回転で一度だけ書く（bind を控える前）。
+        ApplyNonQuadrupedReferencePose(cache, bones);
         ResolveAnimalModelBasis(root, cache, settings);
+        // 既定 ON（2026-10-08、非四足モード。2026-10-09 に採用）: 体の前を「頭 → 顔の骨」の水平の向きにする（ResolveAnimalModelBasis の結果を上書き。体の右を採る前）。
+        ApplyNonQuadrupedForward(root, cache);
         CaptureBodyRightBindWorld(root, cache);
         if (boneOverride != null)
         {
@@ -2035,6 +2093,13 @@ public sealed partial class AnimalPoseApplier
             cache.leftRearToe, cache.rightRearToe,
             cache.tailMid, cache.tailTip);
 
+        // PrimeAnimalBinds の後: 頭の軸（鼻 = Z）は bindRotWorld の頭を、四肢の right の符号は bindDirLocal（次の役の骨への向き）を使う。
+        // 前に呼んでいたときは頭の軸が作られず、anatomicalAxes の資産の頭が骨の局所軸のまま回った（鼻まわりのつもりの首振りが左右の首振りに、
+        // 2026-10-05 の R3 で実測）。PrimeAnimalBinds は読むだけなので、ここでもまだ誰も骨を書いていない bind。
+        EnsureGestureAnatomy(cache);
+        // 尾の鎖（smalTailFullChain、2026-10-07）の bind（局所回転・局所位置・弧長・長さの比）を控える。ここもまだ誰も骨を書いていない bind。
+        CaptureSmalTailChainBind(cache);
+
         // spineToNeckBindDirWorld is kept in world space (bind-time direction from spine to neck).
         // The rootYawFix detection formula uses: candidate * modelOrientFix * spineToNeckBindDirWorld,
         // which correctly predicts the neck world direction because:
@@ -2059,6 +2124,532 @@ public sealed partial class AnimalPoseApplier
         LogAnimalBoneSkinningCheck(skinSearchRoot != null ? skinSearchRoot : root, cache);
 
         return cache;
+    }
+
+    // ---- 脚の基準姿勢を skin 姿勢に（2026-10-08、全関節の監査 J-03 / AL-3、新しい振る舞い・既定 OFF。プレイヤーの同名フィールドが毎フレーム代入する） ----
+    // smalLegReferenceSkinPose: リグのキャッシュを作るとき（GetOrBuildAnimalRigCache で役の骨を決めた直後、bind を控える前）に、
+    //   smalLegReferenceSkinPoseModels に載ったモデルだけ、脚の鎖（肩甲骨 → 脚の役 → 指。後脚は脚の役 → 指）の局所回転を
+    //   skin 姿勢（SkinnedMeshRenderer の bindposes = メッシュが歪まない姿勢）の局所回転へ一度だけ書く。FK ループの外で、親から順に
+    //   「この時点の親の world × skin の局所」を ApplyWorldRotation で書く。位置は書かない。鎖の根の親は胴の骨（肩甲帯・spine）なので、
+    //   書いた後の脚は胴の骨に対して skin 姿勢になる。その後に控える bind（modelForwardLocal・bindRotWorld/Local・bindDirLocal・gestureBindLocal・
+    //   肩甲骨の bind）は自動で skin の脚になり、相対の転写・イベントの既定の姿勢（animalEventFromDefaultPose）・ジェスチャの肩甲骨の土台もこの立ち姿に乗る。
+    //   FK が書かない鎖の骨（肩甲骨・指など）は以後も書いた局所のまま（肩甲骨はジェスチャの骨として毎 tick gestureBindLocal = skin の局所へ戻される）。
+    //   理由: 39_Lynx の prefab の既定姿勢（今の bind。10/08 のダンプの bindRotLocal と 0.0002° で一致）は歩きの途中の形で左右非対称
+    //   （矢状面の傾き L/R: 肩甲骨 −7.2/+14.3°、上腕 −49.9/−37.0°、中手 +20.4/+34.7°）。skin 姿勢は左右同じ。相対の転写がこの非対称を毎フレーム運び、
+    //   左前足が常に右より後ろにあった（前の球節の前後差 体長比 モデル −0.220 対データ +0.073、像面 p50 79〜91 px）。各モデル自身のメッシュが
+    //   歪まない姿勢なので、09-05/09-06 に否定された「共通の基準へ揃える」とは違う（10/04 の AM が採らなかった案の、左右非対称という根拠による再提案）。
+    //   値: Resources/animal_leg_skin_pose.json（2026-10-04 の Unity の棚卸し inv2/unity/animal_rest_rotations.json の bindposes から焼いたもの。
+    //   runtime で Mesh.bindposes は読まない: IL2CPP で読めるか確かめていない）。キーは prefab 名から先頭の「数字_」を外したもの。
+    //   回転だけ書くので skin 姿勢そのものにはならない（胴 Spine〜Spine3 の局所回転 2〜6°、肩甲骨・Spine4 の局所位置 5〜6% の差が残り、肩の低さも変わらない）。
+    //   Lynx の静的な予測（棚卸しの FK、impl_joints/I4/verify_I4.py）: 前の球節の前後差 −0.264 → −0.013、肩の支点 −0.097 → −0.010、
+    //   区間の矢状面の角の L−R 最大 21.5° → 0.74°、体長 +3.6%、bind 姿勢で前の球節が約 2.5 cm 下がる（倍率 1 の root 座標。指の骨が既定姿勢の床
+    //   （Reference）より最大 2.4 cm 下に出て、骨の高さの幅 +3.1%。再生中の倍率と ⑦ は shot によって上下どちらにも動く、目安 ×0.92〜×1.10）、
+    //   後脚の下腿が約 17° 起きる、modelForwardLocal の yaw −0.16°・pitch +0.58°。フレームごと（impl_joints/I4/predict_I4_frames.py、
+    //   今の FK の移植で bind だけ替えて回し直したもの）: 前の球節の前後差 全編 −0.220 → +0.011（データ +0.073）、shot 23 −0.118 → +0.115（+0.118）。
+    //   書かない条件（モデルごとに 1 行ログを出して既定姿勢のまま。一部の脚だけ書くと左右の非対称が別の形で残るので、全部書くか何も書かないか）:
+    //   名簿に無い / 表に無い / 表の骨が見つからない・親の名前が違う / 今の局所回転が表の def と 0.5° より違う（モデルが棚卸しの後に変わった）/
+    //   役の骨（上腕〜手根・上腿〜つま先）が表の鎖に入っていない。フラグ OFF・名簿が空なら表も読まずログも出さない。
+    //   効くのはキャッシュを作るときだけ（途中で切り替えても、モデルを作り直すまで変わらない。バッチの -setFields は再生前に入るので効く）。
+    // smalLegReferenceSkinPoseModels: prefab 名のカンマ区切り（先頭の「数字_」は無視。"Lynx" と "39_Lynx" は同じ）。既定は空 = どのモデルにも掛けない。
+    //   05_Horse・20_Donkey は skin 姿勢自体が左右非対称なので表に焼いていない（載せても何もしない）。
+    public bool smalLegReferenceSkinPose;
+    public string smalLegReferenceSkinPoseModels = "";
+
+    private const string LegSkinPoseResource = "animal_leg_skin_pose";
+    // 今の局所回転と表の def（棚卸しの既定姿勢）の許容差。runtime の bind と棚卸しの def の差は 0.0002°（AL_verify/v06）なので、
+    // これを超えるのはモデルが棚卸しの後に変わったとき。
+    private const float LegSkinPoseDefToleranceDegrees = 0.5f;
+
+    private sealed class LegSkinPoseBone
+    {
+        public string name;
+        public string parent;
+        public Quaternion skinLocal;
+        public Quaternion defLocal;
+    }
+
+    // 表（キー → 親が先に並んだ骨の列）。最初に要ったときに 1 回だけ読む。
+    private static Dictionary<string, List<LegSkinPoseBone>> legSkinPoseTable;
+    // 名簿の解釈は尾の鎖の名簿と同じ（カンマ区切り、先頭の「数字_」は AnimalLegMappingFix.Key で外す）。
+    private readonly SmalTailModelList legSkinPoseModelList = new SmalTailModelList();
+
+    private void ApplyLegReferenceSkinPose(AnimalRigCache cache, Transform[] bones)
+    {
+        if (!smalLegReferenceSkinPose || string.IsNullOrEmpty(smalLegReferenceSkinPoseModels) || cache == null || bones == null)
+        {
+            return;
+        }
+
+        string modelKey = AnimalLegMappingFix.Key(KeyFor(cache));
+        if (!legSkinPoseModelList.Contains(smalLegReferenceSkinPoseModels, modelKey))
+        {
+            Debug.Log($"[LEGSKIN] model={modelKey} は smalLegReferenceSkinPoseModels='{smalLegReferenceSkinPoseModels}' に無い → 既定姿勢のまま");
+            return;
+        }
+
+        if (!TryGetLegSkinPose(modelKey, out List<LegSkinPoseBone> entries))
+        {
+            Debug.Log($"[LEGSKIN] model={modelKey} は Resources/{LegSkinPoseResource}.json に無い → 既定姿勢のまま");
+            return;
+        }
+
+        // 先に全部確かめる（1 本でも合わなければ何も書かない）。
+        var targets = new Transform[entries.Count];
+        var inChain = new HashSet<Transform>();
+        float maxDefDiff = 0f;
+        for (int i = 0; i < entries.Count; i++)
+        {
+            LegSkinPoseBone e = entries[i];
+            Transform t = FindLegSkinPoseBone(bones, e.name, e.parent);
+            if (t == null)
+            {
+                Debug.Log($"[LEGSKIN] model={modelKey} 骨 {e.name}（親 {e.parent}）が見つからない → 既定姿勢のまま");
+                return;
+            }
+
+            float defDiff = Quaternion.Angle(t.localRotation, e.defLocal);
+            if (defDiff > LegSkinPoseDefToleranceDegrees)
+            {
+                Debug.Log($"[LEGSKIN] model={modelKey} 骨 {e.name} の今の局所回転が表の既定姿勢と {defDiff:F2}° 違う（モデルが棚卸しの後に変わった?）→ 既定姿勢のまま");
+                return;
+            }
+
+            maxDefDiff = Mathf.Max(maxDefDiff, defDiff);
+            targets[i] = t;
+            inChain.Add(t);
+        }
+
+        Transform[] roleBones =
+        {
+            cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw, cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw,
+            cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, cache.leftRearToe,
+            cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, cache.rightRearToe,
+        };
+        foreach (Transform role in roleBones)
+        {
+            if (role != null && !inChain.Contains(role))
+            {
+                Debug.Log($"[LEGSKIN] model={modelKey} 役の骨 {role.name} が表の鎖に無い（役の割り当てが表を焼いた後に変わった?）→ 既定姿勢のまま");
+                return;
+            }
+        }
+
+        // 親から順に書く（表は親が先に並ぶ）。world = この時点の親の world × skin の局所。
+        float maxChange = 0f;
+        float maxResidual = 0f;
+        for (int i = 0; i < targets.Length; i++)
+        {
+            Transform t = targets[i];
+            Quaternion parentWorld = t.parent != null ? t.parent.rotation : Quaternion.identity;
+            maxChange = Mathf.Max(maxChange, Quaternion.Angle(t.localRotation, entries[i].skinLocal));
+            TransformWriter.ApplyWorldRotation(t, parentWorld * entries[i].skinLocal);
+            maxResidual = Mathf.Max(maxResidual, Quaternion.Angle(t.localRotation, entries[i].skinLocal));
+        }
+
+        Debug.Log($"[LEGSKIN] applied model={modelKey} bones={targets.Length} maxChange={maxChange:F1}° residual={maxResidual:F3}° defCheck={maxDefDiff:F4}°");
+    }
+
+    private static Transform FindLegSkinPoseBone(Transform[] bones, string name, string parentName)
+    {
+        for (int i = 0; i < bones.Length; i++)
+        {
+            Transform t = bones[i];
+            if (t != null && t.parent != null && t.name == name && t.parent.name == parentName)
+            {
+                return t;
+            }
+        }
+
+        return null;
+    }
+
+    // Resources/animal_leg_skin_pose.json を MiniJson で読む（反射を使わない。IL2CPP で黙って効かなくなる経路を避ける）。
+    // 形: { "models": { "<キー>": { "chains": [ { "bones": [ { "n": 骨, "p": 親, "skin": [x,y,z,w], "def": [x,y,z,w] }, ... ] }, ... ] } } }
+    // 1 本でも読めない骨があるモデルは表に入れない（そのモデルは「表に無い」で何もしない）。
+    private static bool TryGetLegSkinPose(string modelKey, out List<LegSkinPoseBone> entries)
+    {
+        entries = null;
+        if (legSkinPoseTable == null)
+        {
+            legSkinPoseTable = new Dictionary<string, List<LegSkinPoseBone>>(System.StringComparer.Ordinal);
+            TextAsset asset = Resources.Load<TextAsset>(LegSkinPoseResource);
+            if (asset == null)
+            {
+                Debug.LogWarning($"[LEGSKIN] Resources/{LegSkinPoseResource}.json が無い");
+            }
+            else if (MiniJson.Parse(asset.text) is Dictionary<string, object> rootObj &&
+                     rootObj.TryGetValue("models", out object modelsObj) && modelsObj is Dictionary<string, object> models)
+            {
+                foreach (KeyValuePair<string, object> kv in models)
+                {
+                    if (TryParseLegSkinPoseModel(kv.Value, out List<LegSkinPoseBone> list))
+                    {
+                        legSkinPoseTable[kv.Key] = list;
+                    }
+                }
+
+                Debug.Log($"[LEGSKIN] Resources/{LegSkinPoseResource}.json を読んだ: {legSkinPoseTable.Count} モデル");
+            }
+            else
+            {
+                Debug.LogWarning($"[LEGSKIN] Resources/{LegSkinPoseResource}.json の形が違う");
+            }
+        }
+
+        return legSkinPoseTable.TryGetValue(modelKey, out entries) && entries != null && entries.Count > 0;
+    }
+
+    private static bool TryParseLegSkinPoseModel(object node, out List<LegSkinPoseBone> list)
+    {
+        list = new List<LegSkinPoseBone>();
+        if (!(node is Dictionary<string, object> model) || !model.TryGetValue("chains", out object chainsObj) || !(chainsObj is List<object> chains))
+        {
+            return false;
+        }
+
+        foreach (object chainObj in chains)
+        {
+            if (!(chainObj is Dictionary<string, object> chain) || !chain.TryGetValue("bones", out object bonesObj) || !(bonesObj is List<object> boneList))
+            {
+                return false;
+            }
+
+            foreach (object boneObj in boneList)
+            {
+                if (!(boneObj is Dictionary<string, object> bone) ||
+                    !bone.TryGetValue("n", out object nameObj) || !(nameObj is string boneName) ||
+                    !bone.TryGetValue("p", out object parentObj) || !(parentObj is string parentName) ||
+                    !TryReadLegSkinPoseQuaternion(bone, "skin", out Quaternion skinLocal) ||
+                    !TryReadLegSkinPoseQuaternion(bone, "def", out Quaternion defLocal))
+                {
+                    return false;
+                }
+
+                list.Add(new LegSkinPoseBone { name = boneName, parent = parentName, skinLocal = skinLocal, defLocal = defLocal });
+            }
+        }
+
+        return list.Count > 0;
+    }
+
+    private static bool TryReadLegSkinPoseQuaternion(Dictionary<string, object> bone, string key, out Quaternion q)
+    {
+        q = Quaternion.identity;
+        if (!bone.TryGetValue(key, out object value) || !(value is List<object> a) || a.Count != 4)
+        {
+            return false;
+        }
+
+        var c = new float[4];
+        for (int i = 0; i < 4; i++)
+        {
+            if (a[i] is double d)
+            {
+                c[i] = (float)d;
+            }
+            else if (a[i] is long l)
+            {
+                c[i] = l;
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        float n = Mathf.Sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2] + c[3] * c[3]);
+        if (!(n > 0.5f && n < 1.5f))
+        {
+            return false;
+        }
+
+        q = new Quaternion(c[0] / n, c[1] / n, c[2] / n, c[3] / n);
+        return true;
+    }
+
+    // ---- 非四足モード（2026-10-08、鳥 3 体とカンガルーを SMAL の FK で動かす。新しい振る舞い。2026-10-09 にユーザーが採用し、プレイヤーの同名フィールドは既定 ON。プレイヤーが毎フレーム代入する） ----
+    // smalNonQuadrupedRig: 主スイッチ。リグのキャッシュを作るとき（GetOrBuildAnimalRigCache、モデルを置いた最初の姿勢適用）に、名簿のモデルだけ
+    //   役を AnimalNonQuadrupedRig.Table の行で付け替え（ApplyNonQuadrupedRoles）、体の前を「頭 → 顔の骨（鼻・顎）」の水平の向きにする（ApplyNonQuadrupedForward）。
+    //   前肢の上の役が左右とも無いリグ（鳥、cache.smalNoFrontLimbs）は spine と後肢の上 2 本で SMAL FK の入口を通す（IsAnimalRigReadyForSmalFk）。
+    //   尾の付け根のあるモデル（カンガルーの Tail01）は関節 25/26 を bind に保つ（AnimalSmalFkApplier の主ループ）。
+    //   モードはキャッシュを作るとき 1 回だけ決めて cache.smalNonQuadruped に持つ（途中で切り替えても、Change Model でモデルを作り直すまで変わらない）。
+    //   ON でも名簿・表に無いモデル（実験の Labrador・Lynx を含む）は何も変わらない（ログも出さない）。
+    // smalNonQuadrupedRigModels: 名簿。prefab 名のカンマ区切り（先頭の「数字_」は無視。解釈は尾の鎖の名簿と同じ）。効くのは表に行のあるモデルだけ。
+    // smalNonQuadrupedHock: 鳥の脛（LegL3/LegR3 = 関節 19/23）を手根・飛節と同じ写し方で（AnimalSmalFkApplier.IsSmalCarpusHockDriven）。前肢の無いリグ（鳥）だけ。
+    //   鳥の脛はこの切り替えだけで決まり、全体の smalDriveCarpusHock（J-08、判断待ち）を ON にしても動かない。鳥の前足・指は smalDriveFeet が ON でも受け身のまま。
+    //   前肢のあるリグ（カンガルー・四足）には効かない（今のまま全体の切り替えに従う）。毎 tick 読む。
+    // smalNonQuadrupedReferencePose: 基準姿勢（Resources/animal_reference_pose.json。形は animal_leg_skin_pose.json と同じで 'skin' が目標の局所回転）を、
+    //   キャッシュを作るとき 1 回だけ bind を控える前に回転だけ書く（ApplyNonQuadrupedReferencePose）。表が無い・行が無い・合わないなら何もせず、ログは
+    //   ファイルが無いことは再生ごとに 1 回、行の理由はモデルごとに 1 回だけ（2026-10-08 の時点で表はまだ無い。焼く Editor の道具は別の作業）。
+    // smalNonQuadrupedUprightRoot: 体の根を上下まわり（yaw）だけにする（既存の ResolveDefaultPoseRoot、イベントの既定の姿勢と同じ式）。毎 tick 読む。
+    // 脛・基準姿勢・直立は、主スイッチ ON で作ったキャッシュ（cache.smalNonQuadruped）にだけ効く。
+    public bool smalNonQuadrupedRig;
+    public string smalNonQuadrupedRigModels = "Goose,Guineafowl,Pheasant,Kangaroo";
+    public bool smalNonQuadrupedHock;
+    public bool smalNonQuadrupedReferencePose;
+    public bool smalNonQuadrupedUprightRoot;
+
+    private const string NonQuadrupedReferencePoseResource = "animal_reference_pose";
+    // 基準姿勢の表（キー → 骨の列）。最初に要ったときに 1 回だけ読む。ファイルが無ければ空の表のまま（読み直さない）。
+    private static Dictionary<string, List<LegSkinPoseBone>> nonQuadrupedReferencePoseTable;
+    private static bool nonQuadrupedReferencePoseFileFound;
+    // (a) を書かなかったログは 1 回だけ（キャッシュを作り直すたび = Change Model のたびには出さない）。ファイルが無いことは 1 回、行の理由はモデルごとに 1 回。
+    // 表と同じく static（再生ごとに初めから。EditorSettings の Enter Play Mode Options はドメインを読み直す設定）。
+    private static bool nonQuadrupedReferencePoseMissingFileLogged;
+    private static HashSet<string> nonQuadrupedReferencePoseSkipLogged;
+    // 名簿の解釈は尾の鎖の名簿と同じ（カンマ区切り、先頭の「数字_」は AnimalLegMappingFix.Key で外す）。
+    private readonly SmalTailModelList nonQuadrupedModelList = new SmalTailModelList();
+
+    // 役を AnimalNonQuadrupedRig.Table の行で付け替える（キャッシュを作るとき 1 回だけ。役の骨を決めた直後、bind を控える前）。
+    // 全部か何もしないか: 空でない骨名を全部見つけてから代入する。1 つでも無ければ 1 行ログを出して今のまま（cache.smalNonQuadruped は false のまま）。
+    // 骨名の探し方は prefab の上書きと同じ（FindBoneByExactNames: 完全一致、メッシュの節なら親）。空の値はその役を null にする（名前は探さない）。
+    private void ApplyNonQuadrupedRoles(AnimalRigCache cache, Transform[] bones)
+    {
+        if (!smalNonQuadrupedRig || string.IsNullOrEmpty(smalNonQuadrupedRigModels) || cache == null || bones == null)
+        {
+            return;
+        }
+
+        string modelKey = AnimalLegMappingFix.Key(KeyFor(cache));
+        if (!nonQuadrupedModelList.Contains(smalNonQuadrupedRigModels, modelKey))
+        {
+            return;
+        }
+
+        if (!AnimalNonQuadrupedRig.Table.TryGetValue(modelKey, out string spec))
+        {
+            Debug.Log($"[NONQUAD] model={modelKey} は smalNonQuadrupedRigModels にあるが AnimalNonQuadrupedRig.Table に行が無い → 今のまま");
+            return;
+        }
+
+        var pairs = new List<KeyValuePair<string, string>>();
+        if (!AnimalNonQuadrupedRig.TryParse(spec, pairs, out string error))
+        {
+            Debug.Log($"[NONQUAD] model={modelKey} の行 '{spec}' が読めない（{error}）→ 今のまま");
+            return;
+        }
+
+        var resolved = new Transform[pairs.Count];
+        for (int i = 0; i < pairs.Count; i++)
+        {
+            if (pairs[i].Value.Length == 0)
+            {
+                continue;
+            }
+
+            resolved[i] = FindBoneByExactNames(bones, pairs[i].Value);
+            if (resolved[i] == null)
+            {
+                Debug.Log($"[NONQUAD] model={modelKey} 骨 {pairs[i].Value}（{pairs[i].Key}）が見つからない → 今のまま（行 '{spec}'）");
+                return;
+            }
+        }
+
+        var roles = new System.Text.StringBuilder();
+        for (int i = 0; i < pairs.Count; i++)
+        {
+            Transform previous = SetNonQuadrupedRole(cache, pairs[i].Key, resolved[i]);
+            roles.Append(i > 0 ? "," : string.Empty).Append(pairs[i].Key).Append('=')
+                 .Append(previous != null ? previous.name : "null").Append("->").Append(resolved[i] != null ? resolved[i].name : "null");
+        }
+
+        cache.smalNonQuadruped = true;
+        cache.smalNoFrontLimbs = cache.leftFrontUpper == null && cache.rightFrontUpper == null;
+        Debug.Log($"[NONQUAD] applied model={modelKey} roles={roles} noFront={cache.smalNoFrontLimbs}");
+    }
+
+    // 役のフィールドへの代入（AnimalLegMappingFix.TrySetOverrideField と同じ並びの switch。反射は使わない: IL2CPP で黙って効かなくなる経路を避ける）。前の骨を返す。
+    private static Transform SetNonQuadrupedRole(AnimalRigCache cache, string key, Transform bone)
+    {
+        Transform previous;
+        switch (key)
+        {
+            case "spine": previous = cache.spine; cache.spine = bone; break;
+            case "neck": previous = cache.neck; cache.neck = bone; break;
+            case "head": previous = cache.head; cache.head = bone; break;
+            case "tailBase": previous = cache.tailBase; cache.tailBase = bone; break;
+            case "tailMid": previous = cache.tailMid; cache.tailMid = bone; break;
+            case "tailTip": previous = cache.tailTip; cache.tailTip = bone; break;
+            case "frontLUpper": previous = cache.leftFrontUpper; cache.leftFrontUpper = bone; break;
+            case "frontLLower": previous = cache.leftFrontLower; cache.leftFrontLower = bone; break;
+            case "frontLPaw": previous = cache.leftFrontPaw; cache.leftFrontPaw = bone; break;
+            case "frontRUpper": previous = cache.rightFrontUpper; cache.rightFrontUpper = bone; break;
+            case "frontRLower": previous = cache.rightFrontLower; cache.rightFrontLower = bone; break;
+            case "frontRPaw": previous = cache.rightFrontPaw; cache.rightFrontPaw = bone; break;
+            case "rearLUpper": previous = cache.leftRearUpper; cache.leftRearUpper = bone; break;
+            case "rearLLower": previous = cache.leftRearLower; cache.leftRearLower = bone; break;
+            case "rearLPaw": previous = cache.leftRearPaw; cache.leftRearPaw = bone; break;
+            case "rearLToe": previous = cache.leftRearToe; cache.leftRearToe = bone; break;
+            case "rearRUpper": previous = cache.rightRearUpper; cache.rightRearUpper = bone; break;
+            case "rearRLower": previous = cache.rightRearLower; cache.rightRearLower = bone; break;
+            case "rearRPaw": previous = cache.rightRearPaw; cache.rightRearPaw = bone; break;
+            case "rearRToe": previous = cache.rightRearToe; cache.rightRearToe = bone; break;
+            default: return null;
+        }
+
+        return previous;
+    }
+
+    // 基準姿勢を回転だけ一度書く（キャッシュを作るとき、bind を控える前。ApplyLegReferenceSkinPose と同じ書き方と同じ 0.5° の def の確認）。
+    // 全部か何もしないか: 骨と親の名前・今の局所回転と表の 'def' の差を全部確かめてから、親から順に「この時点の親の world × 目標の局所（'skin'）」を書く。位置は書かない。
+    // 役の骨が表の鎖に入っているかは確かめない（Goose・Pheasant の行は右脚の鎖だけを持つ）。
+    private void ApplyNonQuadrupedReferencePose(AnimalRigCache cache, Transform[] bones)
+    {
+        if (!smalNonQuadrupedReferencePose || cache == null || !cache.smalNonQuadruped || bones == null)
+        {
+            return;
+        }
+
+        string modelKey = AnimalLegMappingFix.Key(KeyFor(cache));
+        if (!TryGetNonQuadrupedReferencePose(modelKey, out List<LegSkinPoseBone> entries))
+        {
+            if (!nonQuadrupedReferencePoseFileFound)
+            {
+                if (!nonQuadrupedReferencePoseMissingFileLogged)
+                {
+                    nonQuadrupedReferencePoseMissingFileLogged = true;
+                    Debug.Log($"[NONQUAD] reference model={modelKey}: Resources/{NonQuadrupedReferencePoseResource}.json が無い → bind のまま（この行は再生ごとに 1 回だけ）");
+                }
+            }
+            else
+            {
+                LogNonQuadrupedReferencePoseSkipOnce(modelKey, $"[NONQUAD] reference model={modelKey} は Resources/{NonQuadrupedReferencePoseResource}.json に無い → bind のまま");
+            }
+
+            return;
+        }
+
+        // 先に全部確かめる（1 本でも合わなければ何も書かない）。
+        var targets = new Transform[entries.Count];
+        var depth = new int[entries.Count];
+        float maxDefDiff = 0f;
+        for (int i = 0; i < entries.Count; i++)
+        {
+            LegSkinPoseBone e = entries[i];
+            Transform t = FindLegSkinPoseBone(bones, e.name, e.parent);
+            if (t == null)
+            {
+                LogNonQuadrupedReferencePoseSkipOnce(modelKey, $"[NONQUAD] reference model={modelKey} 骨 {e.name}（親 {e.parent}）が見つからない → bind のまま");
+                return;
+            }
+
+            float defDiff = Quaternion.Angle(t.localRotation, e.defLocal);
+            if (defDiff > LegSkinPoseDefToleranceDegrees)
+            {
+                LogNonQuadrupedReferencePoseSkipOnce(modelKey,
+                    $"[NONQUAD] reference model={modelKey} 骨 {e.name} の今の局所回転が表の def と {defDiff:F2}° 違う（モデルが焼いた後に変わった?）→ bind のまま");
+                return;
+            }
+
+            maxDefDiff = Mathf.Max(maxDefDiff, defDiff);
+            targets[i] = t;
+            for (Transform p = t.parent; p != null; p = p.parent)
+            {
+                depth[i]++;
+            }
+        }
+
+        // 親から順（階層の浅い順、同じ深さは表の順）。world = この時点の親の world × 目標の局所。
+        var order = new int[targets.Length];
+        for (int i = 0; i < order.Length; i++)
+        {
+            order[i] = i;
+        }
+
+        System.Array.Sort(order, (a, b) => depth[a] != depth[b] ? depth[a].CompareTo(depth[b]) : a.CompareTo(b));
+        float maxChange = 0f;
+        float maxResidual = 0f;
+        foreach (int i in order)
+        {
+            Transform t = targets[i];
+            Quaternion parentWorld = t.parent != null ? t.parent.rotation : Quaternion.identity;
+            maxChange = Mathf.Max(maxChange, Quaternion.Angle(t.localRotation, entries[i].skinLocal));
+            TransformWriter.ApplyWorldRotation(t, parentWorld * entries[i].skinLocal);
+            maxResidual = Mathf.Max(maxResidual, Quaternion.Angle(t.localRotation, entries[i].skinLocal));
+        }
+
+        Debug.Log($"[NONQUAD] reference applied model={modelKey} bones={targets.Length} maxChange={maxChange:F1}° residual={maxResidual:F3}° defCheck={maxDefDiff:F4}°");
+    }
+
+    // Resources/animal_reference_pose.json を MiniJson で読む（形は animal_leg_skin_pose.json と同じ。モデルの読み方は TryParseLegSkinPoseModel をそのまま使う）。
+    private static bool TryGetNonQuadrupedReferencePose(string modelKey, out List<LegSkinPoseBone> entries)
+    {
+        entries = null;
+        if (nonQuadrupedReferencePoseTable == null)
+        {
+            nonQuadrupedReferencePoseTable = new Dictionary<string, List<LegSkinPoseBone>>(System.StringComparer.Ordinal);
+            TextAsset asset = Resources.Load<TextAsset>(NonQuadrupedReferencePoseResource);
+            nonQuadrupedReferencePoseFileFound = asset != null;
+            if (asset != null)
+            {
+                if (MiniJson.Parse(asset.text) is Dictionary<string, object> rootObj &&
+                    rootObj.TryGetValue("models", out object modelsObj) && modelsObj is Dictionary<string, object> models)
+                {
+                    foreach (KeyValuePair<string, object> kv in models)
+                    {
+                        if (TryParseLegSkinPoseModel(kv.Value, out List<LegSkinPoseBone> list))
+                        {
+                            nonQuadrupedReferencePoseTable[kv.Key] = list;
+                        }
+                    }
+
+                    Debug.Log($"[NONQUAD] Resources/{NonQuadrupedReferencePoseResource}.json を読んだ: {nonQuadrupedReferencePoseTable.Count} モデル");
+                }
+                else
+                {
+                    Debug.LogWarning($"[NONQUAD] Resources/{NonQuadrupedReferencePoseResource}.json の形が違う");
+                }
+            }
+        }
+
+        return nonQuadrupedReferencePoseTable.TryGetValue(modelKey, out entries) && entries != null && entries.Count > 0;
+    }
+
+    // (a) を書かなかった理由（行が無い・骨が無い・def が違う）のログをモデルごとに 1 回だけ出す（そのモデルで最初の理由だけ。2 回目からは黙って何もしない）。
+    private static void LogNonQuadrupedReferencePoseSkipOnce(string modelKey, string message)
+    {
+        if (nonQuadrupedReferencePoseSkipLogged == null)
+        {
+            nonQuadrupedReferencePoseSkipLogged = new HashSet<string>(System.StringComparer.Ordinal);
+        }
+
+        if (nonQuadrupedReferencePoseSkipLogged.Add(modelKey ?? string.Empty))
+        {
+            Debug.Log(message);
+        }
+    }
+
+    // 体の前（cache.modelForwardLocal、root ローカル）を「頭 → 顔の骨（FindHeadFacingChild の nose・jaw・mouth・muzzle）」の水平の向きにする。
+    // ResolveAnimalModelBasis の後・CaptureBodyRightBindWorld の前（体の右・modelOrientFix・rootYawFix・体の前を読むイベントの経路がすべてこれを使う）。
+    // 鳥は前肢の役が無く ResolveAnimalModelBasis が全モデル共通の animalModelForwardLocal (0,0,-1) に落ちていた（実際の前は root ローカル −X）。
+    // カンガルーは「肩の中点 − 股の中点」が直立の体で 79° 上を向いていた（FK の中は水平にして使うが、TryGetBodyForwardSpineLocal・ResolveDefaultPoseRoot は
+    // 水平にせずに使う）。水平にするのは TryApplyAnimalSmalFk の modelOrientFix と同じ（y を 0）。顔の骨が無い・ほぼ真上か真下なら今のまま。
+    private static void ApplyNonQuadrupedForward(Transform root, AnimalRigCache cache)
+    {
+        if (cache == null || !cache.smalNonQuadruped || root == null || cache.head == null)
+        {
+            return;
+        }
+
+        string modelKey = AnimalLegMappingFix.Key(KeyFor(cache));
+        Transform tip = FindHeadFacingChild(cache.head);
+        if (tip == null)
+        {
+            Debug.Log($"[NONQUAD] forward model={modelKey}: 頭 {cache.head.name} の子孫に顔の骨（nose/jaw/mouth/muzzle）が無い → 前は今のまま {cache.modelForwardLocal:F3}");
+            return;
+        }
+
+        Vector3 raw = root.InverseTransformDirection(tip.position - cache.head.position);
+        Vector3 flat = new Vector3(raw.x, 0f, raw.z);
+        if (raw.sqrMagnitude < 1e-12f || flat.sqrMagnitude < 0.01f * raw.sqrMagnitude)
+        {
+            Debug.Log($"[NONQUAD] forward model={modelKey}: 頭 → {tip.name} がほぼ真上か真下（{raw:F3}）→ 前は今のまま {cache.modelForwardLocal:F3}");
+            return;
+        }
+
+        Vector3 before = cache.modelForwardLocal;
+        cache.modelForwardLocal = flat.normalized;
+        Debug.Log($"[NONQUAD] forward={cache.modelForwardLocal:F3} model={modelKey} from={cache.head.name}->{tip.name} was={before:F3}");
     }
 
     private static void LogAnimalBoneSkinningCheck(Transform root, AnimalRigCache cache)
@@ -2161,6 +2752,305 @@ public sealed partial class AnimalPoseApplier
         }
     }
 
+    // 動物の動きの作り直し（2026-10-05）: 新しいジェスチャの点の骨と、資産の anatomicalAxes で使う骨ごとの体の軸を、キャッシュを作るとき（bind）に 1 回だけ求める。
+    // - 胴の鎖: spine の子孫で、首（neck）と前脚の役の上腕の共通の祖先（肩甲帯）まで（spine は含めず肩甲帯は含める）。共通の祖先が spine 自身（00_Dog）なら空。
+    //   SMAL の仮想の背骨（関節 1〜6）は骨を持たないので、これらは誰も書かない骨。gestureBindLocal に入れて毎 tick bind に戻し、その上にジェスチャを足す
+    //   （今の回転に足すと積み重なって暴走する。メモリ animal_bones_not_reset_each_tick）。首の鎖（名前に neck、ApplySmalNeckChain）とは重ならない
+    // - 肩甲骨: 役の上腕の親。spine・胴の鎖・root・役の骨なら無し（00_Dog は上腕の親が spine）
+    // - 耳: 頭の子孫で名前に "ear" を含み、親が耳でない骨。左右は bind の頭からの位置と体の右の内積
+    // - 体の軸: X = 体の右（bodyRightBindWorld）、Y = 上（world の上を体の右に直交化）、Z = 前（X × Y）を骨ローカルにした回転（頭は Z = 鼻）。
+    //   軸は骨に付いたもの（骨が曲がると一緒に回る = 関節の蝶番の軸）。right の符号は「+5° で先（子の向き、頭は鼻）が四肢・肩甲骨なら体の前へ、ほかは上へ動く」側
+    //   体の右が取れないモデル（F2 の対象外）は軸を作らない（資産の anatomicalAxes でも骨の局所軸のまま）
+    private static void EnsureGestureAnatomy(AnimalRigCache cache)
+    {
+        if (cache.gestureAnatomyResolved)
+        {
+            return;
+        }
+
+        cache.gestureAnatomyResolved = true;
+        cache.trunkChain.Clear();
+        cache.gestureAxesFrame.Clear();
+        cache.gestureSwingSign.Clear();
+
+        var roles = new HashSet<Transform>
+        {
+            cache.root, cache.spine, cache.neck, cache.head, cache.tailBase, cache.tailMid, cache.tailTip,
+            cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw, cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw,
+            cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, cache.leftRearToe,
+            cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, cache.rightRearToe,
+        };
+
+        // 胴の鎖
+        Transform girdle = null;
+        if (cache.spine != null && cache.neck != null && cache.leftFrontUpper != null)
+        {
+            var frontAncestors = new HashSet<Transform>();
+            for (Transform t = cache.leftFrontUpper.parent; t != null; t = t.parent)
+            {
+                frontAncestors.Add(t);
+            }
+
+            for (Transform t = cache.neck.parent; t != null; t = t.parent)
+            {
+                if (frontAncestors.Contains(t))
+                {
+                    girdle = t;
+                    break;
+                }
+            }
+
+            if (girdle != null && girdle != cache.spine && girdle.IsChildOf(cache.spine))
+            {
+                for (Transform t = girdle; t != null && t != cache.spine; t = t.parent)
+                {
+                    if (roles.Contains(t))
+                    {
+                        cache.trunkChain.Clear();
+                        break;
+                    }
+
+                    cache.trunkChain.Add(t);
+                }
+
+                cache.trunkChain.Reverse();
+            }
+
+            // 後脚の上腿・尾の付け根が胴の鎖の骨の下にぶら下がる形なら胴は曲げない（曲げると後脚・尾も振れる。47 体の移植では該当なし、motion_prep/check_rule.py）
+            foreach (Transform hang in new[] { cache.leftRearUpper, cache.rightRearUpper, cache.tailBase })
+            {
+                if (hang != null && cache.trunkChain.Exists(b => hang.IsChildOf(b)))
+                {
+                    cache.trunkChain.Clear();
+                    break;
+                }
+            }
+        }
+
+        // 肩甲骨
+        cache.gestureScapulaLeft = ResolveGestureScapula(cache, cache.leftFrontUpper, roles, girdle);
+        cache.gestureScapulaRight = ResolveGestureScapula(cache, cache.rightFrontUpper, roles, girdle);
+        if (cache.gestureScapulaLeft == null || cache.gestureScapulaRight == null || cache.gestureScapulaLeft == cache.gestureScapulaRight)
+        {
+            // 片側だけ・同じ骨なら両方使わない
+            cache.gestureScapulaLeft = null;
+            cache.gestureScapulaRight = null;
+        }
+
+        // 耳: 頭の子孫で名前に "ear" という語（CamelCase・数字・記号で区切った語）を持ち、親が耳でない骨（耳の根）。
+        // 素朴な部分一致は Beard（ヤギ）・Bear（熊の骨名）を拾う（motion_prep/ear_audit.py）。
+        // 左右は耳の根どうしの体の右の座標を比べて決める（頭の位置を基準にすると、bind で頭が横を向いた 34_Hyena・38_LionessV2 で両耳とも左になった）
+        cache.gestureEarLeft = null;
+        cache.gestureEarRight = null;
+        Vector3 bodyRight = cache.bodyRightBindWorld;
+        if (cache.head != null && bodyRight.sqrMagnitude > 0.5f)
+        {
+            Transform leftmost = null;
+            Transform rightmost = null;
+            float minSide = float.MaxValue;
+            float maxSide = float.MinValue;
+            foreach (Transform t in cache.head.GetComponentsInChildren<Transform>(true))
+            {
+                if (t == cache.head || !NameHasWord(t.name, "ear") || (t.parent != null && NameHasWord(t.parent.name, "ear")))
+                {
+                    continue;
+                }
+
+                float side = Vector3.Dot(t.position, bodyRight);
+                if (side < minSide)
+                {
+                    minSide = side;
+                    leftmost = t;
+                }
+
+                if (side > maxSide)
+                {
+                    maxSide = side;
+                    rightmost = t;
+                }
+            }
+
+            if (leftmost != null && rightmost != null && leftmost != rightmost)
+            {
+                cache.gestureEarLeft = leftmost;
+                cache.gestureEarRight = rightmost;
+            }
+            else if (leftmost != null)
+            {
+                // 耳の根が 1 本だけ: 頭に対する横の位置で片側に置く
+                if (Vector3.Dot(leftmost.position - cache.head.position, bodyRight) >= 0f)
+                {
+                    cache.gestureEarRight = leftmost;
+                }
+                else
+                {
+                    cache.gestureEarLeft = leftmost;
+                }
+            }
+        }
+
+        // FK が書かない新しい点の骨は bind の局所を控える
+        foreach (Transform t in cache.trunkChain)
+        {
+            cache.gestureBindLocal[t] = t.localRotation;
+        }
+
+        foreach (Transform t in new[] { cache.gestureScapulaLeft, cache.gestureScapulaRight, cache.gestureEarLeft, cache.gestureEarRight })
+        {
+            if (t != null)
+            {
+                cache.gestureBindLocal[t] = t.localRotation;
+            }
+        }
+
+        // 体の軸
+        if (bodyRight.sqrMagnitude > 0.5f)
+        {
+            Vector3 r = bodyRight.normalized;
+            Vector3 u = Vector3.ProjectOnPlane(Vector3.up, r).normalized;
+            Vector3 f = Vector3.Cross(r, u);
+            var limbs = new HashSet<Transform>
+            {
+                cache.leftFrontUpper, cache.leftFrontLower, cache.leftFrontPaw, cache.rightFrontUpper, cache.rightFrontLower, cache.rightFrontPaw,
+                cache.leftRearUpper, cache.leftRearLower, cache.leftRearPaw, cache.leftRearToe,
+                cache.rightRearUpper, cache.rightRearLower, cache.rightRearPaw, cache.rightRearToe,
+                cache.gestureScapulaLeft, cache.gestureScapulaRight,
+            };
+            foreach (Transform canonical in cache.gestureCanonicalLimbs.Values)
+            {
+                limbs.Add(canonical);
+            }
+
+            var axial = new HashSet<Transform> { cache.spine, cache.neck, cache.tailBase, cache.tailMid, cache.tailTip, cache.gestureEarLeft, cache.gestureEarRight };
+            foreach (Transform t in cache.trunkChain)
+            {
+                axial.Add(t);
+            }
+
+            foreach (Transform bone in limbs)
+            {
+                AddGestureAxesFrame(cache, bone, r, u, f, true);
+            }
+
+            foreach (Transform bone in axial)
+            {
+                AddGestureAxesFrame(cache, bone, r, u, f, false);
+            }
+
+            // 頭は Z = 鼻（顔の骨から。取れなければ体の前）
+            if (cache.head != null && cache.bindRotWorld.TryGetValue(cache.head, out Quaternion headBind))
+            {
+                Vector3 nose = ResolveHeadNoseLocal(cache) ? cache.headNoseLocal : Quaternion.Inverse(headBind) * f;
+                Vector3 rl = Vector3.ProjectOnPlane(Quaternion.Inverse(headBind) * r, nose);
+                if (rl.sqrMagnitude > 1e-6f)
+                {
+                    rl.Normalize();
+                    Vector3 ul = Vector3.Cross(nose.normalized, rl);
+                    cache.gestureAxesFrame[cache.head] = Quaternion.LookRotation(nose.normalized, ul);
+                    cache.gestureSwingSign[cache.head] = ResolveGestureSwingSign(headBind, rl, nose, u);
+                }
+            }
+        }
+
+        string Name(Transform t) => t != null ? t.name : "-";
+        Debug.Log($"[GESTURE-ANATOMY] {Name(cache.root)} trunk=[{string.Join(",", cache.trunkChain.ConvertAll(t => t.name))}] girdle={Name(girdle)} " +
+                  $"scapula={Name(cache.gestureScapulaLeft)}/{Name(cache.gestureScapulaRight)} ears={Name(cache.gestureEarLeft)}/{Name(cache.gestureEarRight)} " +
+                  $"axesFrames={cache.gestureAxesFrame.Count} bodyRight={(bodyRight.sqrMagnitude > 0.5f ? "yes" : "none")}");
+    }
+
+    // 肩甲骨 = 役の上腕の親。肩甲帯（girdle）の直下に限る: 表が当たらず上腕の役が 1 本下の正規名の骨のままだと、親は本当の上腕で肩甲帯との間に 2 本以上入る
+    // （LionStyleFull・Labrador は 2 本、Fox・Beaver は 3 本。motion_prep/bone_tree_map.json の S3）。
+    private static Transform ResolveGestureScapula(AnimalRigCache cache, Transform upper, HashSet<Transform> roles, Transform girdle)
+    {
+        Transform parent = upper != null ? upper.parent : null;
+        if (parent == null || roles.Contains(parent) || cache.trunkChain.Contains(parent) || girdle == null || parent == girdle || parent.parent != girdle)
+        {
+            return null;
+        }
+
+        return parent;
+    }
+
+    // 名前を CamelCase・数字・記号で語に区切り、word と同じ語（大文字小文字を問わない）があるか。"fLeftEar" → f / Left / Ear、"rear_l_upper" → rear / l / upper。
+    private static bool NameHasWord(string name, string word)
+    {
+        if (string.IsNullOrEmpty(name))
+        {
+            return false;
+        }
+
+        int start = -1;
+        for (int i = 0; i <= name.Length; i++)
+        {
+            bool boundary = i == name.Length || !char.IsLetter(name[i]) ||
+                            (i > 0 && char.IsUpper(name[i]) && (char.IsLower(name[i - 1]) ||
+                             (char.IsUpper(name[i - 1]) && i + 1 < name.Length && char.IsLower(name[i + 1]))));
+            if (boundary && start >= 0)
+            {
+                if (i - start == word.Length && string.Compare(name, start, word, 0, word.Length, System.StringComparison.OrdinalIgnoreCase) == 0)
+                {
+                    return true;
+                }
+
+                start = -1;
+            }
+
+            if (i < name.Length && char.IsLetter(name[i]) && start < 0)
+            {
+                start = i;
+            }
+        }
+
+        return false;
+    }
+
+    // 骨ローカルの体の軸（X = 右、Y = 上、Z = 前）と、right の符号（四肢: +5° で先が前へ、ほか: 先が上へ）。先の向きは bind の子の向き。
+    private static void AddGestureAxesFrame(AnimalRigCache cache, Transform bone, Vector3 r, Vector3 u, Vector3 f, bool limb)
+    {
+        if (bone == null || cache.gestureAxesFrame.ContainsKey(bone))
+        {
+            return;
+        }
+
+        // bind の world 回転。役の骨は PrimeAnimalBind が控えている。胴の鎖・肩甲骨・耳は控えていないが、この関数はキャッシュを作るとき
+        // （まだ誰も書いていない bind）に呼ぶので、今の回転がそのまま bind
+        Quaternion bw = cache.bindRotWorld.TryGetValue(bone, out Quaternion primed) ? primed : bone.rotation;
+        Quaternion inv = Quaternion.Inverse(bw);
+        Vector3 fl = inv * f;
+        Vector3 ul = inv * u;
+        cache.gestureAxesFrame[bone] = Quaternion.LookRotation(fl, ul);
+        Vector3 distal = cache.bindDirLocal.TryGetValue(bone, out Vector3 d) && d.sqrMagnitude > 1e-8f ? d : ResolveFirstChildDirLocal(bone);
+        cache.gestureSwingSign[bone] = ResolveGestureSwingSign(bw, inv * r, distal, limb ? f : u);
+    }
+
+    private static Vector3 ResolveFirstChildDirLocal(Transform bone)
+    {
+        for (int i = 0; i < bone.childCount; i++)
+        {
+            Vector3 p = bone.GetChild(i).localPosition;
+            if (p.sqrMagnitude > 1e-10f)
+            {
+                return p.normalized;
+            }
+        }
+
+        return Vector3.zero;
+    }
+
+    // +5° を骨ローカルの軸 axisLocal まわりに回したとき、先（distalLocal）の world の動きが want の側なら +1、逆なら −1（判定できなければ +1）。
+    private static float ResolveGestureSwingSign(Quaternion boneBindWorld, Vector3 axisLocal, Vector3 distalLocal, Vector3 want)
+    {
+        if (distalLocal.sqrMagnitude < 1e-8f || axisLocal.sqrMagnitude < 1e-8f)
+        {
+            return 1f;
+        }
+
+        Vector3 before = boneBindWorld * distalLocal.normalized;
+        Vector3 after = boneBindWorld * (Quaternion.AngleAxis(5f, axisLocal.normalized) * distalLocal.normalized);
+        float d = Vector3.Dot(after - before, want);
+        return d < 0f ? -1f : 1f;
+    }
+
     private static void CaptureBodyRightBindWorld(Transform root, AnimalRigCache cache)
     {
         cache.bodyRightBindWorld = Vector3.zero;
@@ -2169,7 +3059,7 @@ public sealed partial class AnimalPoseApplier
             return;
         }
 
-        // F2 を使わないモデル（AnimalLegMappingFix.FrontLimbBodyLateralExcluded）は体の右を採らない（零のままなら F2 の分岐に入らず、首の副軸のまま）。
+        // F2 を使わないモデル（AnimalLegMappingFix.FrontLimbBodyLateralExcluded。2026-10-09 から空）は体の右を採らない（零のままなら F2 の分岐に入らず、首の副軸のまま）。
         ReplaceableModel model = root.GetComponentInParent<ReplaceableModel>();
         if (model != null && AnimalLegMappingFix.FrontLimbBodyLateralExcluded.Contains(AnimalLegMappingFix.Key(model.sourcePrefabName)))
         {

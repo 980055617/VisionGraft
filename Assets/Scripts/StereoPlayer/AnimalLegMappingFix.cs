@@ -17,12 +17,12 @@ using System.Collections.Generic;
 // Moose・Goat・Mink・Fox の前肢上で前後逆になり、Lynx・Racoon・EuropeanBadger では縮退する（MAP の map10）。
 public static class AnimalLegMappingFix
 {
-    // 前肢の副軸を体の横にする F2（animalFrontLimbBodyLateralSecondary）を使わないモデル（キーは Key() と同じ）。
-    // 16_Deer1（Reallusion 系のリグ）は F2 で前肢上の θ（矢状面の角の相関）が今より悪くなった（今 +0.22〜+0.89 → F2 −0.04〜−0.66、
-    // 2026-10-04 の R6c / R7。MAP の移植は逆の予測で、このリグでは移植の前提が合わない）。後肢は F2 に関係なくばらつく（別の問題、未調査）。
+    // 前肢の副軸を体の横にする F2（animalFrontLimbBodyLateralSecondary）を使わないモデル（キーは Key() と同じ）。2026-10-09 から空。
+    // 16_Deer1 は 2026-10-04 に F2 で前肢上の θ（矢状面の角の相関）が悪くなった（+0.22〜+0.89 → −0.04〜−0.66、R6c / R7）として入れていたが、
+    // その測定は背骨の役が骨盤（Hips）に付いて胴が止まったダンプで取られていた。背骨の役を body に直す（下の Table の行）と、F2 込みで
+    // 動物 52 体の一覧の確認の全項目が合格した（不合格 54 → 0、Docs/tmp/roster_20261009/README.md の 7-2）。ユーザーが絵を見て採用（2026-10-09）。
     public static readonly HashSet<string> FrontLimbBodyLateralExcluded = new HashSet<string>(System.StringComparer.Ordinal)
     {
-        "Deer1",
     };
 
     // prefab 名から先頭の「数字_」を外す（"36_LabradorDog" → "LabradorDog"）。数字が無い、または数字の後が "_" でなければそのまま。
@@ -131,7 +131,9 @@ public static class AnimalLegMappingFix
         },
         // 肉球・つま先だけ（上の 2 本は正しい）
         { "Deer1.0", "frontLPaw=RigLFLeg3;frontRPaw=RigRFLeg3;rearLPaw=RigLBLeg3;rearRPaw=RigRBLeg3;rearLToe=rear_l_paw;rearRToe=rear_r_paw" },
-        // 二足（SMAL の対象外）だが Change Model で選べる。toe の親の食い違い（171° / 91°）だけ直す
+        // 二足だが prefab の上書き（AnimalBoneMappingOverride の上腕・大腿）で SMAL FK の入口を通り、SMAL FK で動いている（2026-10-08 に訂正。以前ここに
+        // 「SMAL の対象外」と書いていたのは誤り: bk0_kangaroo.log に rootYawFix decided・MODEL spineName=Spine）。Change Model で選べる。toe の親の食い違い（171° / 91°）だけ直す。
+        // 腰（Hips を誰も書かずに残るねじれ）と尾は、非四足モード（AnimalNonQuadrupedRig、2026-10-09 に既定 ON）で直す。
         { "Kangaroo", "rearLToe=LeftFootBase;rearRToe=RightFootBase" },
         // 尾（脚ではない。2026-10-04、S1 のダンプ）: 27_GermanShepherd は役が見つからないときの DEF-spine のフォールバック
         // （AnimalPoseApplier、全モデル共通の animalModelForwardLocal で背骨を前後に並べて最後尾を tailBase にする）が、このリグでは
@@ -140,5 +142,10 @@ public static class AnimalLegMappingFix
         // tailBase が見つかると AnimalDefSpineFallbackPolicy が DEF-spine の並びで spine を置き換えなくなり、
         // "spine" という名前の骨（このリグでは尾の先）が背骨の役になる。
         { "GermanShepherd", "spine=DEF-spine.004;tailBase=DEF-spine.003;tailMid=DEF-spine.002;tailTip=DEF-spine.001" },
+        // 背骨（脚ではない。2026-10-09、動物 52 体の一覧の確認）: 16_Deer1 は背骨の役が体全体の根（body）でなく骨盤（Hips）に付いていた
+        // （AnimalRigBoneRenamer の Hips→spine）。SMAL FK は体の向きを背骨の役にだけ書くので、後ろ半分だけ回り、胸・肩・首の付け根は prefab の
+        // 向きに止まっていた（体の向き・左右の後脚・関節の反転・伏せで頭が折れる、はどれもこれ）。body に付け替え、上の F2 の除外も外した。
+        // バッチの -animalBoneOverride "16_Deer1|spine=body" で撮って全項目合格（Docs/tmp/roster_20261009/README.md の 7-2）、ユーザーが採用。
+        { "Deer1", "spine=body" },
     };
 }

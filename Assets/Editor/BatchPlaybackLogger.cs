@@ -107,6 +107,11 @@ public static partial class BatchPlaybackLogger
         // プレイヤーの公開フィールドを名前で上書きする（2026-10-03）。"aimAtTargetFromSmpl=true;centeredSmplRotationFilter=true"。
         // 既定 OFF の試作フラグを足すたびに引数を増やさずに済む。名前が合わなければ警告を出す（黙って無視しない）。
         string setFields = null;
+        // track ごとのモデル "0:36,1:39"（2026-10-05。実験は Labrador が track 0、Lynx が track 1。-animalIndex は既定のモデルを変えるだけ）。
+        string trackModels = null;
+        // 候補のジェスチャ資産を読み込む（2026-10-05。"Assets/.../A.asset;Assets/.../B.asset"。シーンの配列を置き換える。Static/ に置くと OnValidate の自動割り当てに拾われるので候補は別のフォルダに置く）。
+        string gestureAssets = null;
+        string walkAsset = null;
         bool? elseFrameOutMotion = null;
         bool? animalFastTrack = null;
         bool? keepScaleContinuousShot = null;
@@ -235,6 +240,9 @@ public static partial class BatchPlaybackLogger
             if (args[i] == "-forceMotionAt") float.TryParse(args[i + 1], out forceMotionAt);
             if (args[i] == "-forceMotionKind") forceMotionKind = args[i + 1];
             if (args[i] == "-forceStaticClip") forceStaticClip = args[i + 1];
+            if (args[i] == "-trackModels") trackModels = args[i + 1];
+            if (args[i] == "-gestureAssets") gestureAssets = args[i + 1];
+            if (args[i] == "-walkAsset") walkAsset = args[i + 1];
             if (args[i] == "-captureMotion") float.TryParse(args[i + 1], out captureMotionEvery);
             if (args[i] == "-captureDir") captureDir = args[i + 1];
             if (args[i] == "-captureWidth") int.TryParse(args[i + 1], out captureWidth);
@@ -381,6 +389,9 @@ public static partial class BatchPlaybackLogger
                 if (elseVerticalFrameOut.HasValue) { p.enableElseVerticalFrameOutContinuation = elseVerticalFrameOut.Value; }
                 if (bboxSpikeFix.HasValue) { p.rejectIsolatedBBoxSpikes = bboxSpikeFix.Value; }
                 if (motion.HasValue) { p.enableInteractiveMotion = motion.Value; }
+                if (!string.IsNullOrEmpty(trackModels)) { p.trackModelIndices = ParseTrackModels(trackModels); }
+                if (!string.IsNullOrEmpty(gestureAssets)) { p.animalStaticGestureClips = LoadGestureAssets(gestureAssets); }
+                if (!string.IsNullOrEmpty(walkAsset)) { p.animalWalkClips = LoadGestureAssets(walkAsset); }
                 // バッチは測定環境なので、明示的に -remember true と言われない限り OFF。
                 // persistentDataPath に保存済みの選択が残っていると A/B が静かに汚れる。
                 p.rememberTrackCustomization = remember.HasValue && remember.Value;
@@ -851,6 +862,50 @@ public static partial class BatchPlaybackLogger
                 }
             }
         }
+    }
+
+    // "0:36,1:39" → track ごとのモデル番号。読めない組は捨てて警告する。
+    private static StreamingStereoVideoPlayer.TrackModelIndexOverride[] ParseTrackModels(string spec)
+    {
+        var list = new List<StreamingStereoVideoPlayer.TrackModelIndexOverride>();
+        foreach (string raw in spec.Split(','))
+        {
+            string[] kv = raw.Trim().Split(':');
+            if (kv.Length == 2 && int.TryParse(kv[0], out int track) && int.TryParse(kv[1], out int model))
+            {
+                list.Add(new StreamingStereoVideoPlayer.TrackModelIndexOverride { trackId = track, modelIndex = model });
+            }
+            else
+            {
+                Debug.LogWarning($"[BATCH] -trackModels: 読めない組 '{raw}'");
+            }
+        }
+
+        Debug.Log($"[BATCH] trackModels={spec} ({list.Count} 組)");
+        return list.ToArray();
+    }
+
+    // "Assets/.../A.asset;Assets/.../B.asset" → AnimalGesturePose の配列。読めないパスは警告して飛ばす（黙って空にしない）。
+    private static AnimalGesturePose[] LoadGestureAssets(string spec)
+    {
+        var list = new List<AnimalGesturePose>();
+        foreach (string raw in spec.Split(';', ','))
+        {
+            string path = raw.Trim();
+            if (path.Length == 0) { continue; }
+            AnimalGesturePose asset = AssetDatabase.LoadAssetAtPath<AnimalGesturePose>(path);
+            if (asset != null)
+            {
+                list.Add(asset);
+            }
+            else
+            {
+                Debug.LogWarning($"[BATCH] gesture asset が読めない: {path}");
+            }
+        }
+
+        Debug.Log($"[BATCH] gesture assets: {string.Join(",", list.ConvertAll(a => a.name))}");
+        return list.ToArray();
     }
 
     // target と同じインスタンス（最上位の Track_N か Animator の root）の中から名前の一致する骨を探す。

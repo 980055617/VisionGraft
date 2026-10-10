@@ -25,7 +25,19 @@ public enum AnimalGesturePoint
     FrontLeftLower,
     FrontRightLower,
     RearLeftLower,
-    RearRightLower
+    RearRightLower,
+    // 2026-10-05 追加（資産は int で保存されるので必ず末尾に足す）。動物の動きの作り直し用:
+    // Trunk = 胴（背骨の根 spine から肩甲帯までの中間の骨の鎖に配って回す。AnimalGesturePosePlayer の胴の分岐）、
+    // Neck = 首の役の骨、TailBase / TailMid = 尾の付け根・中ほどの役の骨、LeftEar / RightEar = 耳（頭の子孫で名前に ear）、
+    // FrontLeftScapula / FrontRightScapula = 前脚の役の上腕の親（肩甲骨。親が背骨・胴の鎖ならなし）。
+    Trunk,
+    Neck,
+    TailBase,
+    TailMid,
+    LeftEar,
+    RightEar,
+    FrontLeftScapula,
+    FrontRightScapula
 }
 
 [Serializable]
@@ -52,4 +64,12 @@ public class AnimalGesturePose : ScriptableObject
 {
     public float duration = 2f;
     public List<AnimalGesturePointCurve> pointCurves = new List<AnimalGesturePointCurve>();
+    // 2026-10-05 追加（どちらも既定 false で、古い資産の再生は変わらない）。
+    // onRoleBones: 四肢の点を役の骨（脚の割り当ての表で付け替えた、解剖学的な上腕・前腕・手 / 大腿・下腿・足）に乗せる。false なら
+    // プレイヤーの animalGestureOnCanonicalLimbs のとおり（既定は正規名の骨。古い資産は正規名の骨の局所軸で作ってある）。
+    public bool onRoleBones;
+    // anatomicalAxes: 曲線を骨の局所軸ではなく体の軸で読む。right = 体の横軸まわり（+ で四肢は先が体の前へ、胴・首・頭・尾・耳は先が上へ）、
+    // up = 体の上まわり（world の上から見て時計回り）、forward = 体の長軸まわり（頭は鼻の軸まわり）。骨ごとの軸は bind の姿勢で決める
+    // （AnimalPoseApplier.EnsureGestureAnatomy）。左右の脚の骨の局所軸が鏡映のモデル（Labrador・Lynx など 52 体中 15 体）でも左右で意味がそろう。
+    public bool anatomicalAxes;
 }

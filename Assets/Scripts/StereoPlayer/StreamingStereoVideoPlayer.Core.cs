@@ -217,6 +217,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // bbox は可視部分だけなので、見切れフレームで bbox 高に合わせるとモデルが縮む。
     // 詳細は ResolveUnclippedTargetHeight のコメント。
     public bool extendTargetHeightForClippedBBox = true;
+    // 見切れた animal（上端か下端が切れたフレーム）の大きさを、meta.bin の SMAL block の transl z と keypoints3d から出した「体全体の像の高さ」でも
+    // 見積もり、上の外挿（ResolveUnclippedTargetHeight）より大きければそちらに合わせる。**新しい振る舞い・既定 OFF（2026-10-07、ユーザーの「一部しか
+    // 映っていないカットで何かいい方法ないの」）。** 増えた分は shot 先頭の倍率の測り直し（RefineLockedScaleFromProjectedBones）で倍率に入れ、⑧ の目標も
+    // 同じ比で上げる。⑧ が目標を上げるのは測り直しが倍率に入れた track だけ（手動倍率で測り直しを飛ばした・ガードで測り直せなかった・shot 先頭が
+    // 見切れていなかった track は今と同じ）。bundle_animal で変わるのは shot 2・11・13（犬の顔の寄り）・23・24・25・27。見切れていないフレーム、
+    // 上の外挿の方が大きい shot 1・20 は変わらない。背骨を anchor に置いたまま大きくなるので頭は目へ寄る（shot 2 の最も近い骨 0.33 → 0.25 m）。
+    // 詳細は ResolveAnimalFullBodyTargetGain。
+    public bool animalPlaceClippedFromFullBody = false;
+    // 上の副選択（既定 OFF）: 左右が切れて上の外挿を諦めていたフレーム（bbox が画面の左端か右端に付く）だけに効かせる。bundle_animal では shot 2・11・13
+    // だけが変わり、外挿が効いていた shot 23・24・25・27 は OFF と同じ（shot 24 は大きくなる代わりに顔が元の猫の顔から離れるので、それを採らないとき用）。
+    public bool animalPlaceClippedFromFullBodyWidthClippedOnly = false;
 
     // 外挿の上限（bbox 高の何倍まで許すか）。1 フレームの推定ミスで暴れないための保護。
     // 1.6 は実測で決めた（2026-08-27、bundle_animal）。1.6 / 2.0 / 3.0 を振ったところ
@@ -240,6 +251,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // ⑧ が何もしなくなる**（32 秒台の sizeRatio が 0.416）。0.2 にすると 0.692 まで戻る。
     // animal の全体誤差・揺れ、human の boneRatio/球との距離/姿勢一致はすべて不変。
     public float depthRefineMinRatio = 0.2f;
+    // animalScaleRefineMinRatioFromDepthRefine（2026-10-09、既存の欠陥の直し・既定 OFF・animal のみ・新しい定数なし）: shot の頭の倍率の測り直し
+    //   （RefineLockedScaleFromProjectedBones）の比の下限を、0.4 から ⑧ の下限（上の depthRefineMinRatio）に揃える。今の既定では比が 0.2〜0.4 に出る
+    //   モデル（Lion・Mink・EuropeanBadger・Racoon）で測り直しが shot の間一度も通らないことがあり、その間 ⑧ が小さいモデルを目の前へ引き寄せる
+    //   （4 体で 20 shot、遅れて通った shot 7 つ。遅れた shot は ⑧ の平滑化が測り直す前の比から始まり、体が目の前から約 1.5 秒かけて奥へ滑る）。
+    //   ON で 4 体とも全 shot が最初の tick に通る。実験の Labrador・Lynx は全 shot で最初から通るので変わらない（860 行一致）。
+    //   倍率が変わったら ⑧ の平滑化を始め直す案も撮ったが、これを ON にすると働く場面が残らず何も変えなかったので入れていない。
+    //   詳細は Docs/tmp/roster_20261009/README.md の 11。
+    public bool animalScaleRefineMinRatioFromDepthRefine = false;
+    // animalBottomFitUsesBoneDepth（2026-10-09、既存の欠陥の直し・既定 OFF・animal のみ・新しい定数なし）: ⑦ の下端合わせ（FitDisplayedModelToBBox）で、
+    //   一番下の骨の投影で合わせるときの px → m の換算を、レンダラーの AABB の中心の深さではなく、その骨自身の深さで行う。骨はその骨の深さで投影して
+    //   いるので、AABB の深さで割り戻すと移動量が「AABB の深さ ÷ 骨の深さ」倍にずれる（31_GrayWolf の伏せで 2.5 倍、体が 0.5 m 浮く。⑧ に目の前へ
+    //   寄せられた 06_AmericanMink で 50 倍、体が頭の上へ飛ぶ）。上端合わせ（下端が切れているとき）はメッシュの投影上端なので今のまま。
+    //   詳細は Docs/tmp/roster_20261009/README.md の 11-4。
+    public bool animalBottomFitUsesBoneDepth = false;
 
     // ⑧ の平滑化を速める相対誤差のしきい値。lo 以下は従来どおりの平滑化、hi 以上で
     // ほぼ即座に追従する。1.0 に設定すると実質無効（従来の挙動）。
@@ -266,6 +291,25 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // スケールのロック時の測り直し（RefineLockedScaleFromProjectedBones）の基準を、bbox 高ではなく
     // ±animalScaleTrendWindowFrames で平滑した目標高にする（B1、animal のみ）。**既定 OFF。**
     public bool refineLockedScaleAgainstSmoothedTarget = false;
+    // C4-T の倍率の基準（ロックしたフレームの値）を、±animalScaleTrendWindowFrames の窓の平均ではなく、そのフレームの生の値にする
+    // （2026-10-07、**新しい振る舞い・既定 OFF**。係数・しきい値は足さない）。ロックの倍率は bbox 高そのもので合わせている
+    // （RefineLockedScaleFromProjectedBones、B1 OFF）ので、基準もそれに揃える。窓の平均のままだと、区間の頭では窓が先のフレームだけになり、
+    // 近づいてくる場面では基準が生の値より大きく出る（bundle_animal f258 で 92.2 px 対 73 px）。B1（上）はロックの方を窓の平均に合わせて
+    // この食い違いを消すが、倍率が動かない区間のロックまで変える（shot 1 で ×1.59 など）。こちらは倍率の基準だけを動かすので、倍率が 1 の区間は
+    // 何も変わらない。B1 と同時に ON にしたときは効かない（ロックが窓の平均に合っているので、基準も今どおり窓の平均）。
+    // bundle_animal で倍率が 1 でなくなるのは f258〜337（×1.01〜2.23）・f427〜533（〜×1.38）・f898〜981（〜×1.83）・f1104〜1145（〜×1.18）・
+    // f1435〜1612（×0.96〜1.00）。詳細は AnimalScaleTrend.partial.cs の TryResolveScaleTrendLockLogTarget。
+    public bool animalScaleTrendRawLockReference = false;
+    // モーションの受け渡し（HandoffBlend）で scale も位置・回転と同じ重みで混ぜる（animal のみ、2026-10-07、既存の欠陥の直し）。**既定 OFF。**
+    // イベント中は配置が止まって scale は発火した tick の値のまま、動画は音のフェード（0.5 s）の間だけ進んでから止まる。受け渡しの最初の tick で
+    // 追従がその時点の scale を書くので、C4-T が ON だと 1 tick で跳ねる（接近中に発火すると実機で最大 ×1.46、録画のバッチで最大 ×1.14）。
+    public bool animalHandoffBlendsScale = false;
+    // 偽のカットを 2 つ以上まとめて順方向に越えた（コマ落ち・シーク）ときも、間の境界がすべて偽のカットなら scale のロックを持ち越す
+    // （2026-10-07、既存の欠陥の直し）。**既定 OFF。** 今は隣の shot へ 1 つ進んだときしか偽のカットと認めず、280・290 を一度に越えると
+    // f290 の bbox でロックし直して、同じ場面のモデルの大きさが着地のフレームによって ×2.5〜3.8 変わる（10/03 の撮影の回で実際に起きた）。
+    // 隣どうしの判定（keepScaleAcrossContinuousShotBoundary）と同じく種別を問わない。今ある bundle で偽のカットが続くのは bundle_animal だけ。
+    // ShotBoundary.partial.cs の IsFalseCutBoundaryChain。
+    public bool falseCutChainKeepsScale = false;
     // animal の ⑧ の奥行きの上限（m）。0 以下ならスクリーン距離（従来）。C4-T の試算は 2.0
     // （動画の犬は自分の視差でスクリーンより奥 1.03〜1.25 m に見えている）。
     public float animalDepthRefineMaxDepthMeters = 0f;
@@ -303,6 +347,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // （HM の F3 (e) / LM の H-2）。2026-10-04、既定 OFF。H-1 だけだと手と前腕の相対ねじれが悪化するので組で使う。
     public bool fkReferenceFromAvatarTPose = false;
     public bool handFkFromForearmFrame = false;
+    // 人の指（2026-10-08、全関節の監査 J-12。どれも既定 OFF、新しい振る舞い）。今は指 30 本を毎 tick muscles=0（1 関節 34〜37° 曲がった半握り）に戻し、
+    // SMPL の 22・23（手）は読むが使わない。詳細・予測・副作用は HumanFingers.partial.cs。採否は絵で。
+    // humanFingerRestFromAvatarTPose: 指 30 本だけ Avatar の T ポーズ（ほぼまっすぐ）の局所回転に戻す。前提「SMPL のゼロ姿勢の手は平ら」は未確認
+    //   （この PC に SMPL のモデルファイルが無い）。T ポーズが採れない（Quest で humanDescription が読めない等）ときは今の muscles=0 のまま。
+    //   T ポーズは Humanoid のキャッシュを作るときにだけ採るので、起動時（-setFields）に入れる。副作用: 指は倍率のロック・⑦・⑧ の投影に入っているので、
+    //   指が投影の上端・下端になるフレームでモデルの置き方が変わる（Eric の移植で変わったフレームの投影の高さ p50 +1.6%、最大 +7.2%）。
+    // humanFingersFromSmplHand（humanFingerRestFromAvatarTPose が前提）: 指の付け根（人差し指〜小指）を SMPL の 22・23 の平滑後の回転で曲げる（係数なし）。
+    //   R22 / R23 はほぼ一定（1 フレームの変化 p50 0.4°）で、本物の動きでなく HMR2 の事前分布の可能性がある。
+    // humanFingersFromSmplHandThumb: humanFingersFromSmplHand を親指の付け根にも掛ける（SMPL の手の関節が親指を動かすかは未確認なので分けた）。
+    public bool humanFingerRestFromAvatarTPose = false;
+    public bool humanFingersFromSmplHand = false;
+    public bool humanFingersFromSmplHandThumb = false;
     // 30 fps の姿勢を tick の時刻（vp.clockTime）で隣り合う 2 フレームから補間する（2026-10-04、調査役 TM の案 A を
     // 反論役 C-TM の修正つきで、既定 OFF）。Human は centeredSmplRotationFilter と組のときだけ。PoseInterpolation.partial.cs を参照。
     public bool interpolatePoseBetweenFrames = false;
@@ -330,6 +386,43 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 詳細は AnimalSmalFkApplier の同名フィールド。採否はメッシュのねじれを含めて絵で。
     public bool smalAbsoluteDirection = false;
     public bool smalAbsoluteDirectionHeadTailOnly = false;
+    // 尾の鎖（2026-10-07、担当 B「猫の尾が元動画のように見えて動く」）。詳細は AnimalSmalFkApplier の同名フィールド。
+    // smalTailFullChain（既定 OFF、新しい振る舞い）: 尾の骨すべてを SMAL の尾の関節 25〜31 の向きへ（方向の転写。左右の反転も直る。Tail03 の 74° の
+    //   曲げは捨てる）。掛かるのは smalTailFullChainModels に載ったモデルだけ（既定 "Lynx"。犬の尾は変えない）。
+    //   副作用: shot の先頭の倍率の測り直し（RefineLockedScaleFromProjectedBones）は、確定前の小さい倍率（Lynx shot 23 で 0.293。確定後の約 0.57 倍）で
+    //   アンカーに置いた骨の投影を測る。この配置では Lynx の尾の先が最上の骨（shot 23 で 6 px 上）なので、尾を立てると倍率が下がる。
+    //   既存の方向の転写で実測 0.5126 → 0.4904（−4.3%）。鎖は移植で ×0.934（約 0.479）。確定後の姿勢では尾は最上の骨にならない。
+    // smalTailFullChainModels: カンマ区切りの prefab 名（先頭の「数字_」は無視）。例 "Lynx,Puma"。"LabradorDog" を足すと犬の尾も変わる（向きが中央 21〜28°）。
+    // smalTailMatchSmalLength（既定 OFF、新しい振る舞い）: 尾の長さの比を SMAL に合わせる（smalTailFullChain と組）。smalTailMatchSmalLengthModels に
+    //   載ったモデルだけ（既定 "Lynx" = 1.93 倍）。倍率に上限は無く、尾の短いモデルは 6〜11 倍になるので、足すときは倍率の表を見てから。
+    //   メッシュが骨の間で引き伸ばされる。Lynx shot 23 の倍率は移植で ×0.855（約 0.438）。
+    // bodyFrameTail（既定 OFF）: 比較用（写像の切り替え）。尾の付け根・中ほどだけ体の写像で。左右の向きだけ変わり、仰角は今のまま。全モデルに効く。
+    // smalAbsoluteDirection + smalAbsoluteDirectionHeadTailOnly は Lynx では尾だけだが、当てはめ済みの頭の Labrador は首・頭も変わるので尾の直しには使わない。
+    public bool smalTailFullChain = false;
+    public string smalTailFullChainModels = "Lynx";
+    public bool smalTailMatchSmalLength = false;
+    public string smalTailMatchSmalLengthModels = "Lynx";
+    // 動物の胴・首・頭・口（2026-10-08、全関節の監査の J-09・J-04・J-21、担当 I3）。詳細は AnimalSmalFkApplier の同名フィールド。
+    // どれも既定 OFF の新しい振る舞いで、採否は絵で決める。尾の鎖の既定の姿勢の混ぜ（J-23）はフラグなしの欠陥の直しで、smalTailFullChain が OFF なら何も変わらない。
+    // smalTrunkChordFromSmal（J-09、係数なし）: SMAL の背骨 1〜6 の弦の振りを胴の骨（Spine〜Spine3）に弧長で配り、肩甲帯（Spine4）を A6 で回す（体の写像）。
+    //   10/04 の AM の案 D（胴の弦）の再提案で、C-DM は D について「方向は正しいが効果は小さい」と判定している。肩甲帯に A6 を掛ける部分は 10/04 に評価されていない。
+    //   予測（監査の移植）: き甲 p50 25 → 7 px（犬）・30 → 8 px（猫）。猫が頭を下げる動きの不足（J-10）も、単独のフラグは出さずこれで確かめる
+    //   （傾き 0.62 → 0.99。ただし全フレームで頭がデータより約 8° 低くなる。C-DM の「A6 系は猫で行き過ぎる」と同じ向き）。
+    //   **胴の曲がりはほぼ肩甲帯の関節（Spine3→Spine4）1 か所に集まる**（反論役の移植: p50 17°・p95 35〜38°・最大 60°。Spine〜Spine3 の各関節は p95 2〜6°）。
+    //   き甲・胸のメッシュに折れ目が出るおそれがあるので、横からの絵で確かめる。shot の先頭の倍率と ⑧ への影響は未予測（[SCALEFIX]・[DEPTH8] で比べる）。
+    // smalHeadNoseAim（J-04 (1)）: 頭の鼻を SMAL の鼻（新しい定数 n_smal = 頭の座標で前から 15° 下、データから較正）へ最小回転で（ロールは B のまま）。
+    //   犬の鼻の上向き 目→鼻 +21.9° → +1.4°（頭→鼻の定義では +15.9° → −4.7°）。照準はモデルごとにほぼ一定の回転（犬 20.8°・猫 6.1°）で、実質は頭の bind の
+    //   向きの回し直し（否定リストの「bind を共通基準へ」の系統）。イベントの既定の姿勢へ戻す間は (1 − 重み) で弱める。
+    // smalNeckFullChain + smalNeckFullChainModels（J-04 (2)）: 首の骨（Neck01 → Neck02 → neck、終点は頭）を SMAL の 6→15→16 の折れ線の同じ弧長の区間の向きへ
+    //   （尾の鎖と同じ仕組み・写像。bind の首の形は捨てる。頭の向きは B のまま）。名簿は既定 空。**犬（"LabradorDog"）だけに使う想定で、猫には入れない**
+    //   （き甲→頭が犬 +25.9 → −8.6°、猫 −2.6 → −22.7° と行き過ぎる）。倍率は犬の多くの shot で ×1.08〜1.35（一次近似）。
+    // smalDriveJaw（J-21）: 頭の子で名前に jaw を含む骨（上顎 UpperJaw は除く）を SMAL の口（関節 32）で回す（B と同じ体の写像）。耳は入れない。
+    public bool smalTrunkChordFromSmal = false;
+    public bool smalHeadNoseAim = false;
+    public bool smalNeckFullChain = false;
+    public string smalNeckFullChainModels = "";
+    public bool smalDriveJaw = false;
+    public bool bodyFrameTail = false;
 
     // Animal の首・頭・四肢を根と同じ体の写像で共役する（2026-10-04、調査役 AM の B / B′ / C）と、受け身の骨を
     // 実際の Unity の親に付ける（A2）。詳細は AnimalSmalFkApplier の同名フィールド。
@@ -340,6 +433,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool bodyFrameKeepFittedHead = false;
     public bool bodyFrameLimbs = false;
     public bool bodyFrameLimbsFrontAndTailOnly = false;
+    // 後肢だけを体の写像で（2026-10-07、実機の再確認「40 秒からの猫の後ろ脚が交差」）。詳細は AnimalSmalFkApplier の同名フィールド。
+    // 既定 ON（未 push、採否は絵と実機で）。bodyFrameLimbs = true なら後肢はもともと体の写像なので、これは何も変えない。
+    public bool bodyFrameRearLimbs = true;
+    // 脚の残り（2026-10-08、全関節の監査 J-05・J-06・J-08・J-20）。詳細は AnimalSmalFkApplier の同名フィールド。すべて既定 OFF、採否は絵で。
+    // 以下の画素は移植の予測（監査 audit_joints/AL と I2 の predict_I2.py、視聴者の目、⑦⑧ の置き直し前）。
+    // bodyFrameFrontLimbs（既存の欠陥の直し、式は既存）: 前肢だけを体の写像で（前脚の横の成分の左右の反転を直す。尾は変えない）。16_Deer1 にも掛かる。
+    //   Labrador の伏せ f341-410 で脚の最下点が p50 +157 px 動き、⑦⑧ の置き直しで位置と大きさが変わる（D-009 の刺激）。⑧ の幅は最大 1.33%（10/07 の bodyFrameLimbs の実測）。
+    // smalDriveCarpusHock（新しい振る舞い、係数なし）: 手根・飛節の曲げを写す（Beaver・Fox は除外）。Lynx shot 20 で最下点が p50 +29〜34 px 動く。
+    //   0.12 s の平滑のもとで中手の 1 動画フレームのゆれは前腕よりやや大きい（p95 4.53 対 4.23°）。平滑 0 の組み合わせでは大きい（18.1 対 15.1°、監査 AL_verify/v13）。
+    // smalDriveFeet（新しい振る舞い）: 前足・後足（指）の曲げを写す。smalDriveCarpusHock と組で使う。
+    // smalAbsoluteDirectionLegsOnly（新しい振る舞い、式は既存の smalAbsoluteDirection）: 方向の転写を脚だけに（尾・首・頭は変えない）。
+    //   Lynx の肘の曲がりすぎ（+52/+43°、データ −12/−15°）を消すが、bind の脚の形（モデルの立ち姿）は捨てる。Lynx の最下点が p50 −24 px。
+    //   イベントの既定の姿勢でも SMAL の rest の脚の形になる（監査 J-23 と同じ型）。
+    public bool bodyFrameFrontLimbs = false;
+    public bool smalDriveCarpusHock = false;
+    public bool smalDriveFeet = false;
+    public bool smalAbsoluteDirectionLegsOnly = false;
     public bool passiveBoneUnityParent = false;
 
     // ⑧ の平滑化を tick ではなく**動画フレーム**で刻む。**既定 ON。**
@@ -361,6 +471,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 切れた下端に合わせると下半身を画面内へ持ち上げてしまうため。上下とも切れている
     // フレームは従来どおり下端合わせにフォールバックする。
     public bool alignTopWhenBottomClipped = true;
+
+    // 「下端が画面の下端で切れているか」の判定にヒステリシスを付ける（2026-10-06、実機のちらつきの直し）。⑦（合わせる基準: 上端 / 下端）と
+    // ⑧（目標高: 外挿 / bboxH）は同じ 1 つの判定（IsBBoxBottomClipped）を使う。下で切れた動物の bbox の下端は 717〜720 で 1〜3 px 揺れ、
+    // `>= eye_h` だと 1 フレームごとに基準が入れ替わって高さが跳んでいた（bundle_animal で 42 回、shot 1・11・20・24 の中だけ、6〜223 mm。
+    // Docs/tmp/devcheck_20261006/README.md の 7-1）。下端 >= eye_h - Enter で「切れている」に入り、< eye_h - Leave で抜ける。
+    // 状態は track ごとで、shot の切れ目（偽のカットを含む）で消す。
+    // **2 / 4 はこの bundle に合わせた値。** manifest の placement_observation_policy.edge_margin_px = 4 に合わせた 4 px・5 px では
+    // shot 14 の f1097〜1099 に今は無い 2 フレームの切り替えができる。抜ける側の 4 が取り決めの 4 px と同じなのは偶然。
+    public bool bboxBottomClipHysteresis = true;
+    public int bboxBottomClipEnterMarginPixels = 2;
+    public int bboxBottomClipLeaveMarginPixels = 4;
 
     // 測定 B（2026-08-28、診断専用）: SMAL の曲げ（body_pose の寄与）を当てず、
     // bind pose を globalOrient で回しただけの姿勢にする。[ANIMALKP] を有無で比べて
@@ -397,8 +518,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 替える（F2、MAP）。首の bind 方向が後ろ向き（48_Puma: 前肢が前後逆）・横向き（Hyena 等: 26〜74° 回る）・上腕と反平行（GSD 等: 縮退）の
     // モデルで写像が壊れていた。体の横は 52 体すべての前肢関節で縮退しない。首が健全なモデルでの差は中央 3.3°。
     // **既定 ON（2026-10-04、fixAnimalLegMapping と同時）。** ゲート: 48_Puma は今の既定で前肢 θ −1.00 → +1.00、27_GermanShepherd 等の
-    // 縮退していた 6 体と Hyena・MountainGoat も +1.00、健全な Labrador は F2 の有無で θ の差 0.00。16_Deer1 は F2 で悪くなったので対象から外した
-    // （AnimalLegMappingFix.FrontLimbBodyLateralExcluded）。
+    // 縮退していた 6 体と Hyena・MountainGoat も +1.00、健全な Labrador は F2 の有無で θ の差 0.00。16_Deer1 は F2 で悪くなったので一度対象から外した
+    // （AnimalLegMappingFix.FrontLimbBodyLateralExcluded）が、測ったときは背骨の役が骨盤に付いて胴が止まっていた。2026-10-09 に背骨の役を body に直し
+    // （AnimalLegMappingFix.Table）、除外も外した（Docs/tmp/roster_20261009/README.md の 7-2）。
     public bool animalFrontLimbBodyLateralSecondary = true;
     // インタラクティブモーションの動物の四肢のジェスチャ（PawRaise・SampleWalk）を、脚の割り当ての表で付け替えた役の骨ではなく
     // 正規名の骨（front_r_upper など、実験で使っていた骨）に乗せる（2026-10-04、査読役の指摘 A と M1 の絵）。資産は正規名の骨の局所軸で
@@ -470,6 +592,29 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 対象を掴んで手首をひねると回る。既定 ON。
     // 実機で誤爆するようなら Inspector で切れるようにしてある。
     public bool enableGrabRotate = true;
+
+    // 手動の回転（掴んで回す・保存した向き）と bind（2026-10-08、全関節の監査 J-01・J-18、担当 I1）。humanBindRootRelative・humanFollowManualRotation・animalBindWithoutManualRotation の 3 つは 2026-10-09 にユーザーが採用して既定 ON
+    // （humanFollowManualRotationAllAxes だけ既定 OFF）。
+    // humanBindRootRelative（既存の欠陥の直し）: 人の bind（muscles=0 の姿勢・handBindCorrection・シルエット・T ポーズ）を採る間だけ、Animator の
+    //   Transform の world 回転を単位にして、採った後に戻す（GetOrBuildHumanoidCache の HumanBindRootScope）。今は配置が root に書いた回転（手動の
+    //   回転を含む）のまま採り、root の回転が bind に 2 回入る（HumanPoseHandler の Get/Set の往復と推定。調整役の撮影 queue_hx1: 60° 回した後に
+    //   作り直すと bind が +y まわり 120.00°。FK は worldGO × bodyFk × bind で root の回転を使わないので、腰の線の向きが f620 で約 160°・f900 で
+    //   約 120° ずれ、肩と腰の線が 31.6° ねじれた）。「inv(root) × bind で持つ」形では 2θ のうち θ が残るので、採る間だけ単位にする。
+    //   配置の回転（pinhole の基底 × prefab の回転）が単位なら（バッチ、人 16 体の prefab）、手動の回転が無いときは今と同じ値。
+    //   効くのはキャッシュを作るときだけなので、起動時（再生前）に入れる（途中で入れても、モデルを作り直すまで今のキャッシュのまま）。
+    // humanFollowManualRotation（新しい振る舞い。humanBindRootRelative と組でだけ効く）: 手動の回転を SMPL の FK の根（平滑の後の worldGO）の左と
+    //   keypoints（AimAt・足の高さ合わせの目標）の両方に掛け、人の体を手動の回転に付いて回す。今は回しても root だけが回り、体は回らない
+    //   （queue_hx1: 60° 回しても腰の線の向きは 162.2° のまま）。既定は yaw だけ（動物の FK と同じ。掴む手首の傾きで体が傾かない）。
+    //   平滑の後に掛けるので遅れずに回る（動物は根の平滑 0.12 s の分だけ遅れる。an_yaw の f310 で +51.8°）。
+    // humanFollowManualRotationAllAxes: humanFollowManualRotation で pitch・roll も掛ける（配置と同じ 3 軸）。
+    // animalBindWithoutManualRotation（既存の欠陥の直し）: 動物のリグのキャッシュ（bind）を採る間だけ、インスタンスの root を手動の回転を除いた
+    //   配置の回転（pinhole の基底 × prefab の回転）に置き、採った後に戻す（AnimalPoseApplier.PrebuildRigCacheWithoutManualRotation）。今は手動の回転の
+    //   まま bind を採り、SMAL の FK が root の yaw をもう一度掛ける（queue_syn1 の an_yawswap: f600 の作り直しで bind が全 20 骨とも +y まわり
+    //   60.000°、体の向きが回さない走り＋129.5°（p50）。回したまま作り直さない an_yaw は＋60.0°）。手動の回転が無いフレームでは呼ばない（今と同じ経路）。
+    public bool humanBindRootRelative = true;
+    public bool humanFollowManualRotation = true;
+    public bool humanFollowManualRotationAllAxes = false;
+    public bool animalBindWithoutManualRotation = true;
 
     // バッチ検証専用の手動 yaw 注入。"track:deg" をカンマ区切りで書く（例: "0:90,1:-45"）。
     // 実機の手動回転は VR の UI からしか操作できず、Editor では再現できない。
@@ -918,6 +1063,81 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public float humanWalkSpeedMetersPerSecond = 0.8f;
     public float animalApproachStopDistanceMeters = 0.5f;
     public float animalWalkSpeedMetersPerSecond = 0.5f;
+    // ランダムのイベントを今の表示位置から始める（2026-10-05、既存の不具合の直し）。起点に使っていた livePosition は bbox の面積の門
+    // （直前に通った面積の 50% 以上のときだけ更新、基準の面積は shot をまたいで戻らない）を通った位置で、倍率の違う shot では門が閉じたまま、
+    // Labrador の track 0 は 1146 フレーム中 551 で最長 8 s 古い位置になり、開始の 1 tick で体が 18〜19 cm 跳んでいた。門つきの位置はフレームアウトの起点用に残す。
+    public bool interactiveRandomOriginFromDisplayed = true;
+    // 動物の向き替えに時間の緩急を付ける（2026-10-05）。FaceViewer は 30〜61° を 0.4〜0.6 s、歩きの段の始めは 1 秒に 360° を目安に 0.2〜0.45 s、
+    // ハンドオフは smoothstep。これまでは root の向きを 1 tick で切り替え、SMAL の根の平滑が回転だけを遅らせて骨の位置は root に即座についていくので、
+    // 体が 10〜24 cm 瞬間移動していた。段の長さ（動画の停止時間）は変えない。
+    public bool animalInteractiveTurnEasing = true;
+    // 静的イベントで体を回さずに頭で視聴者を向く角度（2026-10-05、動物の動きの作り直し）。体の前と視聴者の向きの差のうち、この角度までは体を回さず
+    // 頭を視聴者へ向ける層（animalGestureLookAtViewer、±100°）に任せ、超えた分だけ体を回す。0 なら従来どおり体ごと視聴者へ向き直る。
+    // 足を踏み替えずにその場で回るので、伏せ（Labrador f380）は 61° 回って前脚の先が床を 44 cm 掃き、Lynx（track 1、f2025）は 42° で前足が 20〜32 cm 滑っていた
+    // （R3・R4 の record_pose.csv）。頭を向ける層が働かないイベント（システムのフレームアウト、層を切ったとき）は従来どおり体ごと回す。
+    public float animalStaticHeadOnlyTurnDegrees = 80f;
+    // 発火の判定を、その tick の配置と表示位置の記録の後に行う（2026-10-06、既存の不具合の直し）。前に置いていたので、track が再び現れた
+    // 最初の tick（ループ・シーク）と shot の切れ目の最初の tick では、前の出番の位置・倍率・凍結姿勢からイベントが始まっていた。
+    // 実験の 12〜24 s 間隔でも、track 0 は 32.5 s・track 1 は 38.2 s 画面から居なくなるので、2 周目以降の f0・f1146 ではほぼ必ず
+    // 最初の tick で発火する。イベントの開始は 1 tick 遅れる。位置の効果は interactiveRandomOriginFromDisplayed が ON のときだけ。
+    public bool interactiveScheduleAfterPlacement = true;
+    // 歩いて近づくときに止まる距離を、root ではなく体（スキンの骨のうち視聴者の目に一番近い点）で測る（2026-10-06、既存の不具合の直し）。
+    // root は体の中心ではない。SMAL FK の根の骨は root から一定の位置にあり（Lynx (0.007, 0.736, -0.316)·s）、カメラを向いた動物では
+    // 頭が root より「骨盤から頭まで + 0.316·s」前に出る。root で 0.5 m に止めていたので、寄りの場面の Lynx（f1206、倍率 0.51）は
+    // 頭が目の面を 6 cm、鼻が 15 cm 越えて視聴者の頭に埋まった（Docs/tmp/devcheck_20261006/README.md の 7-3）。
+    // 止まる距離は animalApproachStopDistanceMeters をそのまま使う（目と最も近い骨の 3D 距離）。各点は行き先の向きに回してから測る。
+    // 歩ける距離が interactiveApproachMinTravelMeters 未満なら歩かない: animalApproachNoRoomFallsBackToStatic が true ならその場の
+    // 動き（静的イベント）に切り替え、false なら発火せずに次の機会へ送る（車と同じ）。0.10 m と切り替えの形はユーザーの判断待ち。
+    // 距離を保証するのは歩き終えた時点の姿勢だけ（その後の視聴者を見る層・ジェスチャは点を近づけうる）。
+    public bool animalApproachByNearestPoint = true;
+    public float interactiveApproachMinTravelMeters = 0.10f;
+    public bool animalApproachNoRoomFallsBackToStatic = true;
+    // 動物のランダムのイベントを既定の姿勢（prefab の bind の立ち姿）に戻してから動かす（2026-10-07、ユーザーの要望「human みたいにデフォルトのポーズに
+    // 戻してからやる方がいい。動物だと変な体勢の時にアニメーションが起こることを避けたい」）。今は発火した tick の SMAL を凍結して FK に通し、その曲がりの上に
+    // 身ぶりを足していた。発火から animalDefaultPoseBlendSeconds の段 to_default で FK の入力を既定の姿勢へ混ぜ（AnimalSmalFkApplier.smalDefaultPoseWeight）、
+    // 混ぜ終えてから身ぶり・歩きを始める。秒数が負なら interactiveHandoffBlendSeconds（シーン値 0.45 s）を使い、0 なら最初の tick で切り替える（Human のクリップの
+    // 切り替え方）。足の高さは変えない（root は凍結のまま。下端が見える shot では足が数 cm 沈む・浮く）。歩くかどうかは混ぜ終えた姿勢の骨で決める。
+    // 動画の停止は to_default の分だけ延びる（実験ログに to_default の行）。SMAL の track だけ（keypoint の代替経路・Human・Else は変わらない）。
+    public bool animalEventFromDefaultPose = true;
+    // 脚の基準姿勢を skin 姿勢に（2026-10-08、全関節の監査 J-03、新しい振る舞い・既定 OFF）。詳細は AnimalPoseApplier の同名フィールド。
+    // smalLegReferenceSkinPose: smalLegReferenceSkinPoseModels に載ったモデルだけ、リグのキャッシュを作るとき（モデルを置いた最初の姿勢適用）に
+    //   脚の鎖（肩甲骨 → 脚の役 → 指）の局所回転を skin 姿勢（メッシュが歪まない姿勢）へ一度だけ書く。以後の bind（相対の転写の基準・上の
+    //   animalEventFromDefaultPose の既定の姿勢・ジェスチャの肩甲骨の土台）が skin の左右対称な立ち姿の脚になる。39_Lynx の prefab の既定姿勢は
+    //   左右非対称で、左前足が常に右より後ろにあった（前の球節の前後差 体長比 モデル −0.220 対データ +0.073）。
+    //   キャッシュを作るときに 1 回だけ読むので、途中で切り替えても次にモデルを作り直すまで変わらない（バッチの -setFields は再生前に入るので効く）。
+    //   副作用（棚卸しの FK の静的な予測、Lynx、倍率 1 の root 座標）: 前の球節の前後差 −0.264 → −0.013、肩の支点 −0.097 → −0.010、体長 +3.6%。
+    //   「前の球節が約 2.5 cm 下がる・指が既定姿勢の床より最大 2.4 cm 下に出る」は bind 姿勢（静的）の値。再生中は最下点の骨が替わり、shot の先頭の
+    //   倍率と ⑦ は shot によって上下どちらにも動く（反論役の目安 ×0.92〜×1.10、未確定）。後脚も skin 姿勢に入るので、後脚の下腿が約 17° 起き、
+    //   後ろ足が毎フレーム p50 約 0.09〜0.10 root 動く（後脚はもともと左右対称なので、非対称の直しの外の変化。keypoints に近づく向き）。
+    //   胴の鎖と局所位置は書かないので skin 姿勢そのものにはならない（肩の低さは変わらない。四肢は真の skin 姿勢より体の下へ約 7° 寄る）。
+    // smalLegReferenceSkinPoseModels: prefab 名のカンマ区切り（先頭の「数字_」は無視）。既定は空 = どのモデルにも掛けない。例 "Lynx"。
+    //   05_Horse・20_Donkey は skin 姿勢自体が左右非対称なので入れない（Resources/animal_leg_skin_pose.json にも焼いていない）。
+    public bool smalLegReferenceSkinPose = false;
+    public string smalLegReferenceSkinPoseModels = "";
+    // 非四足モード（2026-10-08、鳥 3 体とカンガルーを SMAL の FK で。新しい振る舞い。2026-10-09 にユーザーが絵を見て採用し、bool はすべて既定 ON = 撮影の B2）。詳細は AnimalPoseApplier の同名フィールド。
+    // smalNonQuadrupedRig: 主スイッチ。名簿のモデルだけ、リグのキャッシュを作るとき（モデルを置いたとき）に、役を AnimalNonQuadrupedRig.Table の行で付け替え
+    //   （鳥 spine=Pelvis・neck=Neck3・尾の役なし、カンガルー spine=Hips・neck=Neck02）、体の前を「頭 → 顔の骨（鼻・顎）」の水平の向きにし、前肢の無い鳥も
+    //   SMAL FK の入口を通す。カンガルーの尾 Tail01 は bind のまま（腰に剛体）。モードは作るときに決まるので、切り替えは Change Model まで効かない。
+    //   ON でも名簿の外（実験の Labrador・Lynx を含む）は何も変わらない。犬の track では鳥・カンガルーの首が約 20° 後ろへ反り、くちばしが約 15° 上を向く
+    //   一定の偏りが出る（B は bind からの相対なので、犬が首を SMAL の rest より高く保つ分がそのまま乗る。動きではない。35_Kangaroo の実測）。
+    //   イベント（向き直し・歩いて近づく・既定の姿勢・ジェスチャの首の点・カンガルーの頭を視聴者へ向ける）の挙動も変わる。（2026-10-09 に、モード＋脛＋基準姿勢＋直立の組で採用）
+    // smalNonQuadrupedRigModels: 名簿（prefab 名のカンマ区切り、先頭の「数字_」は無視）。表に行のあるモデルだけ効く。
+    // smalNonQuadrupedHock: 鳥の脛（関節 19/23）を手根・飛節と同じ写し方で。前肢の無いリグ（鳥）だけ。鳥の脛はこの切り替えだけで決まり、全体の
+    //   smalDriveCarpusHock（判断待ち）を ON にしても動かない。鳥の前足・指は smalDriveFeet が ON でも受け身のまま。カンガルーには効かない。毎 tick 読む。
+    // smalNonQuadrupedReferencePose: 鳥の基準姿勢（Resources/animal_reference_pose.json。2026-10-09 に Assets/Editor/AnimalLegSkinPoseBaker で焼いた）をキャッシュを作るとき 1 回だけ書く。
+    //   表・行が無い・合わないなら何もしない（ログはファイルが無いことは再生ごとに 1 回、行の理由はモデルごとに 1 回）。
+    // smalNonQuadrupedUprightRoot: 体の根を上下まわりだけにする（イベントの既定の姿勢と同じ式）。犬が横に寝る・座るときに一緒に倒れない。毎 tick 読む。
+    public bool smalNonQuadrupedRig = true;
+    public string smalNonQuadrupedRigModels = "Goose,Guineafowl,Pheasant,Kangaroo";
+    public bool smalNonQuadrupedHock = true;
+    public bool smalNonQuadrupedReferencePose = true;
+    public bool smalNonQuadrupedUprightRoot = true;
+    // （次の animalDefaultPoseBlendSeconds は上の animalEventFromDefaultPose の説明の続き）
+    public float animalDefaultPoseBlendSeconds = -1f;
+    // 歩けずにその場の動きへ切り替えたイベントは体を回さない（2026-10-07、10/06 の直しの食い違いの直し）。歩ける距離の判定は「視聴者へ向き直った姿勢が
+    // もう止まる距離の内側」と見て歩きを捨てたのに、切り替え先の静的イベントが同じ向き直りを確かめずに行い、横の近い視聴者の顔を猫の頭が通り越した
+    // （実機 f1853、向き直った後の最も近い骨が目から 0.10 m）。頭を視聴者へ向ける層は今までどおり。
+    public bool animalNoRoomStaticKeepsHeading = true;
     // Else（車などの剛体）の自発的な動き（2026-09-25、ユーザー指示）: 走って視聴者の手前まで近づき、
     // 弧を描いて U ターンし、走って戻る。その場回転は使わない（車らしくないため）。
     // 向きは前後のホイール（FL/FR/RL/RR の子）から決める。ホイールが無いモデルは向きを変えずに滑る。

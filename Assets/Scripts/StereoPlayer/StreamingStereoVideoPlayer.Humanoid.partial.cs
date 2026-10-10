@@ -5,6 +5,42 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // Depends on: HumanoidRigCache and humanoid caches in Model.cs
     // Provides: humanoid cache build for the SMPL24 person pipeline
 
+    // bind を採る間だけ Animator の Transform の world 回転を単位にする（humanBindRootRelative、2026-10-08、2026-10-09 に既定 ON、全関節の監査 J-01 ①）。
+    // root が θ 回ったまま採ると muscles=0 の姿勢が 2θ 回る（調整役の撮影 queue_hx1: 60° → bind が +y まわり 120.00°。HumanPoseHandler の
+    // GetHumanPose が体の回転を world で返し、SetHumanPose が root からの相対として当てる往復と推定。切り分けてはいない）。
+    // 単位にしておけば往復は恒等で、bind は root の回転に依らない（FK の worldGO × bodyFk × bind が前提にする「root が単位のときの bind」）。
+    // 戻すのは using を抜けるとき（例外でも戻る）。局所回転を控えて書き戻すので、戻した root は採る前とビット単位で同じ。
+    // FK のループの外（キャッシュを作る 1 回だけ）。
+    private readonly struct HumanBindRootScope : System.IDisposable
+    {
+        private readonly Transform root;
+        private readonly Quaternion savedLocalRotation;
+
+        public HumanBindRootScope(Transform root)
+        {
+            this.root = root;
+            savedLocalRotation = root != null ? root.localRotation : Quaternion.identity;
+            if (root != null)
+            {
+                Debug.Log($"[HUMAN-BIND] model={root.name} bind を root の world 回転を単位にして採る（外した回転 {Quaternion.Angle(root.rotation, Quaternion.identity):F2}°）");
+                TransformWriter.ApplyWorldRotation(root, Quaternion.identity);
+            }
+        }
+
+        public void Dispose()
+        {
+            if (root != null)
+            {
+                TransformWriter.ApplyLocalRotation(root, savedLocalRotation);
+            }
+        }
+    }
+
+    private HumanBindRootScope BeginHumanBindRootScope(Animator animator)
+    {
+        return new HumanBindRootScope(humanBindRootRelative && animator != null ? animator.transform : null);
+    }
+
     private HumanoidRigCache GetOrBuildHumanoidCache(Animator animator)
     {
         if (humanoidCaches.TryGetValue(animator, out HumanoidRigCache existing))
@@ -46,6 +82,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 cache.bones[HumanBodyBones.UpperChest] = leftShoulderBone.parent;
             }
         }
+
+        // 既定 ON（2026-10-08、J-01 ①。2026-10-09 に採用）: ここから return まで（シルエット・muscles=0・handBindCorrection・T ポーズの採取）は Animator の
+        // Transform の world 回転を単位にして採る（HumanBindRootScope）。handBindCorrection は yaw には不変だが pitch・roll には不変でないので、
+        // この区間に入れる。シルエットは root の回転に依らない（root.up とメッシュ・骨が一緒に回る）が、区間の始まりはその前に置く。採る順は今のまま。
+        using HumanBindRootScope bindRootScope = BeginHumanBindRootScope(animator);
 
         // シルエット相当の投影点は既定姿勢で測る。下の muscles=0 は膝・肘が曲がった姿勢なので、その前に呼ぶ。
         CaptureHumanoidSilhouetteFrame(animator, cache);
@@ -101,7 +142,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         // T ポーズを使うフラグが立っているときだけ採る（既定の経路では avatar.humanDescription を読まない。Quest の IL2CPP で
         // 読めるかは未確認なので、既定の挙動に関わらないようにする）。
-        if (fkReferenceFromAvatarTPose || handFkFromForearmFrame || footAimAtModelRestDirection)
+        if (fkReferenceFromAvatarTPose || handFkFromForearmFrame || footAimAtModelRestDirection || humanFingerRestFromAvatarTPose)
         {
             CaptureAvatarTPoseWorld(animator, cache);
         }

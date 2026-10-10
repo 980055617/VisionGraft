@@ -121,6 +121,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         rawFrameObjectsMemo.Clear();
         rawFrameObjectsMemoOrder.Clear();
         loggedBBoxSpikeKeys.Clear();
+        // C4-T の先読みの表と基準も bundle ごとに捨てる（展開先の meta.bin のパスは bundle によらず同じなので、パスでは区別できない）。
+        InvalidateAnimalScaleTrendTable();
 
         try
         {
@@ -137,6 +139,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (metaLoaded)
             {
                 CalibrateAnchorDepthRange();
+                // C4-T / B1 の先読みの表をここで作る（どちらかのフラグが ON のときだけ）。遅延で作ると再生中の最初のフレームで 265〜320 ms 止まる。
+                // 止まりは読み込み中へ移るだけで、消えてはいない（実機の時間は [BUNDLETIME] meta.bin で測る）。
+                PrecomputeAnimalScaleTrendTableOnLoad();
             }
         }
         catch

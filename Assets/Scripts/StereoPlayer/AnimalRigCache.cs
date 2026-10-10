@@ -68,5 +68,21 @@ internal sealed class AnimalRigCache
     public bool headGestureRemapResolved;
     public bool headGestureRemapValid;
     public Quaternion headGestureRemap = Quaternion.identity;
+    // 動物の動きの作り直し（2026-10-05、AnimalPoseApplier.EnsureGestureAnatomy）: 胴の鎖（spine の子から肩甲帯まで。FK が書かない骨）、
+    // 肩甲骨・耳（FK が書かない骨）と、資産の anatomicalAxes で使う骨ごとの体の軸（骨ローカル。X = 体の右、Y = 体の上、Z = 体の前、頭は Z = 鼻）と
+    // right の曲線の符号（+ で四肢は先が前、ほかは先が上）。
+    public bool gestureAnatomyResolved;
+    public readonly List<Transform> trunkChain = new List<Transform>();
+    public Transform gestureScapulaLeft;
+    public Transform gestureScapulaRight;
+    public Transform gestureEarLeft;
+    public Transform gestureEarRight;
+    public readonly Dictionary<Transform, Quaternion> gestureAxesFrame = new Dictionary<Transform, Quaternion>();
+    public readonly Dictionary<Transform, float> gestureSwingSign = new Dictionary<Transform, float>();
+    // 非四足モード（AnimalPoseApplier.smalNonQuadrupedRig、2026-10-08、2026-10-09 に既定 ON）。キャッシュを作るとき 1 回だけ決める（ApplyNonQuadrupedRoles）。どちらも既定 false。
+    // smalNoFrontLimbs: そのうち前肢の上の役が左右とも無いリグ（鳥）。SMAL FK の入口を spine と後肢の上 2 本で通す。脛 19/23 は smalNonQuadrupedHock だけで写し、
+    //   全体の smalDriveCarpusHock・smalDriveFeet は見ない（前足・指は受け身のまま。AnimalSmalFkApplier の IsSmalCarpusHockDriven・IsSmalFootParentOnBodyFrame）。
+    public bool smalNonQuadruped;
+    public bool smalNoFrontLimbs;
     public bool ready;
 }

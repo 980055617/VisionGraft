@@ -350,11 +350,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void ResetHumanoidLocalRotations(HumanoidRigCache cache)
     {
+        // humanFingerRestFromAvatarTPose（既定 OFF、2026-10-08、J-12 (a)、新しい振る舞い）: 指 30 本だけ muscles=0 ではなく Avatar の T ポーズの局所回転へ戻す
+        // （HumanFingers.partial.cs）。T ポーズの局所が無い指は今どおり muscles=0。OFF なら fingerRest は null で、今と同じく全骨を muscles=0 に戻す。
+        var fingerRest = humanFingerRestFromAvatarTPose ? ResolveHumanFingerRestLocals(cache) : null;
         foreach (var kv in cache.bindRotLocal)
         {
             if (cache.bones.TryGetValue(kv.Key, out Transform bone) && bone != null)
             {
-                TransformWriter.ApplyLocalRotation(bone, kv.Value);
+                Quaternion local = kv.Value;
+                if (fingerRest != null && fingerRest.TryGetValue(kv.Key, out Quaternion fingerLocal))
+                {
+                    local = fingerLocal;
+                }
+
+                TransformWriter.ApplyLocalRotation(bone, local);
             }
         }
     }

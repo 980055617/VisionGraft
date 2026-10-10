@@ -77,6 +77,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 smplPose = InterpolateCenteredSmplPose(obj.trackId, interpA, interpB, interpW, smplPose);
             }
 
+            // 既定 ON（2026-10-08、J-01 ② humanFollowManualRotation、新しい振る舞い。2026-10-09 に採用）: 人の体を手動の回転に付いて回す。FK の根（平滑の後）と
+            // keypoints（AimAt・足の高さ合わせの目標）に同じ回転を掛ける（FK だけだと AimAt が回る前の keypoints を見て胴と四肢がずれる）。
+            // root の深度の平滑（上の cameraForward）はカメラの向きのまま使うので、root を置いた後のここで掛ける。手動の回転が無ければ何もしない。
+            if (TryResolveHumanFollowManualRotation(obj.trackId, frame, out Quaternion humanFollowRotation))
+            {
+                smplPose.hasFollowRotation = true;
+                smplPose.followRotation = humanFollowRotation;
+                RotatePersonJointsAboutRoot(ref pose, humanFollowRotation);
+            }
+
             TryApplyHumanSmplRotationOverlay(cache, smplPose);
             if (enableKeypointAimAt)
             {
@@ -101,6 +111,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 }
             }
             // enableKeypointAimAt = false のときは手も FK ループ内で適用済み（純 FK）。
+            // humanFingersFromSmplHand（既定 OFF、2026-10-08、J-12 (b)）: 手が書き終わったここで、指の付け根を SMPL の 22・23 で書く
+            // （keypoint の AimAt・SMPL 目標の AimAt・純 FK のどの手の経路でも。HumanFingers.partial.cs）。OFF なら何もしない。
+            TryApplyHumanFingersFromSmplHand(cache);
             // 骨盤基準配置後にキャラのモデル脚長と SMPL 脚長の差を Y オフセットで吸収する。
             // XZ は骨盤 anchor のまま、Y だけ SMPL ankle 基準に揃える。
             AlignHumanoidFeetYToSmplAnkles(instance.transform, cache, pose.jointsWorld, pose.jointVis);
@@ -294,13 +307,38 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         animalPoseApplier.bodyFrameKeepFittedHead = bodyFrameKeepFittedHead;
         animalPoseApplier.bodyFrameLimbs = bodyFrameLimbs;
         animalPoseApplier.bodyFrameLimbsFrontAndTailOnly = bodyFrameLimbsFrontAndTailOnly;
+        animalPoseApplier.bodyFrameRearLimbs = bodyFrameRearLimbs;
+        animalPoseApplier.bodyFrameFrontLimbs = bodyFrameFrontLimbs;
+        animalPoseApplier.smalDriveCarpusHock = smalDriveCarpusHock;
+        animalPoseApplier.smalDriveFeet = smalDriveFeet;
+        animalPoseApplier.smalAbsoluteDirectionLegsOnly = smalAbsoluteDirectionLegsOnly;
         animalPoseApplier.passiveBoneUnityParent = passiveBoneUnityParent;
         animalPoseApplier.smalDriveNeckChain = smalDriveNeckChain;
         animalPoseApplier.smalAbsoluteDirection = smalAbsoluteDirection;
         animalPoseApplier.frontLimbBodyLateralSecondary = animalFrontLimbBodyLateralSecondary;
         animalPoseApplier.smalAbsoluteDirectionHeadTailOnly = smalAbsoluteDirectionHeadTailOnly;
+        animalPoseApplier.smalTailFullChain = smalTailFullChain;
+        animalPoseApplier.smalTailFullChainModels = smalTailFullChainModels;
+        animalPoseApplier.smalTailMatchSmalLength = smalTailMatchSmalLength;
+        animalPoseApplier.smalTailMatchSmalLengthModels = smalTailMatchSmalLengthModels;
+        animalPoseApplier.smalTrunkChordFromSmal = smalTrunkChordFromSmal;
+        animalPoseApplier.smalHeadNoseAim = smalHeadNoseAim;
+        animalPoseApplier.smalNeckFullChain = smalNeckFullChain;
+        animalPoseApplier.smalNeckFullChainModels = smalNeckFullChainModels;
+        animalPoseApplier.smalDriveJaw = smalDriveJaw;
+        animalPoseApplier.bodyFrameTail = bodyFrameTail;
         animalPoseApplier.useTwoAxisJointFrameMap = useTwoAxisJointFrameMap;
         animalPoseApplier.enableAnimalHeadPose = enableAnimalHeadPose;
+        // 既定 OFF（2026-10-08、J-03）: 脚の基準姿勢を skin 姿勢に。読まれるのはリグのキャッシュを作るとき（下の Apply の最初の 1 回）だけ。
+        animalPoseApplier.smalLegReferenceSkinPose = smalLegReferenceSkinPose;
+        animalPoseApplier.smalLegReferenceSkinPoseModels = smalLegReferenceSkinPoseModels;
+        // 既定 空（2026-10-09）: F2 の除外を名簿のモデルだけ外す。読まれるのはリグのキャッシュを作るときだけ。
+        // 既定 ON（2026-10-08、非四足モード。2026-10-09 に採用）: 主スイッチ・名簿・基準姿勢はリグのキャッシュを作るときだけ読まれる。脛・直立は毎 tick（モードで作ったキャッシュだけ）。
+        animalPoseApplier.smalNonQuadrupedRig = smalNonQuadrupedRig;
+        animalPoseApplier.smalNonQuadrupedRigModels = smalNonQuadrupedRigModels;
+        animalPoseApplier.smalNonQuadrupedHock = smalNonQuadrupedHock;
+        animalPoseApplier.smalNonQuadrupedReferencePose = smalNonQuadrupedReferencePose;
+        animalPoseApplier.smalNonQuadrupedUprightRoot = smalNonQuadrupedUprightRoot;
         animalPoseApplier.enableAnimalKeypointAimAt = enableAnimalKeypointAimAt;
         if (enableAnimalKeypointAimAt && !loggedAnimalAimAt)
         {
@@ -316,6 +354,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             loggedSmalBendDisabled = true;
             Debug.Log("[SMAL-FK-DBG] disableSmalBendForDiag=true (測定 B: 曲げを切って bind pose + globalOrient のみ)");
+        }
+
+        // 既定 ON（2026-10-08、J-18 animalBindWithoutManualRotation。2026-10-09 に採用）: リグのキャッシュ（bind）がまだ無く、このフレームに手動の回転があるときだけ、
+        // root を手動の回転を除いた配置の回転（ApplyMetaTarget と同じ式: pinhole の基底 × prefab の回転）に置いて bind を採り、すぐ戻す。
+        // 採る時点は今と同じ（DisableAnimalAnimatorPlayback と毎フレームの受け渡しの後、Apply の配置より前）。条件は Apply の入口の早期 return と同じ。
+        // インタラクティブモーションの経路（ApplyAnimalPoseRequest）は通さない（イベント中に初めてキャッシュを作る場合は今のまま）。
+        if (animalBindWithoutManualRotation &&
+            (hasSmalPose || (pose.jointsWorld != null && pose.jointVis != null && pose.jointCount >= 20)) &&
+            HasManualRotationAtFrame(obj.trackId, frame))
+        {
+            animalPoseApplier.PrebuildRigCacheWithoutManualRotation(
+                instance.transform, animator, ApplyModelBaseRotation(instance, GetPinholeBasisRotation(screen)), BuildAnimalPoseSettings());
         }
 
         animalPoseApplier.Apply(new AnimalPoseRequest

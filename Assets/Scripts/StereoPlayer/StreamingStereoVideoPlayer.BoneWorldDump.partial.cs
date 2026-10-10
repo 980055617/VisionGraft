@@ -23,6 +23,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private string boneWorldDumpParsedSpec;
     private readonly List<Vector2Int> boneWorldDumpRanges = new List<Vector2Int>();
 
+    // バッチの録画（Editor の BatchPlaybackLogger.Record）が役の骨（足先・尾など）の位置を tick ごとに書くための入口（2026-10-05）。
+    internal AnimalRigCache PeekAnimalRigCacheForBatch(GameObject instance)
+    {
+        return animalPoseApplier.PeekAnimalRigCache(instance);
+    }
+
     private void DumpBoneWorldIfEnabled(MetaObj target, GameObject instance, Transform screen, int frame)
     {
         if (string.IsNullOrEmpty(boneWorldDumpPath) || boneWorldDumpFailed || instance == null)

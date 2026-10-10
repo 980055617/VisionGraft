@@ -19,7 +19,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private enum InteractiveMotionSubject { Person, Animal, Rigid }
     private enum InteractiveEventKind { Static, Dynamic }
     private enum InteractiveTriggerSource { Random, SystemFrameOut }
-    private enum InteractiveDynamicPhase { WalkIn, Gesture, WalkBack }
+    // ToDefault: 既定の姿勢へ混ぜる段（animalEventFromDefaultPose、2026-10-07）。静的・動的どちらのイベントもここから始まる。
+    private enum InteractiveDynamicPhase { WalkIn, Gesture, WalkBack, ToDefault }
     private enum InteractiveEventStage { Inactive, Owned, HandoffBlend }
     private enum InteractiveAnimalPreset { FaceViewer, BodyTurnViewer, TailWag, PawWave, DataDrivenClip }
     private enum InteractiveHumanPreset { ClipGesture, FaceViewer }
@@ -59,10 +60,30 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         public Vector3 handoffFromPosition;
         public Quaternion handoffFromRotation = Quaternion.identity;
+        // 受け渡しの起点の scale（animalHandoffBlendsScale、2026-10-07）。BeginHandoff が今の localScale を控える。
+        public Vector3 handoffFromScale = Vector3.one;
+        public bool hasHandoffFromScale;
 
         public bool hasLiveSample;
         public Vector3 livePosition;
         public Quaternion liveRotation = Quaternion.identity;
+        // 門を通さない今の表示位置（ランダムのイベントの起点、interactiveRandomOriginFromDisplayed、2026-10-05）。
+        public bool hasDisplayedSample;
+        public Vector3 displayedPosition;
+        public Quaternion displayedRotation = Quaternion.identity;
+        // 動物の FaceViewer の向き替えを時間で回す（animalInteractiveTurnEasing、2026-10-05）。0 なら 1 tick で切り替え（従来）。
+        public Quaternion gestureTurnFromRotation = Quaternion.identity;
+        public float gestureTurnDuration;
+        // 歩きの段の始めに向きを回す秒数（同上）。0 なら段の最初の tick から phaseToRotation（従来）。
+        public float walkTurnDuration;
+        // 体で測った歩ける距離（animalApproachByNearestPoint、2026-10-06）。負なら従来の root の規則。
+        public float approachTravelMeters = -1f;
+        // 既定の姿勢へ戻してから動かすイベントか（animalEventFromDefaultPose、2026-10-07）。to_default の段で重み 0 → 1、その後イベントの終わりまで 1。
+        public bool usesDefaultPose;
+        public float defaultPoseStartTime;
+        public float defaultPoseBlendDuration;
+        // 歩けずにその場の動きへ切り替えたイベント（animalNoRoomStaticKeepsHeading で体を回さない）。
+        public bool downgradedForClearance;
         public float lastGoodBBoxArea;
         public bool hasReliableBBoxThisFrame;
         public Transform lastScreen;
@@ -181,6 +202,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         InteractiveMotionState state = GetOrCreateInteractiveMotionState(trackId);
+        // 門の前に、今の表示位置は毎回控える（ランダムのイベントの起点。門の基準の面積は shot をまたいで戻らないので、倍率の違う shot では
+        // 門が閉じたままになり、track 0 は 1146 フレーム中 551 で最長 8 s 古い位置が起点になって、開始の 1 tick で体が 18〜19 cm 跳んでいた。2026-10-05 の棚卸し）。
+        state.displayedPosition = instance.transform.position;
+        state.displayedRotation = instance.transform.rotation;
+        state.hasDisplayedSample = true;
         if (state.hasLiveSample && !state.hasReliableBBoxThisFrame)
         {
             return;
@@ -636,18 +662,145 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private void StartInteractiveMotion(uint trackId, bool isAnimal, InteractiveEventKind kind, float now)
     {
         InteractiveMotionState state = GetOrCreateInteractiveMotionState(trackId);
+        // ランダムのイベントは今の表示位置から始める（interactiveRandomOriginFromDisplayed）。門つきの livePosition はフレームアウトの起点用（端で崩れた bbox を避ける）。
+        bool fromDisplayed = interactiveRandomOriginFromDisplayed && state.hasDisplayedSample;
+        Vector3 originPosition = fromDisplayed ? state.displayedPosition : (state.hasLiveSample ? state.livePosition : Vector3.zero);
+        Quaternion originRotation = fromDisplayed ? state.displayedRotation : (state.hasLiveSample ? state.liveRotation : Quaternion.identity);
+
+        // 既定の姿勢へ戻してから動かす（animalEventFromDefaultPose）。混ぜる段がある（秒数 > 0）なら、歩くかどうかは混ぜ終えた姿勢の骨で決める
+        // （FinishDefaultPoseTransition）。凍結した姿勢で決めると、既定の姿勢で歩いたときに判定と見せる姿勢が食い違う（10/07 の所見 4 と同じ型）。
+        bool usesDefaultPose = isAnimal && animalEventFromDefaultPose && state.cachedAnimalHasSmalPose;
+        float defaultPoseSeconds = usesDefaultPose ? ResolveDefaultPoseBlendSeconds() : 0f;
+        bool deferApproach = usesDefaultPose && defaultPoseSeconds > 0f;
+
+        // 歩いて近づく余地を体で測る（animalApproachByNearestPoint）。足りなければ歩かない。
+        float approachTravel = -1f;
+        string downgradeNote = "";
+        state.downgradedForClearance = false;
+        if (kind == InteractiveEventKind.Dynamic && isAnimal && animalApproachByNearestPoint && !deferApproach)
+        {
+            approachTravel = ResolveAnimalApproachTravel(trackId, originPosition, originRotation, out string nearestBone, out float nearestNow, out float rootRuleTravel, out string nearestNowBone);
+            Debug.Log($"[MOTION] approach track={trackId} travel={approachTravel:F3}m rootRule={rootRuleTravel:F3}m " +
+                      $"stop={animalApproachStopDistanceMeters:F2}m nearest={nearestBone ?? "-"} nearestNow={nearestNow:F3}m nearestNowBone={nearestNowBone ?? "-"}");
+            if (approachTravel < interactiveApproachMinTravelMeters)
+            {
+                if (!animalApproachNoRoomFallsBackToStatic)
+                {
+                    state.nextTriggerTime = RuntimeClock.ResolveNextTime(now, RandomInteractiveInterval());
+                    Debug.Log($"[MOTION] walk_in skipped track={trackId} reason=clearance travel={approachTravel:F3}m (next chance)");
+                    return;
+                }
+
+                kind = InteractiveEventKind.Static;
+                state.downgradedForClearance = true;
+                downgradeNote = $" downgraded_from=Dynamic reason=clearance travel_m={ExperimentCsv.Format(approachTravel)}";
+                Debug.Log($"[MOTION] walk_in downgraded to static track={trackId} reason=clearance travel={approachTravel:F3}m");
+            }
+        }
+
         state.subject = isAnimal ? InteractiveMotionSubject.Animal : InteractiveMotionSubject.Person;
         state.triggerSource = InteractiveTriggerSource.Random;
         state.kind = kind;
         state.eventStartTime = now;
+        state.approachTravelMeters = kind == InteractiveEventKind.Dynamic ? approachTravel : -1f;
+        state.usesDefaultPose = usesDefaultPose;
+        state.defaultPoseStartTime = now;
+        state.defaultPoseBlendDuration = defaultPoseSeconds;
         BeginRandomInteractiveMotionVideoPause(trackId);
-        state.originPosition = state.hasLiveSample ? state.livePosition : Vector3.zero;
-        state.originRotation = state.hasLiveSample ? state.liveRotation : Quaternion.identity;
+        state.originPosition = originPosition;
+        state.originRotation = originRotation;
+        Debug.Log($"[MOTION] origin track={trackId} source={(fromDisplayed ? "displayed" : "live")} " +
+                  $"gap={(state.hasDisplayedSample && state.hasLiveSample ? Vector3.Distance(state.displayedPosition, state.livePosition) : 0f):F3}m " +
+                  $"pos=({originPosition.x:F3},{originPosition.y:F3},{originPosition.z:F3}) frame={GetCurrentPlaybackFrame()} tick={Time.frameCount}");
 
         ExperimentLog.Interaction(
             trackId,
             $"random_{kind}",
-            $"subject={(isAnimal ? "animal" : "human")}");
+            $"subject={(isAnimal ? "animal" : "human")}{downgradeNote}");
+
+        if (deferApproach)
+        {
+            BeginDefaultPosePhase(state, trackId, now);
+            return;
+        }
+
+        if (state.kind == InteractiveEventKind.Static)
+        {
+            BeginGesturePhase(state, trackId, isAnimal, state.originPosition, state.originRotation, now);
+            return;
+        }
+
+        BeginWalkInPhase(state, trackId, isAnimal, now);
+    }
+
+    private float ResolveDefaultPoseBlendSeconds()
+    {
+        return animalDefaultPoseBlendSeconds >= 0f ? animalDefaultPoseBlendSeconds : Mathf.Max(0f, interactiveHandoffBlendSeconds);
+    }
+
+    // 既定の姿勢の重み（animalEventFromDefaultPose）。to_default の段で 0 → 1（緩急 ON なら smoothstep）、その後イベントの終わりまで 1。
+    // ランダムのイベントだけ（システムのフレームアウトは 0）。
+    private float ResolveDefaultPoseWeight(InteractiveMotionState state, float now)
+    {
+        if (state == null || !state.usesDefaultPose || state.triggerSource != InteractiveTriggerSource.Random)
+        {
+            return 0f;
+        }
+
+        if (state.defaultPoseBlendDuration <= 0f)
+        {
+            return 1f;
+        }
+
+        float u = Mathf.Clamp01(RuntimeClock.ResolveElapsed(now, state.defaultPoseStartTime) / state.defaultPoseBlendDuration);
+        return animalInteractiveTurnEasing ? Mathf.SmoothStep(0f, 1f, u) : u;
+    }
+
+    // 既定の姿勢へ混ぜる段（animalEventFromDefaultPose）。root は起点のまま回さず、身ぶりも足さない（重みは ResolveDefaultPoseWeight）。
+    private void BeginDefaultPosePhase(InteractiveMotionState state, uint trackId, float now)
+    {
+        state.fallbackBoneBaseLocalRotations.Clear();
+        state.dynamicPhase = InteractiveDynamicPhase.ToDefault;
+        state.gesturePosition = state.originPosition;
+        state.gestureRotation = state.originRotation;
+        state.gestureTurnFromRotation = state.originRotation;
+        state.gestureTurnDuration = 0f;
+        state.animalGestureClip = null;
+        state.phaseStartTime = now;
+        state.phaseDuration = state.defaultPoseBlendDuration;
+        state.stage = InteractiveEventStage.Owned;
+        LogInteractiveMotionPhase(trackId, "to_default", "default_pose", state.phaseDuration, 0f);
+    }
+
+    // 既定の姿勢へ混ぜ終えたら、身ぶり（静的）か歩き（動的）へ進む。歩くかどうかはここで、混ぜ終えた姿勢の骨で決める（animalApproachByNearestPoint）。
+    private void FinishDefaultPoseTransition(uint trackId, InteractiveMotionState state, bool isAnimal, float now)
+    {
+        if (state.kind == InteractiveEventKind.Dynamic && isAnimal && animalApproachByNearestPoint)
+        {
+            float travel = ResolveAnimalApproachTravel(trackId, state.originPosition, state.originRotation, out string nearestBone, out float nearestNow, out float rootRuleTravel, out string nearestNowBone);
+            Debug.Log($"[MOTION] approach track={trackId} travel={travel:F3}m rootRule={rootRuleTravel:F3}m stop={animalApproachStopDistanceMeters:F2}m " +
+                      $"nearest={nearestBone ?? "-"} nearestNow={nearestNow:F3}m nearestNowBone={nearestNowBone ?? "-"} (default pose)");
+            if (travel < interactiveApproachMinTravelMeters)
+            {
+                if (!animalApproachNoRoomFallsBackToStatic)
+                {
+                    // 見送り: 動画はもう止めているので、歩かずにそのまま追従へ戻す。
+                    Debug.Log($"[MOTION] walk_in skipped track={trackId} reason=clearance travel={travel:F3}m (default pose, back to tracking)");
+                    ExperimentLog.Interaction(trackId, "walk_skipped", $"reason=clearance travel_m={ExperimentCsv.Format(travel)}");
+                    BeginHandoff(trackId, state, now);
+                    return;
+                }
+
+                state.kind = InteractiveEventKind.Static;
+                state.downgradedForClearance = true;
+                Debug.Log($"[MOTION] walk_in downgraded to static track={trackId} reason=clearance travel={travel:F3}m (default pose)");
+                ExperimentLog.Interaction(trackId, "walk_downgraded", $"to=Static reason=clearance travel_m={ExperimentCsv.Format(travel)}");
+            }
+            else
+            {
+                state.approachTravelMeters = travel;
+            }
+        }
 
         if (state.kind == InteractiveEventKind.Static)
         {
@@ -671,6 +824,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 destination = toViewer.sqrMagnitude > 0.000001f
             ? viewerPosition - toViewer.normalized * stopDistance
             : state.originPosition;
+        // 体で測った歩ける距離（animalApproachByNearestPoint）。root を視聴者の方へその距離だけ進める。
+        if (isAnimal && state.approachTravelMeters >= 0f && toViewer.sqrMagnitude > 0.000001f)
+        {
+            destination = state.originPosition + toViewer.normalized * state.approachTravelMeters;
+        }
         destination = PreserveHeight(destination, state.originPosition, upAxis);
         Quaternion destinationRotation = state.originRotation;
         if (toViewer.sqrMagnitude > 0.000001f)
@@ -684,6 +842,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.phaseFromRotation = state.originRotation;
         state.phaseToPosition = destination;
         state.phaseToRotation = destinationRotation;
+        state.walkTurnDuration = ResolveAnimalWalkTurnDuration(isAnimal, state.phaseFromRotation, state.phaseToRotation);
 
         float speed = Mathf.Max(0.05f, isAnimal ? animalWalkSpeedMetersPerSecond : humanWalkSpeedMetersPerSecond);
         float distance = Vector3.Distance(state.phaseFromPosition, state.phaseToPosition);
@@ -702,6 +861,101 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
     }
 
+    // 体の点（スキンの骨。SkinnedMeshRenderer を持たないモデルは Renderer の位置）。BoneWorldDump と同じ列挙。
+    private readonly List<Transform> approachPointBuffer = new List<Transform>(128);
+    private readonly HashSet<Transform> approachPointSeen = new HashSet<Transform>();
+
+    // 歩いて近づける距離（m、animalApproachByNearestPoint、2026-10-06）。体の各点を行き先の向き（BeginWalkInPhase と同じ
+    // ResolveAnimalTurnedRotation）に起点まわりで回し、root を視聴者の方へ水平に t 進めたとき、目との 3D 距離が初めて
+    // animalApproachStopDistanceMeters になる t の最小値。従来の root の規則（水平距離 - 止まる距離）も上限にする。
+    // すでに内側にある点があれば負を返す（歩かない）。nearestNow は今（向き替えの後、歩く前）の最も近い点の距離。
+    private float ResolveAnimalApproachTravel(uint trackId, Vector3 originPosition, Quaternion originRotation,
+        out string nearestBoneName, out float nearestNow, out float rootRuleTravel, out string nearestNowBoneName)
+    {
+        nearestBoneName = null;
+        nearestNowBoneName = null;
+        nearestNow = float.PositiveInfinity;
+        Vector3 upAxis = Vector3.up;
+        InteractiveMotionState state = GetOrCreateInteractiveMotionState(trackId);
+        Transform viewer = GetViewOrHeadTransform();
+        Vector3 forwardFallback = state.lastScreen != null ? -state.lastScreen.forward : Vector3.forward;
+        Vector3 viewerPosition = viewer != null ? viewer.position : originPosition + forwardFallback;
+        Vector3 toViewer = Vector3.ProjectOnPlane(viewerPosition - originPosition, upAxis);
+        float stop = Mathf.Max(0f, animalApproachStopDistanceMeters);
+        rootRuleTravel = toViewer.magnitude - stop;
+        GameObject instance = GetTrackInstanceOrNull(trackId);
+        if (toViewer.sqrMagnitude <= 0.000001f || instance == null)
+        {
+            return rootRuleTravel;
+        }
+
+        Vector3 u = toViewer.normalized;
+        Quaternion destinationRotation = ResolveAnimalTurnedRotation(instance, originRotation, toViewer, upAxis);
+        // 骨は今の root からの相対で持ち、起点で行き先の向きに置き直す（起点が今の表示位置なら今の姿勢をそのまま回すのと同じ）。
+        Quaternion currentInverse = Quaternion.Inverse(instance.transform.rotation);
+        Vector3 currentRoot = instance.transform.position;
+
+        approachPointBuffer.Clear();
+        approachPointSeen.Clear();
+        foreach (SkinnedMeshRenderer smr in instance.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        {
+            Transform[] bones = smr != null ? smr.bones : null;
+            if (bones == null)
+            {
+                continue;
+            }
+
+            for (int i = 0; i < bones.Length; i++)
+            {
+                if (bones[i] != null && approachPointSeen.Add(bones[i]))
+                {
+                    approachPointBuffer.Add(bones[i]);
+                }
+            }
+        }
+
+        if (approachPointBuffer.Count == 0)
+        {
+            foreach (Renderer r in instance.GetComponentsInChildren<Renderer>(true))
+            {
+                if (r != null && approachPointSeen.Add(r.transform))
+                {
+                    approachPointBuffer.Add(r.transform);
+                }
+            }
+        }
+
+        float travel = rootRuleTravel;
+        for (int i = 0; i < approachPointBuffer.Count; i++)
+        {
+            Transform point = approachPointBuffer[i];
+            Vector3 a = originPosition + destinationRotation * (currentInverse * (point.position - currentRoot)) - viewerPosition;
+            float aDotU = Vector3.Dot(a, u);
+            float distanceNow = a.magnitude;
+            if (distanceNow < nearestNow)
+            {
+                nearestNow = distanceNow;
+                nearestNowBoneName = point.name;
+            }
+
+            // |a + t u| = stop の小さい方の解（初めて止まる距離に届く t）。判別式が負なら、まっすぐ進んでもこの点は届かない。
+            float discriminant = aDotU * aDotU - (distanceNow * distanceNow - stop * stop);
+            if (discriminant < 0f)
+            {
+                continue;
+            }
+
+            float t = -aDotU - Mathf.Sqrt(discriminant);
+            if (t < travel)
+            {
+                travel = t;
+                nearestBoneName = point.name;
+            }
+        }
+
+        return travel;
+    }
+
     private void BeginGesturePhase(InteractiveMotionState state, uint trackId, bool isAnimal, Vector3 freezePosition, Quaternion freezeRotation, float now)
     {
         state.fallbackBoneBaseLocalRotations.Clear();
@@ -716,9 +970,34 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             state.animalPreset = PickAnimalPreset(state.cachedAnimalHasSmalPose, out AnimalGesturePose gestureClip);
             state.animalGestureClip = gestureClip;
+            state.gestureTurnFromRotation = freezeRotation;
+            state.gestureTurnDuration = 0f;
             if (state.animalPreset == InteractiveAnimalPreset.FaceViewer)
             {
                 state.gestureRotation = ResolveAnimalFaceViewerRotation(instance, state.gesturePosition, freezeRotation, state.lastScreen);
+                // 歩けずに切り替えたイベントは体を回さない（animalNoRoomStaticKeepsHeading）。回した姿勢がもう止まる距離の内側と判定したので歩きを捨てた。
+                if (state.downgradedForClearance && animalNoRoomStaticKeepsHeading)
+                {
+                    state.gestureRotation = freezeRotation;
+                    Debug.Log($"[MOTION] face viewer body turn skipped track={trackId} (walk downgraded for clearance)");
+                }
+                // 静的イベントは体の前と視聴者の差のうち animalStaticHeadOnlyTurnDegrees までを頭（視聴者を見る層）に任せ、超えた分だけ体を回す（0 なら従来どおり全部）。
+                // どちらも上の軸まわりの回転なので、Slerp の割合で回す角度だけを縮める。
+                if (state.kind == InteractiveEventKind.Static && animalStaticHeadOnlyTurnDegrees > 0f && UsesAnimalLookAtViewer(state))
+                {
+                    float fullDegrees = Quaternion.Angle(freezeRotation, state.gestureRotation);
+                    float bodyDegrees = Mathf.Max(0f, fullDegrees - animalStaticHeadOnlyTurnDegrees);
+                    state.gestureRotation = fullDegrees > 1e-3f ? Quaternion.Slerp(freezeRotation, state.gestureRotation, bodyDegrees / fullDegrees) : freezeRotation;
+                    Debug.Log($"[MOTION] face viewer track={trackId} full={fullDegrees:F1}deg body={bodyDegrees:F1}deg (head-only up to {animalStaticHeadOnlyTurnDegrees:F0}deg)");
+                }
+
+                // その場の向き替えは時間で回す（animalInteractiveTurnEasing）。30〜61° を 0.4〜0.6 s（平均 120°/s、smoothstep で頭打ち 180°/s）。
+                // 1 tick で root を切り替えると、SMAL の根の平滑は回転だけを遅らせ骨の位置は root に即座についていくので、体が 10〜24 cm 瞬間移動した（2026-10-05 の棚卸し）。
+                if (animalInteractiveTurnEasing)
+                {
+                    float turnDegrees = Quaternion.Angle(freezeRotation, state.gestureRotation);
+                    state.gestureTurnDuration = turnDegrees > 0.5f ? Mathf.Clamp(turnDegrees / 120f, 0.4f, 0.6f) : 0f;
+                }
             }
             state.phaseDuration = gestureClip != null
                 ? Mathf.Max(MinGestureDurationSeconds, gestureClip.duration)
@@ -761,6 +1040,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 : Quaternion.LookRotation(travel.normalized, upAxis);
         }
 
+        state.walkTurnDuration = ResolveAnimalWalkTurnDuration(isAnimal, state.phaseFromRotation, state.phaseToRotation);
         float speed = Mathf.Max(0.05f, isAnimal ? animalWalkSpeedMetersPerSecond : humanWalkSpeedMetersPerSecond);
         float distance = Vector3.Distance(state.phaseFromPosition, state.phaseToPosition);
         state.phaseStartTime = now;
@@ -781,6 +1061,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private void AdvanceRandomEventPhase(uint trackId, InteractiveMotionState state, float now)
     {
         bool isAnimal = state.subject == InteractiveMotionSubject.Animal;
+        if (state.dynamicPhase == InteractiveDynamicPhase.ToDefault)
+        {
+            FinishDefaultPoseTransition(trackId, state, isAnimal, now);
+            return;
+        }
+
         if (state.kind == InteractiveEventKind.Static)
         {
             BeginHandoff(trackId, state, now);
@@ -1048,7 +1334,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         bool isAnimal = state.subject == InteractiveMotionSubject.Animal;
-        bool isGesturePhase = state.kind == InteractiveEventKind.Static || state.dynamicPhase == InteractiveDynamicPhase.Gesture;
+        bool isGesturePhase = state.kind == InteractiveEventKind.Static || state.dynamicPhase == InteractiveDynamicPhase.Gesture ||
+                              state.dynamicPhase == InteractiveDynamicPhase.ToDefault;
 
         // Permanent frame-out: no reappearance in remaining metadata — walk indefinitely until
         // off-screen rather than stopping at a fixed control point.
@@ -1077,7 +1364,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 // rotation via AnimalFrameOutMotion.ResolveRotation, so it needs no change.)
                 if (state.triggerSource == InteractiveTriggerSource.Random)
                 {
-                    rotation = state.phaseToRotation;
+                    // 段の始めの walkTurnDuration だけ、前の向きから時間で回す（animalInteractiveTurnEasing。0 なら従来どおり最初の tick から行き先の向き）。
+                    rotation = state.walkTurnDuration > 0f
+                        ? Quaternion.Slerp(state.phaseFromRotation, state.phaseToRotation,
+                            Mathf.SmoothStep(0f, 1f, RuntimeClock.ResolveElapsed(tick.now, state.phaseStartTime) / state.walkTurnDuration))
+                        : state.phaseToRotation;
                 }
                 ApplyMovingAnimalPose(instance, state, position, rotation, tick);
             }
@@ -1255,6 +1546,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         GameObject instance = GetTrackInstanceOrNull(trackId);
         state.handoffFromPosition = instance != null ? instance.transform.position : state.originPosition;
         state.handoffFromRotation = instance != null ? instance.transform.rotation : state.originRotation;
+        state.handoffFromScale = instance != null ? instance.transform.localScale : Vector3.one;
+        // イベント中（音のフェードで動画が進む間）に本物のカットを越えていたらロックは消えている。そのときは scale を混ぜず、
+        // 新しい shot の値へ切り替える（bundle の shot_boundary_policy: カットでは補間せず新しい shot の値にする）。偽のカットではロックが残る。
+        state.hasHandoffFromScale = instance != null && lockedModelLocalScaleByTrack.ContainsKey(trackId);
         state.handoffFromBoneLocalRotations.Clear();
         state.handoffFromAnimalBoneLocalRotations.Clear();
         if (instance != null && state.subject == InteractiveMotionSubject.Person)
@@ -1263,7 +1558,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         else if (instance != null && state.subject == InteractiveMotionSubject.Animal)
         {
-            animalPoseApplier.CaptureBoneLocalRotations(instance.transform, state.handoffFromAnimalBoneLocalRotations);
+            animalPoseApplier.CaptureBoneLocalRotations(instance.transform, state.handoffFromAnimalBoneLocalRotations,
+                state.usesDefaultPose && state.triggerSource == InteractiveTriggerSource.Random);
         }
         else if (state.subject == InteractiveMotionSubject.Rigid)
         {
@@ -1285,6 +1581,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float elapsed = RuntimeClock.ResolveElapsed(tick.now, state.handoffStartTime);
         float duration = Mathf.Max(0.05f, interactiveHandoffBlendSeconds);
         float t = Mathf.Clamp01(elapsed / duration);
+        // 動物はハンドオフにも緩急を付ける（animalInteractiveTurnEasing。線形だと一定の速さでいきなり始まりいきなり止まる）。Human は従来どおり線形。
+        if (state.subject == InteractiveMotionSubject.Animal && animalInteractiveTurnEasing && t < 1f)
+        {
+            t = Mathf.SmoothStep(0f, 1f, t);
+        }
 
         // The tracked pipeline already wrote this frame's fully-tracked bone pose before this
         // runs; blend the body pose toward it too, not just the root, otherwise the body snaps
@@ -1300,7 +1601,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         Vector3 blendedPosition = Vector3.Lerp(state.handoffFromPosition, instance.transform.position, t);
         Quaternion blendedRotation = Quaternion.Slerp(state.handoffFromRotation, instance.transform.rotation, t);
-        TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(blendedPosition, blendedRotation, instance.transform.localScale));
+        // animalHandoffBlendsScale（既定 OFF、animal のみ）: scale も同じ重みで混ぜる。イベント中は配置が止まって scale は発火した tick の値のまま
+        // なので、追従がこの tick に書いた scale（C4-T の倍率込み）へ 1 tick で切り替えると跳ねる。追従は毎 tick ロック × 倍率から書き直すので、
+        // 混ぜた値は次の tick に持ち越されない（⑧ はこの前に走るので、その平滑の状態にも入らない）。
+        Vector3 blendedScale = animalHandoffBlendsScale && state.subject == InteractiveMotionSubject.Animal && state.hasHandoffFromScale
+            ? Vector3.Lerp(state.handoffFromScale, instance.transform.localScale, t)
+            : instance.transform.localScale;
+        TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(blendedPosition, blendedRotation, blendedScale));
 
         if (t >= 1f)
         {
@@ -1409,8 +1716,34 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(state.gesturePosition, state.gestureRotation, instance.transform.localScale));
-        ApplyFrozenAnimalGesture(instance, state, tick);
+        Quaternion gestureRotation = ResolveAnimalGestureRotation(state, tick.now);
+        TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(state.gesturePosition, gestureRotation, instance.transform.localScale));
+        ApplyFrozenAnimalGesture(instance, state, tick, gestureRotation);
+    }
+
+    // 動物のジェスチャの段の root の向き。FaceViewer の向き替えを gestureTurnDuration かけて smoothstep で回す（0 なら従来どおり最初から gestureRotation）。
+    private static Quaternion ResolveAnimalGestureRotation(InteractiveMotionState state, float now)
+    {
+        if (state.gestureTurnDuration <= 0f)
+        {
+            return state.gestureRotation;
+        }
+
+        float u = Mathf.Clamp01(RuntimeClock.ResolveElapsed(now, state.phaseStartTime) / state.gestureTurnDuration);
+        return Quaternion.Slerp(state.gestureTurnFromRotation, state.gestureRotation, Mathf.SmoothStep(0f, 1f, u));
+    }
+
+    // 歩きの段の始めに向きを回す秒数（animalInteractiveTurnEasing）。1 秒に 360°（smoothstep で頭打ち 540°/s）を目安に 0.2〜0.45 s。
+    // 回る間も位置は段の smoothstep で進む（始めはゆっくりなので、0.45 s で進むのは段の距離の 3 割弱）。0.5° 未満の向き替えは回さない。
+    private float ResolveAnimalWalkTurnDuration(bool isAnimal, Quaternion from, Quaternion to)
+    {
+        if (!isAnimal || !animalInteractiveTurnEasing)
+        {
+            return 0f;
+        }
+
+        float degrees = Quaternion.Angle(from, to);
+        return degrees > 0.5f ? Mathf.Clamp(degrees / 360f, 0.2f, 0.45f) : 0f;
     }
 
     private void StartHumanClipPlayback(uint trackId, GameObject instance, AnimationClip clip, bool loop)
@@ -1603,14 +1936,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.cachedAnimalSmalPose = smalPose;
     }
 
-    private void ApplyFrozenAnimalGesture(GameObject instance, InteractiveMotionState state, RuntimeClock.TickContext tick)
+    private void ApplyFrozenAnimalGesture(GameObject instance, InteractiveMotionState state, RuntimeClock.TickContext tick, Quaternion gestureRotation)
     {
         if (!state.hasCachedAnimalPose)
         {
             return;
         }
 
-        AnimalPoseWorldData pose = RemapAnimalPoseRigid(state.cachedAnimalPose, state.cachedAnimalBasePosition, state.cachedAnimalBaseRotation, state.gesturePosition, state.gestureRotation);
+        AnimalPoseWorldData pose = RemapAnimalPoseRigid(state.cachedAnimalPose, state.cachedAnimalBasePosition, state.cachedAnimalBaseRotation, state.gesturePosition, gestureRotation);
         float elapsed = RuntimeClock.ResolveElapsed(tick.now, state.phaseStartTime);
         float wave = Mathf.Sin(elapsed * Mathf.PI * 1.5f);
 
@@ -1642,8 +1975,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             gestureOverlayNormalizedTime = state.phaseDuration > 0.0001f ? Mathf.Clamp01(elapsed / state.phaseDuration) : 0f;
         }
 
-        ApplyAnimalPoseRequest(instance, pose, state.cachedAnimalHasSmalPose, state.cachedAnimalSmalPose, state.gesturePosition, state.gestureRotation, tick, gestureOverlayClip, gestureOverlayNormalizedTime,
-            ResolveAnimalLookAtViewerWeight(state, tick.now), UsesAnimalLookAtViewer(state));
+        ApplyAnimalPoseRequest(instance, pose, state.cachedAnimalHasSmalPose, state.cachedAnimalSmalPose, state.gesturePosition, gestureRotation, tick, gestureOverlayClip, gestureOverlayNormalizedTime,
+            ResolveAnimalLookAtViewerWeight(state, tick.now), UsesAnimalLookAtViewer(state), ResolveDefaultPoseWeight(state, tick.now));
     }
 
     // 動物の頭を視聴者へ向けるか（animalGestureLookAtViewer、2026-10-04）。ランダムのイベントだけ（システムのフレームアウトは向けない）。
@@ -1722,10 +2055,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             loopTime = (elapsed % clipDuration) / clipDuration;
         }
         ApplyAnimalPoseRequest(instance, pose, state.cachedAnimalHasSmalPose, state.cachedAnimalSmalPose, position, rotation, tick, state.animalWalkClip, loopTime,
-            ResolveAnimalLookAtViewerWeight(state, tick.now), UsesAnimalLookAtViewer(state));
+            ResolveAnimalLookAtViewerWeight(state, tick.now), UsesAnimalLookAtViewer(state), ResolveDefaultPoseWeight(state, tick.now));
     }
 
-    private void ApplyAnimalPoseRequest(GameObject instance, AnimalPoseWorldData pose, bool hasSmalPose, AnimalSmalPose smalPose, Vector3 targetPosition, Quaternion targetRotation, RuntimeClock.TickContext tick, AnimalGesturePose gestureOverlayClip, float gestureOverlayNormalizedTime, float lookAtViewerWeight = 0f, bool lookAtViewerPath = false)
+    private void ApplyAnimalPoseRequest(GameObject instance, AnimalPoseWorldData pose, bool hasSmalPose, AnimalSmalPose smalPose, Vector3 targetPosition, Quaternion targetRotation, RuntimeClock.TickContext tick, AnimalGesturePose gestureOverlayClip, float gestureOverlayNormalizedTime, float lookAtViewerWeight = 0f, bool lookAtViewerPath = false, float defaultPoseWeight = 0f)
     {
         // 頭を視聴者へ向けるイベントでは、ジェスチャを Apply の中ではなく、root を置き直して頭を向けた後に足す
         // （向ける回転は最終の root の位置・向きで計算しないと置き直しでずれ、ジェスチャを先に足すと首振りを打ち消してしまう）。
@@ -1747,7 +2080,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             gestureOverlayClip = lookAtViewer ? null : gestureOverlayClip,
             gestureOverlayNormalizedTime = gestureOverlayNormalizedTime,
             gestureOnCanonicalLimbs = animalGestureOnCanonicalLimbs,
-            gestureAnatomicalHeadAxes = animalGestureAnatomicalHeadAxes
+            gestureAnatomicalHeadAxes = animalGestureAnatomicalHeadAxes,
+            defaultPoseWeight = defaultPoseWeight
         });
 
         // AnimalPoseApplier re-aligns and low-pass-filters the root from the solved bone

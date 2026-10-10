@@ -635,9 +635,7 @@ public sealed class ExperimentController : MonoBehaviour
             $"次: {next.DescribeForParticipant(ExperimentPlan.TrialCount)}\n\n" +
             // ログの保存先はここに出さない（被験者が知る必要はない。2026-09-11 指示）。Debug.Log には残る。
             // アンケートの案内はブロックの区切り（3 本見終わった直後）だけ。同じ区切りでは 1 回だけ。
-            (TakeQuestionnaireCue()
-                ? BuildQuestionnaireCue("「この動画を開始」")
-                : "実験者の合図があったら\n「この動画を開始」を押してください。");
+            ResolveTrialWaitingInstruction(TakeQuestionnaireCue(), next.indexInBlock);
 
         List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
         {
@@ -673,6 +671,24 @@ public sealed class ExperimentController : MonoBehaviour
     {
         return "実験者の合図でヘッドセットを外し、\nアンケートに答えてください。\n" +
                $"戻ったら{buttonPhrase}を押してください。";
+    }
+
+    // 待機画面（次の動画の前）の指示。**実験者の合図を待たせるのはブロックの頭（1・4・7 本目の前）だけ。**
+    // ブロックの途中（2・3・5・6・8・9 本目の前）は被験者が自分のペースで「この動画を開始」を押す
+    // （2026-10-01 ユーザー「1,2,3 / 4,5,6 / 7,8,9 で三個一組。指示が要るのは 3-4・6-7 の間だけ」）。
+    // 以前は全部の待機画面が「実験者の合図があったら」で、アンケートを動画ごとに答えると思い込んで
+    // 書いた 9/11 の文面の名残だった（アンケートの案内は 10/1 にブロックごとへ直したが、こちらが残っていた）。
+    // ブロックの頭はアンケートと練習の直後（1 本目は実験の始まり）なので、実験者が区切りを取る。
+    public static string ResolveTrialWaitingInstruction(bool questionnaireCueDue, int nextIndexInBlock)
+    {
+        if (questionnaireCueDue)
+        {
+            return BuildQuestionnaireCue("「この動画を開始」");
+        }
+
+        return nextIndexInBlock <= 0
+            ? "実験者の合図があったら\n「この動画を開始」を押してください。"
+            : "準備ができたら\n「この動画を開始」を押してください。";
     }
 
     private void BeginNextTrial()
@@ -1471,7 +1487,8 @@ public sealed class ExperimentController : MonoBehaviour
             : ExperimentDisplayMode.Monocular;
     }
 
-    private static string DescribeTutorialContent(ExperimentDisplayMode mode)
+    // 練習の待機画面の「内容:」。パネルの撮影（ExperimentPanelCapture）からも使うので public。
+    public static string DescribeTutorialContent(ExperimentDisplayMode mode)
     {
         switch (mode)
         {
@@ -1481,7 +1498,8 @@ public sealed class ExperimentController : MonoBehaviour
                 return "立体で見えることの説明のみ（操作は同じ）";
             default:
                 // 2026-09-25 に 1 段階から 3 段階に増えたので文面も合わせる（監査で指摘）。
-                return "モデルが自分から動く例を見る / Model でモデルを替える / Settings で動きの切り替え";
+                // 2026-10-01 に 4 段階目（掴んで回す）を足した（ExperimentTutorial.Step.GrabRotate）。
+                return "モデルが自分から動く例を見る / Model でモデルを替える / Settings で動きの切り替え / モデルを掴んで回す";
         }
     }
 

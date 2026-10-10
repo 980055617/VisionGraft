@@ -11,6 +11,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public bool hasTransl;
         public Vector3 transl;
         public float[] betas;
+        // 既定 ON（2026-10-08、J-01 ② humanFollowManualRotation。2026-10-09 に採用）: FK の根（平滑の後の worldGO）の左に掛ける手動の回転。
+        // hasFollowRotation のときだけ使う（default の Quaternion は (0,0,0,0) で回転ではない）。
+        public bool hasFollowRotation;
+        public Quaternion followRotation;
         // Camera-to-world rotation (screen transform basis). Stored for potential future use.
         public Quaternion camRotation;
     }
@@ -19,10 +23,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         public readonly Dictionary<HumanBodyBones, Quaternion> referenceUnityLocal = new Dictionary<HumanBodyBones, Quaternion>();
         public readonly Dictionary<HumanBodyBones, Quaternion> referenceSmplLocal = new Dictionary<HumanBodyBones, Quaternion>();
-        public readonly Quaternion[] smplFk = new Quaternion[22]; // indices 0-21, reused each frame
-        // Smoothed SMPL local rotations for temporal noise reduction (index 0 = worldFk0, 1-21 = body_pose joints)
-        public readonly Quaternion[] smoothedSmplLocal = new Quaternion[22];
+        // 24 枠（2026-10-08、J-12）。22・23（SMPL の手）は humanFingersFromSmplHand のときだけ埋める（HumanFingers.partial.cs の
+        // SmoothHumanSmplHandJoints）。OFF なら今どおり 0〜21 だけを使い、22・23 は誰も読まない（配列の長さを見るコードも無い）。
+        public readonly Quaternion[] smplFk = new Quaternion[24]; // indices 0-23, reused each frame
+        // Smoothed SMPL local rotations for temporal noise reduction (index 0 = worldFk0, 1-21 = body_pose joints, 22-23 = hands)
+        public readonly Quaternion[] smoothedSmplLocal = new Quaternion[24];
         public bool smoothingInitialized = false;
+        // 22・23 の平滑が今の値を持っているか（humanFingersFromSmplHand を途中で入れたとき・22・23 が無いフレームの後に、0 の四元数や古い値から
+        // Slerp しないため）。shot の切れ目では smoothingInitialized が下りるので、こちらも今の値から始まる。
+        public bool smplHandSmoothingInitialized = false;
         public int debugFrameCount = 0;
         // 直前の FK の worldGlobalOrient（smplFk には bodyFk が残る）。SMPL 目標の AimAt が使う（HumanSmplAim.partial.cs）。
         public Quaternion lastWorldGlobalOrient = Quaternion.identity;
@@ -209,6 +218,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 }
             }
 
+            // 既定 ON（2026-10-08、J-01 ② humanFollowManualRotation、新しい振る舞い。2026-10-09 に採用）: 手動の回転を平滑の後の worldGO の左に掛ける
+            // （Hips・下の FK のループ・lastWorldGlobalOrient（SMPL 目標の AimAt）が使う）。平滑の状態 smoothedSmplLocal[0] には入れない:
+            // 平滑は動画フレームで刻む（smoothPerVideoFrame）ので動画を止めて掴んでいる間は進まず、平滑の前に掛けると掴んでいる間は体が回らない
+            // （keypoints だけ回って AimAt で腕・脚がねじれる）。
+            if (pose.hasFollowRotation && IsFinite(pose.followRotation))
+            {
+                fk[0] = pose.followRotation * fk[0];
+            }
+
             if (cache.bones.TryGetValue(HumanBodyBones.Hips, out Transform hipsBone) &&
                 hipsBone != null &&
                 cache.bindRotWorld.TryGetValue(HumanBodyBones.Hips, out Quaternion bindHipsWorld) &&
@@ -361,6 +379,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
                 appliedAny = true;
             }
+            // humanFingersFromSmplHand（既定 OFF、2026-10-08、J-12 (b)）: SMPL の 22・23（手）も同じ smoothAlpha で平滑して bodyFk に積む（骨には書かない。
+            // 指の付け根は手を書き終えた後に TryApplyHumanFingersFromSmplHand が書く）。OFF なら 22・23 の印を下ろすだけで、0〜21 の結果は変わらない。
+            SmoothHumanSmplHandJoints(state, pose, bodyFk, smoothAlpha);
             state.lastWorldGlobalOrient = worldGlobalOrient;
             state.hasLastFk = true;
             state.smoothingInitialized = true;

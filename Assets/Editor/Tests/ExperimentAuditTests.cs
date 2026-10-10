@@ -428,6 +428,29 @@ public class ExperimentSessionCsvTests
 
 public class ExperimentQuestionnaireTimingTests
 {
+    // **実験者の合図を待たせるのはブロックの頭だけ**（2026-10-01 ユーザー「1,2,3 / 4,5,6 / 7,8,9 で三個一組。
+    // 指示が要るのは 3-4・6-7 の間だけ」）。ブロックの途中は被験者が自分のペースで始める。
+    [Test]
+    public void WaitingInstruction_AsksForTheExperimentersCueOnlyAtTheStartOfABlock()
+    {
+        string blockStart = ExperimentController.ResolveTrialWaitingInstruction(false, 0);
+        Assert.That(blockStart, Does.Contain("実験者の合図"));
+        Assert.That(blockStart, Does.Contain("「この動画を開始」"));
+
+        for (int indexInBlock = 1; indexInBlock <= 2; indexInBlock++)
+        {
+            string within = ExperimentController.ResolveTrialWaitingInstruction(false, indexInBlock);
+            Assert.That(within, Does.Not.Contain("実験者"), $"ブロックの {indexInBlock + 1} 本目の前");
+            Assert.That(within, Does.Contain("準備ができたら"));
+            Assert.That(within, Does.Contain("「この動画を開始」"));
+        }
+
+        // アンケートの区切りでは、そちらの案内（実験者の合図でヘッドセットを外す）が優先される。
+        string questionnaire = ExperimentController.ResolveTrialWaitingInstruction(true, 0);
+        Assert.That(questionnaire, Does.Contain("アンケート"));
+        Assert.That(questionnaire, Does.Contain("「この動画を開始」"));
+    }
+
     // **アンケートは 3 本（1 ブロック）見終わってから 1 回**（2026-10-01 ユーザー指示）。
     // 以前は 2 本目以降の毎回、待機画面にアンケートの案内が出ていた。9 本のうち案内が要るのは
     // 4 本目と 7 本目の前だけ（最後のブロックの分は終了画面で案内する）。
@@ -506,18 +529,18 @@ public class ExperimentTrialParticipantDescribeTests
 
 public class ExperimentTutorialAuditTests
 {
-    // 置換ありの見出しは 3 段階。実験者用のボタンで途中終了したときの記録には段階名が残る。
+    // 置換ありの見出しは 4 段階（2026-10-01 に掴んで回すを追加）。実験者用のボタンで途中終了したときの記録には段階名が残る。
     [Test]
     public void ModelReplaced_TitleAndResultCarryTheStep()
     {
         ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
 
-        Assert.That(tutorial.Title, Is.EqualTo("練習 1/3"));
+        Assert.That(tutorial.Title, Is.EqualTo("練習 1/4"));
         Assert.That(tutorial.DescribeResult(), Is.EqualTo("completed=0 step=WatchMotion mode=ModelReplaced"));
 
         tutorial.RecordInteraction(1, "random_Static", null);
         tutorial.RecordInteraction(1, "motion_end", "reason=completed");
-        Assert.That(tutorial.Title, Is.EqualTo("練習 2/3"));
+        Assert.That(tutorial.Title, Is.EqualTo("練習 2/4"));
         Assert.That(tutorial.DescribeResult(), Is.EqualTo("completed=0 step=ChangeModel mode=ModelReplaced"));
     }
 

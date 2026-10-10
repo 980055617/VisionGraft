@@ -238,7 +238,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         rotationPinhole = ApplyModelBaseRotation(instance, rotationPinhole);
 
         ObserveInteractiveMotionLiveTrackedSample(target.trackId, target, screen);
-        UpdateInteractiveMotionSchedule(target.trackId, target, frame);
+        if (!interactiveScheduleAfterPlacement)
+        {
+            UpdateInteractiveMotionSchedule(target.trackId, target, frame);
+        }
         TryStopSystemTriggerOnVisibleFrame(target.trackId);
 
         if (TryApplyOwnedInteractiveMotion(target.trackId, instance, screen, frame))
@@ -291,6 +294,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             FitDisplayedModelToBBox(instance, target, screen, bboxHAdjusted);
         }
         ObserveInteractiveMotionDisplayedRoot(target.trackId, instance);
+        // 発火の判定はこの tick の配置と表示位置の記録の後（interactiveScheduleAfterPlacement、2026-10-06）。起点・倍率・凍結姿勢が
+        // この tick の値になる（前に置くと、再び現れた最初の tick・shot の切れ目の最初の tick で前の出番の値から始まる）。
+        if (interactiveScheduleAfterPlacement)
+        {
+            UpdateInteractiveMotionSchedule(target.trackId, target, frame);
+        }
         ApplyInteractiveHandoffBlendIfActive(target.trackId, instance, frame);
         LogPlacementMeasurementIfEnabled(target, instance, screen, frame);
         LogHorizontalPlacementIfEnabled(target, instance, screen, frame);
@@ -847,6 +856,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // shot 先頭・モデル変更直後は平滑化せず、その場の値から始める。
             smoothedProjectedDepthRatioByTrack[trackId] = ratio;
             smoothedDepthRatioFrameByTrack[trackId] = GetCurrentPlaybackFrame();
+            if (logPlacementMeasurement)
+            {
+                // 記録だけ（2026-10-09）: 平滑化の最初の値と、その時点で shot の頭の倍率の測り直しが済んでいたか。
+                // 済む前の値から始まると、遅れて測り直しが通ったあと τ をかけて奥行きが動く（Docs/tmp/roster_20261009/README.md の 11）。
+                Debug.Log($"[DEPTH8-INIT] shot={lastAppliedShotIndex} track={trackId} frame={GetCurrentPlaybackFrame()} ratio={ratio:F3} refined={scaleRefinedByTrack.Contains(trackId)}");
+            }
             return ratio;
         }
 
@@ -950,7 +965,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 検証: 見切れなしフレームでの誤差は median 1.6%、p90 14.5%（2026-08-26）。
     //
     // 左右のどちらかが切れていると横で較正できないので、その場合は諦めて bboxH を返す。
-    private float ResolveUnclippedTargetHeight(MetaObj obj, float bboxH)
+    // clippedBottomOverride: 全フレームを走査する呼び出し元（AnimalScaleTrend）が自分の状態で判定した値。null なら IsBBoxBottomClipped。
+    private float ResolveUnclippedTargetHeight(MetaObj obj, float bboxH, bool? clippedBottomOverride = null)
     {
         if (!extendTargetHeightForClippedBBox || manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
         {
@@ -959,7 +975,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         // 下端も上端も切れていないなら bbox 高がそのまま被写体の高さ。
         bool clippedTop = obj.bboxY <= 0;
-        bool clippedBottom = obj.bboxY + obj.bboxH >= manifest.eye_h;
+        bool clippedBottom = clippedBottomOverride ?? IsBBoxBottomClipped(obj);
         if (!clippedTop && !clippedBottom)
         {
             return bboxH;
@@ -988,6 +1004,103 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 外挿を無制限に許すと 1 フレームの推定ミスで極端な値になる。
         float maxH = bboxH * Mathf.Max(1f, maxClippedHeightExtrapolation);
         return Mathf.Min(estimated, maxH);
+    }
+
+    // animalPlaceClippedFromFullBody（既定 OFF、2026-10-07、新しい振る舞い）: 体全体の像の高さで ⑧ の目標と shot 先頭の倍率の基準を上げる比（1 以上）。
+    // 上端か下端が切れた animal のフレームだけ max(currentTargetH, 体全体の像の高さ) ÷ currentTargetH。それ以外（見切れていない・transl が無い・
+    // Human / Else・フラグ OFF）は 1。上の外挿の方が大きいフレームも 1（bundle_animal の shot 1・20 は外挿が 1.6 倍の上限で、体全体の像は 1.39 倍・1.12 倍）。
+    // 今より大きくなるのは、左右が切れて外挿を諦めていた犬の顔の寄り（shot 2・11・13）と、keypoints の横の幅に尾が入って外挿が小さく出ていた猫
+    // （shot 23・24・25・27）。体全体の像にも外挿と同じ上限 maxClippedHeightExtrapolation × bboxH を掛ける（bundle_animal では最大 1.545 倍で当たらない）。
+    // 上端の判定にはヒステリシスが無い。上端が 0 と数 px を行き来するフレームで目標が 1 フレームで跳ねる（⑧ に効く shot で 5% を超えるのは shot 23 の
+    // 5 か所・25 の 2 か所。今の外挿でも同じ shot に同じ数の跳ねがあり、最大は同じ 20.8%）。⑧ の平滑（τ 1.2 s）を通る。
+    private float ResolveAnimalFullBodyTargetGain(MetaObj obj, float bboxH, float currentTargetH)
+    {
+        if (!animalPlaceClippedFromFullBody || bboxH <= 0f || currentTargetH <= 0f || manifest == null || !IsCategoryAnimal(obj.categoryId))
+        {
+            return 1f;
+        }
+
+        bool clippedTop = obj.bboxY <= 0;
+        bool clippedBottom = IsBBoxBottomClipped(obj);
+        if (!clippedTop && !clippedBottom)
+        {
+            return 1f;
+        }
+
+        // 副選択: 左右が切れて上の外挿を諦めていたフレームだけ（ResolveUnclippedTargetHeight の横の判定と同じ式）。
+        if (animalPlaceClippedFromFullBodyWidthClippedOnly &&
+            obj.bboxX > 0 && obj.bboxX + obj.bboxW < manifest.eye_w && obj.bboxW > 0)
+        {
+            return 1f;
+        }
+
+        if (!TryResolveAnimalFullBodyHeightPixels(obj, out float fullBodyH))
+        {
+            return 1f;
+        }
+
+        fullBodyH = Mathf.Min(fullBodyH, bboxH * Mathf.Max(1f, maxClippedHeightExtrapolation));
+        return fullBodyH > currentTargetH ? fullBodyH / currentTargetH : 1f;
+    }
+
+    // 測り直し（RefineLockedScaleFromProjectedBones）が倍率に入れた gain（1 より大きいときだけ記録）。⑧ はこれがある track だけ目標を上げる。
+    // scaleRefineFactorByTrack と同じ寿命: モデルの差し替え・視聴距離の変更では持ち越し、shot 境界（偽のカットを除く）で捨てる（ResetPerShotTrackState）。
+    private readonly Dictionary<uint, float> animalFullBodyGainByTrack = new Dictionary<uint, float>();
+
+    // 体全体の像の高さ（eye px）。bbox は見えている部分だけだが（bundle 側の回答、Docs/bundle-placement.md の 2026-08-26）、meta.bin の
+    // keypoints3d（根 = 関節 7 と 18 の中点からの相対、x 右・y 上・z 前。見切れた関節にも当てはめの座標が入る）と SMAL block の transl は
+    // 画面の外まで体全体を持っている。transl は AniMer の全画面のカメラ（f_full = 5000 px、主点は画面の中心）の値なので（Docs/bundle-shared/D-017）、
+    // 関節 i の像の縦の位置は y_i ÷ (tz + z_i) に比例する。根の奥行きを tz で代用する（transl はモデルの原点で根ではない。差は中央 0.24〜0.42 単位）。
+    //   高さ = AnimalFullBodyHeightPerEyeWidth × eye_w × (y_i ÷ (tz + z_i) の最大 − 最小)
+    // 係数 4.666（= 5972 px ÷ 1280 ≒ 5000 × 1.19。1.19 は関節の外側のシルエットのぶん）は、見切れていない 988 フレーム（犬 564・猫 424）の
+    // bbox 高 ÷ (y_i ÷ (tz + z_i) の幅) の中央値。そこでの誤差は中央 7.6%・p90 16.7%（較正に使ったフレームそのもので測った値）。犬だけ・猫だけで
+    // 較正すると 5591・6160 px。**犬の誤差は距離で偏る**（遠い shot は −7〜−15%、近い shot は +8〜+16%）。犬の顔の寄り（shot 2・11・13、tz 4.6〜5.7）は
+    // 較正の外（見切れていない犬で tz < 8.9 は 2 フレームだけ）で、距離の傾向を伸ばすと +20% 前後だが、切れていない上側（根から bbox 上端）の
+    // 当てはまりは逆向き（実測 ÷ 予測 1.18〜1.23）。符号は決まらず ±20% 程度と見る。採否は絵で決める。検証は scratchpad の fixwork3/A・A_verify。
+    // 全関節を使う（TryGetJointSpan と同じ理由。見切れた関節こそ画面外の体を表す）。
+    private const float AnimalFullBodyHeightPerEyeWidth = 4.666f;
+
+    private bool TryResolveAnimalFullBodyHeightPixels(MetaObj obj, out float heightPixels)
+    {
+        heightPixels = 0f;
+        if (!obj.hasSkeleton || obj.jointsCam == null || manifest == null || manifest.eye_w <= 0)
+        {
+            return false;
+        }
+
+        // obj はこの tick の表示用のフレーム（DisplayModelTick の displayMetadataFrame）から読んだもの。SMAL block も同じフレームで引く。
+        int frame = GetPlaybackFrameSnapshot().displayMetadataFrame;
+        if (!TryGetAnimalSmalPoseLoaded(frame, obj.trackId, out AnimalSmalPose smal) || !smal.hasTransl || smal.transl.z <= 0.0001f)
+        {
+            return false;
+        }
+
+        float tz = smal.transl.z;
+        float minY = float.MaxValue;
+        float maxY = float.MinValue;
+        int used = 0;
+        for (int i = 0; i < obj.jointsCam.Length; i++)
+        {
+            Vector3 j = obj.jointsCam[i];
+            float depth = tz + j.z;
+            if (float.IsNaN(j.y) || float.IsNaN(j.z) || depth <= tz * 0.2f)
+            {
+                continue;
+            }
+
+            float yOverDepth = j.y / depth;
+            if (yOverDepth < minY) { minY = yOverDepth; }
+            if (yOverDepth > maxY) { maxY = yOverDepth; }
+            used++;
+        }
+
+        if (used < 6 || maxY <= minY)
+        {
+            return false;
+        }
+
+        heightPixels = AnimalFullBodyHeightPerEyeWidth * manifest.eye_w * (maxY - minY);
+        return true;
     }
 
     // keypoints の x / y スパン（メートル）。root 相対座標なのでそのまま幅・高さになる。
@@ -1127,6 +1240,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 見切れていないフレームでは推定全高 ≒ bbox 高になるので、正常なフレームの挙動は
         // 変わらない。推定できないフレーム（左右も切れている等）は bbox 高のまま。
         float targetH = ResolveUnclippedTargetHeight(obj, bboxH);
+        // animalPlaceClippedFromFullBody（既定 OFF）: shot 先頭の測り直しが体全体の gain を倍率に入れた track だけ、目標も体全体の像の高さとの大きい方へ
+        // 上げる（ResolveAnimalFullBodyTargetGain）。倍率に入っていない track で上げると、増えた分を全部 ⑧ が奥行きで寄せる（shot 2 で最も近い骨が目から
+        // 約 0.09 m）。shot の途中で gain が先頭より上がった分は ⑧ が寄せる（bundle_animal の shot 27 で先頭の gain より最大 +17%）。
+        if (animalFullBodyGainByTrack.ContainsKey(obj.trackId))
+        {
+            targetH *= ResolveAnimalFullBodyTargetGain(obj, bboxH, targetH);
+        }
 
         // 手動倍率は「自動フィットからわざとずらした量」なので、補正の対象から外す。
         // 割り戻さないと、ユーザーが 2 倍にしたぶんだけモデルを奥へ押しやって打ち消す
@@ -1254,12 +1374,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (!lockedModelLocalScaleByTrack.TryGetValue(obj.trackId, out Vector3 locked))
         {
+            NoteScaleRefineSkip(obj, "noLock", 0f, bboxH);
             return;
         }
 
         if (!TryProjectBonesToEyeHeight(instance, screen, out _, out _, out float projectedH, out _, out _, useSilhouetteProjectionExtent) ||
             projectedH <= 0.0001f)
         {
+            NoteScaleRefineSkip(obj, "projectFail", 0f, bboxH);
             return;
         }
 
@@ -1276,6 +1398,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float manualScale = Mathf.Max(0.01f, EvaluateManualScaleForFrame(obj.trackId, GetCurrentPlaybackFrame()));
         if (Mathf.Abs(manualScale - ManualScaleDefault) > 0.001f)
         {
+            NoteScaleRefineSkip(obj, "manualScale", 0f, bboxH);
             return;
         }
 
@@ -1292,9 +1415,38 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         // bbox が画面端で切れている、検出が破綻している等でこの範囲を外れたら補正しない。
         // 誤った基準を焼き付けると shot の間ずっと残るため、疑わしいときは何もしない方が安全。
-        if (ratio < MinProjectedBoneRatioForScaleRefine || ratio > MaxProjectedBoneRatioForScaleRefine)
+        //
+        // 既定 OFF（2026-10-09、animalScaleRefineMinRatioFromDepthRefine、既存の欠陥の直し）: animal は下限を ⑧ の下限（depthRefineMinRatio）に揃える。
+        // ⑧ は同じ理由で 2026-08-27 に下限を 0.4 → 0.2 に下げてあり、ここだけ 0.4 のまま残っていた。比が 0.2〜0.4 の間だと、ここは何もせず、
+        // ⑧ が小さいモデルを目の前へ引き寄せて大きさを合わせる（04_Lion の shot 15: 目から 0.26 m に骨の広がり 8 cm、51 体の中央値は 0.83 m・17 cm）。
+        // ② の倍率（bind 姿勢のメッシュの AABB で合わせる）で比がいつも 0.4 近くに出るモデル（Lion・Mink・EuropeanBadger・Racoon）で起きる
+        // （Docs/tmp/roster_20261009/README.md の 11）。新しい定数は足さない。
+        float minRefineRatio = MinProjectedBoneRatioForScaleRefine;
+        if (animalScaleRefineMinRatioFromDepthRefine && IsCategoryAnimal(obj.categoryId))
         {
+            minRefineRatio = Mathf.Min(minRefineRatio, depthRefineMinRatio);
+        }
+
+        if (ratio < minRefineRatio || ratio > MaxProjectedBoneRatioForScaleRefine)
+        {
+            NoteScaleRefineSkip(obj, ratio < minRefineRatio ? "ratioBelowMin" : "ratioAboveMax", ratio, bboxH);
             return;
+        }
+
+        // animalPlaceClippedFromFullBody（既定 OFF）: 見切れた animal は ⑧ と同じ gain で基準を大きくし、倍率に入れる。上のガードは測った比に掛け、gain は
+        // 通った後に入れる（基準を大きくしただけで「測定が疑わしい」にしない。shot 25・27 の先頭は測った比 0.46〜0.52 で、gain 1.2〜1.4 を先に割ると
+        // 0.4 を割り、測り直しが毎 tick 止まる）。入れた gain は ⑧ のために覚える。gain はこの測り直しが走った 1 フレームの値（ふつうは shot の先頭。
+        // コマ落ち・シークで別のフレームになると、shot 23 なら 1.035 が 1.074 に変わる）。どのフレームの値だったかを [FULLBODY] に出す。
+        if (animalPlaceClippedFromFullBody && IsCategoryAnimal(obj.categoryId))
+        {
+            float fullBodyGain = ResolveAnimalFullBodyTargetGain(obj, bboxH, ResolveUnclippedTargetHeight(obj, bboxH));
+            if (fullBodyGain > 1f)
+            {
+                Debug.Log($"[FULLBODY] track={obj.trackId} frame={GetPlaybackFrameSnapshot().displayMetadataFrame} gain={fullBodyGain:F4} " +
+                          $"boneRatio={ratio:F4} -> {ratio / fullBodyGain:F4} lockedScale={locked.x:F5}");
+                ratio /= fullBodyGain;
+                animalFullBodyGainByTrack[obj.trackId] = fullBodyGain;
+            }
         }
 
         // ratio を projectedBoneRatioTarget に合わせる（既定 1.0 = bbox ぴったり）。
@@ -1302,6 +1454,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 refined = locked * factor;
         lockedModelLocalScaleByTrack[obj.trackId] = refined;
         scaleRefinedByTrack.Add(obj.trackId);
+        NoteScaleRefinePassed(obj, ratio);
         // モデルを替えて再ロックしたときに掛け直すため、倍率そのものを覚えておく。
         scaleRefineFactorByTrack[obj.trackId] = factor;
 
@@ -1321,6 +1474,98 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
     }
 
+
+    // shot の頭の倍率の測り直しが通らなかった記録（2026-10-09、記録だけ・振る舞いは変えない。logPlacementMeasurement のときだけ）。
+    // 測り直しは比が 0.4〜3.0 の外だと何もせずに戻り、次の tick でまたやり直す。shot の間ずっと外なら ② の倍率のまま残る（今の既定で 8 体・15 shot、
+    // Docs/tmp/roster_20261009/README.md の 11）。[SCALEFIX] は通ったときしか出ないので、外れた比と理由をここで残す:
+    //   [SCALEFIX-SKIP]  shot・track・理由の組ごとに最初の 1 回（毎 tick 出すとログが埋まる）
+    //   [SCALEFIX-AT]    通ったとき毎回: フレームと、それまでに外れた tick 数・比の幅
+    //   [SCALEFIX-NEVER] shot の境界で、前の shot で一度も通らなかった track
+    private struct ScaleRefineSkipNote
+    {
+        public int shot;
+        public int ticks;
+        public float minRatio;
+        public float maxRatio;
+        public int firstFrame;
+        public int lastFrame;
+        public string reasons;
+    }
+
+    private readonly Dictionary<uint, ScaleRefineSkipNote> scaleRefineSkipNotes = new Dictionary<uint, ScaleRefineSkipNote>();
+    private readonly HashSet<string> scaleRefineSkipLogged = new HashSet<string>();
+
+    private void NoteScaleRefineSkip(MetaObj obj, string reason, float ratio, float bboxH)
+    {
+        if (!logPlacementMeasurement)
+        {
+            return;
+        }
+
+        int frame = GetPlaybackFrameSnapshot().displayMetadataFrame;
+        if (!scaleRefineSkipNotes.TryGetValue(obj.trackId, out ScaleRefineSkipNote note) || note.shot != lastAppliedShotIndex)
+        {
+            note = new ScaleRefineSkipNote { shot = lastAppliedShotIndex, minRatio = float.MaxValue, maxRatio = float.MinValue, firstFrame = frame, reasons = "" };
+        }
+
+        note.ticks++;
+        note.lastFrame = frame;
+        if (ratio > 0f)
+        {
+            note.minRatio = Mathf.Min(note.minRatio, ratio);
+            note.maxRatio = Mathf.Max(note.maxRatio, ratio);
+        }
+
+        if (note.reasons.IndexOf(reason, System.StringComparison.Ordinal) < 0)
+        {
+            note.reasons = note.reasons.Length == 0 ? reason : note.reasons + "," + reason;
+        }
+
+        scaleRefineSkipNotes[obj.trackId] = note;
+        if (scaleRefineSkipLogged.Add(lastAppliedShotIndex + ":" + obj.trackId + ":" + reason))
+        {
+            Debug.Log($"[SCALEFIX-SKIP] shot={lastAppliedShotIndex} track={obj.trackId} frame={frame} reason={reason} boneRatio={ratio:F3} bboxH={bboxH:F0}");
+        }
+    }
+
+    private void NoteScaleRefinePassed(MetaObj obj, float ratio)
+    {
+        if (!logPlacementMeasurement)
+        {
+            return;
+        }
+
+        int frame = GetPlaybackFrameSnapshot().displayMetadataFrame;
+        bool skipped = scaleRefineSkipNotes.TryGetValue(obj.trackId, out ScaleRefineSkipNote note) && note.shot == lastAppliedShotIndex;
+        Debug.Log($"[SCALEFIX-AT] shot={lastAppliedShotIndex} track={obj.trackId} frame={frame} boneRatio={ratio:F3} " +
+                  (skipped
+                      ? $"skippedTicks={note.ticks} skippedFrames={note.firstFrame}-{note.lastFrame} skippedRatio={FormatSkipRatio(note)} reasons={note.reasons}"
+                      : "skippedTicks=0"));
+        scaleRefineSkipNotes.Remove(obj.trackId);
+    }
+
+    // shot の境界で呼ぶ（SyncShotBoundaryForFrame）。前の shot で一度も通らなかった track を出して消す。
+    private void LogScaleRefineNeverPassedAndClear(int previousShotIndex)
+    {
+        if (logPlacementMeasurement)
+        {
+            foreach (KeyValuePair<uint, ScaleRefineSkipNote> kv in scaleRefineSkipNotes)
+            {
+                if (kv.Value.shot == previousShotIndex && !scaleRefinedByTrack.Contains(kv.Key))
+                {
+                    Debug.Log($"[SCALEFIX-NEVER] shot={kv.Value.shot} track={kv.Key} ticks={kv.Value.ticks} frames={kv.Value.firstFrame}-{kv.Value.lastFrame} " +
+                              $"ratio={FormatSkipRatio(kv.Value)} reasons={kv.Value.reasons}");
+                }
+            }
+        }
+
+        scaleRefineSkipNotes.Clear();
+    }
+
+    private static string FormatSkipRatio(ScaleRefineSkipNote note)
+    {
+        return note.maxRatio >= note.minRatio ? $"{note.minRatio:F3}-{note.maxRatio:F3}" : "n/a";
+    }
 
     private Vector3 GetOrLockModelLocalScale(uint trackId, Vector3 desiredLocalScale)
     {
@@ -1458,6 +1703,38 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
+    // 下端が画面の下端で切れているかの track ごとの状態（bboxBottomClipHysteresis）。shot の切れ目で消す（ResetPerShotTrackState）。
+    private readonly Dictionary<uint, bool> bboxBottomClippedByTrack = new Dictionary<uint, bool>();
+
+    // 下端が画面の下端で切れているか。⑦（FitDisplayedModelToBBox）と ⑧（ResolveUnclippedTargetHeight）がこの 1 つの判定を使う（2026-10-06）。
+    // 同じ tick に何度呼んでも結果は変わらない（抜ける側の余裕を入る側以上にしているので、同じ下端なら状態が動かない）。
+    private bool IsBBoxBottomClipped(MetaObj obj)
+    {
+        float bottom = obj.bboxY + obj.bboxH;
+        if (!bboxBottomClipHysteresis)
+        {
+            return bottom >= manifest.eye_h;
+        }
+
+        bool wasClipped = bboxBottomClippedByTrack.TryGetValue(obj.trackId, out bool previous) && previous;
+        bool clipped = ResolveBBoxBottomClipState(wasClipped, bottom);
+        bboxBottomClippedByTrack[obj.trackId] = clipped;
+        return clipped;
+    }
+
+    // 状態を書かない判定（全フレームを走査する AnimalScaleTrend は自分の状態を持ってこれを呼ぶ）。
+    private bool ResolveBBoxBottomClipState(bool wasClipped, float bboxBottom)
+    {
+        if (!bboxBottomClipHysteresis)
+        {
+            return bboxBottom >= manifest.eye_h;
+        }
+
+        int enter = Mathf.Max(0, bboxBottomClipEnterMarginPixels);
+        int leave = Mathf.Max(enter, bboxBottomClipLeaveMarginPixels);
+        return bboxBottom >= manifest.eye_h - (wasClipped ? leave : enter);
+    }
+
     private void FitDisplayedModelToBBox(GameObject instance, MetaObj obj, Transform screen, float bboxH)
     {
         if (instance == null || manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
@@ -1488,7 +1765,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 足首が bbox 下端から 15% 浮く（2026-08-07 実測）。
         // ボーンが取れないモデルでは従来どおり AABB 下端にフォールバックする。
         float bottomV = projectedBottomV;
-        if (TryProjectBonesToEyeHeight(instance, screen, out _, out float boneBottomV, out _, out _, out _, useSilhouetteProjectionExtent))
+        string bottomBoneName = null;
+        if (TryProjectBonesToEyeHeight(instance, screen, out _, out float boneBottomV, out _, out _, out bottomBoneName, useSilhouetteProjectionExtent))
         {
             bottomV = boneBottomV;
         }
@@ -1504,7 +1782,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         //
         // 上下とも切れているフレーム（animal で 8.9%）はどちらも基準にできないので
         // 従来どおり下端合わせにフォールバックする。
-        bool clippedBottom = obj.bboxY + obj.bboxH >= manifest.eye_h;
+        bool clippedBottom = IsBBoxBottomClipped(obj);
         bool clippedTop = obj.bboxY <= 0;
         if (alignTopWhenBottomClipped && clippedBottom && !clippedTop)
         {
@@ -1518,6 +1796,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // あるため。上端には同じ前提が成り立たない。
             // そもそも bbox の上端は被写体の見た目の上端（毛・耳）なので、対応するのは
             // 骨ではなくメッシュ。
+            LogBottomFixDepthIfEnabled(instance, obj, screen, null, projectedTopV, obj.bboxY, depthMeters, true);
             AlignProjectedModelBottomToBBox(instance.transform, screen, projectedTopV, depthMeters, obj.bboxY);
             return;
         }
@@ -1525,7 +1804,67 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // depthMeters はモデル AABB 中心の深度で、anchorZ とは 3〜4% ずれる。
         // ここは「投影した下端を bbox 下端に一致させる」処理なので、投影に使ったのと同じ
         // 深度（depthMeters）で逆算するのが正しい。anchorZ を混ぜてはいけない。
-        AlignProjectedModelBottomToBBox(instance.transform, screen, bottomV, depthMeters, ResolveReliableBBoxBottomVEye(obj));
+        float targetBottomV = ResolveReliableBBoxBottomVEye(obj);
+        LogBottomFixDepthIfEnabled(instance, obj, screen, bottomBoneName, bottomV, targetBottomV, depthMeters, false);
+        // 既定 OFF（2026-10-09、animalBottomFitUsesBoneDepth、既存の欠陥の直し）: animal は、一番下の骨で合わせるとき px → m の換算をその骨自身の深さで行う。
+        // 骨はその骨の深さで投影している（v = (cy − y·fy/z·0.5)·eye_h、カメラの上方向へ動かしても z は変わらない）ので、AABB の中心の深さで割り戻すと
+        // 移動量が「AABB の深さ ÷ 骨の深さ」倍にずれる。伏せた 31_GrayWolf の鼻先（目から 0.29 m、AABB の中心 0.73 m）で 2.5 倍行き過ぎ、⑧ が奥行きの
+        // 上限で止まって 2 回目の ⑦ が走らない tick では、体が 0.5 m 浮いたまま残る。⑧ に目の前へ寄せられた 06_AmericanMink では唇の骨が目から 3 mm で
+        // 50 倍になり、体が頭の上へ飛ぶ（Docs/tmp/roster_20261009/README.md の 11-4）。骨が取れない（AABB の下端で合わせる）ときは今のまま。
+        float alignDepth = depthMeters;
+        if (animalBottomFitUsesBoneDepth && IsCategoryAnimal(obj.categoryId) &&
+            TryResolveProjectionBoneDepth(instance, screen, bottomBoneName, out float bottomBoneDepth))
+        {
+            alignDepth = bottomBoneDepth;
+        }
+
+        AlignProjectedModelBottomToBBox(instance.transform, screen, bottomV, alignDepth, targetBottomV);
+    }
+
+    // 投影に使う骨（ResolveProjectionBones）のうち、名前が一致する骨のカメラ空間の深さ。投影できる深さ（0.001 m より奥）のときだけ true。
+    private bool TryResolveProjectionBoneDepth(GameObject instance, Transform screen, string boneName, out float depth)
+    {
+        depth = 0f;
+        if (instance == null || string.IsNullOrEmpty(boneName) || !TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
+        {
+            return false;
+        }
+
+        Animator animator = instance.GetComponentInChildren<Animator>(true);
+        var bones = ResolveProjectionBones(instance, animator);
+        for (int i = 0; i < bones.Count; i++)
+        {
+            if (bones[i].Value != null && bones[i].Key == boneName)
+            {
+                depth = (Quaternion.Inverse(camRotation) * (bones[i].Value.position - camOrigin)).z;
+                return depth > 0.001f;
+            }
+        }
+
+        return false;
+    }
+
+    // 記録だけ（2026-10-09、logPlacementMeasurement、animal のみ）: ⑦ は縦の移動量を depthMeters（レンダラーの AABB の中心の深さ）で px → m に
+    // 直すが、合わせる下端は一番下の骨の投影（骨はその骨自身の深さで投影している）。骨の深さが AABB の中心と大きく違うと、移動量がその比だけ
+    // ずれる疑い（31_GrayWolf の shot 6 の浮き、Docs/tmp/roster_20261009/README.md の 11-3）。骨・その深さ・AABB の深さ・比・px の差を出す。
+    // 上端合わせ（下端が切れているとき）はメッシュの投影上端なので bone=meshTop。
+    private void LogBottomFixDepthIfEnabled(GameObject instance, MetaObj obj, Transform screen, string boneName, float projectedV, float targetV,
+        float aabbDepth, bool topAligned)
+    {
+        if (!logPlacementMeasurement || !IsCategoryAnimal(obj.categoryId))
+        {
+            return;
+        }
+
+        float boneDepth = -1f;
+        if (!topAligned && !TryResolveProjectionBoneDepth(instance, screen, boneName, out boneDepth))
+        {
+            boneDepth = -1f;
+        }
+
+        Debug.Log($"[BOTTOMFIX-DEPTH] f={GetPlaybackFrameSnapshot().displayMetadataFrame} track={obj.trackId} {(topAligned ? "top" : "bottom")} " +
+                  $"bone={(topAligned ? "meshTop" : boneName)} boneZ={boneDepth:F3} aabbZ={aabbDepth:F3} " +
+                  $"k={(boneDepth > 0.0001f ? aabbDepth / boneDepth : 0f):F2} deltaV={targetV - projectedV:F1} root={instance.transform.position.y:F3}");
     }
 
     // SMPL の transl で root を置く経路は無効化されている

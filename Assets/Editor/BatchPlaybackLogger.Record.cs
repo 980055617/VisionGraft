@@ -179,17 +179,28 @@ public static partial class BatchPlaybackLogger
         if (recordPose == null)
         {
             recordPose = new StreamWriter(Path.Combine(dir, "record_pose.csv"), false, new System.Text.UTF8Encoding(false));
+            // 2026-10-05 追記: 役の骨の位置（足先 4 本・尾 3 点・四肢の付け根 4 本）を末尾に足した（足の接地・滑り・着地の順・尾の振れを測るため）。
             recordPose.WriteLine("name,frameCount,vx,vy,vz,hpx,hpy,hpz,hqx,hqy,hqz,hqw,nqx,nqy,nqz,nqw,rpx,rpy,rpz,rqx,rqy,rqz,rqw," +
-                "npx,npy,npz,spx,spy,spz,sqx,sqy,sqz,sqw");
+                "npx,npy,npz,spx,spy,spz,sqx,sqy,sqz,sqw," +
+                "flpx,flpy,flpz,frpx,frpy,frpz,rlpx,rlpy,rlpz,rrpx,rrpy,rrpz,tbx,tby,tbz,tmx,tmy,tmz,ttx,tty,ttz," +
+                "flux,fluy,fluz,frux,fruy,fruz,rlux,rluy,rluz,rrux,rruy,rruz");
         }
 
-        if (!TryResolveAuxViewTarget("Track_0/head", out Transform head, out _))
+        // 撮る track は補助カメラの指定の最初の "Track_N/..." から決める（既定 Track_0。Lynx は実験と同じ track 1 で撮る）。
+        string track = ResolveRecordPoseTrack();
+        GameObject trackObject = GameObject.Find(track);
+        var player = UnityEngine.Object.FindFirstObjectByType<StreamingStereoVideoPlayer>();
+        AnimalRigCache cache = player != null && trackObject != null ? player.PeekAnimalRigCacheForBatch(trackObject) : null;
+        Transform head = cache != null ? cache.head : null;
+        if (head == null && !TryResolveAuxViewTarget(track + "/head", out head, out _))
         {
             return;
         }
 
-        TryResolveAuxViewTarget("Track_0/neck", out Transform neck, out _);
-        TryResolveAuxViewTarget("Track_0/spine", out Transform spine, out _);
+        Transform neck = cache != null ? cache.neck : null;
+        Transform spine = cache != null ? cache.spine : null;
+        if (neck == null) { TryResolveAuxViewTarget(track + "/neck", out neck, out _); }
+        if (spine == null) { TryResolveAuxViewTarget(track + "/spine", out spine, out _); }
         Transform root = head;
         while (root.parent != null && !root.name.StartsWith("Track_", StringComparison.Ordinal))
         {
@@ -210,7 +221,36 @@ public static partial class BatchPlaybackLogger
         V(neck != null ? neck.position : Vector3.zero);
         V(spine != null ? spine.position : Vector3.zero);
         Q(spine != null ? spine.rotation : Quaternion.identity);
+        // 役の骨（取れない骨は 0）。後ろ足はつま先があればつま先
+        Vector3 P(Transform t) => t != null ? t.position : Vector3.zero;
+        V(P(cache?.leftFrontPaw));
+        V(P(cache?.rightFrontPaw));
+        V(P(cache != null ? (cache.leftRearToe != null ? cache.leftRearToe : cache.leftRearPaw) : null));
+        V(P(cache != null ? (cache.rightRearToe != null ? cache.rightRearToe : cache.rightRearPaw) : null));
+        V(P(cache?.tailBase));
+        V(P(cache?.tailMid));
+        V(P(cache?.tailTip));
+        V(P(cache?.leftFrontUpper));
+        V(P(cache?.rightFrontUpper));
+        V(P(cache?.leftRearUpper));
+        V(P(cache?.rightRearUpper));
         recordPose.WriteLine(string.Join(",", cols));
+    }
+
+    private static string ResolveRecordPoseTrack()
+    {
+        string spec = SessionState.GetString(KeyRecordViews, string.Empty);
+        foreach (string raw in spec.Split(';'))
+        {
+            string key = raw.Trim();
+            int slash = key.IndexOf('/');
+            if (slash > 0 && key.StartsWith("Track_", StringComparison.Ordinal))
+            {
+                return key.Substring(0, slash);
+            }
+        }
+
+        return "Track_0";
     }
 
     private static void FinishRecording(string reason)

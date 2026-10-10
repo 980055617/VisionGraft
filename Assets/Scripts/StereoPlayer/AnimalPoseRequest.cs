@@ -22,4 +22,6 @@ public struct AnimalPoseRequest
     public bool gestureOnCanonicalLimbs;
     // 頭のジェスチャを解剖学的な軸で回す（StreamingStereoVideoPlayer.animalGestureAnatomicalHeadAxes、2026-10-05）。
     public bool gestureAnatomicalHeadAxes;
+    // SMAL の FK の入力を既定の姿勢へ混ぜる重み（0〜1、StreamingStereoVideoPlayer.animalEventFromDefaultPose、2026-10-07）。追従は 0。
+    public float defaultPoseWeight;
 }

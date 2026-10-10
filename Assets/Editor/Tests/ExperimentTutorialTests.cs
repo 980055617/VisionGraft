@@ -125,6 +125,53 @@ public class ExperimentTutorialTests
         Assert.That(tutorial.IsDone, Is.True);
     }
 
+    // 4/4 は左右（yaw）に回したときだけ数える。体は yaw にしか付いて回らないので、手首をひねる（roll）だけでは済ませない
+    // （2026-10-10）。dyaw の無い記録（10/09 以前の形）は今までどおり数える。
+    [Test]
+    public void ModelReplaced_GrabRotate_NeedsAHorizontalTurn()
+    {
+        ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
+        tutorial.RecordInteraction(1, "random_Static", null);
+        tutorial.RecordInteraction(1, "motion_end", "reason=completed");
+        tutorial.RecordOperation("change_model", "track=1 prefab=x");
+        tutorial.RecordOperation("motion_toggle", "value=0");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.GrabRotate));
+        Assert.That(tutorial.Body, Does.Contain("左右に回して"));
+
+        tutorial.RecordOperation("change_rotation", "track=1 op=grab yaw=2 pitch=0 roll=40 frame=120 dyaw=2");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.GrabRotate), "ひねっただけ（yaw 2°）では済まない");
+
+        tutorial.RecordOperation("change_rotation", "track=1 op=grab yaw=-33.5 pitch=0 roll=0 frame=150 dyaw=-35.5");
+        Assert.That(tutorial.IsDone, Is.True);
+    }
+
+    // 2/4 は「表示しない」では済ませない。3/4 は表示中の切り替えだけ数える（2026-10-10）。
+    [Test]
+    public void ModelReplaced_HideDoesNotCountAsChange_AndToggleCountsOnlyWhileShown()
+    {
+        ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
+        tutorial.RecordOperation("model_assigned", "track=1 category=person prefab=01_Female");
+        tutorial.RecordOperation("model_assigned", "track=2 category=animal prefab=36_LabradorDog");
+        tutorial.RecordInteraction(1, "random_Static", null);
+        tutorial.RecordInteraction(1, "motion_end", "reason=completed");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ChangeModel));
+
+        // 2/4 の最中に Motion を切り替えても 3/4 は済ませない（説明がまだ出ていない）。
+        tutorial.RecordOperation("motion_toggle", "value=0");
+        tutorial.RecordOperation("motion_toggle", "value=1");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ChangeModel));
+
+        // 1 体を「表示しない」にしても 2/4 は済まない。
+        tutorial.RecordOperation("change_model", "track=1 category=person index=-1 prefab=(none)");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ChangeModel));
+
+        tutorial.RecordOperation("change_model", "track=2 category=animal index=3 prefab=37_Lioness");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ToggleMotion));
+
+        tutorial.RecordOperation("motion_toggle", "value=0");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.GrabRotate));
+    }
+
     // 掴む段階でモデルを全部「表示しない」にすると掴む対象が無い。戻し方を出し、戻したら元の文面へ。
     [Test]
     public void ModelReplaced_GrabRotate_AllModelsHidden_TellsHowToShowOneAgain()

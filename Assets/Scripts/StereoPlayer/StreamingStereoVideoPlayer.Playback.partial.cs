@@ -1457,6 +1457,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         NoteScaleRefinePassed(obj, ratio);
         // モデルを替えて再ロックしたときに掛け直すため、倍率そのものを覚えておく。
         scaleRefineFactorByTrack[obj.trackId] = factor;
+        trackPrefabSources.TryGetValue(obj.trackId, out GameObject refinedPrefab);
+        scaleRefineFactorPrefabByTrack[obj.trackId] = refinedPrefab;
 
         TrackPlacementWriter.ApplyLocalScale(instance.transform, refined);
 
@@ -1577,7 +1579,21 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 補正倍率が残っていれば、それは**同じ shot の同じ track**で一度測った結果。
         // モデルを替えただけで測り直すと、差し替えた瞬間の姿勢が焼き込まれて大きさが跳ねる
         // （2026-08-31 実測: 同一モデルへの差し替えでも 15% 縮んだ）。掛け直して確定させる。
-        if (scaleRefineFactorByTrack.TryGetValue(trackId, out float carriedFactor))
+        // 2026-10-10: 持ち越すのは同じ prefab のときだけ。別のモデルに替えたときに前のモデルの倍率を掛けると、動物では
+        // 大きさと奥行きが崩れた（被験者は試行中にモデルを替えられる）。別のモデルなら捨てて、下の測り直しに回す。
+        if (scaleRefineFactorByTrack.TryGetValue(trackId, out float carriedFactor) &&
+            (!trackPrefabSources.TryGetValue(trackId, out GameObject currentPrefab) ||
+             !scaleRefineFactorPrefabByTrack.TryGetValue(trackId, out GameObject factorPrefab) || factorPrefab != currentPrefab))
+        {
+            scaleRefineFactorByTrack.Remove(trackId);
+            scaleRefineFactorPrefabByTrack.Remove(trackId);
+            if (logPlacementMeasurement)
+            {
+                Debug.Log($"[SCALEFIX] track={trackId} 別のモデルに替えたので補正倍率 x{carriedFactor:F3} を捨てて測り直す");
+            }
+        }
+
+        if (scaleRefineFactorByTrack.TryGetValue(trackId, out carriedFactor))
         {
             Vector3 carried = desiredLocalScale * carriedFactor;
             scaleRefinedByTrack.Add(trackId);

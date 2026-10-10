@@ -332,7 +332,6 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 既定 OFF（2026-10-08、J-03）: 脚の基準姿勢を skin 姿勢に。読まれるのはリグのキャッシュを作るとき（下の Apply の最初の 1 回）だけ。
         animalPoseApplier.smalLegReferenceSkinPose = smalLegReferenceSkinPose;
         animalPoseApplier.smalLegReferenceSkinPoseModels = smalLegReferenceSkinPoseModels;
-        // 既定 空（2026-10-09）: F2 の除外を名簿のモデルだけ外す。読まれるのはリグのキャッシュを作るときだけ。
         // 既定 ON（2026-10-08、非四足モード。2026-10-09 に採用）: 主スイッチ・名簿・基準姿勢はリグのキャッシュを作るときだけ読まれる。脛・直立は毎 tick（モードで作ったキャッシュだけ）。
         animalPoseApplier.smalNonQuadrupedRig = smalNonQuadrupedRig;
         animalPoseApplier.smalNonQuadrupedRigModels = smalNonQuadrupedRigModels;
@@ -360,7 +359,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // root を手動の回転を除いた配置の回転（ApplyMetaTarget と同じ式: pinhole の基底 × prefab の回転）に置いて bind を採り、すぐ戻す。
         // 採る時点は今と同じ（DisableAnimalAnimatorPlayback と毎フレームの受け渡しの後、Apply の配置より前）。条件は Apply の入口の早期 return と同じ。
         // インタラクティブモーションの経路（ApplyAnimalPoseRequest）は通さない（イベント中に初めてキャッシュを作る場合は今のまま）。
+        // キャッシュがもうあるなら何もしない（手動の回転の曲線を毎 tick 3 本評価しない。2026-10-10）。
         if (animalBindWithoutManualRotation &&
+            !animalPoseApplier.HasRigCache(instance.transform, animator) &&
             (hasSmalPose || (pose.jointsWorld != null && pose.jointVis != null && pose.jointCount >= 20)) &&
             HasManualRotationAtFrame(obj.trackId, frame))
         {

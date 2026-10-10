@@ -15,6 +15,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // なく track の性質なので、差し替えのたびに測り直すと大きさが跳ねる（2026-08-31 実測で
     // 同一モデルへの差し替えでも 15% 縮んだ）。shot 境界では破棄する。
     private readonly Dictionary<uint, float> scaleRefineFactorByTrack = new Dictionary<uint, float>();
+    // scaleRefineFactorByTrack を測ったときの prefab（2026-10-10）。倍率はモデルの AABB と骨格の比を直すものでモデルごとに違うので、
+    // 持ち越すのは同じ prefab へ差し替えたときだけ（GetOrLockModelLocalScale）。
+    private readonly Dictionary<uint, GameObject> scaleRefineFactorPrefabByTrack = new Dictionary<uint, GameObject>();
     // RefineDepthFromProjectedBones の補正比率を時間平滑化した値。shot 境界でクリアする。
     private readonly Dictionary<uint, float> smoothedProjectedDepthRatioByTrack = new Dictionary<uint, float>();
     // `disparity = a/Z + b` の b。bundle ごとに一度だけ推定する（shot 境界では変わらない）。

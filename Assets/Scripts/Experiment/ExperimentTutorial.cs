@@ -19,7 +19,8 @@ using System.Collections.Generic;
 // 操作も operations.csv に残る（trial_index = -1）。
 //
 // 各段階は「済んだかどうか」で持ち、現在の段階はその列の最初の未完了項目。
-// 順番どおりでなくても済んだ操作は数える。resume だけは pause の後でないと数えない。
+// 順番どおりでなくても済んだ操作は数える。resume だけは pause の後でないと数えない。置換ありの 1/4〜4/4 は
+// その段階を表示している間の操作だけ数える（説明が一度も出ないまま進まないように。3/4 は 2026-10-10 に揃えた）。
 // 段階を個別に飛ばす手段は置かない（実際に操作しないと進めない）。練習全体は実験者用のボタンで
 // いつでも終えられる（ExperimentController が出す。completed=0 と段階名が記録に残る）。
 public sealed class ExperimentTutorial : IExperimentLogSink
@@ -54,6 +55,25 @@ public sealed class ExperimentTutorial : IExperimentLogSink
 
     // 「表示しない」を選んだときに detail へ入る prefab 名（StreamingStereoVideoPlayer.HiddenModelName）。
     private const string HiddenPrefabToken = "prefab=(none)";
+
+    // 4/4 を済ませる左右の回転の最小量（度）。体が回ったと目で分かる量。記録のノイズの閾値（0.5°、EndGrabRotate）とは別。
+    private const float GrabRotateMinYawDegrees = 10f;
+
+    // "key=value" の並び（空白区切り）から数値を 1 つ読む。無い・読めないなら false。
+    private static bool TryReadDetailFloat(string detail, string key, out float value)
+    {
+        value = 0f;
+        int start = detail.IndexOf(key, StringComparison.Ordinal);
+        if (start < 0)
+        {
+            return false;
+        }
+
+        start += key.Length;
+        int end = detail.IndexOf(' ', start);
+        string token = end < 0 ? detail.Substring(start) : detail.Substring(start, end - start);
+        return float.TryParse(token, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value);
+    }
 
     // 被験者が A ボタンで動画を止めているか。Random イベントは動画が動いている間しか発火しないので、
     // 止めたまま「1 回出るまで見ていてください」を待たせると永久に出ない。文面で戻し方を出す
@@ -259,8 +279,8 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                     return
                         "モデルは手で向きを変えられます。\n" +
                         "光線をモデルに合わせ、トリガーを引いたまま\n" +
-                        "手首をひねってください。\n" +
-                        "掴んでいる間は動画が止まり、放すと再開します。\n" +
+                        "コントローラを左右に回してください。\n" +
+                        "掴んでいる間は動画が止まります。\n" +
                         "回した向きはそのまま残ります。";
                 default:
                     return ResolveDoneBody();
@@ -358,7 +378,12 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                 break;
             case "change_model":
                 NoteModelVisibility(detail);
-                SetDone(Step.ChangeModel);
+                // 「表示しない」（prefab=(none)）はモデルを替えたことにしない（2026-10-10）。数えると替え方を覚えないまま
+                // 2/4 が済み、1 体だけ消した場合は以降の段に案内も出なかった（AllModelsHidden は全部消えたときだけ真）。
+                if (detail == null || detail.IndexOf(HiddenPrefabToken, StringComparison.Ordinal) < 0)
+                {
+                    SetDone(Step.ChangeModel);
+                }
                 break;
             case "model_assigned":
                 // 試行（練習）の最初にどの track にモデルが出たか。段階は進めない。
@@ -377,7 +402,9 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                     // OFF にすると走っていたモーションも止まる（StopAllInteractiveMotion）。「動いています」を残さない。
                     motionExampleRunning = false;
                 }
-                if (completed.Contains(Step.WatchMotion))
+                // **3/4 を表示している間の切り替えだけ数える**（2026-10-10、1/4・4/4 と同じ）。2/4 の最中に Settings を開いて
+                // 押すと、10/01 に足した Motion の説明が一度も出ないまま 3/4 が済んでいた。
+                if (completed.Contains(Step.WatchMotion) && CurrentStep == Step.ToggleMotion)
                 {
                     SetDone(Step.ToggleMotion);
                 }
@@ -391,7 +418,12 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                 // Model パネルのボタンで向きを戻した等（op=grab 以外）は数えない。
                 // **その段階を表示している間だけ数える。** 先回りで済ませると、説明が一度も出ないまま
                 // 練習が終わる（WatchMotion と同じ。ほかの段階でうっかりトリガーを引いて回してしまうことがある）。
-                if (CurrentStep == Step.GrabRotate && detail != null && detail.Contains("op=grab"))
+                // **左右（yaw）に回したときだけ数える**（2026-10-10）。人・動物の体は手動の回転の yaw にしか付いて回らない
+                // （humanFollowManualRotationAllAxes は既定 OFF）。手首をひねる（roll）だけでは体はほとんど回らないのに
+                // 段階が済んでいた。dyaw は掴み始めからの yaw の変化（GrabRotate.partial.cs の EndGrabRotate）。dyaw の無い
+                // 記録（10/09 以前の形）は今までどおり数える。
+                if (CurrentStep == Step.GrabRotate && detail != null && detail.Contains("op=grab") &&
+                    (!TryReadDetailFloat(detail, "dyaw=", out float yawChange) || Math.Abs(yawChange) >= GrabRotateMinYawDegrees))
                 {
                     SetDone(Step.GrabRotate);
                 }

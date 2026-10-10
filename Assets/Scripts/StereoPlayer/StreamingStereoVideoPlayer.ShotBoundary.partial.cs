@@ -156,6 +156,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // 補正倍率もここで捨てる。**モデル差し替えでは持ち越すが、shot 境界では持ち越さない。**
             // カットが変われば被写体の典型的な姿勢も変わるので、測り直すのが正しい。
             scaleRefineFactorByTrack.Clear();
+            scaleRefineFactorPrefabByTrack.Clear();
             // animalPlaceClippedFromFullBody: 測り直しが倍率に入れた体全体の gain も同じ寿命（モデル差し替えでは持ち越し、shot 境界で捨てる）。
             animalFullBodyGainByTrack.Clear();
             // ⑧ の深度補正比率も前 shot の値を引きずらせない。

@@ -1967,6 +1967,13 @@ public sealed partial class AnimalPoseApplier
     // 回すのは Animator の Transform ではなくインスタンスの root（Animator が子にあるリグは CaptureGestureBindLocals がその局所回転を控えて
     // 毎 tick 書き戻すので、そちらを回すと仮の回転が残る）。キャッシュを作る間に骨へ書くのは CaptureBindHeadYaw の首の鎖だけで、
     // その軸（体の up）も root から作るので、書く局所回転は root の回転に依らない。
+    // リグのキャッシュがもうあるか（PrebuildRigCacheWithoutManualRotation と同じ鍵: Animator があればその Transform、無ければ root）。
+    public bool HasRigCache(Transform instanceRoot, Animator animator)
+    {
+        Transform rigRoot = animator != null ? animator.transform : instanceRoot;
+        return rigRoot != null && animalRigCaches.ContainsKey(rigRoot);
+    }
+
     public void PrebuildRigCacheWithoutManualRotation(Transform instanceRoot, Animator animator, Quaternion rootRotationWithoutManual, AnimalPoseSettings settings)
     {
         Transform rigRoot = animator != null ? animator.transform : instanceRoot;
@@ -2508,7 +2515,8 @@ public sealed partial class AnimalPoseApplier
                 if (!nonQuadrupedReferencePoseMissingFileLogged)
                 {
                     nonQuadrupedReferencePoseMissingFileLogged = true;
-                    Debug.Log($"[NONQUAD] reference model={modelKey}: Resources/{NonQuadrupedReferencePoseResource}.json が無い → bind のまま（この行は再生ごとに 1 回だけ）");
+                    // 既定 ON の smalNonQuadrupedReferencePose が読む表。無いと鳥が黙って bind のままになるので Warning で出す（2026-10-10）。
+                    Debug.LogWarning($"[NONQUAD] reference model={modelKey}: Resources/{NonQuadrupedReferencePoseResource}.json が無い → bind のまま（この行は再生ごとに 1 回だけ）");
                 }
             }
             else

@@ -386,11 +386,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Debug.Log(
             $"[GRAB] 離した track={grabRotateTrackId} yaw={yaw:F1} pitch={pitch:F1} roll={roll:F1} " +
             $"理由={grabRotateEndReason} 掴んでいた時間={(Time.unscaledTime - grabRotateStartedAt):F2}秒");
+        // dyaw = 掴み始めからの yaw の変化（2026-10-10）。練習 4/4 は体が付いて回る yaw の回転だけを数える（ExperimentTutorial）。
         ExperimentLog.Operation(
             "change_rotation",
             $"track={grabRotateTrackId} op=grab yaw={ExperimentCsv.Format(yaw)} " +
             $"pitch={ExperimentCsv.Format(pitch)} roll={ExperimentCsv.Format(roll)} " +
-            $"frame={GetCurrentPlaybackFrame()}");
+            $"frame={GetCurrentPlaybackFrame()} dyaw={ExperimentCsv.Format(Mathf.DeltaAngle(grabRotateStartYaw, yaw))}");
 
         ResumeVideoAfterGrabRotate();
     }

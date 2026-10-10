@@ -1130,7 +1130,7 @@ public sealed partial class AnimalPoseApplier
     // 主軸と副軸から基底を作る。副軸は主軸に直交化してから使う。
     // 2 つが平行に近いときは基底が定まらないので false を返し、呼び出し側が
     // 従来の FromToRotation にフォールバックする。
-    // 首の鎖（既定 OFF、smalDriveNeckChain）。joint 15 は cache.neck（首の鎖の先端の骨）だけに当たり、その手前の中間の骨
+    // 首の鎖（smalDriveNeckChain、2026-10-04 から既定 ON）。joint 15 は cache.neck（首の鎖の先端の骨）だけに当たり、その手前の中間の骨
     // （Labrador・Lynx の Neck01・Neck02）は根に剛体で付いたまま。SMAL の首は肩の付け根から頭までなので、その回転が首の先端の
     // 短い区間にしか乗らない（Lynx で首の鎖の長さの 16%、C-DM）。neck の剛体からのずれ Δ = tw[15]·(worldFk0·bindRotWorld[neck])⁻¹ を
     // 中間の骨へ根の側から Δ^(k/(n+1)) で配り（各骨の今の world 回転 = 根に剛体の姿勢 に左から掛ける）、そのあと neck と head を

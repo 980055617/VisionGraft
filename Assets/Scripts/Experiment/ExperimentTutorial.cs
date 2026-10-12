@@ -86,7 +86,7 @@ public sealed class ExperimentTutorial : IExperimentLogSink
     // 例を見ない（2026-09-29 の 3 回目の監査）。
     private bool motionExampleRunning;
 
-    // manualRotationResetAtCut（2026-10-12、既定 OFF）が ON のとき、4/4 の最後の行を「場面が切り替わると元に戻る」にする。ExperimentController が試行シーンのプレイヤーから写す。
+    // manualRotationResetAtCut（2026-10-12、同日夜にユーザーが採用し既定 ON）が ON のとき、4/4 の最後の行を「場面が切り替わると元に戻る」にする。ExperimentController が試行シーンのプレイヤーから写す。
     public bool ManualRotationResetsAtCut { get; set; }
 
     public ExperimentTutorial(IExperimentLogSink inner, ExperimentDisplayMode mode)

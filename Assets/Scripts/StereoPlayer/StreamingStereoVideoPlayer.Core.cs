@@ -646,7 +646,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool humanFollowManualRotationAllAxes = false;
     public bool animalBindWithoutManualRotation = true;
 
-    // 手で回した向き・変えた大きさを、本物のカットで区切った区間（場面）の中だけで効かせる（2026-10-12、ユーザー「ショットをまたいでもリセットする実装がしたい」。**既定 OFF**）。
+    // 手で回した向き・変えた大きさを、本物のカットで区切った区間（場面）の中だけで効かせる（2026-10-12、ユーザー「ショットをまたいでもリセットする実装がしたい」）。
+    // **回転は 2026-10-12 夜にユーザーが採用し既定 ON**（「今後使うのでONで」。被験者実験は P07 から。ループ・シークで戻れば編集も戻す〔質問 1〕、基準ファイルのキーも
+    // 区間に閉じる〔質問 3〕は今の実装のまま）。大きさは実験で編集タブを使わない（ユーザーが参加者に伝えている）ので OFF のまま。
     // 今は手動のキーが動画全体に効く（キー 1 つなら全フレーム、2 つ以上ならカットをまたいで補間。TrackKeyframeCurve.Evaluate）。ON にすると各フレームでそのフレームを含む
     // 区間のキーだけを使い（TrackKeyframeCurve.EvaluateWithin）、区間にキーが無ければ回さない。区切りは倍率のロックと同じ本物のカット
     // （keepScaleAcrossContinuousShotBoundary && IsFalseCutBoundary(s-1, s) が偽の境界。AnimalScaleTrend の区間番号と同じ式）で、偽のカット
@@ -655,7 +657,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // bundle_animal の犬 track 0 の f218 だけ: 区間 [151,258) の外で 1.378°）。shot が 1 つ以下の bundle（human・car・tutorial）は何も変わらない。
     // ON のとき練習 4/4 の最後の行と trial_state（manual_reset_at_cut=1）も変わる。ShotBoundary.partial.cs の TryGetManualEditRange、ManualYaw.partial.cs の EvaluateManualKeys。
     // 調査・設計・反論・裁定の全文は Docs/tmp/oct11_20261011/reset/。
-    public bool manualRotationResetAtCut = false;
+    public bool manualRotationResetAtCut = true;
     // 同じことを手動の大きさ（倍率のキー）に（2026-10-12、**既定 OFF**）。回転とは別に採否を決める。
     public bool manualScaleResetAtCut = false;
 
@@ -1165,9 +1167,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 2026-10-11: 鹿（15_Deer）の案 B としてユーザーが採用し、既定 ON・名簿 "Deer"（首・胴の表と組。名簿は完全一致なので Deer1・DeerV2・Deer1.0 には当たらない）。
     // 2026-10-12: 全 52 体の点検（Docs/tmp/oct11_20261011/README.md の 6）で前後を撮った 6 体をユーザーが採用し、撮った形のまま名簿に足した。
     //   脚は WildBoar（脚＋胴＋首）・Bear1.0・BearWITHFUR・Fox（脚＋首）。EuropeanBadger・MountainGoat は脚を当てると悪くなるので入れない。
+    // 2026-10-12 夜: 裁定役が脚の名簿に推した 24 体のうち残りの 20 体（Docs/tmp/oct11_20261011/README.md の 8-1 の A、脚だけ）をユーザーが採用（「Aだけでいいよ」）。
+    //   撮影で足の前後の左右差が 0 に近づき、頭のずれは 0.6° 以内しか動かない。境界の B（足の幅・肩の引き伸ばし）と任意の C（首）は入れない。
     // ほかのモデルは名簿に入れない限り変わらない。
     public bool smalLegReferenceSkinPose = true;
-    public string smalLegReferenceSkinPoseModels = "Deer,WildBoar,Bear1.0,BearWITHFUR,Fox";
+    public string smalLegReferenceSkinPoseModels = "Deer,WildBoar,Bear1.0,BearWITHFUR,Fox," +
+        "Wolf,Buffalo,Lion,BighornSheep,BoarV2,Deer1,Deer1.0,DeerV2,Elk1.0,FoxV2,FoxWITHFUR,Goat1,GrayWolf,Hyena,Moose1.0,MooseF,MooseM,Pronghorn1.0,Puma,Warthog";
     // 首・頭と胴の基準姿勢を skin 姿勢に（2026-10-11、担当 DEER。鹿の案 B としてユーザーが採用し、既定 ON・名簿 "Deer"。2026-10-12 に 6 体を足した）。詳細は AnimalPoseApplier の同名フィールド。
     // 15_Deer の prefab の既定姿勢は草を食む途中の形（頭→鼻 −81.9°、鼻が肩より体長の 1.18 倍下）で、相対の転写がどの場面にもこの形を残し、頭が地面を向いていた。
     // smalNeckReferenceSkinPose: 首の鎖（Neck01〜head）を skin の局所回転へ（Resources/animal_neck_skin_pose.json）。

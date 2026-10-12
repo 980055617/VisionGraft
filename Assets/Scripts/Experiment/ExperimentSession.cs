@@ -165,7 +165,9 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
         bool monocular,
         float screenDistanceMeters,
         bool boneLengthCorrection,
-        float displayHz)
+        float displayHz,
+        bool manualRotationResetAtCut = false,
+        bool manualScaleResetAtCut = false)
     {
         if (!trialInProgress)
         {
@@ -188,7 +190,9 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
             $"mode={CurrentTrial.mode} bundle={currentBundleFileName} sha256={bundleSha256} bytes={ExperimentCsv.Format(bundleBytes)} " +
             $"source={bundleSource} app_build={appBuild} motion={ExperimentCsv.Format(motionEnabled)} " +
             $"monocular={ExperimentCsv.Format(monocular)} screen_dist={ExperimentCsv.Format(screenDistanceMeters)} " +
-            $"bone_length_correction={ExperimentCsv.Format(boneLengthCorrection)} display_hz={ExperimentCsv.Format(displayHz)}");
+            $"bone_length_correction={ExperimentCsv.Format(boneLengthCorrection)} display_hz={ExperimentCsv.Format(displayHz)}" +
+            (manualRotationResetAtCut ? " manual_reset_at_cut=1" : "") +
+            (manualScaleResetAtCut ? " scale_reset_at_cut=1" : ""));
         // 視聴開始の刻（解析の起点）。周期 flush まで 10 秒あるので、ここでも書き切る。
         writer?.Flush();
     }

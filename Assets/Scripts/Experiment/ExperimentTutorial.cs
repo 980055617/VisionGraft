@@ -86,6 +86,9 @@ public sealed class ExperimentTutorial : IExperimentLogSink
     // 例を見ない（2026-09-29 の 3 回目の監査）。
     private bool motionExampleRunning;
 
+    // manualRotationResetAtCut（2026-10-12、既定 OFF）が ON のとき、4/4 の最後の行を「場面が切り替わると元に戻る」にする。ExperimentController が試行シーンのプレイヤーから写す。
+    public bool ManualRotationResetsAtCut { get; set; }
+
     public ExperimentTutorial(IExperimentLogSink inner, ExperimentDisplayMode mode)
     {
         this.inner = inner;
@@ -270,7 +273,7 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                 case Step.GrabRotate:
                     // 掴んで回す（GrabRotate.partial.cs）。置換ありの試行で使えるが、2026-10-01 まで練習に
                     // 一度も出てこず、偶然トリガーを引いた人だけが気づく状態だった（ユーザー「使ってもらうので
-                    // チュートリアルをつけたい」）。放した時点の向きはその場面に残る（PersistManualYaw）。
+                    // チュートリアルをつけたい」）。放した時点の向きは、OFF では動画全体、manualRotationResetAtCut が ON ならその場面（本物のカットで区切った区間）に効く（PersistManualYaw）。
                     if (AllModelsHidden)
                     {
                         return AllModelsHiddenBody;
@@ -281,7 +284,7 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                         "光線をモデルに合わせ、トリガーを引いたまま\n" +
                         "コントローラを左右に回してください。\n" +
                         "掴んでいる間は動画が止まります。\n" +
-                        "回した向きはそのまま残ります。";
+                        (ManualRotationResetsAtCut ? "向きは場面が切り替わると元に戻ります。" : "回した向きはそのまま残ります。");
                 default:
                     return ResolveDoneBody();
             }

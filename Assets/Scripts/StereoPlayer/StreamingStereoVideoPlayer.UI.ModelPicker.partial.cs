@@ -1289,7 +1289,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 機関車は長軸（18.5m）がホルダーの Z に向くので、正面から見ると端から見る形になり
         // 「細長い塊」にしか見えない（2026-09-02 の指摘）。90 度回して側面を見せる。
         // 球は差が出ず、人・動物は高さが最長なのでこの条件に入らない。実測で該当するのは
-        // 06_DieselLocomotive だけ。
+        // 06_DieselLocomotive だけ。2026-09-18 からは車（07〜15）も入る。機関車も root に Y 180° を持つようになり（2026-10-11）、
+        // 機関車の運転室と車の前が同じ側を向く。
         else if (bounds.size.z > bounds.size.x * 1.2f)
         {
             preview.transform.localRotation = Quaternion.Euler(0f, 90f, 0f) * preview.transform.localRotation;

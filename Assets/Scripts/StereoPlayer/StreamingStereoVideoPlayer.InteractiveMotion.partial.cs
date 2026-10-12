@@ -125,6 +125,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public Vector3 rigidAxleLocal = Vector3.right;
         public float wheelAngleDegrees;
         public readonly List<RigidWheel> rigidWheels = new List<RigidWheel>();
+        public bool rigidHandoffLogged;
 
         public readonly Dictionary<HumanBodyBones, Quaternion> fallbackBoneBaseLocalRotations = new Dictionary<HumanBodyBones, Quaternion>();
         public readonly Dictionary<HumanBodyBones, Quaternion> handoffFromBoneLocalRotations = new Dictionary<HumanBodyBones, Quaternion>();
@@ -663,6 +664,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         InteractiveMotionState state = GetOrCreateInteractiveMotionState(trackId);
         // ランダムのイベントは今の表示位置から始める（interactiveRandomOriginFromDisplayed）。門つきの livePosition はフレームアウトの起点用（端で崩れた bbox を避ける）。
+        // 車の走行（StartRigidDriveMotion）は elseRandomOriginFromDisplayed（2026-10-11 に採用、既定 ON）で別に切り替える。
         bool fromDisplayed = interactiveRandomOriginFromDisplayed && state.hasDisplayedSample;
         Vector3 originPosition = fromDisplayed ? state.displayedPosition : (state.hasLiveSample ? state.livePosition : Vector3.zero);
         Quaternion originRotation = fromDisplayed ? state.displayedRotation : (state.hasLiveSample ? state.liveRotation : Quaternion.identity);
@@ -1564,6 +1566,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         else if (state.subject == InteractiveMotionSubject.Rigid)
         {
             RestoreRigidWheels(state);
+            state.rigidHandoffLogged = false;
         }
         state.stage = InteractiveEventStage.HandoffBlend;
         state.handoffStartTime = now;
@@ -1599,6 +1602,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             AnimalPoseApplier.BlendBoneLocalRotations(state.handoffFromAnimalBoneLocalRotations, t);
         }
 
+        // 車の走り終わりに、走行の終点（出発点）から追従の位置までどれだけ滑って戻るかを 1 回だけ出す（2026-10-11、確かめ用。振る舞いは変えない）。
+        if (state.subject == InteractiveMotionSubject.Rigid && !state.rigidHandoffLogged)
+        {
+            state.rigidHandoffLogged = true;
+            Debug.Log($"[MOTION] rigid handoff track={trackId} slide={Vector3.Distance(state.handoffFromPosition, instance.transform.position):F3}m frame={frame} tick={Time.frameCount}");
+        }
         Vector3 blendedPosition = Vector3.Lerp(state.handoffFromPosition, instance.transform.position, t);
         Quaternion blendedRotation = Quaternion.Slerp(state.handoffFromRotation, instance.transform.rotation, t);
         // animalHandoffBlendsScale（既定 OFF、animal のみ）: scale も同じ重みで混ぜる。イベント中は配置が止まって scale は発火した tick の値のまま
@@ -2477,7 +2486,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 車にはリグもクリップも無いので、root の移動と yaw だけで作る。経路は ElseDrivePath（純粋な幾何）。
     // 向きは出発時の回転を「経路の接線と出発時の向きの差」だけ yaw で回す（ピッチ・ロールは手動キーの値のまま）。
     // 前後のホイール（FL/FR/RL/RR）から車の前方向を決め、走った距離ぶんホイールを回す。
-    // ホイールが無いモデル（ボール等）は向きを変えずに経路の上を滑る。
+    // ホイールが無いモデル（ボール等）は向きを変えずに経路の上を滑る。機関車は Renderer の無い空の子 FL/FR/RL/RR（目印）で前を持つ
+    // （2026-10-11、ElseModelImporter.AddDieselLocomotiveWheelMarkers）。
     // 終点は出発位置・出発時の向きなので、ハンドオフで跳ばない（動画は止めているので追従の姿勢も同じ）。
 
     public struct RigidWheel
@@ -2526,7 +2536,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         GameObject instance = GetTrackInstanceOrNull(trackId);
         InteractiveMotionState state = GetOrCreateInteractiveMotionState(trackId);
-        if (instance == null || !state.hasLiveSample || state.stage != InteractiveEventStage.Inactive)
+        // 出発点（elseRandomOriginFromDisplayed、2026-10-11）: ON なら門を通さない今の表示位置、OFF なら従来の門つきの位置（livePosition）。
+        // 門の基準の面積は戻らないので、奥に小さく再登場した車では OFF の位置が前の周の出口のまま残る（Core.cs の同名フィールドの説明）。
+        bool fromDisplayed = elseRandomOriginFromDisplayed && state.hasDisplayedSample;
+        Vector3 originPos = fromDisplayed ? state.displayedPosition : state.livePosition;
+        Quaternion originRot = fromDisplayed ? state.displayedRotation : state.liveRotation;
+        if (instance == null || !(fromDisplayed || state.hasLiveSample) || state.stage != InteractiveEventStage.Inactive)
         {
             return false;
         }
@@ -2534,32 +2549,32 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 up = Vector3.up;
         Transform viewer = GetViewOrHeadTransform();
         Vector3 forwardFallback = state.lastScreen != null ? -state.lastScreen.forward : Vector3.forward;
-        Vector3 viewerPosition = viewer != null ? viewer.position : state.livePosition + forwardFallback;
-        Vector3 toViewer = Vector3.ProjectOnPlane(viewerPosition - state.livePosition, up);
+        Vector3 viewerPosition = viewer != null ? viewer.position : originPos + forwardFallback;
+        Vector3 toViewer = Vector3.ProjectOnPlane(viewerPosition - originPos, up);
         float stopDistance = Mathf.Max(0.05f, elseApproachStopDistanceMeters);
         if (toViewer.magnitude <= stopDistance + 0.01f)
         {
             Debug.Log($"[MOTION] rigid drive skipped track={trackId}: viewer too close ({toViewer.magnitude:F2}m <= stop {stopDistance:F2}m)");
             return false;
         }
-        Vector3 stop = PreserveHeight(viewerPosition - toViewer.normalized * stopDistance, state.livePosition, up);
+        Vector3 stop = PreserveHeight(viewerPosition - toViewer.normalized * stopDistance, originPos, up);
 
         // 車の前方向: 前後のホイールの中点の差（root ローカル）。無ければ視聴者方向を向いていることにして、向きは変えない。
         state.rigidWheels.Clear();
-        bool hasForward = TryResolveRigidWheels(instance, state.liveRotation, state.rigidWheels, out Vector3 forwardLocal);
-        Vector3 headingWorld = hasForward ? Vector3.ProjectOnPlane(state.liveRotation * forwardLocal, up) : toViewer;
+        bool hasForward = TryResolveRigidWheels(instance, originRot, state.rigidWheels, out Vector3 forwardLocal);
+        Vector3 headingWorld = hasForward ? Vector3.ProjectOnPlane(originRot * forwardLocal, up) : toViewer;
         if (headingWorld.sqrMagnitude <= 0.000001f)
         {
             headingWorld = toViewer;
         }
         headingWorld.Normalize();
-        Vector3 upLocal = Quaternion.Inverse(state.liveRotation) * up;
+        Vector3 upLocal = Quaternion.Inverse(originRot) * up;
         state.rigidAxleLocal = hasForward ? Vector3.Cross(upLocal, forwardLocal).normalized : Vector3.right;
 
         float radius = elseTurnRadiusMeters > 0f
             ? elseTurnRadiusMeters
             : Mathf.Clamp(ResolveRigidLengthAlong(instance, headingWorld) * ElseTurnRadiusFromLengthFactor, ElseTurnRadiusMin, ElseTurnRadiusMax);
-        float driveDistance = Vector3.Distance(state.livePosition, stop);
+        float driveDistance = Vector3.Distance(originPos, stop);
         // 余地が短いときは半径を縮めて収める（下限 ElseTurnRadiusMin）。
         radius = Mathf.Min(radius, Mathf.Max(ElseTurnRadiusMin, (driveDistance - 0.02f) * 0.5f));
         if (driveDistance < ElseDrivePath.MinimumDriveDistance(radius))
@@ -2573,8 +2588,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.triggerSource = InteractiveTriggerSource.Random;
         state.kind = InteractiveEventKind.Dynamic;
         state.dynamicPhase = InteractiveDynamicPhase.WalkIn;
-        state.originPosition = state.livePosition;
-        state.originRotation = state.liveRotation;
+        state.originPosition = originPos;
+        state.originRotation = originRot;
         state.driveHeading = headingWorld;
         state.drivePath = ElseDrivePath.Build(state.originPosition, headingWorld, stop, up, radius);
         state.driveSpeed = Mathf.Max(0.05f, elseDriveSpeedMetersPerSecond);
@@ -2589,6 +2604,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Debug.Log(
             $"[MOTION] rigid drive start track={trackId} wheels={state.rigidWheels.Count} hasForward={hasForward} " +
             $"radius={radius:F3}m drive={driveDistance:F2}m total={state.drivePath.TotalLength:F2}m duration={state.phaseDuration:F2}s");
+        // 人・動物の [MOTION] origin と同じ形（2026-10-11）。gap は門を通さない表示位置と門つきの位置の距離（OFF でも ON でも同じ値）。
+        Debug.Log($"[MOTION] origin track={trackId} source={(fromDisplayed ? "displayed" : "live")} " +
+                  $"gap={(state.hasDisplayedSample && state.hasLiveSample ? Vector3.Distance(state.displayedPosition, state.livePosition) : 0f):F3}m " +
+                  $"pos=({originPos.x:F3},{originPos.y:F3},{originPos.z:F3}) frame={GetCurrentPlaybackFrame()} tick={Time.frameCount}");
         LogRigidSegmentIfEntered(trackId, state, ElseDrivePath.SegmentDriveIn);
         return true;
     }

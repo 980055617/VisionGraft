@@ -332,6 +332,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 既定 OFF（2026-10-08、J-03）: 脚の基準姿勢を skin 姿勢に。読まれるのはリグのキャッシュを作るとき（下の Apply の最初の 1 回）だけ。
         animalPoseApplier.smalLegReferenceSkinPose = smalLegReferenceSkinPose;
         animalPoseApplier.smalLegReferenceSkinPoseModels = smalLegReferenceSkinPoseModels;
+        // 既定 OFF（2026-10-11、担当 DEER）: 首・頭と胴の基準姿勢を skin 姿勢に。読まれるのはリグのキャッシュを作るときだけ。
+        animalPoseApplier.smalNeckReferenceSkinPose = smalNeckReferenceSkinPose;
+        animalPoseApplier.smalNeckReferenceSkinPoseModels = smalNeckReferenceSkinPoseModels;
+        animalPoseApplier.smalTrunkReferenceSkinPose = smalTrunkReferenceSkinPose;
+        animalPoseApplier.smalTrunkReferenceSkinPoseModels = smalTrunkReferenceSkinPoseModels;
         // 既定 ON（2026-10-08、非四足モード。2026-10-09 に採用）: 主スイッチ・名簿・基準姿勢はリグのキャッシュを作るときだけ読まれる。脛・直立は毎 tick（モードで作ったキャッシュだけ）。
         animalPoseApplier.smalNonQuadrupedRig = smalNonQuadrupedRig;
         animalPoseApplier.smalNonQuadrupedRigModels = smalNonQuadrupedRigModels;

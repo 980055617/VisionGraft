@@ -27,6 +27,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         cache.hasSilhouette = false;
         cache.silhouetteSoles.Clear();
+        cache.silhouetteExtentLocal = 0f;
         if (animator == null || !cache.bones.TryGetValue(HumanBodyBones.Head, out Transform head) || head == null)
         {
             return;
@@ -106,6 +107,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         cache.hasSilhouette = cache.silhouetteCrownDistance > 0f && cache.silhouetteSoles.Count >= 2;
+        cache.silhouetteExtentLocal = cache.hasSilhouette ? (top - bottom) / lossy : 0f;
 
         if (logSilhouetteExtent)
         {
@@ -119,8 +121,57 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Debug.Log(
                 $"[SILHOUETTE] model={root.name} use={cache.hasSilhouette} lossy={lossy:F4} " +
                 $"boundsTop={top:F4} boundsBottom={bottom:F4} head={headH:F4} crown={cache.silhouetteCrownDistance * lossy:F4} " +
-                $"soles(world m):{sb} {bake}");
+                $"soles(world m):{sb} {bake} {DescribeLodExtentsForLog(root, up)}");
         }
+    }
+
+    // 上の上端・下端は LODGroup の全段のレンダラを含めて測っている（表示されるのは 1 段だけ）。どの段が上端・下端を決めているかを
+    // 見るための記録（2026-10-10、B2 で A・B 系の一番下の骨が枠の下端から 10 px 上がる件の確認）。測り方は上と同じ（sharedMesh.bounds の角）。
+    private string DescribeLodExtentsForLog(Transform root, Vector3 up)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (LODGroup group in root.GetComponentsInChildren<LODGroup>(false))
+        {
+            LOD[] lods = group.GetLODs();
+            for (int l = 0; l < lods.Length; l++)
+            {
+                float top = float.MinValue;
+                float bottom = float.MaxValue;
+                Renderer[] lodRenderers = lods[l].renderers;
+                for (int r = 0; r < lodRenderers.Length; r++)
+                {
+                    Renderer renderer = lodRenderers[r];
+                    if (renderer == null || !renderer.enabled || !renderer.gameObject.activeInHierarchy)
+                    {
+                        continue;
+                    }
+
+                    Mesh mesh = renderer is SkinnedMeshRenderer smr
+                        ? smr.sharedMesh
+                        : (renderer.GetComponent<MeshFilter>() != null ? renderer.GetComponent<MeshFilter>().sharedMesh : null);
+                    if (mesh == null)
+                    {
+                        continue;
+                    }
+
+                    Bounds b = mesh.bounds;
+                    Matrix4x4 m = renderer.transform.localToWorldMatrix;
+                    for (int i = 0; i < 8; i++)
+                    {
+                        Vector3 corner = b.center + Vector3.Scale(
+                            b.extents,
+                            new Vector3((i & 1) == 0 ? -1f : 1f, (i & 2) == 0 ? -1f : 1f, (i & 4) == 0 ? -1f : 1f));
+                        float h = Vector3.Dot(m.MultiplyPoint3x4(corner) - root.position, up);
+                        top = Mathf.Max(top, h);
+                        bottom = Mathf.Min(bottom, h);
+                    }
+                }
+
+                sb.Append(top > bottom ? $" lod{l}={top:F4}/{bottom:F4}" : $" lod{l}=none");
+            }
+        }
+
+        return sb.Length > 0 ? "lods(top/bottom):" + sb : "lods=none";
     }
 
     // 前提（既定姿勢 = bind 姿勢）の確認用。[MESH2D] と同じ BakeMesh(false)（倍率 1、world = 位置 + 回転 × 頂点）。

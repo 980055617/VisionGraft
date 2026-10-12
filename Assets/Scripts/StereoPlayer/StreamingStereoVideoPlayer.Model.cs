@@ -18,6 +18,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // scaleRefineFactorByTrack を測ったときの prefab（2026-10-10）。倍率はモデルの AABB と骨格の比を直すものでモデルごとに違うので、
     // 持ち越すのは同じ prefab へ差し替えたときだけ（GetOrLockModelLocalScale）。
     private readonly Dictionary<uint, GameObject> scaleRefineFactorPrefabByTrack = new Dictionary<uint, GameObject>();
+    // humanScaleRefineCarryAcrossModels（2026-10-10、10/11 に採用して既定 ON）: 倍率を測ったときのモデルの ReplaceableModel.baseBoneExtentToHeightRatio と、
+    // そのときのロックの基準フレーム（scaleLockReferenceFrameByTrack）。別の prefab へ替えたとき、基準フレームが同じなら比で換算して持ち越す。
+    private readonly Dictionary<uint, float> scaleRefineFactorBoneRatioByTrack = new Dictionary<uint, float>();
+    private readonly Dictionary<uint, int> scaleRefineFactorReferenceFrameByTrack = new Dictionary<uint, int>();
+    // 上の比をシルエット（useSilhouetteProjectionExtent）の定義で測ったか。定義が違う 2 つの比は比べない。
+    private readonly Dictionary<uint, bool> scaleRefineFactorRatioSilhouetteByTrack = new Dictionary<uint, bool>();
+    // depthRefineHoldOnGuard（既定 OFF、2026-10-10）: smoothedProjectedDepthRatioByTrack をどの prefab で平滑したか。差し替え・偽のカットでは
+    // 平滑の値が残るので、今と同じ prefab の値だけを保持に使う。shot 境界（偽のカットでない）で一緒に消す。
+    private readonly Dictionary<uint, GameObject> smoothedDepthRatioPrefabByTrack = new Dictionary<uint, GameObject>();
     // RefineDepthFromProjectedBones の補正比率を時間平滑化した値。shot 境界でクリアする。
     private readonly Dictionary<uint, float> smoothedProjectedDepthRatioByTrack = new Dictionary<uint, float>();
     // `disparity = a/Z + b` の b。bundle ごとに一度だけ推定する（shot 境界では変わらない）。
@@ -39,6 +48,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private int metricRatioDiagCount;
     // ⑨ で骨格 track と Else の深度差を平滑化した値。shot 境界でクリアする。
     private readonly Dictionary<uint, float> otherDepthGapByTrack = new Dictionary<uint, float>();
+    // otherDepthFollowHoldsDuringMotion（2026-10-10、10/11 に採用して既定 ON）: Else ごとに、モーションが始まる前の tick の「付いていく骨格の track と、その深さ」。
+    // shot 境界で otherDepthGapByTrack と一緒に消す。
+    private readonly Dictionary<uint, (uint skeletonTrack, float z)> heldSkeletonDepthByOther = new Dictionary<uint, (uint skeletonTrack, float z)>();
     // 実測した boneRatio がこの範囲を外れたらスケールを測り直さない。bbox が画面端で
     // 切れている・検出が破綻しているケースで誤った基準を焼き付けないための保護。
     private const float MinProjectedBoneRatioForScaleRefine = 0.4f;

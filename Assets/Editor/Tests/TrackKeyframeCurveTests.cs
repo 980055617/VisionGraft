@@ -69,4 +69,43 @@ public class TrackKeyframeCurveTests
         // 2 区間目は傾きが違う。手前の区間の傾きを引きずらないこと。
         Assert.That(TrackKeyframeCurve.Evaluate(keys, 200, 0f), Is.EqualTo(20f).Within(1e-4f));
     }
+
+    [Test]
+    public void EvaluateWithin_MatchesEvaluateWhenAllKeysAreInside()
+    {
+        SortedDictionary<int, float> keys = Keys((270, 90f), (300, 30f));
+        for (int f = 250; f <= 345; f++)
+        {
+            Assert.That(TrackKeyframeCurve.EvaluateWithin(keys, f, 258, 338, 0f), Is.EqualTo(TrackKeyframeCurve.Evaluate(keys, f, 0f)));
+        }
+    }
+
+    [Test]
+    public void EvaluateWithin_FullRangeMatchesEvaluate()
+    {
+        SortedDictionary<int, float> keys = Keys((0, 0f), (100, 10f), (300, 30f));
+        foreach (int f in new[] { -5, 0, 50, 100, 200, 300, 9999 })
+        {
+            Assert.That(TrackKeyframeCurve.EvaluateWithin(keys, f, int.MinValue, int.MaxValue, 7f), Is.EqualTo(TrackKeyframeCurve.Evaluate(keys, f, 7f)));
+        }
+    }
+
+    [Test]
+    public void EvaluateWithin_IgnoresKeysOutsideTheRange()
+    {
+        SortedDictionary<int, float> keys = Keys((100, 10f), (300, 60f), (600, -45f));
+        Assert.That(TrackKeyframeCurve.EvaluateWithin(keys, 258, 258, 338, 0f), Is.EqualTo(60f));
+        Assert.That(TrackKeyframeCurve.EvaluateWithin(keys, 300, 258, 338, 0f), Is.EqualTo(60f));
+        Assert.That(TrackKeyframeCurve.EvaluateWithin(keys, 337, 258, 338, 0f), Is.EqualTo(60f));
+    }
+
+    [Test]
+    public void EvaluateWithin_ReturnsFallbackWhenNoKeyIsInTheRange()
+    {
+        SortedDictionary<int, float> keys = Keys((100, 10f));
+        Assert.That(TrackKeyframeCurve.EvaluateWithin(keys, 300, 258, 338, 0f), Is.EqualTo(0f));
+        Assert.That(TrackKeyframeCurve.EvaluateWithin(keys, 300, 258, 338, 1f), Is.EqualTo(1f));
+        Assert.That(TrackKeyframeCurve.EvaluateWithin(null, 300, 258, 338, 1f), Is.EqualTo(1f));
+        Assert.That(TrackKeyframeCurve.EvaluateWithin(new SortedDictionary<int, float>(), 300, 258, 338, 0f), Is.EqualTo(0f));
+    }
 }

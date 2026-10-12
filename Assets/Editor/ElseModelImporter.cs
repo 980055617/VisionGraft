@@ -292,12 +292,175 @@ public static class ElseModelImporter
         Debug.Log($"[ElseModelImporter] Verify: renderers={renderers.Length} meshFilters={filters.Length} nullMeshes={nullMeshes} nullMaterials={nullMaterials}");
     }
 
+    // 機関車の向きを車にそろえる（2026-10-11、9/18 の BakeSportCarFacing の入れ漏れの直し）。車 9 台は root に Y 180°（前 = 視点側）を焼いたが、
+    // 機関車の root は GLB の取り込みの X −90°（Z-up → Y-up）のままで、運転室（GLB の y < −7）が配置の +Z（画面の奥）を向いていた。
+    // root を Y 180° の空の GameObject にし、GLB のインスタンスを今の X −90° と倍率のまま子に入れて同じパスへ保存する（GUID・名前は変わらない）。
+    // 済みなら何もしない。Unity を閉じたバッチで -executeMethod ElseModelImporter.WrapDieselLocomotiveFacing。
+    [MenuItem("Tools/VisionGraft/Wrap Diesel Locomotive Facing (Y 180)")]
+    public static void WrapDieselLocomotiveFacing()
+    {
+        string prefabPath = $"{DestDir}/06_{DieselLocomotiveName}.prefab";
+        var current = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+        if (current == null)
+        {
+            Debug.LogError($"[ElseModelImporter] Wrap: prefab not found: {prefabPath}");
+            return;
+        }
+        if (Quaternion.Angle(current.transform.localRotation, SportCarFacingRotation) < 0.01f)
+        {
+            Debug.Log($"[ElseModelImporter] Wrap: already wrapped (root euler={current.transform.localRotation.eulerAngles})");
+            LogDieselLocomotiveFacing(prefabPath, "Wrap");
+            return;
+        }
+        // .glb を LoadAssetAtPath で取り直さない（.meta は DefaultImporter のことがある）。今の prefab の元（GLB の main object）を使う。
+        var src = PrefabUtility.GetCorrespondingObjectFromSource(current);
+        if (src == null)
+        {
+            Debug.LogError("[ElseModelImporter] Wrap: the prefab has no source (GLB main object); nothing changed");
+            return;
+        }
+        var root = new GameObject($"06_{DieselLocomotiveName}");
+        try
+        {
+            root.transform.localRotation = SportCarFacingRotation;
+            var child = (GameObject)PrefabUtility.InstantiatePrefab(src, root.transform);
+            child.transform.localPosition = Vector3.zero;
+            child.transform.localRotation = current.transform.localRotation;
+            child.transform.localScale = current.transform.localScale;
+            child.name = DieselLocomotiveName;
+            PrefabUtility.SaveAsPrefabAsset(root, prefabPath, out bool ok);
+            if (!ok)
+            {
+                Debug.LogError($"[ElseModelImporter] Wrap: SaveAsPrefabAsset failed: {prefabPath}");
+                return;
+            }
+        }
+        finally
+        {
+            Object.DestroyImmediate(root);
+        }
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+        LogDieselLocomotiveFacing(prefabPath, "Wrap");
+    }
+
+    // 走行イベントの前後の目印（2026-10-11）。車は子 FL/FR/RL/RR（ホイール）から前を決める（InteractiveMotion.partial.cs の TryResolveRigidWheels）。
+    // 機関車には無く、前を「視聴者の方向」とみなして向きを変えずに滑っていた。Renderer の無い空の子を 4 つ root の直下に置く（座標は root の局所。
+    // GLB の台車の中央の軸 wheel_lf.000（前台車 = 運転室側）と wheel_lf.004（後台車）のメッシュの中心、横 ±0.803、高さ 0.949）。
+    // 使われるのは前後の中点の差だけで、新しい係数は無い。包んだ後に 1 回だけ。既にあれば何もしない。
+    [MenuItem("Tools/VisionGraft/Add Diesel Locomotive Wheel Markers")]
+    public static void AddDieselLocomotiveWheelMarkers()
+    {
+        string prefabPath = $"{DestDir}/06_{DieselLocomotiveName}.prefab";
+        GameObject root = PrefabUtility.LoadPrefabContents(prefabPath);
+        int added = 0;
+        try
+        {
+            if (Quaternion.Angle(root.transform.localRotation, SportCarFacingRotation) >= 0.01f)
+            {
+                Debug.LogError("[ElseModelImporter] Markers: root is not Y 180; run WrapDieselLocomotiveFacing first. Nothing changed");
+                return;
+            }
+            var markers = new (string name, Vector3 position)[]
+            {
+                ("FL", new Vector3(-0.80f, 0.949f, 4.901f)),
+                ("FR", new Vector3(0.80f, 0.949f, 4.901f)),
+                ("RL", new Vector3(-0.80f, 0.949f, -5.351f)),
+                ("RR", new Vector3(0.80f, 0.949f, -5.351f)),
+            };
+            foreach (var (name, position) in markers)
+            {
+                if (root.transform.Find(name) != null)
+                {
+                    continue;
+                }
+                var marker = new GameObject(name);
+                marker.transform.SetParent(root.transform, false);
+                marker.transform.localPosition = position;
+                marker.transform.localRotation = Quaternion.identity;
+                marker.transform.localScale = Vector3.one;
+                added++;
+            }
+            if (added > 0)
+            {
+                PrefabUtility.SaveAsPrefabAsset(root, prefabPath, out bool ok);
+                if (!ok)
+                {
+                    Debug.LogError($"[ElseModelImporter] Markers: SaveAsPrefabAsset failed: {prefabPath}");
+                    return;
+                }
+            }
+        }
+        finally
+        {
+            PrefabUtility.UnloadPrefabContents(root);
+        }
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+        Debug.Log($"[ElseModelImporter] Markers: added={added}");
+        LogDieselLocomotiveFacing(prefabPath, "Markers");
+    }
+
+    // 確かめ用: root と子の回転、root から見た描画の合成 bounds（TrackInstanceFactory.TryComputeLocalBounds と同じく各 Renderer の bounds の角を
+    // root の局所へ写す）、目印の数を 1 行に出す。高さ（bounds の y）は 5.259 になるはず（18.5 なら子の X −90° が落ちた 8/28 の再発）。
+    private static void LogDieselLocomotiveFacing(string prefabPath, string tag)
+    {
+        var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+        if (prefab == null)
+        {
+            Debug.LogError($"[ElseModelImporter] {tag}: prefab not found after save: {prefabPath}");
+            return;
+        }
+        var instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+        try
+        {
+            Transform root = instance.transform;
+            Vector3 min = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
+            Vector3 max = new Vector3(float.MinValue, float.MinValue, float.MinValue);
+            foreach (var r in instance.GetComponentsInChildren<Renderer>(true))
+            {
+                Bounds b = r.bounds;
+                for (int c = 0; c < 8; c++)
+                {
+                    Vector3 corner = new Vector3((c & 1) == 0 ? b.min.x : b.max.x, (c & 2) == 0 ? b.min.y : b.max.y, (c & 4) == 0 ? b.min.z : b.max.z);
+                    Vector3 local = root.InverseTransformPoint(corner);
+                    min = Vector3.Min(min, local);
+                    max = Vector3.Max(max, local);
+                }
+            }
+            Vector3 size = max - min;
+            Transform child = root.Find(DieselLocomotiveName);
+            int markerCount = 0;
+            foreach (string n in new[] { "FL", "FR", "RL", "RR" })
+            {
+                if (root.Find(n) != null) markerCount++;
+            }
+            string line = $"[ElseModelImporter] {tag}: root euler={root.localRotation.eulerAngles} child euler={(child != null ? child.localRotation.eulerAngles.ToString() : "none")} " +
+                          $"bounds size=({size.x:F3}, {size.y:F3}, {size.z:F3}) center=({(min.x + max.x) * 0.5f:F3}, {(min.y + max.y) * 0.5f:F3}, {(min.z + max.z) * 0.5f:F3}) markers={markerCount}";
+            if (Mathf.Abs(size.y - 5.259f) > 0.01f)
+            {
+                Debug.LogError(line + " (height is not 5.259)");
+            }
+            else
+            {
+                Debug.Log(line);
+            }
+        }
+        finally
+        {
+            Object.DestroyImmediate(instance);
+        }
+    }
+
     [MenuItem("Tools/VisionGraft/Import And Prefix Else Models")]
     public static void ImportAndPrefix()
     {
         ImportFromSaritasa();
         ImportDieselLocomotive();
         PrefixWithIndex();
+        // 機関車の向きを車にそろえ、走行イベントの前後の目印を足す（2026-10-11）。番号付けの後のパス（06_）で開くので、ここで呼ぶ。
+        WrapDieselLocomotiveFacing();
+        AddDieselLocomotiveWheelMarkers();
     }
 
     // 2026-09-18: Asset Store の "Sport Car" パッケージ（Assets/SportCar、Blender 製、Readme に
@@ -358,6 +521,7 @@ public static class ElseModelImporter
     // root に Y 180° を焼いて「前 = 視点側」にする（2026-09-18 ユーザー合意。yaw キーで持つより
     // 端末ごとの model_selection.json に依存しない）。ReplaceableModel.baseLocalRotation が保持し、
     // 機関車の X −90° と同じ経路で配置・ピッカーのプレビューに掛かる。
+    // 2026-10-11: 機関車も root に同じ Y 180° を持つ（WrapDieselLocomotiveFacing。X −90° は子の GLB に入る）。9/18 に車にだけ入れた入れ漏れの直し。
     private static readonly Quaternion SportCarFacingRotation = Quaternion.Euler(0f, 180f, 0f);
 
     [MenuItem("Tools/VisionGraft/Import Sport Cars Into Else")]

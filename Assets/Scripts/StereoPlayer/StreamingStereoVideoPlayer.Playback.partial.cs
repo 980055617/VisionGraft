@@ -235,6 +235,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 21_Donkey1.0）。残りは恒等なので合成しても何も変わらない。
         //
         // **21_Donkey1.0 は実機で見て確認すること。** 補正が復活するぶん向きが変わる。
+        //
+        // 2026-10-11: 機関車の X −90° は子（GLB）へ移り、root は車と同じ Y 180°（前 = 運転室が視点側）になった
+        // （ElseModelImporter.WrapDieselLocomotiveFacing）。root に回転を持つのは車 9 台・機関車の Y 180° と 21_Donkey1.0。
         rotationPinhole = ApplyModelBaseRotation(instance, rotationPinhole);
 
         ObserveInteractiveMotionLiveTrackedSample(target.trackId, target, screen);
@@ -724,7 +727,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // （掛けているのは焦点距離が取れないフォールバック分岐だけ）ので、二重にならない。
             // C4-T の倍率も手動倍率と同じくロックの外側で掛ける。⑧ は手動倍率だけを割り戻すので、
             // この倍率で伸びたぶんは ⑧ が奥へ押し戻さない（接近を scale で追う狙いどおり）。
-            Vector3 lockedOrDesired = lockScale ? GetOrLockModelLocalScale(obj.trackId, desiredScale) : desiredScale;
+            Vector3 lockedOrDesired = lockScale ? GetOrLockModelLocalScale(obj.trackId, desiredScale, model, IsCategoryPerson(obj.categoryId)) : desiredScale;
             float trendFactor = ResolveAnimalScaleTrendFactor(obj, GetCurrentPlaybackFrame(), lockedOrDesired.x);
             TrackPlacementWriter.ApplyLocalScaleWithGroundAlignment(
                 instance.transform,
@@ -760,7 +763,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         TrackPlacementWriter.ApplyLocalScaleWithGroundAlignment(
             instance.transform,
-            lockScale ? GetOrLockModelLocalScale(obj.trackId, desiredScale) : desiredScale,
+            lockScale ? GetOrLockModelLocalScale(obj.trackId, desiredScale, model, IsCategoryPerson(obj.categoryId)) : desiredScale,
             model != null && model.anchor == null && model.alignToGround,
             model != null ? model.baseBottomOffsetLocal : 0f);
     }
@@ -1154,9 +1157,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 奥行きの上限。既定はスクリーンのすぐ手前（3 月の設計の名残。8/20 からスクリーンは背景描画なので描画上は不要）。
     // allowDepthBehindScreen（既定 OFF、2026-10-03）なら screenDist × depthBehindScreenMaxFactor まで許す。
     // ⑧・⑨・めり込み解消・最初の配置の 4 か所が同じ値を使う（片方だけ外すと人とボールの前後がずれる）。
-    private float ResolveDepthUpperLimitMeters(float screenDist)
+    // allowDepthBehindScreenExceptAnimals（既定 OFF、2026-10-10）は animal 以外だけ外す。forAnimal は ⑧ ならその track、⑨・⑩ なら付いていく骨格が animal か。
+    private float ResolveDepthUpperLimitMeters(float screenDist, bool forAnimal = false)
     {
-        return allowDepthBehindScreen
+        bool behind = allowDepthBehindScreen || (allowDepthBehindScreenExceptAnimals && !forAnimal);
+        return behind
             ? screenDist * Mathf.Max(1f, depthBehindScreenMaxFactor)
             : screenDist - 0.0001f;
     }
@@ -1261,9 +1266,32 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 29.9〜32.7s、bboxH が 110→336px）では、スケールが shot 先頭でロックされている
         // ぶん ratio が 0.4 を割り、**最も補正が要るフレームで ⑧ が何もしなくなる**。
         // 実測でも 32 秒台の sizeRatio が 0.416 とガードに張り付いていた（2026-08-27）。
+        // depthRefineHoldOnGuard（既定 OFF、animal のみ、2026-10-10）: ガードに掛かった tick は前回の平滑後の比で置く。平滑と順序の丸めは通さない。
+        // 使うのは今と同じ prefab で平滑した比だけ（平滑の値はモデルの差し替え・偽のカットでは消えないので、前のモデルの比で置かないため）。
+        // 保持している間も平滑の刻み（動画フレーム）は進め、ガードを抜けた最初の tick が保持した比から 1 フレーム分だけ動くようにする。
+        bool heldOnGuard = false;
         if (ratio < depthRefineMinRatio || ratio > MaxProjectedBoneRatioForScaleRefine)
         {
-            return false;
+            if (!depthRefineHoldOnGuard || !IsCategoryAnimal(obj.categoryId) ||
+                !smoothedProjectedDepthRatioByTrack.TryGetValue(obj.trackId, out float heldRatio) ||
+                !smoothedDepthRatioPrefabByTrack.TryGetValue(obj.trackId, out GameObject heldPrefab) ||
+                !trackPrefabSources.TryGetValue(obj.trackId, out GameObject currentDepthPrefab) || heldPrefab != currentDepthPrefab)
+            {
+                return false;
+            }
+
+            if (logDepthRefineStages)
+            {
+                Debug.Log($"[DEPTH8-HOLD] track={obj.trackId} frame={GetCurrentPlaybackFrame()} measured={ratio:F4} held={heldRatio:F4}");
+            }
+
+            if (smoothDepthPerVideoFrame)
+            {
+                smoothedDepthRatioFrameByTrack[obj.trackId] = GetCurrentPlaybackFrame();
+            }
+
+            ratio = heldRatio;
+            heldOnGuard = true;
         }
 
         if (!TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
@@ -1296,12 +1324,21 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 前後関係の制約は「深度が決まった後の硬いクランプ」ではなく、平滑化の手前で
         // ratio を許容範囲に丸める形で入れる。深度側でクランプすると発動フレームで
         // 一気に 135mm 動いて跳ねる（2026-08-20 実測、1 フレーム変化 max 22mm → 206mm）。
-        ratio = ClampRatioPreservingOtherOrder(obj, camLocal.z, ratio);
-        // animal は姿勢で骨格の投影高が急に変わるので、速追従（1 frame で奥行きが飛ぶ）は掛けない（2026-09-18）。
         bool isAnimal = IsCategoryAnimal(obj.categoryId);
-        bool allowFastTrack = depthRefineFastTrackForAnimal || !isAnimal;
-        float tauOverride = isAnimal && animalDepthRefineSmoothingSeconds > 0f ? animalDepthRefineSmoothingSeconds : -1f;
-        ratio = SmoothProjectedDepthRatio(obj.trackId, ratio, allowFastTrack, tauOverride);
+        if (!heldOnGuard)
+        {
+            ratio = ClampRatioPreservingOtherOrder(obj, camLocal.z, ratio);
+            // animal は姿勢で骨格の投影高が急に変わるので、速追従（1 frame で奥行きが飛ぶ）は掛けない（2026-09-18）。
+            bool allowFastTrack = depthRefineFastTrackForAnimal || !isAnimal;
+            float tauOverride = isAnimal && animalDepthRefineSmoothingSeconds > 0f ? animalDepthRefineSmoothingSeconds : -1f;
+            ratio = SmoothProjectedDepthRatio(obj.trackId, ratio, allowFastTrack, tauOverride);
+            if (depthRefineHoldOnGuard && isAnimal)
+            {
+                // depthRefineHoldOnGuard が保持に使ってよいかを決める札（どの prefab で平滑した比か）。
+                trackPrefabSources.TryGetValue(obj.trackId, out GameObject smoothedPrefab);
+                smoothedDepthRatioPrefabByTrack[obj.trackId] = smoothedPrefab;
+            }
+        }
 
         float beforeZ = camLocal.z;
         float ratioZ = camLocal.z * ratio * Mathf.Max(0.1f, projectedDepthScaleK);
@@ -1310,16 +1347,31 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // screenDist で止まるだけで、体はそのぶん奥（3.0m 設定で 5.45m）に残る。
         // allowDepthBehindScreen（既定 OFF）なら全カテゴリでスクリーンより奥を許す。
         // animal だけ別に上限を指定することもできる（animalDepthRefineMaxDepthMeters、既定 0 = 従来どおりスクリーン）。
-        float upperZ = ResolveDepthUpperLimitMeters(screenDist);
+        float upperZ = ResolveDepthUpperLimitMeters(screenDist, isAnimal);
         if (isAnimal && animalDepthRefineMaxDepthMeters > upperZ)
         {
             upperZ = animalDepthRefineMaxDepthMeters;
         }
 
-        float targetZ = Mathf.Clamp(
-            ratioZ,
-            Mathf.Max(0.001f, MinDistanceFromHeadMeters),
-            upperZ);
+        float lowerZ = Mathf.Max(0.001f, MinDistanceFromHeadMeters);
+        // animalDepthFloorAtNearestBone（既定 OFF、2026-10-10）: 下限を一番近い投影の骨に掛ける。基準点を光線に沿って動かすので、
+        // 基準点の深さ − 一番近い骨の深さ だけ下限を奥へずらせば、その骨がちょうど MinDistanceFromHeadMeters になる。
+        bool floorOverCeiling = false;
+        if (animalDepthFloorAtNearestBone && isAnimal &&
+            TryResolveNearestProjectionBoneDepth(instance, camOrigin, camRotation, out float nearestBoneZ, out string nearestBoneName))
+        {
+            lowerZ = Mathf.Max(lowerZ, MinDistanceFromHeadMeters + (camLocal.z - nearestBoneZ));
+            floorOverCeiling = lowerZ > upperZ;
+            // 下限が効いた tick（比の深さより奥へ押した、または上限を超えた）を、どの骨で押したかと一緒に出す（重み 0 の補助骨で押していないかを見る）。
+            if (logDepthRefineStages && (floorOverCeiling || lowerZ > ratioZ))
+            {
+                Debug.Log($"[DEPTH8-FLOOR] track={obj.trackId} frame={GetCurrentPlaybackFrame()} floor={lowerZ:F4} ceiling={upperZ:F4} ratioZ={ratioZ:F4} " +
+                          $"overCeiling={floorOverCeiling} nearest={nearestBoneName} nearestZ={nearestBoneZ:F4} bodyZ={camLocal.z:F4}");
+            }
+        }
+
+        // 下限が上限を超えたときは下限を優先する（Mathf.Clamp は min > max だと値によって勝つ側が変わる）。
+        float targetZ = floorOverCeiling ? lowerZ : Mathf.Clamp(ratioZ, lowerZ, upperZ);
 
         if (logDepthRefineStages)
         {
@@ -1459,6 +1511,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         scaleRefineFactorByTrack[obj.trackId] = factor;
         trackPrefabSources.TryGetValue(obj.trackId, out GameObject refinedPrefab);
         scaleRefineFactorPrefabByTrack[obj.trackId] = refinedPrefab;
+        // humanScaleRefineCarryAcrossModels（10/11 から既定 ON）が別の prefab へ換算するときに使う。記録するだけで振る舞いは変えない。
+        ReplaceableModel refinedModel = instance.GetComponent<ReplaceableModel>();
+        scaleRefineFactorBoneRatioByTrack[obj.trackId] = ResolveScaleRefineCarryRatio(refinedModel);
+        scaleRefineFactorRatioSilhouetteByTrack[obj.trackId] = useSilhouetteProjectionExtent;
+        scaleRefineFactorReferenceFrameByTrack[obj.trackId] =
+            scaleLockReferenceFrameByTrack.TryGetValue(obj.trackId, out int refinedReferenceFrame) ? refinedReferenceFrame : -1;
 
         TrackPlacementWriter.ApplyLocalScale(instance.transform, refined);
 
@@ -1569,7 +1627,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return note.maxRatio >= note.minRatio ? $"{note.minRatio:F3}-{note.maxRatio:F3}" : "n/a";
     }
 
-    private Vector3 GetOrLockModelLocalScale(uint trackId, Vector3 desiredLocalScale)
+    private Vector3 GetOrLockModelLocalScale(uint trackId, Vector3 desiredLocalScale, ReplaceableModel model = null, bool isPerson = false)
     {
         if (lockedModelLocalScaleByTrack.TryGetValue(trackId, out Vector3 lockedScale))
         {
@@ -1581,15 +1639,37 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // （2026-08-31 実測: 同一モデルへの差し替えでも 15% 縮んだ）。掛け直して確定させる。
         // 2026-10-10: 持ち越すのは同じ prefab のときだけ。別のモデルに替えたときに前のモデルの倍率を掛けると、動物では
         // 大きさと奥行きが崩れた（被験者は試行中にモデルを替えられる）。別のモデルなら捨てて、下の測り直しに回す。
+        // humanScaleRefineCarryAcrossModels（2026-10-10、10/11 に採用して既定 ON）: 人は捨てずに、2 体の baseBoneExtentToHeightRatio の比で換算して持ち越す
+        // （捨てて測り直すと替えた tick の姿勢が焼き付き、立った f1400 でも 12〜13% 小さくなった。10/10 の hm_SW_NOW）。
         if (scaleRefineFactorByTrack.TryGetValue(trackId, out float carriedFactor) &&
             (!trackPrefabSources.TryGetValue(trackId, out GameObject currentPrefab) ||
              !scaleRefineFactorPrefabByTrack.TryGetValue(trackId, out GameObject factorPrefab) || factorPrefab != currentPrefab))
         {
-            scaleRefineFactorByTrack.Remove(trackId);
-            scaleRefineFactorPrefabByTrack.Remove(trackId);
-            if (logPlacementMeasurement)
+            if (currentPrefab != null &&
+                TryConvertScaleRefineFactorForNewHumanModel(trackId, carriedFactor, model, isPerson, out float convertedFactor, out float ratioBefore))
             {
-                Debug.Log($"[SCALEFIX] track={trackId} 別のモデルに替えたので補正倍率 x{carriedFactor:F3} を捨てて測り直す");
+                scaleRefineFactorByTrack[trackId] = convertedFactor;
+                scaleRefineFactorPrefabByTrack[trackId] = currentPrefab;
+                float ratioAfter = ResolveScaleRefineCarryRatio(model);
+                scaleRefineFactorBoneRatioByTrack[trackId] = ratioAfter;
+                if (logPlacementMeasurement)
+                {
+                    Debug.Log($"[SCALEFIX] track={trackId} 別のモデルに替えたので補正倍率 x{carriedFactor:F3} を" +
+                              $"{(useSilhouetteProjectionExtent ? "シルエット" : "骨")}の広がりの比で持ち越し " +
+                              $"x{carriedFactor:F3} × {ratioBefore:F4} / {ratioAfter:F4} = x{convertedFactor:F3}");
+                }
+            }
+            else
+            {
+                scaleRefineFactorByTrack.Remove(trackId);
+                scaleRefineFactorPrefabByTrack.Remove(trackId);
+                scaleRefineFactorBoneRatioByTrack.Remove(trackId);
+                scaleRefineFactorReferenceFrameByTrack.Remove(trackId);
+                scaleRefineFactorRatioSilhouetteByTrack.Remove(trackId);
+                if (logPlacementMeasurement)
+                {
+                    Debug.Log($"[SCALEFIX] track={trackId} 別のモデルに替えたので補正倍率 x{carriedFactor:F3} を捨てて測り直す");
+                }
             }
         }
 
@@ -1610,6 +1690,68 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         scaleRefinedByTrack.Remove(trackId);
         lockedModelLocalScaleByTrack[trackId] = desiredLocalScale;
         return desiredLocalScale;
+    }
+
+    // humanScaleRefineCarryAcrossModels（2026-10-10、10/11 に採用して既定 ON）: 人の track で別の prefab に替えたとき、前のモデルで測った倍率を新しいモデルの値へ換算する。
+    // 測り直しは「投影の広がり ÷ bbox」を 1 に合わせ、② は骨格の高さ（ReplaceableModel.baseSkeletonHeightMeters）を bbox に合わせるので、
+    // 同じ姿勢・同じ bbox なら 2 体の倍率の比は ResolveScaleRefineCarryRatio の逆比になる（姿勢による違いは無視する近似）。
+    // 換算するのは、比が両方とも取れていて、倍率を測ったときと今のロックの基準フレーム（shot の先頭）と広がりの定義（シルエットの ON / OFF）が
+    // 同じときだけ。骨長の補正（enableHumanBoneLengthCorrection）が ON のときは補正後の骨で測るので換算しない。
+    private bool TryConvertScaleRefineFactorForNewHumanModel(uint trackId, float carriedFactor, ReplaceableModel model, bool isPerson,
+        out float convertedFactor, out float ratioBefore)
+    {
+        convertedFactor = carriedFactor;
+        ratioBefore = 0f;
+        if (!humanScaleRefineCarryAcrossModels || !isPerson || enableHumanBoneLengthCorrection || model == null ||
+            !scaleRefineFactorBoneRatioByTrack.TryGetValue(trackId, out ratioBefore) || ratioBefore <= 0f ||
+            !scaleRefineFactorRatioSilhouetteByTrack.TryGetValue(trackId, out bool silhouetteBefore) ||
+            silhouetteBefore != useSilhouetteProjectionExtent ||
+            !scaleRefineFactorReferenceFrameByTrack.TryGetValue(trackId, out int referenceFrameBefore) ||
+            !scaleLockReferenceFrameByTrack.TryGetValue(trackId, out int referenceFrameNow) ||
+            referenceFrameBefore != referenceFrameNow)
+        {
+            return false;
+        }
+
+        float ratioNow = ResolveScaleRefineCarryRatio(model);
+        if (ratioNow <= 0f)
+        {
+            return false;
+        }
+
+        convertedFactor = carriedFactor * ratioBefore / ratioNow;
+        return true;
+    }
+
+    // 倍率の持ち越しで比べる値（humanScaleRefineCarryAcrossModels）。測り直しと同じ広がりの定義を使う:
+    //   シルエット OFF: 全 Humanoid 骨の既定姿勢の縦の広がり ÷ 骨格の高さ × root の localScale.y（ReplaceableModel.ScaleRefineCarryRatio）
+    //   シルエット ON : 頭頂〜足裏の代理点の既定姿勢の広がり（HumanoidRigCache.silhouetteExtentLocal）÷ 骨格の高さ × root の localScale.y
+    // 取れなければ 0。シルエットの値は Humanoid のキャッシュ（無ければここで作る）から引く。
+    private float ResolveScaleRefineCarryRatio(ReplaceableModel model)
+    {
+        if (model == null || model.baseSkeletonHeightMeters <= 0f)
+        {
+            return 0f;
+        }
+
+        if (!useSilhouetteProjectionExtent)
+        {
+            return model.ScaleRefineCarryRatio;
+        }
+
+        Animator animator = model.GetComponentInChildren<Animator>(true);
+        if (animator == null || !animator.isHuman)
+        {
+            return 0f;
+        }
+
+        HumanoidRigCache cache = GetOrBuildHumanoidCache(animator);
+        if (cache == null || !cache.hasSilhouette || cache.silhouetteExtentLocal <= 0f)
+        {
+            return 0f;
+        }
+
+        return cache.silhouetteExtentLocal / model.baseSkeletonHeightMeters * model.baseLocalScale.y;
     }
 
 
@@ -1858,6 +2000,38 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         return false;
+    }
+
+    // 投影に使う骨（ResolveProjectionBones）のうち、カメラ空間でいちばん浅い骨の深さ（animalDepthFloorAtNearestBone、2026-10-10）。
+    // 目の後ろ（深さが負）の骨も含める（その骨を前へ出すのが目的なので）。骨が無ければ false。
+    private bool TryResolveNearestProjectionBoneDepth(GameObject instance, Vector3 camOrigin, Quaternion camRotation, out float nearestDepth, out string nearestName)
+    {
+        nearestDepth = float.MaxValue;
+        nearestName = null;
+        if (instance == null)
+        {
+            return false;
+        }
+
+        Animator animator = instance.GetComponentInChildren<Animator>(true);
+        var bones = ResolveProjectionBones(instance, animator);
+        Quaternion worldToCam = Quaternion.Inverse(camRotation);
+        for (int i = 0; i < bones.Count; i++)
+        {
+            if (bones[i].Value == null)
+            {
+                continue;
+            }
+
+            float z = (worldToCam * (bones[i].Value.position - camOrigin)).z;
+            if (z < nearestDepth)
+            {
+                nearestDepth = z;
+                nearestName = bones[i].Key;
+            }
+        }
+
+        return nearestName != null;
     }
 
     // 記録だけ（2026-10-09、logPlacementMeasurement、animal のみ）: ⑦ は縦の移動量を depthMeters（レンダラーの AABB の中心の深さ）で px → m に

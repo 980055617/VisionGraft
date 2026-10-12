@@ -1059,7 +1059,9 @@ public sealed class ExperimentController : MonoBehaviour
             cachedPlayer.IsExperimentMonocular,
             cachedPlayer.ScreenDistanceMeters,
             cachedPlayer.HumanBoneLengthCorrectionEnabled,
-            displayHz);
+            displayHz,
+            cachedPlayer.manualRotationResetAtCut,
+            cachedPlayer.manualScaleResetAtCut);
     }
 
     private void ShowTrialPanel(ExperimentTrial trial)
@@ -1587,6 +1589,8 @@ public sealed class ExperimentController : MonoBehaviour
 
         session.BeginTutorial(bundleFileName, beforeBlock, tutorialMode);
         tutorial = new ExperimentTutorial(session, tutorialMode);
+        // 2026-10-12: manualRotationResetAtCut が ON なら、練習 4/4 の最後の行を「場面が切り替わると元に戻る」にする（練習と試行は同じ TrialScene）。
+        tutorial.ManualRotationResetsAtCut = cachedPlayer != null && cachedPlayer.manualRotationResetAtCut;
         tutorial.Changed += MarkTutorialPanelDirty;
         // プレイヤーの操作ログを横取りして段階を進める。セッションへはそのまま転送される。
         ExperimentLog.Sink = tutorial;

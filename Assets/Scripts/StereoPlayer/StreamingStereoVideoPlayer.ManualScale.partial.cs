@@ -24,7 +24,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private float EvaluateManualScaleForFrame(uint trackId, int frame)
     {
         manualScaleKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> keys);
-        float value = TrackKeyframeCurve.Evaluate(keys, frame, ManualScaleDefault);
+        float value = EvaluateManualKeys(keys, frame, ManualScaleDefault, manualScaleResetAtCut);
         return Mathf.Clamp(value, ManualScaleMin, ManualScaleMax);
     }
 

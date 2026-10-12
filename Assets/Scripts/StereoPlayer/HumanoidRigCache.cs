@@ -35,6 +35,9 @@ internal sealed class HumanoidRigCache
     public Vector3 silhouetteCrownLocalDir;
     public float silhouetteCrownDistance;
     public readonly List<SilhouetteSolePoint> silhouetteSoles = new List<SilhouetteSolePoint>(4);
+    // 既定姿勢での頭頂〜足裏の縦の広がり（モデルのローカル単位、2026-10-10、humanScaleRefineCarryAcrossModels のシルエットの場合）。
+    // 頭頂と足裏の代理点はメッシュの上端・下端に置くので、既定姿勢ではちょうど上端 − 下端になる。測れなければ 0。
+    public float silhouetteExtentLocal;
 }
 
 internal struct SilhouetteSolePoint

@@ -310,6 +310,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 隣どうしの判定（keepScaleAcrossContinuousShotBoundary）と同じく種別を問わない。今ある bundle で偽のカットが続くのは bundle_animal だけ。
     // ShotBoundary.partial.cs の IsFalseCutBoundaryChain。
     public bool falseCutChainKeepsScale = false;
+    // 偽のカット（keepScale で scale を持ち越す境界）では SMAL の回転の平滑（body_pose・globalOrient の EMA）を始め直さない
+    // （2026-10-10、既存の欠陥の直し）。**2026-10-11 にユーザーが採用し既定 ON。** 下の keepScaleAcrossContinuousShotBoundary のコメントは「連続なら 1 frame の再初期化で見えない」
+    // としていたが、bundle_animal の偽のカット 7 か所（280・290・520・1117・1127・1130・1144）では次の tick が平滑なしの生の値になり、
+    // 1 tick で脚・尾・体の向きが最大 30〜40° 跳ぶ（Docs/tmp/final4_20261010 の A-TAIL M2）。位置・scale・root の位置の平滑・人の平滑は変えない。
+    public bool smalSmoothingAcrossFalseCut = true;
+    // 人を試行の途中で別の prefab に替えたとき、shot 先頭で測った scale の補正倍率を、2 体の「既定姿勢の骨の縦の広がり ÷ ② の高さの基準」の比で
+    // 換算して持ち越す（2026-10-10、既存の欠陥の直し、H-MODELS F7）。**2026-10-11 にユーザーが採用し既定 ON。** e06fbf9 から、別の prefab へ替えると倍率を捨てて替えた tick の
+    // 姿勢で測り直す（動物の大きさの崩れ PL-06 の直し）。人では 8/31 に退けた「替えた瞬間の姿勢の焼き付き」が戻り、立った f1400 でも 12〜13% 小さくなった
+    // （10/10 の hm_SW_NOW: Female_A_02→Eric 0.2145 対 0.2450、Female_A_02→Female_A_01 0.2201 対 0.2540）。骨格が同じ A・B 系 12 体どうしは比が 1 で、
+    // 10/09 以前の「そのまま持ち越す」と同じになる。比は ResolveScaleRefineCarryRatio（シルエット（useSilhouetteProjectionExtent）が ON なら
+    // 頭頂〜足裏の代理点の既定姿勢の広がりで、測り直しと同じ定義）。骨長の補正（enableHumanBoneLengthCorrection）が ON のときは換算せず、
+    // 今までどおり捨てて測り直す。動物は対象外。
+    public bool humanScaleRefineCarryAcrossModels = true;
     // animal の ⑧ の奥行きの上限（m）。0 以下ならスクリーン距離（従来）。C4-T の試算は 2.0
     // （動画の犬は自分の視差でスクリーンより奥 1.03〜1.25 m に見えている）。
     public float animalDepthRefineMaxDepthMeters = 0f;
@@ -324,10 +337,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool allowDepthBehindScreen = false;
     // 外したときの安全上限（スクリーン距離の倍数）。⑧ の比のガード（3.0）より奥へは行かない目安。
     [Min(1f)] public float depthBehindScreenMaxFactor = 3f;
+    // allowDepthBehindScreen と同じことを animal 以外（人・Else）にだけ行う（2026-10-10、H-BALL FP3s）。**既定 OFF。**
+    // bundle_human の f210〜220 で人もボールもスクリーンの上限に止まり、ボールが腹と同じ深度に貼り付く。allowDepthBehindScreen は全カテゴリに効くので、
+    // 動物の奥行きまで変わる（再現器の推定で、犬の伏せの比が 1.10 → 0.89、Lynx の shot 23 が 0.82 → 0.73）。こちらは ⑧ が animal の track、⑨・⑩ が animal の骨格に付く
+    // Else のときは従来の上限のまま。倍率は depthBehindScreenMaxFactor を使う。
+    public bool allowDepthBehindScreenExceptAnimals = false;
     // animal の ⑧ の深度の基準を root ではなく骨格（投影に使うボーン）の重心にする。**既定 OFF（2026-10-03、試作）。**
     // ⑧ は「投影高 ∝ 1/深度」で z × ratio と一手で動かすので、root が体から離れていると狙いを越える
     // （39_Lynx は root が体の約 0.5 m 奥にあると見ると、上限あり・なしの両方の結果が説明できる）。Humanoid は従来どおり Hips。
     public bool animalDepthReferenceFromBody = false;
+    // animal の ⑧ の奥行きの下限（MinDistanceFromHeadMeters、頭から 0.25 m）を、基準点（root）ではなく投影に使う骨のうち一番近い骨に掛ける
+    // （2026-10-10、既存の欠陥の直し、A-MODELS F3'）。**既定 OFF。** ⑧ は「投影高 ∝ 1/深度」の一手で基準点を動かすだけで結果の骨の位置を確かめず、
+    // 寄りの場面では root が 0.25 m 以上でも鼻・舌・牙の骨が目の直前か目の後ろに来る（bundle_animal の s20・s23、Docs/tmp/final4_20261010 の A-MODELS）。
+    // 移動は基準点を通る光線に沿った平行移動なので、一番近い骨がちょうど 0.25 m 以上になる。下限がスクリーンの上限を超える tick は下限を優先し、
+    // [DEPTH8-FLOOR] に出す（どちらを優先するかは未決。上限を優先すると 0.25 m を割る）。⑧ が動かさない tick（ガード）は変わらない。
+    public bool animalDepthFloorAtNearestBone = false;
+    // ⑧ のガード（比が depthRefineMinRatio〜3.0 の外）に掛かった tick で、anchor の深さに戻さず前回の平滑後の比で置く（animal のみ、2026-10-10、
+    // PL-14・10/02 の案 G）。**既定 OFF。** 今は止まった tick だけ anchor の深さのままになり、寄りで投影が 3 倍を超えたモデルが目の直前・目の後ろに残る
+    // （s20 の 23_EuropeanBadger・31_GrayWolf は 145/145 tick）。前回の値が無い（shot の中で一度も通っていない）か、別の prefab で平滑した値（差し替えの直後。
+    // 平滑の値は差し替え・偽のカットでは消えない）のときは今までどおり。保持している間は比を更新せず、平滑の刻み（動画フレーム）だけ進める
+    // （抜けた最初の tick が保持した比から 1 フレーム分だけ動く）。2 回目の ⑦ が走る tick が増えるので、C（animalBottomFitUsesBoneDepth）と組で見る。
+    public bool depthRefineHoldOnGuard = false;
 
     // 検証用（既定 空 = OFF、2026-10-04）: 姿勢と配置が全部終わった時点の骨の world の位置・回転を、tick ごとに
     // このファイルへ JSON 1 行で書き出す（BoneWorldDump.partial.cs）。割り当て（SMPL / SMAL → モデルの骨）の再調査で、
@@ -616,6 +646,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool humanFollowManualRotationAllAxes = false;
     public bool animalBindWithoutManualRotation = true;
 
+    // 手で回した向き・変えた大きさを、本物のカットで区切った区間（場面）の中だけで効かせる（2026-10-12、ユーザー「ショットをまたいでもリセットする実装がしたい」。**既定 OFF**）。
+    // 今は手動のキーが動画全体に効く（キー 1 つなら全フレーム、2 つ以上ならカットをまたいで補間。TrackKeyframeCurve.Evaluate）。ON にすると各フレームでそのフレームを含む
+    // 区間のキーだけを使い（TrackKeyframeCurve.EvaluateWithin）、区間にキーが無ければ回さない。区切りは倍率のロックと同じ本物のカット
+    // （keepScaleAcrossContinuousShotBoundary && IsFalseCutBoundary(s-1, s) が偽の境界。AnimalScaleTrend の区間番号と同じ式）で、偽のカット
+    // （bundle_animal の 280・290・520・1117・1127・1130・1144）では戻さない。キーは消さないので、ループ・シークでその区間に戻れば編集も戻り、
+    // 保存（model_selection.json・セッションの上書き）は変わらない。研究者の基準ファイルのキーも同じ曲線を通るので一緒に閉じる（今の基準で値が変わるのは
+    // bundle_animal の犬 track 0 の f218 だけ: 区間 [151,258) の外で 1.378°）。shot が 1 つ以下の bundle（human・car・tutorial）は何も変わらない。
+    // ON のとき練習 4/4 の最後の行と trial_state（manual_reset_at_cut=1）も変わる。ShotBoundary.partial.cs の TryGetManualEditRange、ManualYaw.partial.cs の EvaluateManualKeys。
+    // 調査・設計・反論・裁定の全文は Docs/tmp/oct11_20261011/reset/。
+    public bool manualRotationResetAtCut = false;
+    // 同じことを手動の大きさ（倍率のキー）に（2026-10-12、**既定 OFF**）。回転とは別に採否を決める。
+    public bool manualScaleResetAtCut = false;
+
     // バッチ検証専用の手動 yaw 注入。"track:deg" をカンマ区切りで書く（例: "0:90,1:-45"）。
     // 実機の手動回転は VR の UI からしか操作できず、Editor では再現できない。
     // 回転経路（ApplyManualTrackYawOffset → prefab 補正の合成）を batchmode で
@@ -765,10 +808,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     [Min(0f)] public float elseChainDepthTieMeters = 0.02f;
     // 隣と見なす中心間距離の上限（接触距離の何倍か）。これより離れていれば向きも触らない。
     [Min(1f)] public float elseChainNeighborFactor = 2f;
-    // 連結で決めた向きに足す角度。モデルのどちらの端が先頭かは prefab 次第で、
-    // 06_DieselLocomotive はキャブ（先頭）が +Z 端（実機で確認、2026-09-11: 通過時に先頭が
-    // 進行方向の反対を向いていた）。0 なら −Z 端が先頭の扱いになる。
-    public float elseChainHeadingOffsetDeg = 180f;
+    // 連結で決めた向きに足す角度。0 なら prefab の root の −Z 端が先頭の扱いになる。
+    // 2026-10-11 から車 9 台と 06_DieselLocomotive は root に Y 180° を持ち、前（車の前輪・機関車の運転室）が −Z 端に来る（ElseModelImporter の
+    // WrapDieselLocomotiveFacing）。180 は、10/11 まで機関車だけキャブ（先頭）が +Z 端だったときの補正（2026-09-11: 通過時に先頭が進行方向の
+    // 反対を向いていた）。球（00〜05）は Y 180° を持たない。連結は既定 OFF。
+    public float elseChainHeadingOffsetDeg = 0f;
     // 連結の向きの 1 frame あたりの変化量の上限（度）。通過中に後続が奥へ押し出されると連結方向が
     // 視線側へ傾き、先頭車が視聴者の方を向いてしまう（f885〜935 で 108° → 161°）。その暴走を鈍らせる。
     [Min(0f)] public float elseChainMaxYawStepDeg = 1f;
@@ -933,6 +977,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool alignModelBodyToAnchorDepth = false;
     public bool logBodyAnchorAlign = false;
     public bool followOtherDepthToRefinedSkeleton = true;
+    // 人（骨格の track）がインタラクティブモーション中（stage が Inactive 以外）の tick は、⑨ がボール（Else）の深さを決めるのに使う人の深さを、
+    // 発火の直前の値のまま止める（2026-10-10、既存の欠陥の直し、H-BALL FP4）。**2026-10-11 にユーザーが採用し既定 ON。** ⑨ はモーションの判定を持たず、モーションが動かす
+    // 人の Hips に毎 tick ボールを付け直すので、動画が止まっている間にボールが前後へ滑る（10/10 の hb_R7d・R7s: 止まっている間に Hips の z が
+    // 最大 224 mm 動き、ボールも同じだけ動いた、相関 1.00）。覚えるのは同じ骨格の track のときだけ。ON のときは [DEPTH9] に実際の z（skelZActual=）も出す。
+    public bool otherDepthFollowHoldsDuringMotion = true;
 
     // RefineLockedScaleFromProjectedBones が狙う boneRatio。1.0 は「基準フレームで骨格の
     // 投影高さを bbox 高さにぴったり合わせる」。ただし boneRatio は姿勢で 1.0〜2.2 と動くため、
@@ -1066,6 +1115,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // ランダムのイベントを今の表示位置から始める（2026-10-05、既存の不具合の直し）。起点に使っていた livePosition は bbox の面積の門
     // （直前に通った面積の 50% 以上のときだけ更新、基準の面積は shot をまたいで戻らない）を通った位置で、倍率の違う shot では門が閉じたまま、
     // Labrador の track 0 は 1146 フレーム中 551 で最長 8 s 古い位置になり、開始の 1 tick で体が 18〜19 cm 跳んでいた。門つきの位置はフレームアウトの起点用に残す。
+    // 車の走行（StartRigidDriveMotion）はこれを見ない。elseRandomOriginFromDisplayed（2026-10-11 に採用、既定 ON）で別に切り替える。
     public bool interactiveRandomOriginFromDisplayed = true;
     // 動物の向き替えに時間の緩急を付ける（2026-10-05）。FaceViewer は 30〜61° を 0.4〜0.6 s、歩きの段の始めは 1 秒に 360° を目安に 0.2〜0.45 s、
     // ハンドオフは smoothstep。これまでは root の向きを 1 tick で切り替え、SMAL の根の平滑が回転だけを遅らせて骨の位置は root に即座についていくので、
@@ -1112,8 +1162,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     //   胴の鎖と局所位置は書かないので skin 姿勢そのものにはならない（肩の低さは変わらない。四肢は真の skin 姿勢より体の下へ約 7° 寄る）。
     // smalLegReferenceSkinPoseModels: prefab 名のカンマ区切り（先頭の「数字_」は無視）。既定は空 = どのモデルにも掛けない。例 "Lynx"。
     //   05_Horse・20_Donkey は skin 姿勢自体が左右非対称なので入れない（Resources/animal_leg_skin_pose.json にも焼いていない）。
-    public bool smalLegReferenceSkinPose = false;
-    public string smalLegReferenceSkinPoseModels = "";
+    // 2026-10-11: 鹿（15_Deer）の案 B としてユーザーが採用し、既定 ON・名簿 "Deer"（首・胴の表と組。名簿は完全一致なので Deer1・DeerV2・Deer1.0 には当たらない）。
+    // 2026-10-12: 全 52 体の点検（Docs/tmp/oct11_20261011/README.md の 6）で前後を撮った 6 体をユーザーが採用し、撮った形のまま名簿に足した。
+    //   脚は WildBoar（脚＋胴＋首）・Bear1.0・BearWITHFUR・Fox（脚＋首）。EuropeanBadger・MountainGoat は脚を当てると悪くなるので入れない。
+    // ほかのモデルは名簿に入れない限り変わらない。
+    public bool smalLegReferenceSkinPose = true;
+    public string smalLegReferenceSkinPoseModels = "Deer,WildBoar,Bear1.0,BearWITHFUR,Fox";
+    // 首・頭と胴の基準姿勢を skin 姿勢に（2026-10-11、担当 DEER。鹿の案 B としてユーザーが採用し、既定 ON・名簿 "Deer"。2026-10-12 に 6 体を足した）。詳細は AnimalPoseApplier の同名フィールド。
+    // 15_Deer の prefab の既定姿勢は草を食む途中の形（頭→鼻 −81.9°、鼻が肩より体長の 1.18 倍下）で、相対の転写がどの場面にもこの形を残し、頭が地面を向いていた。
+    // smalNeckReferenceSkinPose: 首の鎖（Neck01〜head）を skin の局所回転へ（Resources/animal_neck_skin_pose.json）。
+    // smalTrunkReferenceSkinPose: 胴（Spine〜Spine4）も（Resources/animal_trunk_skin_pose.json）。肩甲帯が回るので脚の smalLegReferenceSkinPose と組で使う。
+    // 名簿は prefab 名のカンマ区切り（先頭の「数字_」は無視）。キャッシュを作るときだけ読む。既定は 2026-10-11 に "Deer"、2026-10-12 に
+    // 前後を撮った 6 体をユーザーが採用して足した: 首 EuropeanBadger・WildBoar（鹿と同じく待機アニメの 0 フレーム目で保存されていた）・Bear1.0・BearWITHFUR・Fox・
+    // MountainGoat（保存された頭が横に 50.6° 向き、CaptureBindHeadYaw が首で隠していた）、胴 EuropeanBadger・WildBoar。表は 47 体ぶん（名簿のモデルの行だけ読む）。
+    public bool smalNeckReferenceSkinPose = true;
+    public string smalNeckReferenceSkinPoseModels = "Deer,EuropeanBadger,WildBoar,Bear1.0,BearWITHFUR,Fox,MountainGoat";
+    public bool smalTrunkReferenceSkinPose = true;
+    public string smalTrunkReferenceSkinPoseModels = "Deer,EuropeanBadger,WildBoar";
     // 非四足モード（2026-10-08、鳥 3 体とカンガルーを SMAL の FK で。新しい振る舞い。2026-10-09 にユーザーが絵を見て採用し、bool はすべて既定 ON = 撮影の B2）。詳細は AnimalPoseApplier の同名フィールド。
     // smalNonQuadrupedRig: 主スイッチ。名簿のモデルだけ、リグのキャッシュを作るとき（モデルを置いたとき）に、役を AnimalNonQuadrupedRig.Table の行で付け替え
     //   （鳥 spine=Pelvis・neck=Neck3・尾の役なし、カンガルー spine=Hips・neck=Neck02）、体の前を「頭 → 顔の骨（鼻・顎）」の水平の向きにし、前肢の無い鳥も
@@ -1150,6 +1215,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public float elseApproachStopDistanceMeters = 0.45f;
     public float elseDriveSpeedMetersPerSecond = 0.35f;
     [Min(0f)] public float elseTurnRadiusMeters = 0f;
+    // 車の走行イベントを今の表示位置から始める（2026-10-11、既存の不具合の直し。10/05 の interactiveRandomOriginFromDisplayed の直し漏れ）。**2026-10-11 にユーザーが採用し既定 ON。**
+    // StartRigidDriveMotion は出発点・向き・視聴者までの距離・止まる点・前方向に門つきの livePosition / liveRotation を使っていた。門の基準の面積は
+    // 戻らないので、car クリップの 2 周目以降、track 1〜4 が奥に小さく再登場した最初の tick（発火が集まる tick）では門が閉じたまま、前の周に画面の下から
+    // 出ていった位置（見えている位置から 0.67〜0.84 m、主に右下、バッチで実測）と向き（PC の手動キーで計算すると yaw 22〜27° 違う）から走り出し、最後に同じ距離を 0.45 s で滑って戻っていた（Docs/tmp/oct11_20261011 の 2-1）。
+    // ON の副作用（バッチで実測）: 走る距離が 0.19〜0.27 m → 0.48〜0.64 m に延び、1 回の停止が 1.5〜2.4 s 長くなる（論文側の R-3 も変わる）。シーンには serialize されていない（10/11 に確認）。
+    public bool elseRandomOriginFromDisplayed = true;
 
     // popoutRangeMeters（Inspector 調整可）へ移行済み。
     private const float EpsilonMeters = 0.02f;

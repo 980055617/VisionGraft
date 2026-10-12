@@ -234,6 +234,46 @@ public class ExperimentSessionCsvTests
         return new ExperimentSession("P01", ExperimentGroup.A, 1, writer, () => 1.5d, () => clock);
     }
 
+    // trial_state の末尾の印（2026-10-12）。OFF（9 引数の呼び出し）では 1 文字も変わらない。
+    [Test]
+    public void TrialState_AppendsManualResetFlagsOnlyWhenOn()
+    {
+        string[] details = new string[2];
+        for (int run = 0; run < 2; run++)
+        {
+            string runDir = Path.Combine(dir, "r" + run);
+            using (ExperimentLogWriter writer = new ExperimentLogWriter(runDir))
+            {
+                ExperimentSession session = NewSession(writer);
+                session.BeginTrial(0, "bundle_animal.svb");
+                if (run == 0)
+                {
+                    session.SetTrialStartState("abc", 123L, "sharedStorage", "VisionGraft.apk;2026-10-12T12:00:00;git:abc", true, false, 1.0f, false, 72f);
+                }
+                else
+                {
+                    session.SetTrialStartState("abc", 123L, "sharedStorage", "VisionGraft.apk;2026-10-12T12:00:00;git:abc", true, false, 1.0f, false, 72f, true, true);
+                }
+                session.EndTrial(false);
+            }
+
+            List<string[]> ops = ReadCsv(Path.Combine(runDir, ExperimentLogWriter.OperationsFileName));
+            int action = Column(ops[0], "action");
+            int detail = Column(ops[0], "detail");
+            for (int i = 1; i < ops.Count; i++)
+            {
+                if (ops[i][action] == "trial_state")
+                {
+                    details[run] = ops[i][detail];
+                }
+            }
+        }
+
+        Assert.That(details[0], Is.Not.Null);
+        Assert.That(details[0], Does.Not.Contain("reset_at_cut"));
+        Assert.That(details[1], Is.EqualTo(details[0] + " manual_reset_at_cut=1 scale_reset_at_cut=1"));
+    }
+
     private static List<string[]> ReadCsv(string path)
     {
         // RFC 4180 の引用符付きフィールドを切る（値のカンマを列に数えない）。

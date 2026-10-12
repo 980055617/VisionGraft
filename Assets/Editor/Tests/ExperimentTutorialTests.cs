@@ -508,6 +508,23 @@ public class ExperimentTutorialTests
         tutorial.RecordOperation("seek", "0.3");
         Assert.That(changed, Is.EqualTo(3));
     }
+
+    [Test]
+    public void ModelReplaced_GrabRotate_TellsTheOrientationResetsAtACutOnlyWhenEnabled()
+    {
+        foreach (bool reset in new[] { false, true })
+        {
+            ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
+            tutorial.ManualRotationResetsAtCut = reset;
+            tutorial.RecordInteraction(1, "random_Static", null);
+            tutorial.RecordInteraction(1, "motion_end", "reason=completed");
+            tutorial.RecordOperation("change_model", "track=1 prefab=x");
+            tutorial.RecordOperation("motion_toggle", "value=0");
+            Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.GrabRotate));
+            Assert.That(tutorial.Body, reset ? Does.Contain("場面が切り替わると元に戻ります") : Does.Contain("そのまま残ります"));
+            Assert.That(tutorial.Body, reset ? Does.Not.Contain("そのまま残ります") : Does.Not.Contain("場面が切り替わる"));
+        }
+    }
 }
 
 public class ExperimentTutorialHandoffTests

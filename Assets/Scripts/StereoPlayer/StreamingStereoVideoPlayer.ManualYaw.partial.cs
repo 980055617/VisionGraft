@@ -45,14 +45,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private float EvaluateManualPitchDegForFrame(uint trackId, int frame)
     {
         manualPitchKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> keys);
-        return TrackKeyframeCurve.Evaluate(keys, frame, 0f);
+        return EvaluateManualKeys(keys, frame, 0f, manualRotationResetAtCut);
     }
 
 
     private float EvaluateManualRollDegForFrame(uint trackId, int frame)
     {
         manualRollKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> keys);
-        return TrackKeyframeCurve.Evaluate(keys, frame, 0f);
+        return EvaluateManualKeys(keys, frame, 0f, manualRotationResetAtCut);
     }
 
 
@@ -90,7 +90,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private float EvaluateManualYawOffsetDegForFrame(uint trackId, int frame)
     {
         manualYawKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> keys);
-        return TrackKeyframeCurve.Evaluate(keys, frame, 0f);
+        return EvaluateManualKeys(keys, frame, 0f, manualRotationResetAtCut);
+    }
+
+
+    // 2026-10-12: 手動のキーの評価の入口（回転 3 軸と大きさ）。scopedToCut が false なら今と同じ Evaluate（同じ関数・同じ引数）。
+    // true でも shot が 1 つ以下・区間の表が無いときは今と同じ（TryGetManualEditRange が false）。
+    private float EvaluateManualKeys(SortedDictionary<int, float> keys, int frame, float fallback, bool scopedToCut)
+    {
+        if (scopedToCut && keys != null && keys.Count > 0 && TryGetManualEditRange(frame, out int rangeStart, out int rangeEnd))
+        {
+            return TrackKeyframeCurve.EvaluateWithin(keys, frame, rangeStart, rangeEnd, fallback);
+        }
+
+        return TrackKeyframeCurve.Evaluate(keys, frame, fallback);
     }
 
 

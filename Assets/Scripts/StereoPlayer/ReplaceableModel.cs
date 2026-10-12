@@ -32,6 +32,13 @@ public class ReplaceableModel : MonoBehaviour
     // 縮み、頭が本来より下がる（2026-08-07 実測。頭上のボールが浮く原因になっていた）。
     // 関節位置を映像に合わせるにはこちらを使う。Humanoid でない場合は 0。
     public float baseSkeletonHeightMeters;
+    // 既定姿勢での全 Humanoid 骨の縦（transform.up）の広がり ÷ baseSkeletonHeightMeters（2026-10-10、humanScaleRefineCarryAcrossModels）。
+    // shot 先頭の倍率の測り直しは「骨の投影の広がり ÷ bbox」を 1 に合わせるので、② で骨格の高さを揃えた 2 体の倍率の比はこの比の逆比になる
+    // （姿勢の違いは無視する近似。骨格が同じモデルどうしは同じ値で、比は 1）。Humanoid でない・測れないときは 0。
+    public float baseBoneExtentToHeightRatio;
+    // 倍率の持ち越しで比べる値。② は baseLocalScale を掛け、高さの基準（baseSkeletonHeightMeters）は lossyY で割ってあるので、
+    // 測り直しの倍率は 1 / (baseLocalScale.y × baseBoneExtentToHeightRatio) に比例する（root の localScale が 1 でない prefab の分も入れる）。
+    public float ScaleRefineCarryRatio => baseBoneExtentToHeightRatio * baseLocalScale.y;
     // AABB の (幅, 高さ)。配置スケールに使うのは高さ（.y）だけで、幅（.x）は使わない。
     // 幅は bind pose 固定の X 幅であり、prefab によって X 軸が体長だったり体幅だったりする
     // うえ、映像の bbox 幅は被写体の yaw で体長〜体幅の間を動くので、両者を比べても
@@ -86,6 +93,7 @@ public class ReplaceableModel : MonoBehaviour
     private void CaptureSkeletonHeight()
     {
         baseSkeletonHeightMeters = 0f;
+        baseBoneExtentToHeightRatio = 0f;
         Animator animator = GetComponentInChildren<Animator>(true);
         if (animator == null || !animator.isHuman)
         {
@@ -114,7 +122,47 @@ public class ReplaceableModel : MonoBehaviour
         if (span > 0.0001f)
         {
             baseSkeletonHeightMeters = span / SkeletonSpanToHeightRatio;
+            CaptureBoneExtentRatio(animator, lossyY);
         }
+    }
+
+    // baseBoneExtentToHeightRatio を求める。投影の広がりの測り直し（ResolveProjectionBones）と同じく、Avatar に登録された全 HumanBodyBones を使う。
+    private void CaptureBoneExtentRatio(Animator animator, float lossyY)
+    {
+        baseBoneExtentToHeightRatio = 0f;
+        Vector3 up = transform.up;
+        float minY = float.MaxValue;
+        float maxY = float.MinValue;
+        foreach (HumanBodyBones boneId in System.Enum.GetValues(typeof(HumanBodyBones)))
+        {
+            if (boneId == HumanBodyBones.LastBone)
+            {
+                continue;
+            }
+
+            Transform bone = animator.GetBoneTransform(boneId);
+            if (bone == null)
+            {
+                continue;
+            }
+
+            float y = Vector3.Dot(bone.position, up);
+            minY = Mathf.Min(minY, y);
+            maxY = Mathf.Max(maxY, y);
+        }
+
+        if (maxY <= minY || baseSkeletonHeightMeters <= 0f)
+        {
+            return;
+        }
+
+        float extent = maxY - minY;
+        if (lossyY > 0f)
+        {
+            extent /= lossyY;
+        }
+
+        baseBoneExtentToHeightRatio = extent / baseSkeletonHeightMeters;
     }
 
     // 配置スケールの基準となる高さ。Humanoid では骨格由来を優先する。

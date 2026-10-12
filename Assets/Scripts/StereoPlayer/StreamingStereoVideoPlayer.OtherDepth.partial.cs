@@ -103,7 +103,7 @@ public partial class StreamingStereoVideoPlayer
             targetZ = Mathf.Clamp(
                 targetZ,
                 Mathf.Max(0.001f, MinDistanceFromHeadMeters),
-                ResolveDepthUpperLimitMeters(screenDist));
+                ResolveDepthUpperLimitMeters(screenDist, IsCategoryAnimal(skeleton.categoryId)));
 
             if (Mathf.Abs(targetZ - otherCam.z) <= 0.0001f)
             {
@@ -298,6 +298,22 @@ public partial class StreamingStereoVideoPlayer
                 continue;
             }
 
+            // otherDepthFollowHoldsDuringMotion（2026-10-10、10/11 に採用して既定 ON）: 人がモーション中なら、発火の直前に覚えた人の深さを使う。
+            float skeletonZActual = skeletonCam.z;
+            if (otherDepthFollowHoldsDuringMotion)
+            {
+                bool skeletonInMotion = interactiveMotionByTrack.TryGetValue(skeleton.trackId, out InteractiveMotionState skeletonMotion) &&
+                                        skeletonMotion != null && skeletonMotion.stage != InteractiveEventStage.Inactive;
+                if (!skeletonInMotion)
+                {
+                    heldSkeletonDepthByOther[other.trackId] = (skeleton.trackId, skeletonCam.z);
+                }
+                else if (heldSkeletonDepthByOther.TryGetValue(other.trackId, out var heldSkeleton) && heldSkeleton.skeletonTrack == skeleton.trackId)
+                {
+                    skeletonCam.z = heldSkeleton.z;
+                }
+            }
+
             float screenDist = Mathf.Max(0.001f, screenDistanceMeters);
             float targetZ;
             if (useMetricRatioForOtherDepth && TryResolveMetricDepthRatio(skeleton, other, out float ratio))
@@ -322,7 +338,7 @@ public partial class StreamingStereoVideoPlayer
             targetZ = Mathf.Clamp(
                 targetZ,
                 Mathf.Max(0.001f, MinDistanceFromHeadMeters),
-                ResolveDepthUpperLimitMeters(screenDist));
+                ResolveDepthUpperLimitMeters(screenDist, IsCategoryAnimal(skeleton.categoryId)));
 
             // ⑨ の適用結果は [PLACE] には出ない（[PLACE] は各 track の ApplyMetaTarget 内で
             // 出力されるが、⑨ は全 track の処理が終わったあとに走るため）。
@@ -340,7 +356,8 @@ public partial class StreamingStereoVideoPlayer
                     $"intended={(skeleton.anchorZ - other.anchorZ) * 1000f:F1}mm " +
                     $"bboxH={skeleton.bboxH:F0} otherBboxW={other.bboxW:F0} otherBboxH={other.bboxH:F0} " +
                     $"factor={targetZ / otherCam.z:F4} scaleIn={otherInstance.transform.localScale.x:F5} " +
-                    $"matchScale={matchOtherScaleToFollowedDepth}");
+                    $"matchScale={matchOtherScaleToFollowedDepth}" +
+                    (otherDepthFollowHoldsDuringMotion ? $" skelZActual={skeletonZActual:F4}" : ""));
             }
 
             if (Mathf.Abs(targetZ - otherCam.z) <= 0.0001f)

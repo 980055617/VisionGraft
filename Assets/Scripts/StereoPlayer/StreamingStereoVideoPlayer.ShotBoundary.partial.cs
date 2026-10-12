@@ -14,10 +14,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 本物のカットで区切られた shot はこの bundle では最短 22 frame。
     private const int KeepScaleShortShotMaxFrames = 15;
 
+    // 2026-10-12（manualRotationResetAtCut / manualScaleResetAtCut）: shot ごとに、その shot を含む区間（本物のカットで区切る）の [開始, 終わり)。
+    // 先頭の区間は int.MinValue から、最後の区間は int.MaxValue まで（ResolveShotIndex の丸めと同じ）。どちらかの切り替えが ON のとき LoadMeta で作る。
+    private int[] manualEditRangeStartByShot;
+    private int[] manualEditRangeEndByShot;
+    private bool manualEditRangesKeepScaleFlag;
+    private bool manualEditRangesBuildingOnLoad;
+    private bool loggedManualEditRangesUnavailable;
+
     private void ApplyLoadedShotBoundaries(ShotBoundaries loadedShotBoundaries)
     {
         shotBoundaries = loadedShotBoundaries ?? ShotBoundaries.Empty;
         lastAppliedShotIndex = -1;
+        InvalidateManualEditRanges();
         Debug.Log($"[Shot] shots={shotBoundaries.Count}");
     }
 
@@ -47,6 +56,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         bool keepScale = keepScaleAcrossContinuousShotBoundary && IsFalseCutBoundaryChain(previousShotIndex, shotIndex);
         Debug.Log($"[Shot] boundary crossed. frame={frame} shotIndex={shotIndex} startFrame={shotBoundaries.GetStartFrame(shotIndex)} keepScale={keepScale}");
+        LogManualEditRangeChange(previousShotIndex, shotIndex, frame);
         // 記録だけ（2026-10-09、logPlacementMeasurement）: 前の shot で倍率の測り直しが一度も通らなかった track を出す。ResetPerShotTrackState が
         // scaleRefinedByTrack を消す前に呼ぶ。
         LogScaleRefineNeverPassedAndClear(previousShotIndex);
@@ -139,11 +149,216 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return anyShared;
     }
 
+    // ---- 2026-10-12: 手動の編集を本物のカットで区切った区間に閉じる（manualRotationResetAtCut / manualScaleResetAtCut、既定 OFF） ----
+
+    private void InvalidateManualEditRanges()
+    {
+        manualEditRangeStartByShot = null;
+        manualEditRangeEndByShot = null;
+    }
+
+    // LoadMeta の終わり（PrecomputeAnimalScaleTrendTableOnLoad の後）で呼ぶ。どちらかの切り替えが ON で shot が 2 つ以上のときだけ表を作る。
+    // 再生中の最初の評価（掴んだ瞬間など）で作ると、境界のフレームを読む分だけ止まるので読み込み中へ移す。
+    // 判定（IsShotBoundaryBBoxContinuous）が読んだフレームの SMPL/SMAL の項目は、読む前に無かったものを消し（AnimalScaleTrend の hadHuman/hadAnimal と同じ考え）、
+    // メモ（rawFrameObjectsMemo）も空にする。メモだけ残すと、そのフレームを再生で読んだときに SMPL/SMAL を読み直さずに返すため。
+    private void PrecomputeManualEditRangesOnLoad()
+    {
+        if ((!manualRotationResetAtCut && !manualScaleResetAtCut) || shotBoundaries.Count <= 1)
+        {
+            return;
+        }
+
+        var humanBefore = new HashSet<int>(humanSmplPosesMetaBin.Keys);
+        var animalBefore = new HashSet<int>(animalSmalPosesMetaBin.Keys);
+        manualEditRangesBuildingOnLoad = true;
+        try
+        {
+            EnsureManualEditRanges();
+        }
+        catch (System.Exception ex)
+        {
+            InvalidateManualEditRanges();
+            Debug.LogWarning($"[MANUALRESET] precompute on load failed, built on first use instead: {ex.Message}");
+        }
+        finally
+        {
+            manualEditRangesBuildingOnLoad = false;
+            RemoveFramesNotIn(humanSmplPosesMetaBin, humanBefore);
+            RemoveFramesNotIn(animalSmalPosesMetaBin, animalBefore);
+            rawFrameObjectsMemo.Clear();
+            rawFrameObjectsMemoOrder.Clear();
+        }
+    }
+
+    private static void RemoveFramesNotIn<T>(Dictionary<int, T> target, HashSet<int> keep)
+    {
+        List<int> added = null;
+        foreach (int frame in target.Keys)
+        {
+            if (!keep.Contains(frame))
+            {
+                if (added == null)
+                {
+                    added = new List<int>();
+                }
+                added.Add(frame);
+            }
+        }
+
+        if (added == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < added.Count; i++)
+        {
+            target.Remove(added[i]);
+        }
+    }
+
+    // 表が無ければ作る（読み込み時に作れなかったとき・読み込みの後で切り替えを ON にしたときの経路。読んだ項目の掃除はしない＝再生中の IsFalseCutBoundary と同じ）。
+    private bool EnsureManualEditRanges()
+    {
+        if (manualEditRangeStartByShot != null && manualEditRangeStartByShot.Length == shotBoundaries.Count &&
+            manualEditRangesKeepScaleFlag == keepScaleAcrossContinuousShotBoundary)
+        {
+            return true;
+        }
+
+        if (!metaLoaded || metaHeader.numFrames == 0)
+        {
+            if (!loggedManualEditRangesUnavailable)
+            {
+                loggedManualEditRangesUnavailable = true;
+                Debug.LogWarning("[MANUALRESET] meta を読む前なので区間の表を作れない。手動のキーは区間で閉じずに評価する（今と同じ）");
+            }
+            return false;
+        }
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        int count = shotBoundaries.Count;
+        var segmentByShot = new int[count];
+        for (int s = 1; s < count; s++)
+        {
+            bool keeps = keepScaleAcrossContinuousShotBoundary && IsFalseCutBoundary(s - 1, s);   // AnimalScaleTrend の区間番号と同じ式
+            segmentByShot[s] = segmentByShot[s - 1] + (keeps ? 0 : 1);
+        }
+
+        var starts = new int[count];
+        var ends = new int[count];
+        var cuts = new System.Text.StringBuilder();
+        for (int s = 0; s < count; s++)
+        {
+            int first = s;
+            while (first > 0 && segmentByShot[first - 1] == segmentByShot[s])
+            {
+                first--;
+            }
+            int last = s;
+            while (last + 1 < count && segmentByShot[last + 1] == segmentByShot[s])
+            {
+                last++;
+            }
+            starts[s] = first == 0 ? int.MinValue : shotBoundaries.GetStartFrame(first);
+            ends[s] = last + 1 < count ? shotBoundaries.GetStartFrame(last + 1) : int.MaxValue;
+            if (s > 0 && segmentByShot[s] != segmentByShot[s - 1])
+            {
+                cuts.Append(cuts.Length > 0 ? "," : "").Append(shotBoundaries.GetStartFrame(s));
+            }
+        }
+
+        manualEditRangeStartByShot = starts;
+        manualEditRangeEndByShot = ends;
+        manualEditRangesKeepScaleFlag = keepScaleAcrossContinuousShotBoundary;
+        Debug.Log($"[MANUALRESET] table segments={segmentByShot[count - 1] + 1} shots={count} cuts={cuts} " +
+                  $"keepScaleAcrossContinuousShotBoundary={keepScaleAcrossContinuousShotBoundary} rotation={manualRotationResetAtCut} scale={manualScaleResetAtCut} " +
+                  $"phase={(manualEditRangesBuildingOnLoad ? "load" : "play")} ms={stopwatch.Elapsed.TotalMilliseconds:F1}");
+        return true;
+    }
+
+    // frame を含む区間 [rangeStart, rangeEnd)。shot が 1 つ以下・表を作れないときは false（呼び出し元は今と同じ Evaluate）。
+    private bool TryGetManualEditRange(int frame, out int rangeStart, out int rangeEnd)
+    {
+        rangeStart = int.MinValue;
+        rangeEnd = int.MaxValue;
+        if (shotBoundaries.Count <= 1 || !EnsureManualEditRanges())
+        {
+            return false;
+        }
+
+        int shot = shotBoundaries.ResolveShotIndex(frame);
+        rangeStart = manualEditRangeStartByShot[shot];
+        rangeEnd = manualEditRangeEndByShot[shot];
+        return true;
+    }
+
+    private bool HasAnyManualKeys()
+    {
+        return manualYawKeyframesByTrack.Count > 0 || manualPitchKeyframesByTrack.Count > 0 ||
+               manualRollKeyframesByTrack.Count > 0 || manualScaleKeyframesByTrack.Count > 0;
+    }
+
+    private static bool HasManualKeys(Dictionary<uint, SortedDictionary<int, float>> target, uint trackId)
+    {
+        return target.TryGetValue(trackId, out SortedDictionary<int, float> keys) && keys != null && keys.Count > 0;
+    }
+
+    // ON・キーありのときだけ。区間が変わった境界（本物のカット。偽のカットでは出ない）で、このフレームに写っていてキーを持つ track ごとに、
+    // 閉じた値（表示する値）と閉じない値（OFF なら表示した値）を 1 行に出す。記録だけで振る舞いは変えない。
+    private void LogManualEditRangeChange(int previousShotIndex, int shotIndex, int frame)
+    {
+        if ((!manualRotationResetAtCut && !manualScaleResetAtCut) || !HasAnyManualKeys() ||
+            !TryGetManualEditRange(frame, out int toStart, out int toEnd) ||
+            previousShotIndex < 0 || previousShotIndex >= manualEditRangeStartByShot.Length)
+        {
+            return;
+        }
+
+        int fromStart = manualEditRangeStartByShot[previousShotIndex];
+        int fromEnd = manualEditRangeEndByShot[previousShotIndex];
+        if (fromStart == toStart)
+        {
+            return;
+        }
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"[MANUALRESET] cut frame={frame} shot {previousShotIndex}->{shotIndex} range={FormatManualEditRange(fromStart, fromEnd)}->{FormatManualEditRange(toStart, toEnd)}");
+        for (int i = 0; i < metaFrameObjects.Count; i++)
+        {
+            uint trackId = metaFrameObjects[i].trackId;
+            bool hasRotation = HasManualKeys(manualYawKeyframesByTrack, trackId) || HasManualKeys(manualPitchKeyframesByTrack, trackId) ||
+                               HasManualKeys(manualRollKeyframesByTrack, trackId);
+            if (manualRotationResetAtCut && hasRotation)
+            {
+                manualYawKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> yawKeys);
+                manualPitchKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> pitchKeys);
+                manualRollKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> rollKeys);
+                sb.Append($" | t{trackId} yaw={EvaluateManualYawOffsetDegForFrame(trackId, frame):F2}(off {TrackKeyframeCurve.Evaluate(yawKeys, frame, 0f):F2})" +
+                          $" pitch={EvaluateManualPitchDegForFrame(trackId, frame):F2}(off {TrackKeyframeCurve.Evaluate(pitchKeys, frame, 0f):F2})" +
+                          $" roll={EvaluateManualRollDegForFrame(trackId, frame):F2}(off {TrackKeyframeCurve.Evaluate(rollKeys, frame, 0f):F2})");
+            }
+            if (manualScaleResetAtCut && HasManualKeys(manualScaleKeyframesByTrack, trackId))
+            {
+                manualScaleKeyframesByTrack.TryGetValue(trackId, out SortedDictionary<int, float> scaleKeys);
+                float offScale = Mathf.Clamp(TrackKeyframeCurve.Evaluate(scaleKeys, frame, ManualScaleDefault), ManualScaleMin, ManualScaleMax);
+                sb.Append($" | t{trackId} scale={EvaluateManualScaleForFrame(trackId, frame):F3}(off {offScale:F3})");
+            }
+        }
+
+        Debug.Log(sb.ToString());
+    }
+
+    private string FormatManualEditRange(int start, int end)
+    {
+        return $"[{(start == int.MinValue ? 0 : start)},{(end == int.MaxValue ? (int)metaHeader.numFrames : end)})";
+    }
+
     // bundle の shot_boundary_policy.unity_guidance:
     //   "Do not interpolate or spring position/scale across a shot boundary for the same
     //    trackId; snap to the new shot's first-frame anchor instead."
-    // モデルのボーン解決結果 (HumanoidRigCache / AnimalRigCache)、ユーザーが選んだモデル、
-    // 手動 yaw キーフレームは shot とは無関係なので触らない。
+    // モデルのボーン解決結果 (HumanoidRigCache / AnimalRigCache)、ユーザーが選んだモデルは shot とは無関係なので触らない。
+    // 手動のキーフレーム（yaw・pitch・roll・大きさ）も消さない。manualRotationResetAtCut / manualScaleResetAtCut が ON なら、評価するときに
+    // 本物のカットで区切った区間に閉じる（TryGetManualEditRange、2026-10-12）。
     private void ResetPerShotTrackState(bool keepScale = false)
     {
         if (!keepScale)
@@ -157,18 +372,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // カットが変われば被写体の典型的な姿勢も変わるので、測り直すのが正しい。
             scaleRefineFactorByTrack.Clear();
             scaleRefineFactorPrefabByTrack.Clear();
+            scaleRefineFactorBoneRatioByTrack.Clear();
+            scaleRefineFactorReferenceFrameByTrack.Clear();
+            scaleRefineFactorRatioSilhouetteByTrack.Clear();
             // animalPlaceClippedFromFullBody: 測り直しが倍率に入れた体全体の gain も同じ寿命（モデル差し替えでは持ち越し、shot 境界で捨てる）。
             animalFullBodyGainByTrack.Clear();
             // ⑧ の深度補正比率も前 shot の値を引きずらせない。
             smoothedProjectedDepthRatioByTrack.Clear();
+            smoothedDepthRatioPrefabByTrack.Clear();
         }
         // ⑨ の深度差の平滑化も shot をまたがせない。
         otherDepthGapByTrack.Clear();
+        heldSkeletonDepthByOther.Clear();
 
         // 位置・向きの平滑化。前 shot の値から補間すると新しいカットの先頭で滑り込む。
         smoothedJointsByTrack.Clear();
         personRootYawForwardByRoot.Clear();
-        animalPoseApplier.ResetMotionState();
+        // smalSmoothingAcrossFalseCut（2026-10-10、10/11 に採用して既定 ON）: 偽のカット（keepScale）では SMAL の回転の平滑を始め直さない。
+        animalPoseApplier.ResetMotionState(keepScale && smalSmoothingAcrossFalseCut);
         ResetHumanSmplSmoothingForShotBoundary();
 
         // 前 shot の bbox を基準にした下端合わせのホールド。

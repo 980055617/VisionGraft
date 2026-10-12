@@ -15,10 +15,14 @@ public sealed partial class AnimalPoseApplier
 
     // shot 境界で持ち越してはいけないのは平滑化状態だけ。animalRigCaches はモデルの
     // ボーン解決結果でカットとは無関係なので保持する（作り直すと bind pose の再取得が走る）。
-    public void ResetMotionState()
+    // keepSmalSmoothing（2026-10-10、smalSmoothingAcrossFalseCut）: 偽のカットでは SMAL の回転の平滑を残す。root の位置の平滑（motionFilter）は今までどおり消す。
+    public void ResetMotionState(bool keepSmalSmoothing = false)
     {
         motionFilter.Reset();
-        ResetSmalSmoothing();
+        if (!keepSmalSmoothing)
+        {
+            ResetSmalSmoothing();
+        }
     }
 
     // Snapshot every resolved canonical bone's local rotation, so a caller can blend the body
@@ -2040,10 +2044,17 @@ public sealed partial class AnimalPoseApplier
         // 既定 ON（2026-10-08、非四足モード smalNonQuadrupedRig。2026-10-09 に採用）: 名簿のモデルだけ、役を AnimalNonQuadrupedRig.Table の行で付け替え、cache.smalNonQuadruped・
         // smalNoFrontLimbs を決める。役を決めた直後なので、この後に控える bind（modelForwardLocal・bindRotWorld/Local・bindDirLocal・胴の鎖など）は新しい役で採る。
         ApplyNonQuadrupedRoles(cache, bones);
-        // 既定 OFF（2026-10-08、J-03 smalLegReferenceSkinPose）: 名簿のモデルだけ、脚の鎖の局所回転を skin 姿勢へ一度だけ書く。役の骨を決めた直後で、
+        // 2026-10-08、J-03 smalLegReferenceSkinPose（プレイヤー側は 10/11 から既定 ON・名簿 Deer）: 名簿のモデルだけ、脚の鎖の局所回転を skin 姿勢へ一度だけ書く。役の骨を決めた直後で、
         // ResolveAnimalModelBasis・CaptureGestureBindLocals・PrimeAnimalBinds・EnsureGestureAnatomy より前なので、この後に控える bind
         // （modelForwardLocal・bindRotWorld/Local・bindDirLocal・gestureBindLocal・肩甲骨の bind）はすべて skin の脚になる。OFF なら何もしない。
         ApplyLegReferenceSkinPose(cache, bones);
+        // 既定 ON・名簿 Deer（2026-10-11 に採用、担当 DEER、smalTrunkReferenceSkinPose・smalNeckReferenceSkinPose）: 名簿のモデルだけ、胴（Spine〜Spine4）と首の鎖（Neck01〜head）の
+        // 局所回転を skin 姿勢へ一度だけ書く。脚と同じく、この後に控える bind（modelForwardLocal・体の右・gestureBindLocal・CaptureBindHeadYaw・bindRotWorld/Local・
+        // bindDirLocal・首の鎖の bind の局所）はすべて書いた後の姿勢になる。局所回転を書くので、脚・胴・首の順番は結果に効かない。OFF・名簿が空なら何もしない。
+        ApplyAxialReferenceSkinPose(cache, bones, smalTrunkReferenceSkinPose, smalTrunkReferenceSkinPoseModels, trunkSkinPoseModelList,
+            TrunkSkinPoseResource, "TRUNKSKIN", ref trunkSkinPoseTable, null);
+        ApplyAxialReferenceSkinPose(cache, bones, smalNeckReferenceSkinPose, smalNeckReferenceSkinPoseModels, neckSkinPoseModelList,
+            NeckSkinPoseResource, "NECKSKIN", ref neckSkinPoseTable, new[] { cache.neck, cache.head });
         // 既定 ON（2026-10-08、smalNonQuadrupedReferencePose。2026-10-09 に採用）: 非四足モードのモデルだけ、基準姿勢（Resources/animal_reference_pose.json）を回転で一度だけ書く（bind を控える前）。
         ApplyNonQuadrupedReferencePose(cache, bones);
         ResolveAnimalModelBasis(root, cache, settings);
@@ -2372,6 +2383,146 @@ public sealed partial class AnimalPoseApplier
 
         q = new Quaternion(c[0] / n, c[1] / n, c[2] / n, c[3] / n);
         return true;
+    }
+
+    // ---- 首・頭と胴の基準姿勢を skin 姿勢に（2026-10-11、担当 DEER。プレイヤーの同名フィールド（10/11 から既定 ON・名簿 Deer）が毎フレーム代入する） ----
+    // 既存の欠陥: 15_Deer の prefab の既定姿勢（runtime が bind として採る姿勢）は草を食む途中の形で、首の鎖が肩甲帯から下へ（Neck01→head の弦 −48.4°）、
+    //   頭→鼻 −81.9°、鼻が肩より体長（腰→肩）の 1.18 倍下にある。元の FBX の既定姿勢とメッシュの skin 姿勢（bindposes = メッシュが歪まない姿勢）は首を上げた
+    //   立ち姿（skin: 弦 +36°、頭→鼻 −11.0°）で、草を食む形は prefab にだけある（027e823 で追加、以後変更なし）。姿勢の写し方は B（bodyFrameNeckHead）を含め
+    //   bind からの相対なので、この形がどの場面にも残り、頭が地面を向く（keypoints の頭→鼻との 3D の角 p50 63〜68°、犬・猫の track の全 8 区間。
+    //   B を切っても 41〜101°）。鼻・舌が一番下の骨になり、⑦ の下端合わせで蹄が浮く（走る f290-337 p50 11 px）。調べ方は scratchpad w1011/DEER。
+    //   脚の J-03（smalLegReferenceSkinPose）と同じ理由・同じ書き方（各モデル自身のメッシュが歪まない姿勢。共通の基準へ揃えるのではない）。
+    // smalNeckReferenceSkinPose: 首の鎖（ApplySmalNeckChain の中間の骨 Neck01・Neck02 と neck・head の役）を skin の局所回転へ（Resources/animal_neck_skin_pose.json）。
+    //   15_Deer の予測（d11、今の FK の移植で bind だけ替えたもの、8 区間の中央値の範囲）: 3D の角 63〜68° → 26〜31°、首の弦 −22〜−80° → −21〜+50°、
+    //   頭の高さ（肩から、体長の倍）−0.58〜−0.92 → −0.57〜+0.06。
+    //   残りの約 29° は胴（Spine1〜3 も草を食む形）。
+    // smalTrunkReferenceSkinPose: 胴（Spine〜Spine4 = 肩甲帯）を skin の局所回転へ（Resources/animal_trunk_skin_pose.json）。首と組で 15_Deer の bind の頭→鼻が −9.7°
+    //   （n_smal との差 約 5°）。肩甲帯 Spine4 が 34.4° 回り、前脚の bind も一緒に回るので、脚の smalLegReferenceSkinPose（表の Deer）と組で使う。
+    // 副作用（15_Deer）: 頭が上がるので shot の先頭の倍率の測り直しの最上・最下の骨が替わる（一次近似、shot の先頭が手元のダンプにある shot だけ:
+    //   f290 ×1.045、f1104〜1144 ×1.04〜1.16。ほかの shot は未予測）。枝角は骨でなく head の子の剛体メッシュなので倍率・⑦・⑧ に入らず、頭を上げると
+    //   最上の骨より骨の広がりの 0.3〜1.2 倍上へ出る（bbox の上へはみ出す）。イベントの既定の姿勢・頭を視聴者へ向ける・ジェスチャの土台も立ち姿になる。
+    //   名簿の外（実験の Labrador・Lynx を含む）は何も変わらない。
+    // 書かない条件は脚と同じ（名簿に無い / 表に無い / 骨が見つからない・親の名前が違う / 今の局所回転が表の def と 0.5° より違う / 役の骨が鎖に無い）。
+    //   効くのはキャッシュを作るときだけ（途中で切り替えても、モデルを作り直すまで変わらない。バッチの -setFields は再生前に入るので効く）。
+    public bool smalNeckReferenceSkinPose;
+    public string smalNeckReferenceSkinPoseModels = "";
+    public bool smalTrunkReferenceSkinPose;
+    public string smalTrunkReferenceSkinPoseModels = "";
+
+    private const string NeckSkinPoseResource = "animal_neck_skin_pose";
+    private const string TrunkSkinPoseResource = "animal_trunk_skin_pose";
+    private static Dictionary<string, List<LegSkinPoseBone>> neckSkinPoseTable;
+    private static Dictionary<string, List<LegSkinPoseBone>> trunkSkinPoseTable;
+    private readonly SmalTailModelList neckSkinPoseModelList = new SmalTailModelList();
+    private readonly SmalTailModelList trunkSkinPoseModelList = new SmalTailModelList();
+
+    // 表から骨の列を引き、全部そろって def と 0.5° 以内なら、親から順に「この時点の親の world × skin の局所」を書く（ApplyLegReferenceSkinPose と同じ）。
+    // requiredRoles: 鎖に入っていなければ何も書かない役の骨（首は neck・head。null は確かめない）。
+    private void ApplyAxialReferenceSkinPose(AnimalRigCache cache, Transform[] bones, bool enabled, string models, SmalTailModelList modelList,
+        string resource, string tag, ref Dictionary<string, List<LegSkinPoseBone>> table, Transform[] requiredRoles)
+    {
+        if (!enabled || string.IsNullOrEmpty(models) || cache == null || bones == null)
+        {
+            return;
+        }
+
+        string modelKey = AnimalLegMappingFix.Key(KeyFor(cache));
+        if (!modelList.Contains(models, modelKey))
+        {
+            Debug.Log($"[{tag}] model={modelKey} は名簿 '{models}' に無い → 既定姿勢のまま");
+            return;
+        }
+
+        if (!TryGetSkinPoseTable(resource, tag, ref table, modelKey, out List<LegSkinPoseBone> entries))
+        {
+            Debug.Log($"[{tag}] model={modelKey} は Resources/{resource}.json に無い → 既定姿勢のまま");
+            return;
+        }
+
+        var targets = new Transform[entries.Count];
+        var inChain = new HashSet<Transform>();
+        float maxDefDiff = 0f;
+        for (int i = 0; i < entries.Count; i++)
+        {
+            LegSkinPoseBone e = entries[i];
+            Transform t = FindLegSkinPoseBone(bones, e.name, e.parent);
+            if (t == null)
+            {
+                Debug.Log($"[{tag}] model={modelKey} 骨 {e.name}（親 {e.parent}）が見つからない → 既定姿勢のまま");
+                return;
+            }
+
+            float defDiff = Quaternion.Angle(t.localRotation, e.defLocal);
+            if (defDiff > LegSkinPoseDefToleranceDegrees)
+            {
+                Debug.Log($"[{tag}] model={modelKey} 骨 {e.name} の今の局所回転が表の既定姿勢と {defDiff:F2}° 違う（モデルが棚卸しの後に変わった?）→ 既定姿勢のまま");
+                return;
+            }
+
+            maxDefDiff = Mathf.Max(maxDefDiff, defDiff);
+            targets[i] = t;
+            inChain.Add(t);
+        }
+
+        if (requiredRoles != null)
+        {
+            foreach (Transform role in requiredRoles)
+            {
+                if (role == null || !inChain.Contains(role))
+                {
+                    Debug.Log($"[{tag}] model={modelKey} 役の骨 {(role != null ? role.name : "null")} が表の鎖に無い → 既定姿勢のまま");
+                    return;
+                }
+            }
+        }
+
+        float maxChange = 0f;
+        float maxResidual = 0f;
+        for (int i = 0; i < targets.Length; i++)
+        {
+            Transform t = targets[i];
+            Quaternion parentWorld = t.parent != null ? t.parent.rotation : Quaternion.identity;
+            maxChange = Mathf.Max(maxChange, Quaternion.Angle(t.localRotation, entries[i].skinLocal));
+            TransformWriter.ApplyWorldRotation(t, parentWorld * entries[i].skinLocal);
+            maxResidual = Mathf.Max(maxResidual, Quaternion.Angle(t.localRotation, entries[i].skinLocal));
+        }
+
+        Debug.Log($"[{tag}] applied model={modelKey} bones={targets.Length} maxChange={maxChange:F1}° residual={maxResidual:F3}° defCheck={maxDefDiff:F4}°");
+    }
+
+    // TryGetLegSkinPose と同じ読み方（MiniJson、形も同じ）を資源の名前で。最初に要ったときに 1 回だけ読む。
+    private static bool TryGetSkinPoseTable(string resource, string tag, ref Dictionary<string, List<LegSkinPoseBone>> table, string modelKey,
+        out List<LegSkinPoseBone> entries)
+    {
+        entries = null;
+        if (table == null)
+        {
+            table = new Dictionary<string, List<LegSkinPoseBone>>(System.StringComparer.Ordinal);
+            TextAsset asset = Resources.Load<TextAsset>(resource);
+            if (asset == null)
+            {
+                Debug.LogWarning($"[{tag}] Resources/{resource}.json が無い");
+            }
+            else if (MiniJson.Parse(asset.text) is Dictionary<string, object> rootObj &&
+                     rootObj.TryGetValue("models", out object modelsObj) && modelsObj is Dictionary<string, object> models)
+            {
+                foreach (KeyValuePair<string, object> kv in models)
+                {
+                    if (TryParseLegSkinPoseModel(kv.Value, out List<LegSkinPoseBone> list))
+                    {
+                        table[kv.Key] = list;
+                    }
+                }
+
+                Debug.Log($"[{tag}] Resources/{resource}.json を読んだ: {table.Count} モデル");
+            }
+            else
+            {
+                Debug.LogWarning($"[{tag}] Resources/{resource}.json の形が違う");
+            }
+        }
+
+        return table.TryGetValue(modelKey, out entries) && entries != null && entries.Count > 0;
     }
 
     // ---- 非四足モード（2026-10-08、鳥 3 体とカンガルーを SMAL の FK で動かす。新しい振る舞い。2026-10-09 にユーザーが採用し、プレイヤーの同名フィールドは既定 ON。プレイヤーが毎フレーム代入する） ----

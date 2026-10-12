@@ -327,6 +327,9 @@ public static partial class BatchPlaybackLogger
         {
             string key = raw.Trim();
             string[] p = key.Split(':');
+            // 7 つ目が "all" なら、対象のモデルだけでなく全 track（Track_N の下）を写す（2026-10-10。人とボールの前後を横・上から見る用。
+            // 今までは対象のモデル以外を全部隠していたので、横の絵にボールが写らなかった）。動画の画面など track 以外は今までどおり隠す。
+            bool keepAllTracks = p.Length >= 7 && p[6] == "all";
             // "viewer": 視聴者の目（main カメラの位置）からモデルを寄りで撮る（2026-10-04、頭が視聴者を見ているかを確かめる用）。
             // 2 つ目 = 枠に入れる大きさ（モデルの大きさの倍数）、画角は距離から毎 tick 決める。6 つ目が "c" なら bounds の中心を見る。
             if (p.Length >= 3 && p[2] == "viewer")
@@ -345,7 +348,8 @@ public static partial class BatchPlaybackLogger
                 float vDist = look.magnitude;
                 float vFov = Mathf.Clamp(2f * Mathf.Atan(0.5f * frameFactor * vSize / vDist) * Mathf.Rad2Deg, 2f, 90f);
                 RenderRecordView(mainCam, eye, Quaternion.LookRotation(look / vDist, Vector3.up), vFov,
-                    Mathf.Max(0.001f, vDist * 0.05f), 100f, 960, 720, Path.Combine(dir, $"{name}_{p[0].Replace('/', '-')}_viewer.jpg"), vTarget);
+                    Mathf.Max(0.001f, vDist * 0.05f), 100f, 960, 720, Path.Combine(dir, $"{name}_{p[0].Replace('/', '-')}_viewer.jpg"), vTarget,
+                    keepAllTracks);
                 continue;
             }
 
@@ -426,8 +430,19 @@ public static partial class BatchPlaybackLogger
             string label = p[0].Replace('/', '-') + "_" +
                 (bodyFront ? "front" : bodySide > 0 ? "side" : bodySide < 0 ? "sideL" : Mathf.RoundToInt(azimuth).ToString(inv));
             RenderRecordView(mainCam, aim + viewDir * dist, Quaternion.LookRotation(-viewDir, Vector3.up), fov,
-                Mathf.Max(0.001f, dist * 0.05f), 100f, 960, 720, Path.Combine(dir, $"{name}_{label}.jpg"), target);
+                Mathf.Max(0.001f, dist * 0.05f), 100f, 960, 720, Path.Combine(dir, $"{name}_{label}.jpg"), target, keepAllTracks);
         }
+    }
+
+    // Renderer が track のインスタンス（名前が Track_ で始まる祖先）の下にあるか。
+    private static bool IsUnderTrackRoot(Transform t)
+    {
+        for (Transform cur = t; cur != null; cur = cur.parent)
+        {
+            if (cur.name.StartsWith("Track_", StringComparison.Ordinal)) { return true; }
+        }
+
+        return false;
     }
 
     // 骨が属するモデル（Track_N のインスタンス）の、有効な Renderer の bounds の中心。無ければ骨の位置。
@@ -489,7 +504,7 @@ public static partial class BatchPlaybackLogger
     // mainCam の設定を写した一時カメラで 1 枚撮って JPEG で保存する。auxTarget があるときは、そのモデル（Track_N の
     // インスタンス）以外の表示を撮る間だけ隠す。動画の画面やほかの track が横から写り込むと、手足の動きが読みにくい。
     private static void RenderRecordView(Camera mainCam, Vector3 pos, Quaternion rot, float fov, float near, float far,
-        int W, int H, string path, Transform auxTarget)
+        int W, int H, string path, Transform auxTarget, bool keepAllTracks = false)
     {
         var hidden = new List<Renderer>();
         if (auxTarget != null)
@@ -502,7 +517,8 @@ public static partial class BatchPlaybackLogger
 
             foreach (Renderer r in UnityEngine.Object.FindObjectsByType<Renderer>(FindObjectsSortMode.None))
             {
-                if (r.enabled && !r.transform.IsChildOf(model)) { r.enabled = false; hidden.Add(r); }
+                bool keep = keepAllTracks ? IsUnderTrackRoot(r.transform) : r.transform.IsChildOf(model);
+                if (r.enabled && !keep) { r.enabled = false; hidden.Add(r); }
             }
         }
 

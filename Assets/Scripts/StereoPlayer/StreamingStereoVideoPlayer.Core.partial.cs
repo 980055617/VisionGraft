@@ -977,7 +977,25 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Debug.Log($"[Model] Human: {humanPrefabs.Length} prefab, Animal: {animalPrefabs.Length} prefab, Else: {elsePrefabs.Length} prefab");
         Debug.Log($"[LOADTIME] prefab 読み込み {stopwatch.ElapsedMilliseconds}ms（フレームを跨いで）");
         VerifyModelPrefabOrderInBatch();
+        ApplyCutoutAlphaForPassthrough();
         modelPrefabsReady = true;
+    }
+
+
+    // 実機の MSAA 4x で、cutout（毛・ヒゲのカード、人の髪・服）からパススルーの部屋が透けるのを防ぐ（PassthroughCutoutAlpha）。
+    // 書き換えるのは実機だけ（Editor では 0 件）。カテゴリを外すときは、その行を消す。
+    private void ApplyCutoutAlphaForPassthrough()
+    {
+        if (!cutoutAlphaForPassthrough)
+        {
+            return;
+        }
+
+        var done = new HashSet<Material>();
+        int changed = PassthroughCutoutAlpha.ApplyToPrefabs(animalPrefabs, "Animal", done)
+                      + PassthroughCutoutAlpha.ApplyToPrefabs(humanPrefabs, "Human", done)
+                      + PassthroughCutoutAlpha.ApplyToPrefabs(elsePrefabs, "Else", done);
+        Debug.Log($"[CUTOUTALPHA] changed={changed} isEditor={Application.isEditor}");
     }
 
 

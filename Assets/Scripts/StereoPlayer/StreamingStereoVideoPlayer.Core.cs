@@ -125,11 +125,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // keypoints3d は生成側で因果 EMA（新しい値の重み 0.2）済みで、速い動き（2 Hz）が 0.54 倍に縮み
     // 約 0.1 s 遅れる。区間の向きを「関節の world 回転 × bundle から推定した rest 方向」で作る。
     // AimAt 自体は残す（目標だけ差し替える）。詳細は HumanSmplAim.partial.cs。
-    public bool aimAtTargetFromSmpl = false;
+    // **2026-10-14 夜にユーザーが体験のため既定 ON（「人の上限なしFP1 真ん中合わせを入れてほしいけどな」「再度pushしてほしい」）。** 戻すときはこのコミットを revert する。
+    public bool aimAtTargetFromSmpl = true;
     // SMPL の回転の時間平滑を、Slerp の EMA（半減期 0.05 s、遅れ約 40 ms）から前後 2 フレームの
     // 中心 5tap [1,4,6,4,1]/16（遅れ 0）に替える。**既定 OFF。** aimAtTargetFromSmpl と組で使う
     // （片方だけだと四肢と胴の遅れがずれる）。
-    public bool centeredSmplRotationFilter = false;
+    // **2026-10-14 夜にユーザーが体験のため既定 ON（「人の上限なしFP1 真ん中合わせを入れてほしいけどな」「再度pushしてほしい」）。** 戻すときはこのコミットを revert する。
+    public bool centeredSmplRotationFilter = true;
     // 診断: SMPL の目標と keypoint の目標の角度を [SMPLAIM] に出す。
     public bool logSmplAimTarget = false;
     [Min(1)] public int logSmplAimTargetEveryNFrames = 1;
@@ -209,7 +211,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 関節で測ると骨格が人より 1.13〜1.20 倍大きく置かれ、その量がリグと姿勢で変わる。
     // aimAtTargetFromSmpl と同時か後に使う（単独だと、大きさで隠れていた動きの縮みが目立つ）。
     // 詳細は SilhouetteExtent.partial.cs。
-    public bool useSilhouetteProjectionExtent = false;
+    // **2026-10-14 夜にユーザーが体験のため既定 ON（「人の上限なしFP1 真ん中合わせを入れてほしいけどな」「再度pushしてほしい」）。** 戻すときはこのコミットを revert する。
+    public bool useSilhouetteProjectionExtent = true;
     // 診断: 代理点の距離と、Editor では BakeMesh で測ったメッシュの上端・下端を [SILHOUETTE] に 1 回出す。
     public bool logSilhouetteExtent = false;
 
@@ -1048,7 +1051,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // （参照点の 1f 変化 median 1.00mm 対 1.60mm、球の 1f 変化 p90 3.00mm 対 4.70mm）。
     //
     // Humanoid でない track（Animal 等）は自動的に Root にフォールバックする。
-    public HumanDepthReferenceMode otherDepthSkeletonReference = HumanDepthReferenceMode.Hips;
+    // **2026-10-14 夜: Hips → MeshCenter（9/9 に bundle の人の anchor_z が「見えている体の中央値」に変わったのに合わせる。ボールの埋もれの直し、Docs/tmp/depthcap_20261013/README.md の夜通しの調査）。ユーザー「人の上限なしFP1 真ん中合わせを入れてほしいけどな」。TrialScene・TestScene の値も 2。** 戻すときはこのコミットを revert する。
+    public HumanDepthReferenceMode otherDepthSkeletonReference = HumanDepthReferenceMode.MeshCenter;
     // ⑨ が Else を深度方向に動かしたぶん、見かけの大きさが変わらないようスケールを合わせるか。
     //
     // ⑨ は従来スケールを据え置いたまま位置だけ動かしていた。参照点を Hips にして移動量が

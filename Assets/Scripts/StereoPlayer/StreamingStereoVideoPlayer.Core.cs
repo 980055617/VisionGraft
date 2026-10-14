@@ -278,7 +278,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     //   下限を 0.2 に下げると 10/09 の 31_GrayWolf の浮き（Docs/tmp/roster_20261009/README.md の 11-3）が出るため。
     //   ON のとき refineLockedScaleAgainstSmoothedTarget（B1）は使わない（⑧ と目標を揃えるのが目的なので）。animalScaleRefineMinRatioFromDepthRefine も意味が無くなる
     //   （下限はいつも depthRefineMinRatio）。⑧ そのもの（一手の線形）は変えない（U2 の担当）。
-    public bool exactScaleRefine = false;
+    // **2026-10-14 にユーザーが体験のため既定 ON（「U1-U3+0.3でいい」「このバージョンでいったんpushして実験用でビルドして私が体験してみる，ダメならrevertするように伝える」）。** 戻すときはこのコミットを revert する。
+    public bool exactScaleRefine = true;
     // bottomFitUsesProjectionPointDepth（2026-10-13、U1 の一部・既存の欠陥の直し・既定 OFF・全リグ・新しい係数なし）: ⑦ の下端合わせで、一番下の投影点
     //   （TryProjectBonesToEyeHeight の下端。シルエットの足裏の代理点を含む）に合わせるときの px → m の換算を、レンダラーの AABB の中心の深さではなく、
     //   その点自身の深さで行う。上の animalBottomFitUsesBoneDepth（動物だけ・名前で骨を引き直す）を全リグにしたもの。名前で引き直さないので、
@@ -316,7 +317,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     //   [MESH2D] のシルエット ÷ 枠 1.15 → 0.99。2D の大きさと立体の奥行きの交換、README の R6）。
     //   今ある bundle で骨格と Else が同時にいるのは bundle_human だけで、animal の track は 09-18 から速追従が無いので変わらない。
     //   詳細は Docs/tmp/depthcap_20261013/README.md の R8・U3。
-    public bool depthRefineUniformSmoothing = false;
+    // **2026-10-14 にユーザーが体験のため既定 ON（「U1-U3+0.3でいい」「このバージョンでいったんpushして実験用でビルドして私が体験してみる，ダメならrevertするように伝える」）。** 戻すときはこのコミットを revert する。
+    public bool depthRefineUniformSmoothing = true;
 
     // Animal の接近を scale でも追う（C4-T）。**既定 OFF（2026-10-03、試作）。10/1 の「⑧・範囲・shot 内の scale は変えない」
     // を開き直す変更。** 詳細は AnimalScaleTrend.partial.cs。
@@ -412,7 +414,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 下限（頭から 0.25 m）は全リグで一番近い投影の骨に掛ける（animalDepthFloorAtNearestBone を全リグに）。上限は今と同じ点（基準点）に掛ける
     // （上限を骨の重心に掛けるのは下の depthRefineCapAtProjectionCentroid）。
     // 新しい係数は無い（二分法の打ち切りは数値上の設定。PinholePlacementSpace.TrySolveDepthMultiplierForExtent）。
-    public bool depthRefineExactSolve = false;
+    // **2026-10-14 にユーザーが体験のため既定 ON（「U1-U3+0.3でいい」「このバージョンでいったんpushして実験用でビルドして私が体験してみる，ダメならrevertするように伝える」）。** 戻すときはこのコミットを revert する。
+    public bool depthRefineExactSolve = true;
     // ⑧ の奥行きの上限（スクリーン。allowDepthBehindScreen なら 3 倍）を、基準点（人は Hips、動物は root）ではなく投影に使う骨の重心に掛ける
     // （2026-10-13、U2 の付帯。**既定 OFF。** depthRefineExactSolve と独立に効く）。移動は基準点の光線に沿ったまま、上限だけ
     // 「基準点の深さ − 重心の深さ」ずらす（下限を一番近い骨に掛けるのと同じ形。全リグ同じ式で、係数は無い）。
@@ -600,7 +603,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     //   目標の kp2d[18] との差（p50 / p95 px）: shot 1 6.3/21.1、2 6.4/9.7、11 12.4/23.2、13 15.7/20.0、20 4.5/24.6、24 4.3/12.9（anchor は kp2d[7]・[18] の 2D の中点で、
     //   根の再投影ではないため。transl はモデルの原点で根ではない）。bundle_animal で変わるのは今の上端合わせが走る shot 1・2・11・13（犬）・20・24（猫）だけ。
     //   手動の回転・大きさはこの tick では頭のまわりに効く。U1（exactScaleRefine）・U2（depthRefineExactSolve）の解く式も同じ tick に頭合わせを写す。
-    public bool animalBottomClippedHeadPin = false;
+    // **2026-10-14 にユーザーが体験のため既定 ON（「U1-U3+0.3でいい」「このバージョンでいったんpushして実験用でビルドして私が体験してみる，ダメならrevertするように伝える」）。** 戻すときはこのコミットを revert する。
+    public bool animalBottomClippedHeadPin = true;
 
     // 測定 B（2026-08-28、診断専用）: SMAL の曲げ（body_pose の寄与）を当てず、
     // bind pose を globalOrient で回しただけの姿勢にする。[ANIMALKP] を有無で比べて
@@ -837,7 +841,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 参考: ⑧ OFF は p90 5.0mm / max 22.0mm、median 1.082 / 8.8% / 79.0%。
     // 1.2s で揺れは ⑧ OFF と同等まで戻り、サイズ精度と前後関係は改善したままになる。
     // 平滑化を強めても boneRatio がほとんど悪化しないのは、外れ値の ratio が均されるため。
-    [Min(0f)] public float projectedDepthSmoothingSeconds = 1.2f;
+    // **2026-10-14: 1.2 s → 0.3 s（走ってくる犬が遅れて小さくなる直し。ユーザー「0.3秒でも全然パフォーマンスは悪くないと思った」「U1-U3+0.3でいい」）。**
+    // TrialScene・TestScene の値も 0.3 にした。人にも効く。戻すときはこのコミットを revert する。
+    [Min(0f)] public float projectedDepthSmoothingSeconds = 0.3f;
 
     // ⑧ の補正が、同じフレームの Else との前後関係（meta.bin の anchor_z が示す順序）を
     // 壊さないよう ratio を丸めるときの最小の隙間（m）。0 で無効。

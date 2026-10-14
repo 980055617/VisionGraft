@@ -415,7 +415,7 @@ MonoBehaviour:
   logAnimalBoneVsKeypoint: 0
   refineDepthFromProjectedBones: 1
   projectedDepthScaleK: 1
-  projectedDepthSmoothingSeconds: 1.2
+  projectedDepthSmoothingSeconds: 0.3
   projectedDepthOrderEpsilonMeters: 0.04
   logDepthRefineStages: 0
   resolveOtherPenetration: 0

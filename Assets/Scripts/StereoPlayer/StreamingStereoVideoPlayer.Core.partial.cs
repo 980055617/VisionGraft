@@ -977,7 +977,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Debug.Log($"[Model] Human: {humanPrefabs.Length} prefab, Animal: {animalPrefabs.Length} prefab, Else: {elsePrefabs.Length} prefab");
         Debug.Log($"[LOADTIME] prefab 読み込み {stopwatch.ElapsedMilliseconds}ms（フレームを跨いで）");
         VerifyModelPrefabOrderInBatch();
-        ApplyCutoutAlphaForPassthrough();
+        // 失敗しても読み込みは止めない（WaitForModelPrefabs が modelPrefabsReady を待っている）。
+        try
+        {
+            ApplyCutoutAlphaForPassthrough();
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogException(ex);
+        }
+
         modelPrefabsReady = true;
     }
 

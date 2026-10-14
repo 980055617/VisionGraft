@@ -664,7 +664,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 実機（Quest、画質 Mobile = MSAA 4x）で cutout の毛・ヒゲ・髪からパススルーの部屋が透けるのを防ぐ（2026-10-13、ユーザー
     // 「毛の部分が透けているんです，近すぎたとかではなく，選択画面から透けていた」「透けて見えたのは Quest の上で」）。
     // prefab を読み終えた直後に、不透明の cutout マテリアルの alpha のブレンドだけ One/OneMinusSrcAlpha にする（PassthroughCutoutAlpha）。
-    // 色は変わらない。Editor では書き換えない（MSAA 1x で起きず、.mat のアセットを書き換えると保存されるため）。
+    // 色のブレンドは変えない。Editor では書き換えない（MSAA 1x で起きず、.mat のアセットを書き換えると保存されるため）。
     public bool cutoutAlphaForPassthrough = true;
 
     // バッチ検証専用の手動 yaw 注入。"track:deg" をカンマ区切りで書く（例: "0:90,1:-45"）。

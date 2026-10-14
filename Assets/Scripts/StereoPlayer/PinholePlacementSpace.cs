@@ -125,6 +125,18 @@ public static class PinholePlacementSpace
         return true;
     }
 
+    // 点（カメラ空間の深さ pointZ、像 pointU / pointV）を目標の列・行へ動かすカメラの面内の移動（m）。z は変えないので 1 点について厳密
+    // （TryProjectCamLocalToEyePixel の逆。主点に依らない）。AlignProjectedModelBottomToBBox と同じ換算だが、そちらは書き換えない（2026-10-14、animalBottomClippedHeadPin）。
+    public static float CameraShiftXToPutPointOnColumn(int eyeW, float fx, float pointZ, float pointU, float targetU)
+    {
+        return (targetU - pointU) * 2f / eyeW * (pointZ / fx);
+    }
+
+    public static float CameraShiftYToPutPointOnRow(int eyeH, float fy, float pointZ, float pointV, float targetV)
+    {
+        return -((targetV - pointV) * 2f / eyeH) * (pointZ / fy);
+    }
+
     // ---- ⑧ の厳密解（StreamingStereoVideoPlayer.depthRefineExactSolve、既定 OFF、2026-10-13。Docs/tmp/depthcap_20261013/README.md の U2）----
     // ⑧（RefineDepthFromProjectedBones）はモデルを基準点の光線に沿って剛体で平行移動し、そのあと 2 回目の ⑦（FitDisplayedModelToBBox →
     // AlignProjectedModelBottomToBBox）がカメラの上下だけ合わせ直す。その 2 段を変換を書かずに写し、骨の投影の縦の広がりが目標に一致する
@@ -138,7 +150,9 @@ public static class PinholePlacementSpace
         // 下端が画面の下で切れて上端が切れていない: メッシュの AABB の上端（AABB の中心の深さで投影）を bbox の上端へ
         Top,
         // それ以外: 一番下の投影点を bbox の下端へ
-        Bottom
+        Bottom,
+        // animalBottomClippedHeadPin（2026-10-14）: 頭の骨の点を目標の行へ（その点の深さで換算）
+        HeadPoint
     }
 
     // 2 回目の ⑦ を写すための値。どれも ⑧ が動かす前（anchor から作った配置）の値。AABB は平行移動でそのまま動き、縦の半幅は変わらない
@@ -156,6 +170,9 @@ public static class PinholePlacementSpace
         public float cyPixels;
         // Bottom の px → m を一番下の点自身の深さで換算する（FitDisplayedModelToBBox の alignDepth の分岐と同じ条件で決める）
         public bool bottomUsesPointDepth;
+        // HeadPoint: 頭の骨の点（カメラ空間 y・z、⑧ が動かす前）。targetV はその点を置く行（eye px）
+        public float pointY;
+        public float pointZ;
     }
 
     // 数値上の設定（新しい係数ではない。解はこれらに依らず、評価回数と打ち切りの精度だけが変わる）。
@@ -219,7 +236,17 @@ public static class PinholePlacementSpace
         // 2 回目の ⑦ の縦の移動（AlignProjectedModelBottomToBBox: −(deltaV × 2 / eye_h) × (深さ / fy)）。
         float shiftY = 0f;
         float centerZ = fit.aabbCenterZ + dz;
-        if (fit.mode != SecondFitMode.None && centerZ > 0.001f)
+        if (fit.mode == SecondFitMode.HeadPoint)
+        {
+            // 2 回目の ⑦ の頭合わせ: ⑧ の剛体の平行移動の後の頭の点を目標の行へ。移動後の頭の行は固定されるので、広がりは dz だけで決まる（基準の光線に依らない）。
+            float hz = fit.pointZ + dz;
+            if (hz > 0.001f)
+            {
+                float hv = (cyNorm - ((fit.pointY + dy) * fy / hz) * 0.5f) * eyeH;
+                shiftY = CameraShiftYToPutPointOnRow(manifest.eye_h, fy, hz, hv, fit.targetV);
+            }
+        }
+        else if (fit.mode != SecondFitMode.None && centerZ > 0.001f)
         {
             float depth = Mathf.Max(0.001f, centerZ);
             float deltaV;

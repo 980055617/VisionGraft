@@ -588,6 +588,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public int bboxBottomClipEnterMarginPixels = 2;
     public int bboxBottomClipLeaveMarginPixels = 4;
 
+    // animalBottomClippedHeadPin（2026-10-14、新しい振る舞い・既定 OFF・種別を問わない（animal のリグなら全部）・新しい係数なし。
+    //   Docs/tmp/headpin_20261014/README.md）: 下端が画面の下で切れて上端が切れていない tick の ⑦（alignTopWhenBottomClipped の上端合わせ）で、
+    //   レンダラーの AABB の上端（箱を 1 つの深さで投影した上端。shot 24 の猫ではメッシュの本当の上端が bbox の上端より中央 72 px 上に出る）を合わせる
+    //   代わりに、頭の骨（SMAL J16 を当てる骨 = AnimalRigCache.head）を、meta.bin の頭の関節（AniMer kp18、根からの相対）を SMAL block の transl z の
+    //   奥行きで AniMer の全体画像のカメラ（f = 1000/256 × 画の長辺、主点 = 画の中心。D-017 Q1 の回答で確定）に投影した点へ、カメラの面内の平行移動で置く
+    //   （z・倍率・⑧ の目標は変えない）。横は今の root の平滑（One-Euro）の遅れを同じだけ残し、縦は今と同じく生（今の ⑦ は縦を毎 tick 置き直すので平滑が効いていない）。
+    //   データが欠けた tick（頭の関節が不可視・0・transl が無い）は使えた最後の「頭の像 − anchor」を使う（shot の切れ目で消す）。それも無い・頭の骨が無い・
+    //   manifest が「元の画 = 片目の画」と言わない bundle（bundle.svb・bundle_tutorial は crop_fraction を持たない）は今の上端合わせ。
+    //   transl を読む: D-017 Q4 で「実験中のアプリは transl を使っていない」と伝えてあるので、既定 ON にする前に生成側に知らせること。
+    //   目標の kp2d[18] との差（p50 / p95 px）: shot 1 6.3/21.1、2 6.4/9.7、11 12.4/23.2、13 15.7/20.0、20 4.5/24.6、24 4.3/12.9（anchor は kp2d[7]・[18] の 2D の中点で、
+    //   根の再投影ではないため。transl はモデルの原点で根ではない）。bundle_animal で変わるのは今の上端合わせが走る shot 1・2・11・13（犬）・20・24（猫）だけ。
+    //   手動の回転・大きさはこの tick では頭のまわりに効く。U1（exactScaleRefine）・U2（depthRefineExactSolve）の解く式も同じ tick に頭合わせを写す。
+    public bool animalBottomClippedHeadPin = false;
+
     // 測定 B（2026-08-28、診断専用）: SMAL の曲げ（body_pose の寄与）を当てず、
     // bind pose を globalOrient で回しただけの姿勢にする。[ANIMALKP] を有無で比べて
     // 「形状・bind pose の不一致」と「jointFrameMap のロール未拘束」を切り分ける。

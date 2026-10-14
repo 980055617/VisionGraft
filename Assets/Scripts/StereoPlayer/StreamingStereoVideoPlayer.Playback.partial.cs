@@ -191,6 +191,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void ApplyMetaTarget(MetaObj target, int frame)
     {
+        // animalBottomClippedHeadPin（既定 OFF）: ⑦ が SMAL の transl を obj と同じフレームで引くため（GetPlaybackFrameSnapshot を引き直さない）。
+        if (animalBottomClippedHeadPin)
+        {
+            animalHeadPinFrame = frame;
+        }
+
         if (!ResolveAnchorToScreen(target.anchorU, out Transform screen, out int uEye, out _))
         {
             return;
@@ -304,6 +310,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             UpdateInteractiveMotionSchedule(target.trackId, target, frame);
         }
         ApplyInteractiveHandoffBlendIfActive(target.trackId, instance, frame);
+        LogAnimalHeadPinEndOfTickIfEnabled(target, instance, screen);
         LogPlacementMeasurementIfEnabled(target, instance, screen, frame);
         LogHorizontalPlacementIfEnabled(target, instance, screen, frame);
         LogAnimalBoneVsKeypointIfEnabled(target, instance, screen, frame);
@@ -1715,8 +1722,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 bool clippedTop = obj.bboxY <= 0;
                 if (alignTopWhenBottomClipped && clippedBottom && !clippedTop)
                 {
-                    setup.fitMode = ExactScaleRefineSolver.FitMode.Top;
-                    setup.fitTargetV = obj.bboxY;
+                    // animalBottomClippedHeadPin: 実際の ⑦ が頭合わせをする tick は、同じ解決（控えの値を含む）で頭の点を写す。
+                    if (animalBottomClippedHeadPin && IsCategoryAnimal(obj.categoryId) &&
+                        TryResolveAnimalHeadPin(instance, obj, camOrigin, camRotation, out Vector3 headPinCam, out AnimalHeadPinTarget headPinTarget, out _))
+                    {
+                        setup.fitMode = ExactScaleRefineSolver.FitMode.HeadPoint;
+                        setup.fitPoint = headPinCam;
+                        setup.fitTargetV = headPinTarget.pixel.y;
+                    }
+                    else
+                    {
+                        setup.fitMode = ExactScaleRefineSolver.FitMode.Top;
+                        setup.fitTargetV = obj.bboxY;
+                    }
                 }
                 else
                 {
@@ -1897,6 +1915,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             None,
             Bottom,
             Top,
+            HeadPoint,          // animalBottomClippedHeadPin の ⑦（頭の骨の点を目標の行へ。2026-10-14）
         }
 
         internal struct Setup
@@ -1906,7 +1925,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             public Vector3 aabbCenter;          // レンダラーの world AABB の中心（camera 空間）
             public float aabbVerticalExtent;    // AABB の camera の上方向の半幅
             public FitMode fitMode;
-            public float fitTargetV;            // Bottom: bbox の下端（eye px）、Top: bbox の上端
+            public float fitTargetV;            // Bottom: bbox の下端（eye px）、Top: bbox の上端、HeadPoint: 頭の骨の点を置く行
+            public Vector3 fitPoint;            // HeadPoint: 頭の骨の点（camera 空間）
             public bool bottomUsesPointDepth;   // Bottom の px → m を一番下の点の深さで換算するか（false なら AABB の中心の深さ。今の ⑦）
             public ManifestData manifest;
             public float fx;
@@ -1945,7 +1965,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
             float eyeH = s.manifest.eye_h;
             float deltaCamY = 0f;
-            if (s.fitMode != FitMode.None)
+            if (s.fitMode == FitMode.HeadPoint)
+            {
+                // 一様な倍率 g を中心のまわりに掛けると頭も「中心 + g × (頭 − 中心)」へ写る。⑦ の頭合わせはその点の深さで換算して縦に動かす（横は広がりに効かない）。
+                Vector3 q = s.pivot + (s.fitPoint - s.pivot) * g;
+                if (PinholePlacementSpace.TryProjectCamLocalToEyePixel(s.manifest, q, s.fx, s.fy, out Vector2 qp))
+                {
+                    deltaCamY = PinholePlacementSpace.CameraShiftYToPutPointOnRow(s.manifest.eye_h, s.fy, q.z, qp.y, s.fitTargetV);
+                }
+            }
+            else if (s.fitMode != FitMode.None)
             {
                 Vector3 center = s.pivot + (s.aabbCenter - s.pivot) * g;
                 // TryProjectRendererBoundsToEyeHeight は AABB の上端・下端（中心と同じ深さ）が目の前 0.001 m 以内だと失敗し、⑦ は動かさない。
@@ -2564,9 +2593,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // あるため。上端には同じ前提が成り立たない。
             // そもそも bbox の上端は被写体の見た目の上端（毛・耳）なので、対応するのは
             // 骨ではなくメッシュ。
+            // animalBottomClippedHeadPin（既定 OFF、2026-10-14）: animal は頭の骨を meta.bin の頭の関節の像へ置く（AnimalHeadPin.partial.cs）。
+            // 置けなかった tick は下の今の 2 行（理由は [HEADPIN-MISS]）。U1・U2 の解く式（TryBuildExactScaleRefineSetup・TryBuildExactDepthSecondFit）も同じ判定・同じ解決で写す。
+            if (animalBottomClippedHeadPin && IsCategoryAnimal(obj.categoryId) &&
+                TryApplyAnimalHeadPin(instance, obj, screen, projectedTopV))
+            {
+                return;
+            }
+
             LogBottomFixDepthIfEnabled(instance, obj, screen, null, projectedTopV, obj.bboxY, depthMeters, true);
             AlignProjectedModelBottomToBBox(instance.transform, screen, projectedTopV, depthMeters, obj.bboxY);
             return;
+        }
+
+        if (animalBottomClippedHeadPin && IsCategoryAnimal(obj.categoryId))
+        {
+            NoteAnimalHeadPinBranch(obj, false, "bottomBranch");
         }
 
         // depthMeters はモデル AABB 中心の深度で、anchorZ とは 3〜4% ずれる。
@@ -3011,8 +3053,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         bool clippedTop = obj.bboxY <= 0;
         if (alignTopWhenBottomClipped && clippedBottom && !clippedTop)
         {
-            fit.mode = PinholePlacementSpace.SecondFitMode.Top;
-            fit.targetV = obj.bboxY;
+            // animalBottomClippedHeadPin: 実際の 2 回目の ⑦ が頭合わせをする tick は、同じ解決（控えの値を含む）で頭の点を写す。
+            if (animalBottomClippedHeadPin && IsCategoryAnimal(obj.categoryId) &&
+                TryResolveAnimalHeadPin(instance, obj, camOrigin, camRotation, out Vector3 headPinCam, out AnimalHeadPinTarget headPinTarget, out _))
+            {
+                fit.mode = PinholePlacementSpace.SecondFitMode.HeadPoint;
+                fit.pointY = headPinCam.y;
+                fit.pointZ = headPinCam.z;
+                fit.targetV = headPinTarget.pixel.y;
+            }
+            else
+            {
+                fit.mode = PinholePlacementSpace.SecondFitMode.Top;
+                fit.targetV = obj.bboxY;
+            }
         }
         else
         {

@@ -33,6 +33,20 @@ public sealed class ManifestData
     // bundle_animal_shots_depthdriftfix_shotsfix.svb）が、inputs.video_mp4 は
     // 再生成をまたいで同じことを実測で確認済み（2026-08-28、docs/model-selection-persistence.md）。
     public ManifestInputsData inputs;
+
+    // 片目の画が元の画（推定器が走った画）のどこか（2026-10-14、animalBottomClippedHeadPin の判定 IsAnimalHeadPinCanvasEye だけが読む）。
+    // bundle_animal・human・car: left_eye_origin = "full"、crop_fraction の 4 つ = 1.0。bundle.svb・bundle_tutorial は crop_fraction を持たない（null）。
+    public string left_eye_origin;
+    public ManifestCropFractionData crop_fraction;
+}
+
+[Serializable]
+public sealed class ManifestCropFractionData
+{
+    public float crop_w_fraction;
+    public float crop_h_fraction;
+    public float eye_w_fraction;
+    public float eye_h_fraction;
 }
 
 [Serializable]

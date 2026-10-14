@@ -100,6 +100,13 @@ public sealed class AnimalMotionFilter
         }
     }
 
+    // root の位置の平滑（FilterRootPosition）の今の遅れ（直前の出力 − 直前の入力）。平滑がまだ無い root は false。読むだけ（2026-10-14、animalBottomClippedHeadPin）。
+    public bool TryGetRootPositionLag(Transform root, out Vector3 lag)
+    {
+        lag = Vector3.zero;
+        return root != null && rootPositionFilters.TryGetValue(root, out RuntimeOneEuroVector3Filter filter) && filter != null && filter.TryGetLag(out lag);
+    }
+
     public Vector3 FilterLimbTarget(Transform key, Vector3 target, float minCutoffHz, float beta, float deltaTime)
     {
         if (!limbTargetFilters.TryGetValue(key, out RuntimeOneEuroVector3Filter filter) || filter == null)

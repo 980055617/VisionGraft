@@ -32,6 +32,12 @@ public sealed partial class AnimalPoseApplier
         motionFilter.ShiftRootPosition(instanceRoot, delta);
     }
 
+    // animalBottomClippedHeadPin（2026-10-14）: AlignAnimalRootToSkeleton の One-Euro が今 root を生の目標からずらしている量（world）。鍵は instance の root。読むだけ。
+    public bool TryGetRootPositionSmoothingLag(Transform instanceRoot, out Vector3 lag)
+    {
+        return motionFilter.TryGetRootPositionLag(instanceRoot, out lag);
+    }
+
     // Snapshot every resolved canonical bone's local rotation, so a caller can blend the body
     // pose back toward whatever the tracked pipeline writes next (mirroring
     // CaptureHumanoidBoneLocalRotations/BlendHumanoidBoneLocalRotations for Human) - without

@@ -397,6 +397,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         lastGoodBottomAlignVEye.Clear();
         // 下端が切れているかのヒステリシスの状態も shot をまたがせない（偽のカットでも消す。bboxBottomClipHysteresis）。
         bboxBottomClippedByTrack.Clear();
+        // animalBottomClippedHeadPin: 頭の関節の控えと記録の状態も同じ寿命（偽のカットでも消す）。
+        animalHeadPinHeldOffsetByTrack.Clear();
+        animalHeadPinActiveByTrack.Clear();
 
         ResetHumanOtherContactStateForShotBoundary();
         // Else の連結順と向きの記憶も shot をまたがせない。

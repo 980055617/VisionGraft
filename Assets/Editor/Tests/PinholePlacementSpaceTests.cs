@@ -281,6 +281,104 @@ public class PinholePlacementSpaceTests
         Assert.That(ok, Is.False);
     }
 
+    // animalBottomClippedHeadPin（2026-10-14）: カメラの面内の移動で点がちょうど目標の画素へ来る（z は変えない）。
+    [Test]
+    public void CameraShiftHelpersPutThePointOnTheTargetPixel()
+    {
+        ManifestData manifest = new ManifestData { eye_w = 1280, eye_h = 720, cx = 640f, cy = 360f };
+        const float fx = 1.4281480f;
+        const float fy = 2.5389298f;
+        Vector3 p = new Vector3(-0.07f, 0.11f, 0.83f);
+        Assert.That(PinholePlacementSpace.TryProjectCamLocalToEyePixel(manifest, p, fx, fy, out Vector2 px), Is.True);
+        Vector2 target = new Vector2(px.x - 51.3f, px.y + 116.7f);
+
+        Vector3 moved = p + new Vector3(
+            PinholePlacementSpace.CameraShiftXToPutPointOnColumn(manifest.eye_w, fx, p.z, px.x, target.x),
+            PinholePlacementSpace.CameraShiftYToPutPointOnRow(manifest.eye_h, fy, p.z, px.y, target.y),
+            0f);
+
+        Assert.That(PinholePlacementSpace.TryProjectCamLocalToEyePixel(manifest, moved, fx, fy, out Vector2 after), Is.True);
+        Assert.That(after.x, Is.EqualTo(target.x).Within(0.001f));
+        Assert.That(after.y, Is.EqualTo(target.y).Within(0.001f));
+    }
+
+    // HeadPoint の 2 回目の ⑦ の写し: 手で「剛体で動かす → 頭を目標の行へ縦に動かす → 縦の広がり」を計算したものと一致する。
+    [Test]
+    public void HeadPointSecondFitMatchesAnExplicitMoveAndShift()
+    {
+        ManifestData manifest = DepthSolveManifest();
+        float[] y = { 0.20f, 0.05f, -0.12f, -0.18f, 0.10f };
+        float[] z = { 0.50f, 0.60f, 0.64f, 0.72f, 0.80f };
+        bool[] isBone = { true, true, true, true, true };
+        const float headY = 0.21f;
+        const float headZ = 0.55f;
+        const float targetV = 180f;
+        const float refY = -0.10f;
+        const float refZ = 0.92f;
+        const float s = 1.17f;
+        PinholePlacementSpace.SecondFitModel fit = new PinholePlacementSpace.SecondFitModel
+        {
+            mode = PinholePlacementSpace.SecondFitMode.HeadPoint,
+            targetV = targetV,
+            pointY = headY,
+            pointZ = headZ,
+            aabbCenterY = 0.02f,
+            aabbCenterZ = 0.62f,
+            aabbVerticalExtent = 0.24f,
+            cyPixels = 360f
+        };
+
+        float extent = PinholePlacementSpace.EvaluateExtentAfterDepthMove(manifest, DepthSolveFy, y, z, isBone, 5, refY, refZ, s, fit);
+
+        float dy = (s - 1f) * refY;
+        float dz = (s - 1f) * refZ;
+        float hz = headZ + dz;
+        float hv = (0.5f - ((headY + dy) * DepthSolveFy / hz) * 0.5f) * 720f;
+        float shiftY = -((targetV - hv) * 2f / 720f) * (hz / DepthSolveFy);
+        float minV = float.MaxValue;
+        float maxV = float.MinValue;
+        for (int i = 0; i < 5; i++)
+        {
+            float zi = z[i] + dz;
+            float v = (0.5f - ((y[i] + dy + shiftY) * DepthSolveFy / zi) * 0.5f) * 720f;
+            minV = Mathf.Min(minV, v);
+            maxV = Mathf.Max(maxV, v);
+        }
+
+        Assert.That(extent, Is.EqualTo(maxV - minV).Within(0.01f));
+    }
+
+    // HeadPoint でも、解いた奥行きの移動量 (s − 1) × z_ref は基準点（光線）に依らない（移動後の頭の行が固定されるので広がりは dz だけで決まる）。
+    [Test]
+    public void DepthSolveMoveDoesNotDependOnTheReferenceRayInHeadPointMode()
+    {
+        ManifestData manifest = DepthSolveManifest();
+        float[] y = { 0.20f, 0.05f, -0.12f, -0.18f, 0.10f };
+        float[] z = { 0.50f, 0.60f, 0.64f, 0.72f, 0.80f };
+        bool[] isBone = { true, true, true, true, true };
+        PinholePlacementSpace.SecondFitModel fit = new PinholePlacementSpace.SecondFitModel
+        {
+            mode = PinholePlacementSpace.SecondFitMode.HeadPoint,
+            targetV = 150f,
+            pointY = 0.21f,
+            pointZ = 0.55f,
+            aabbCenterY = 0.02f,
+            aabbCenterZ = 0.62f,
+            aabbVerticalExtent = 0.24f,
+            cyPixels = 360f
+        };
+        float extent = PinholePlacementSpace.EvaluateExtentAfterDepthMove(manifest, DepthSolveFy, y, z, isBone, 5, -0.10f, 0.92f, 1f, fit);
+        float target = extent / 1.2f;
+
+        bool okA = PinholePlacementSpace.TrySolveDepthMultiplierForExtent(
+            manifest, DepthSolveFy, y, z, isBone, 5, -0.10f, 0.92f, fit, target, 1.2f, out float sA, out _, out _, out _);
+        bool okB = PinholePlacementSpace.TrySolveDepthMultiplierForExtent(
+            manifest, DepthSolveFy, y, z, isBone, 5, 0.12f, 0.58f, fit, target, 1.2f, out float sB, out _, out _, out _);
+
+        Assert.That(okA && okB, Is.True);
+        Assert.That((sA - 1f) * 0.92f, Is.EqualTo((sB - 1f) * 0.58f).Within(0.0002f));
+    }
+
     private static ManifestData DepthSolveManifest()
     {
         return new ManifestData
@@ -431,6 +529,28 @@ public class ExactScaleRefineSolverTests
         float ea = StreamingStereoVideoPlayer.ExactScaleRefineSolver.EvaluateExtent(a, 0.8f);
         float eb = StreamingStereoVideoPlayer.ExactScaleRefineSolver.EvaluateExtent(b, 0.8f);
 
+        Assert.That(eb, Is.EqualTo(ea).Within(0.01f));
+    }
+
+    // HeadPoint（animalBottomClippedHeadPin の ⑦）: 頭を目標の行へ置いた後の広がりは、合わせる前の縦の位置に依らない。
+    [Test]
+    public void HeadPointFitIsIndependentOfTheStartingHeight()
+    {
+        Vector3[] pts = { new Vector3(0f, 0.25f, 0.62f), new Vector3(0f, -0.2f, 0.9f) };
+        Vector3 head = new Vector3(0.02f, 0.22f, 0.6f);
+        Vector3 pivot = new Vector3(0f, 0f, 0.8f);
+        Vector3 lift = new Vector3(0f, -0.04f, 0f);
+        var a = MakeSetup(pivot, pts);
+        var b = MakeSetup(pivot + lift, pts[0] + lift, pts[1] + lift);
+        a.fitMode = b.fitMode = StreamingStereoVideoPlayer.ExactScaleRefineSolver.FitMode.HeadPoint;
+        a.fitTargetV = b.fitTargetV = 120f;
+        a.fitPoint = head;
+        b.fitPoint = head + lift;
+
+        float ea = StreamingStereoVideoPlayer.ExactScaleRefineSolver.EvaluateExtent(a, 0.8f);
+        float eb = StreamingStereoVideoPlayer.ExactScaleRefineSolver.EvaluateExtent(b, 0.8f);
+
+        Assert.That(ea, Is.GreaterThan(0f));
         Assert.That(eb, Is.EqualTo(ea).Within(0.01f));
     }
 

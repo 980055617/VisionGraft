@@ -42,10 +42,26 @@ public sealed class RuntimeOneEuroVector3Filter
     }
 
 
+    // 直前の出力 − 直前の入力（平滑が今どれだけ遅れているか）。初期化前なら false。状態は変えない（2026-10-14、animalBottomClippedHeadPin）。
+    public bool TryGetLag(out Vector3 lag)
+    {
+        lag = Vector3.zero;
+        if (!x.TryGetLag(out float lx) || !y.TryGetLag(out float ly) || !z.TryGetLag(out float lz))
+        {
+            return false;
+        }
+
+        lag = new Vector3(lx, ly, lz);
+        return true;
+    }
+
+
     private sealed class LowPassFilter1D
     {
         private bool initialized;
         private float previousValue;
+
+        public float Value => previousValue;
 
         public float Filter(float value, float alpha)
         {
@@ -134,6 +150,19 @@ public sealed class RuntimeOneEuroVector3Filter
 
             previousRawValue += delta;
             valueFilter.Shift(delta);
+        }
+
+
+        public bool TryGetLag(out float lag)
+        {
+            lag = 0f;
+            if (!initialized)
+            {
+                return false;
+            }
+
+            lag = valueFilter.Value - previousRawValue;
+            return true;
         }
 
 

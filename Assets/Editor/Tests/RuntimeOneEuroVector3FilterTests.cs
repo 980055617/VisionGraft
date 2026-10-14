@@ -77,6 +77,34 @@ public class RuntimeOneEuroVector3FilterTests
     }
 
 
+    // animalBottomClippedHeadPin（2026-10-14）: 遅れ = 直前の出力 − 直前の入力。初期化前は false。Shift では変わらない（入力と出力を同じだけずらすため）。
+    [Test]
+    public void LagIsLastOutputMinusLastInputAndShiftKeepsIt()
+    {
+        var filter = new RuntimeOneEuroVector3Filter(1.6f, 0.08f, 1.0f);
+        Assert.That(filter.TryGetLag(out _), Is.False);
+
+        Vector3 output = Vector3.zero;
+        Vector3 input = Vector3.zero;
+        for (int i = 0; i < 6; i++)
+        {
+            input = new Vector3(0.01f * i, -0.02f * i, 0.005f * i);
+            output = filter.Filter(input, 1f / 72f);
+        }
+
+        Assert.That(filter.TryGetLag(out Vector3 lag), Is.True);
+        Assert.That(lag.x, Is.EqualTo(output.x - input.x).Within(1e-6f));
+        Assert.That(lag.y, Is.EqualTo(output.y - input.y).Within(1e-6f));
+        Assert.That(lag.z, Is.EqualTo(output.z - input.z).Within(1e-6f));
+
+        filter.Shift(new Vector3(0.3f, -0.1f, 0.2f));
+        Assert.That(filter.TryGetLag(out Vector3 lagAfterShift), Is.True);
+        Assert.That(lagAfterShift.x, Is.EqualTo(lag.x).Within(1e-5f));
+        Assert.That(lagAfterShift.y, Is.EqualTo(lag.y).Within(1e-5f));
+        Assert.That(lagAfterShift.z, Is.EqualTo(lag.z).Within(1e-5f));
+    }
+
+
     [Test]
     public void ShiftBeforeFirstFilterCallIsIgnored()
     {

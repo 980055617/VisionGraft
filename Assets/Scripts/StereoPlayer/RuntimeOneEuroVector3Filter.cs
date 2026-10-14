@@ -31,6 +31,17 @@ public sealed class RuntimeOneEuroVector3Filter
     }
 
 
+    // 状態（直前の入力と直前の出力）を delta だけずらす。微分の平滑は触らない（2026-10-13、exactScaleRefine）。
+    // 入力の系列が一定量ずれたとき（倍率の測り直しで root の目標が動いた）、ずれる前からその系列だったのと同じ出力を返すようにする:
+    // 次の Filter の微分は「ずらした直前の入力」との差なので変わらず、出力は「ずらした直前の出力」から同じ割合で寄る。初期化前なら何もしない。
+    public void Shift(Vector3 delta)
+    {
+        x.Shift(delta.x);
+        y.Shift(delta.y);
+        z.Shift(delta.z);
+    }
+
+
     private sealed class LowPassFilter1D
     {
         private bool initialized;
@@ -54,6 +65,15 @@ public sealed class RuntimeOneEuroVector3Filter
         {
             initialized = true;
             previousValue = value;
+        }
+
+
+        public void Shift(float delta)
+        {
+            if (initialized)
+            {
+                previousValue += delta;
+            }
         }
     }
 
@@ -102,6 +122,18 @@ public sealed class RuntimeOneEuroVector3Filter
             previousRawValue = value;
             valueFilter.Reset(value);
             derivativeFilter.Reset(0f);
+        }
+
+
+        public void Shift(float delta)
+        {
+            if (!initialized)
+            {
+                return;
+            }
+
+            previousRawValue += delta;
+            valueFilter.Shift(delta);
         }
 
 

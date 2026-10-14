@@ -90,6 +90,16 @@ public sealed class AnimalMotionFilter
         return filter.Filter(target, deltaTime);
     }
 
+    // shot の頭の倍率の測り直し（exactScaleRefine、2026-10-13）が root を動かした量だけ、root の位置の平滑の状態をずらす（次の tick に過渡を作らない）。
+    // その root の平滑がまだ無い（姿勢の適用が平滑を通っていない）ときは何もしない。
+    public void ShiftRootPosition(Transform root, Vector3 delta)
+    {
+        if (root != null && rootPositionFilters.TryGetValue(root, out RuntimeOneEuroVector3Filter filter) && filter != null)
+        {
+            filter.Shift(delta);
+        }
+    }
+
     public Vector3 FilterLimbTarget(Transform key, Vector3 target, float minCutoffHz, float beta, float deltaTime)
     {
         if (!limbTargetFilters.TryGetValue(key, out RuntimeOneEuroVector3Filter filter) || filter == null)

@@ -1173,3 +1173,128 @@ public class HumanOtherContactCorrectionIntegrationTests
         return Vector2.Distance(point, start + segment * t);
     }
 }
+
+// U3（depthRefineUniformSmoothing、2026-10-13）の 2 つの関門を EditMode で確かめる。
+// 新しいファイル（と .meta）を増やさないため、using が揃っているこのファイルの末尾に置く（2026-10-13、統合役）。
+// シーンも動画も使わず、プレイヤーを空の GameObject に付けて private のメソッドをリフレクションで呼ぶ。
+// EditMode では Awake が走らないので vp も manifest も null のまま。GetCurrentPlaybackFrame は 0 を返し、
+// SmoothProjectedDepthRatio の動画のフレームレートは 30 fps の既定になる。
+// 詳細は Docs/tmp/depthcap_20261013/README.md の U3。
+public class DepthRefineUniformSmoothingTests
+{
+    private const byte PersonCategory = 0;
+    private const byte OtherCategory = 1;
+    private const uint PersonTrack = 0;
+    private const uint BallTrack = 1;
+
+    private GameObject host;
+    private StreamingStereoVideoPlayer player;
+
+    [SetUp]
+    public void SetUp()
+    {
+        host = new GameObject("DepthRefineUniformSmoothingTests");
+        player = host.AddComponent<StreamingStereoVideoPlayer>();
+    }
+
+    [TearDown]
+    public void TearDown()
+    {
+        Object.DestroyImmediate(host);
+    }
+
+    [Test]
+    public void UniformSmoothingIsOffByDefault()
+    {
+        Assert.That(player.depthRefineUniformSmoothing, Is.False);
+    }
+
+    [Test]
+    public void OrderClampIsBypassedOnlyWhenUniformSmoothingIsOn()
+    {
+        StreamingStereoVideoPlayer.MetaObj person = PrepareBallBehindPerson();
+        player.projectedDepthOrderEpsilonMeters = 0.04f;
+        player.projectedDepthScaleK = 1f;
+
+        // OFF（今の既定）: ボールの anchorZ 0.85 − eps 0.04 より奥へは行かせない（ratio ≤ 0.81 / 0.80）。
+        player.depthRefineUniformSmoothing = false;
+        Assert.That(InvokeClamp(person, 0.80f, 1.2f), Is.EqualTo((0.85f - 0.04f) / 0.80f).Within(1e-6f));
+
+        // ON: 丸めない（入力をそのまま返す）。
+        player.depthRefineUniformSmoothing = true;
+        Assert.That(InvokeClamp(person, 0.80f, 1.2f), Is.EqualTo(1.2f));
+
+        // 今ある無効化の経路（eps = 0）も同じ結果になる。
+        player.depthRefineUniformSmoothing = false;
+        player.projectedDepthOrderEpsilonMeters = 0f;
+        Assert.That(InvokeClamp(person, 0.80f, 1.2f), Is.EqualTo(1.2f));
+    }
+
+    [Test]
+    public void FastTrackIsDisabledForEveryCallerWhenUniformSmoothingIsOn()
+    {
+        // OFF + 速追従あり（今の人の経路）: 相対誤差 1.0 は depthRefineFastTrackHigh 0.60 を超えるので 1 フレームで追いつく。
+        player.depthRefineUniformSmoothing = false;
+        Assert.That(SmoothOneVideoFrame(10, true), Is.EqualTo(2f).Within(1e-5f));
+
+        // OFF + 速追従なし（今の animal の経路）: τ 1.2 s・30 fps の 1 フレーム分だけ進む。
+        float animalPath = SmoothOneVideoFrame(11, false);
+        float expected = 1f + (1f - Mathf.Exp(-(1f / 30f) / 1.2f)) * (2f - 1f);
+        Assert.That(animalPath, Is.EqualTo(expected).Within(1e-6f));
+
+        // ON: 呼び出し側が速追従ありを渡しても、animal の経路とビットまで同じ値になる。
+        player.depthRefineUniformSmoothing = true;
+        Assert.That(SmoothOneVideoFrame(12, true), Is.EqualTo(animalPath));
+    }
+
+    // 1 回目で平滑を始め（その場の値 1.0）、「最後に進めた動画フレーム」を 1 つ戻してから 2.0 を入れる。
+    // GetCurrentPlaybackFrame は 0 のまま進まないので、こうして 1 動画フレーム進んだことにする。
+    private float SmoothOneVideoFrame(uint trackId, bool allowFastTrack)
+    {
+        InvokeSmooth(trackId, 1f, allowFastTrack);
+        Dictionary<uint, int> frames = GetPrivateField<Dictionary<uint, int>>("smoothedDepthRatioFrameByTrack");
+        frames[trackId] = frames[trackId] - 1;
+        return InvokeSmooth(trackId, 2f, allowFastTrack);
+    }
+
+    private StreamingStereoVideoPlayer.MetaObj PrepareBallBehindPerson()
+    {
+        Dictionary<byte, string> names = GetPrivateField<Dictionary<byte, string>>("categoryNames");
+        names[PersonCategory] = "person";
+        names[OtherCategory] = "other";
+
+        var person = new StreamingStereoVideoPlayer.MetaObj { trackId = PersonTrack, categoryId = PersonCategory, anchorZ = 0.80f };
+        var ball = new StreamingStereoVideoPlayer.MetaObj { trackId = BallTrack, categoryId = OtherCategory, anchorZ = 0.85f };
+        List<StreamingStereoVideoPlayer.MetaObj> frameObjects =
+            GetPrivateField<List<StreamingStereoVideoPlayer.MetaObj>>("metaFrameObjects");
+        frameObjects.Clear();
+        frameObjects.Add(person);
+        frameObjects.Add(ball);
+        return person;
+    }
+
+    private float InvokeClamp(StreamingStereoVideoPlayer.MetaObj obj, float currentZ, float ratio)
+    {
+        MethodInfo method = typeof(StreamingStereoVideoPlayer).GetMethod(
+            "ClampRatioPreservingOtherOrder",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.That(method, Is.Not.Null);
+        return (float)method.Invoke(player, new object[] { obj, currentZ, ratio });
+    }
+
+    private float InvokeSmooth(uint trackId, float ratio, bool allowFastTrack)
+    {
+        MethodInfo method = typeof(StreamingStereoVideoPlayer).GetMethod(
+            "SmoothProjectedDepthRatio",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.That(method, Is.Not.Null);
+        return (float)method.Invoke(player, new object[] { trackId, ratio, allowFastTrack, -1f });
+    }
+
+    private T GetPrivateField<T>(string name) where T : class
+    {
+        FieldInfo field = typeof(StreamingStereoVideoPlayer).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.That(field, Is.Not.Null, name);
+        return (T)field.GetValue(player);
+    }
+}

@@ -225,4 +225,46 @@ public class AnimalMotionFilterTests
         }
         finally { Object.DestroyImmediate(go); }
     }
+
+    // --- ShiftRootPosition（2026-10-13、exactScaleRefine） ---
+
+    [Test]
+    public void ShiftRootPosition_NextOutputMovesByDelta()
+    {
+        var go = new GameObject();
+        try
+        {
+            var plain = new AnimalMotionFilter(defaultConfig);
+            var shifted = new AnimalMotionFilter(defaultConfig);
+            Vector3 start = new Vector3(0.2f, -0.3f, 0.8f);
+            Vector3 moved = new Vector3(0.21f, -0.3f, 0.82f);
+            plain.FilterRootPosition(go.transform, start, 1f / 72f);
+            shifted.FilterRootPosition(go.transform, start, 1f / 72f);
+            Vector3 delta = new Vector3(0f, 0.04f, -0.15f);
+
+            shifted.ShiftRootPosition(go.transform, delta);
+            Vector3 a = plain.FilterRootPosition(go.transform, moved, 1f / 72f);
+            Vector3 b = shifted.FilterRootPosition(go.transform, moved + delta, 1f / 72f);
+
+            Assert.That((b - a - delta).magnitude, Is.LessThan(0.0001f));
+        }
+        finally { Object.DestroyImmediate(go); }
+    }
+
+    [Test]
+    public void ShiftRootPosition_WithoutFilter_DoesNothing()
+    {
+        var go = new GameObject();
+        try
+        {
+            var filter = new AnimalMotionFilter(defaultConfig);
+            filter.ShiftRootPosition(go.transform, new Vector3(1f, 1f, 1f));
+            Vector3 target = new Vector3(3f, 1f, 2f);
+
+            Vector3 result = filter.FilterRootPosition(go.transform, target, 0.016f);
+
+            Assert.That(result, Is.EqualTo(target));
+        }
+        finally { Object.DestroyImmediate(go); }
+    }
 }

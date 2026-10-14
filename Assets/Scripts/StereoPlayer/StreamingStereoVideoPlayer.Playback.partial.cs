@@ -796,7 +796,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private float ClampRatioPreservingOtherOrder(MetaObj obj, float currentZ, float ratio)
     {
         float eps = Mathf.Max(0f, projectedDepthOrderEpsilonMeters);
-        if (eps <= 0f || metaFrameObjects == null || currentZ <= 0.0001f)
+        // depthRefineUniformSmoothing（既定 OFF、2026-10-13、U3）: 丸めを外す（eps = 0 と同じ）。今は ⑨ が毎 tick ⑧ の後にボールを
+        // 「人の ⑧ 後の深さ − 平滑した anchorZ の差」へ置き直すので、ここで比べている other.anchorZ の深さにボールは描かれていない。
+        // 速追従と組で外す（丸めだけ外すと本物の後転 f850 で跳ぶ。Core.cs の depthRefineUniformSmoothing）。
+        if (depthRefineUniformSmoothing || eps <= 0f || metaFrameObjects == null || currentZ <= 0.0001f)
         {
             return ratio;
         }
@@ -846,6 +849,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private float SmoothProjectedDepthRatio(uint trackId, float ratio, bool allowFastTrack = true, float tauOverride = -1f)
     {
+        // depthRefineUniformSmoothing（既定 OFF、2026-10-13、U3）: 速追従を全カテゴリで切る（呼び出し側が人で true を渡しても切る）。
+        // 呼び出し側ではなくここで切るのは、⑧ に渡す比の作り方が変わっても（10/13 の U2 など）同じように効かせるため。
+        allowFastTrack = allowFastTrack && !depthRefineUniformSmoothing;
         // tauOverride > 0: animal だけ時定数を替える（animalDepthRefineSmoothingSeconds、2026-10-03）。
         float tau = tauOverride > 0f ? tauOverride : Mathf.Max(0f, projectedDepthSmoothingSeconds);
         if (tau <= 0.0001f)
@@ -1258,6 +1264,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // （投影高は距離に反比例するため、見かけは戻るが深度が壊れる）。
         float manualScale = Mathf.Max(0.01f, EvaluateManualScaleForFrame(obj.trackId, GetCurrentPlaybackFrame()));
         float ratio = projectedH / (targetH * manualScale);
+        // exactScaleRefine の確かめ用の記録（2026-10-13、logPlacementMeasurement のときだけ・振る舞いは変えない）。測り直しの後の数 tick の生の比と中心の骨のずれ。
+        if (exactScaleRefine && logPlacementMeasurement)
+        {
+            LogExactScaleRefineFollowUp(instance, obj, screen, ratio);
+        }
 
         // 検出が破綻しているフレームでは動かさないためのガード。
         //
@@ -1327,6 +1338,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         bool isAnimal = IsCategoryAnimal(obj.categoryId);
         if (!heldOnGuard)
         {
+            // depthRefineExactSolve（既定 OFF、2026-10-13）: 一手の比の代わりに、実際の投影で解いた深度倍率 s を平滑へ渡す。
+            // s も「基準点の深さの倍率」なので、順序の丸め（z = 基準点の深さ × 倍率）・平滑・上限・下限は比と同じに扱える（換算は厳密に成り立つ）。
+            // 解けない tick（投影できる点が無い等）は今の比のまま。ガード（上）と保持（heldOnGuard）は今の比で判定したまま。
+            if (depthRefineExactSolve)
+            {
+                ratio = ResolveExactDepthMultiplierOrLinear(instance, obj, camOrigin, camRotation, camLocal, targetH * manualScale, ratio);
+            }
+
             ratio = ClampRatioPreservingOtherOrder(obj, camLocal.z, ratio);
             // animal は姿勢で骨格の投影高が急に変わるので、速追従（1 frame で奥行きが飛ぶ）は掛けない（2026-09-18）。
             bool allowFastTrack = depthRefineFastTrackForAnimal || !isAnimal;
@@ -1353,11 +1372,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             upperZ = animalDepthRefineMaxDepthMeters;
         }
 
+        // depthRefineCapAtProjectionCentroid（既定 OFF、2026-10-13）: 上限を投影に使う骨の重心に掛ける。移動は基準点の光線に沿うので、
+        // 重心の深さも基準点と同じだけ動く。基準点の深さ − 重心の深さ だけ上限をずらせば、重心がちょうど上限に来る。
+        // このずらしは平滑の外で毎 tick 測り直すので、上限に当たっている間は重心のぶれ（人で 1 フレーム最大 23 mm。Core.cs の
+        // depthRefineCapAtProjectionCentroid）がそのまま基準点の奥行きのぶれになる。
+        if (depthRefineCapAtProjectionCentroid &&
+            TryResolveProjectionCentroidDepth(instance, camOrigin, camRotation, out float centroidZ))
+        {
+            upperZ += camLocal.z - centroidZ;
+        }
+
         float lowerZ = Mathf.Max(0.001f, MinDistanceFromHeadMeters);
         // animalDepthFloorAtNearestBone（既定 OFF、2026-10-10）: 下限を一番近い投影の骨に掛ける。基準点を光線に沿って動かすので、
         // 基準点の深さ − 一番近い骨の深さ だけ下限を奥へずらせば、その骨がちょうど MinDistanceFromHeadMeters になる。
         bool floorOverCeiling = false;
-        if (animalDepthFloorAtNearestBone && isAnimal &&
+        // depthRefineExactSolve（既定 OFF、2026-10-13）: 下限は全リグで一番近い投影の骨に掛ける。厳密に解いた奥行きは基準点に依らないので、
+        // 下限だけ基準点（Hips・root）に掛けると、基準点が体のどこにあるかで目の直前に来る骨の深さが変わってしまう。
+        if (((animalDepthFloorAtNearestBone && isAnimal) || depthRefineExactSolve) &&
             TryResolveNearestProjectionBoneDepth(instance, camOrigin, camRotation, out float nearestBoneZ, out string nearestBoneName))
         {
             lowerZ = Mathf.Max(lowerZ, MinDistanceFromHeadMeters + (camLocal.z - nearestBoneZ));
@@ -1454,6 +1485,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // exactScaleRefine（既定 OFF、2026-10-13、U1）: ここから先（目標・ガード・倍率・書き方）を実際の投影で解く形に置き換える（RefineLockedScaleExact）。
+        // OFF なら下の今の一手の補正のまま（この分岐を通らない）。
+        if (exactScaleRefine)
+        {
+            RefineLockedScaleExact(instance, obj, screen, bboxH, locked, projectedH);
+            return;
+        }
+
         // B1（refineLockedScaleAgainstSmoothedTarget、animal のみ、既定 OFF）: 基準を ±W frame で平滑した目標高にする。
         // ロックしたフレームの bbox が姿勢や検出で一時的に伸び縮みしていると、その値が shot の間ずっと残るため。
         float refineTargetH = bboxH;
@@ -1531,6 +1570,577 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Debug.Log(
                 $"[SCALEFIX] track={obj.trackId} boneRatio={ratio:F3} target={projectedBoneRatioTarget:F3} " +
                 $"scale {locked.x:F4} → {refined.x:F4} (×{projectedBoneRatioTarget / ratio:F3}) bboxH={bboxH:F0}");
+        }
+    }
+
+
+    // exactScaleRefine（既定 OFF、2026-10-13、Docs/tmp/depthcap_20261013/README.md の U1）: shot の頭の倍率の測り直しを、実際の投影で解く。
+    // 呼ぶのは RefineLockedScaleFromProjectedBones の「ロックがある・投影できる・手動倍率が 1」を確かめた後だけ（今の版と同じ tick に走る）。
+    //   目標・ガード: ⑧ と同じ。比 = 投影の広がり ÷ ResolveUnclippedTargetHeight が depthRefineMinRatio〜3.0 の外なら何もしない（次の tick にやり直す）。
+    //     今の版は分母が bboxH で下限 0.4（Mammoth の f1613 は測り直しが 3.018 で見送られ、⑧ は 2.809 で通った。README の R9）。
+    //     体全体の gain（animalPlaceClippedFromFullBody）は今の版と同じくガードを通った後に目標へ掛けて覚え、projectedBoneRatioTarget も今の版と同じく掛ける。
+    //   解き方: ExactScaleRefineSolver。中心 = 配置が anchor に置く骨（ResolveAnchorPlacementPivotWorld）。続く ⑦ を同じ式で当てた後の広がりで比べる
+    //     （⑦ は上下の端の点の深さの違いで広がりを 0.86〜1.10 倍変える。README の R3）。一番近い点が MinDistanceFromHeadMeters を割る拡大はしない。
+    //   書き方: localScale を g 倍、root を「中心 + g × (root − 中心)」へ（中心の骨が動かない）。今の版は root を中心に拡大するので、root が体の奥にある
+    //     モデルでは体が手前へ寄り、次の tick に配置が中心の骨を anchor へ戻す（README の R2）。
+    //     動物の root の位置の平滑（AnimalPoseApplier の One-Euro）の状態も同じだけずらす。ずらさないと次の tick に root の目標が (1 − g) × (中心 − root) だけ
+    //     跳び、平滑が数 tick かけて追う過渡になる。ずらす量は拡大による root の移動だけ（続く ⑦ の縦の移動は平滑の外で毎 tick 掛け直すので含めない）。
+    //     人は Hips を anchor に置くとき平滑するのが anchor の深さだけ（GetSmoothedSmplRootWorld、倍率に依らない）なので、ずらすものが無い
+    //     （ShiftRootPositionFilter は平滑の無い root では何もしない）。
+    //   記録（logPlacementMeasurement）: [SCALEFIX]（今と同じ形、末尾に exact=1）、[SCALEFIX-EXACT]（解の中身と、⑦ の後に実際に測った広がり）、
+    //     続く動画 3 フレームの [SCALEFIX-EXACT-NEXT]（LogExactScaleRefineFollowUp）。
+    private void RefineLockedScaleExact(GameObject instance, MetaObj obj, Transform screen, float bboxH, Vector3 locked, float projectedH)
+    {
+        float targetH = ResolveUnclippedTargetHeight(obj, bboxH);
+        float ratio = projectedH / targetH;
+        if (ratio < depthRefineMinRatio || ratio > MaxProjectedBoneRatioForScaleRefine)
+        {
+            NoteScaleRefineSkip(obj, ratio < depthRefineMinRatio ? "ratioBelowMin" : "ratioAboveMax", ratio, bboxH);
+            return;
+        }
+
+        float fullBodyGain = animalPlaceClippedFromFullBody && IsCategoryAnimal(obj.categoryId)
+            ? ResolveAnimalFullBodyTargetGain(obj, bboxH, targetH)
+            : 1f;
+        float goalH = targetH * fullBodyGain * Mathf.Max(0.1f, projectedBoneRatioTarget);
+        if (!TryBuildExactScaleRefineSetup(instance, obj, screen, out ExactScaleRefineSolver.Setup setup, out Vector3 pivotWorld, out string pivotName))
+        {
+            NoteScaleRefineSkip(obj, "exactSetupFail", ratio, bboxH);
+            return;
+        }
+
+        ExactScaleRefineSolver.Result solved = ExactScaleRefineSolver.Solve(setup, goalH, MinDistanceFromHeadMeters);
+        if (!solved.solved)
+        {
+            NoteScaleRefineSkip(obj, solved.failure, ratio, bboxH);
+            return;
+        }
+
+        if (fullBodyGain > 1f)
+        {
+            Debug.Log($"[FULLBODY] track={obj.trackId} frame={GetPlaybackFrameSnapshot().displayMetadataFrame} gain={fullBodyGain:F4} " +
+                      $"boneRatio={ratio:F4} -> {ratio / fullBodyGain:F4} lockedScale={locked.x:F5} exact=1");
+            animalFullBodyGainByTrack[obj.trackId] = fullBodyGain;
+        }
+
+        float g = solved.g;
+        Vector3 refined = locked * g;
+        lockedModelLocalScaleByTrack[obj.trackId] = refined;
+        scaleRefinedByTrack.Add(obj.trackId);
+        NoteScaleRefinePassed(obj, ratio);
+        // 倍率の持ち越し（モデルの差し替え・視聴距離の変更）に使う記録は今の版と同じ（RefineLockedScaleFromProjectedBones の下と同じ並び）。
+        scaleRefineFactorByTrack[obj.trackId] = g;
+        trackPrefabSources.TryGetValue(obj.trackId, out GameObject refinedPrefab);
+        scaleRefineFactorPrefabByTrack[obj.trackId] = refinedPrefab;
+        ReplaceableModel refinedModel = instance.GetComponent<ReplaceableModel>();
+        scaleRefineFactorBoneRatioByTrack[obj.trackId] = ResolveScaleRefineCarryRatio(refinedModel);
+        scaleRefineFactorRatioSilhouetteByTrack[obj.trackId] = useSilhouetteProjectionExtent;
+        scaleRefineFactorReferenceFrameByTrack[obj.trackId] =
+            scaleLockReferenceFrameByTrack.TryGetValue(obj.trackId, out int refinedReferenceFrame) ? refinedReferenceFrame : -1;
+
+        // 今の localScale（ロック × C4-T の倍率。手動倍率はここに来る track では 1）を g 倍する。中心の骨が動かないよう root も動かす。
+        Transform root = instance.transform;
+        Vector3 rootBefore = root.position;
+        Vector3 rootAfter = pivotWorld + (rootBefore - pivotWorld) * g;
+        TrackPlacementWriter.Apply(root, new TrackPlacementCommand(rootAfter, root.rotation, root.localScale * g));
+        animalPoseApplier.ShiftRootPositionFilter(root, rootAfter - rootBefore);
+
+        if (!ShouldUseHumanSmplRootPlacement(obj, GetCurrentPlaybackFrame()))
+        {
+            FitDisplayedModelToBBox(instance, obj, screen, bboxH);
+        }
+
+        if (logPlacementMeasurement)
+        {
+            float actualH = TryProjectBonesToEyeHeight(instance, screen, out _, out _, out float measuredAfter, out _, out _, useSilhouetteProjectionExtent)
+                ? measuredAfter
+                : -1f;
+            Debug.Log(
+                $"[SCALEFIX] track={obj.trackId} boneRatio={ratio:F3} target={projectedBoneRatioTarget:F3} " +
+                $"scale {locked.x:F4} → {refined.x:F4} (×{g:F3}) bboxH={bboxH:F0} exact=1");
+            // extent1 − measured1: 解く式の g = 1 と実際の投影の差（点の写し方の確かめ、0.01 px 程度のはず）。predicted − actual: ⑦ の後の広がりの予測と実測の差
+            // （⑦ の写し方と、拡大の後に renderer.bounds が更新されているかの確かめ）。linear: 今の版の式（目標 ÷ 広がり）で同じ目標に合わせたときの倍率。
+            Debug.Log(
+                $"[SCALEFIX-EXACT] track={obj.trackId} frame={GetPlaybackFrameSnapshot().displayMetadataFrame} pivot={pivotName} " +
+                $"targetH={targetH:F1} goalH={goalH:F1} g={g:F4} linear={goalH / projectedH:F4} " +
+                $"extent1={solved.extentAtOne:F2} measured1={projectedH:F2} predicted={solved.extentAtG:F2} actual={actualH:F2} " +
+                $"fit={setup.fitMode} upper={solved.upperLimit:F3} clamped={(solved.clamped ? 1 : 0)} evals={solved.evaluations} " +
+                $"rootShift={(rootAfter - rootBefore).magnitude * 1000f:F1}mm");
+            exactScaleRefineWatchFrameByTrack[obj.trackId] = GetCurrentPlaybackFrame();
+        }
+    }
+
+    // exactScaleRefine の解く式に渡す材料（camera 空間）。点は TryProjectBonesToEyeHeight と同じ集まり・同じ順（TryCollectProjectionPointsCam）を
+    // 専用のリストに写してから使う（共有のバッファ projectionBoneBuffer・silhouettePointBuffer は他の関数も使うので、解いている間は触らない）。
+    // ⑦ の当て方は FitDisplayedModelToBBox と同じ判定: AABB が取れなければ ⑦ は動かさない（None）。下端が切れて上端が切れていなければ AABB の上端を
+    // bbox の上端へ（Top）、それ以外は一番下の点を bbox の下端へ（Bottom。exactScaleRefine は ⑦ の換算をその点の深さにする）。
+    // IsBBoxBottomClipped・ResolveReliableBBoxBottomVEye は同じ tick に何度呼んでも同じ値（どちらもこの tick の ⑦ が既に呼んでいる）。
+    private readonly List<Vector3> exactScaleRefinePointBuffer = new List<Vector3>(128);
+
+    private bool TryBuildExactScaleRefineSetup(GameObject instance, MetaObj obj, Transform screen,
+        out ExactScaleRefineSolver.Setup setup, out Vector3 pivotWorld, out string pivotName)
+    {
+        setup = default;
+        pivotWorld = ResolveAnchorPlacementPivotWorld(instance, out pivotName);
+        if (!TryGetProjectionIntrinsics(out float fx, out float fy, out _, out float cyPixels) ||
+            !TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation) ||
+            !TryCollectProjectionPointsCam(instance, screen, exactScaleRefinePointBuffer))
+        {
+            return false;
+        }
+
+        Quaternion worldToCam = Quaternion.Inverse(camRotation);
+        setup.points = exactScaleRefinePointBuffer;
+        setup.pivot = worldToCam * (pivotWorld - camOrigin);
+        setup.manifest = manifest;
+        setup.fx = fx;
+        setup.fy = fy;
+        setup.cyPixels = cyPixels;
+        setup.bottomUsesPointDepth = true;
+        setup.fitMode = ExactScaleRefineSolver.FitMode.None;
+        if (TryGetRendererWorldBounds(instance, out Bounds bounds))
+        {
+            // TryProjectRendererBoundsToEyeHeight と同じ式。
+            Vector3 camUp = camRotation * Vector3.up;
+            Vector3 extents = bounds.extents;
+            float verticalExtent =
+                Mathf.Abs(Vector3.Dot(new Vector3(extents.x, 0f, 0f), camUp)) +
+                Mathf.Abs(Vector3.Dot(new Vector3(0f, extents.y, 0f), camUp)) +
+                Mathf.Abs(Vector3.Dot(new Vector3(0f, 0f, extents.z), camUp));
+            if (verticalExtent > 0.000001f)
+            {
+                setup.aabbCenter = worldToCam * (bounds.center - camOrigin);
+                setup.aabbVerticalExtent = verticalExtent;
+                bool clippedBottom = IsBBoxBottomClipped(obj);
+                bool clippedTop = obj.bboxY <= 0;
+                if (alignTopWhenBottomClipped && clippedBottom && !clippedTop)
+                {
+                    setup.fitMode = ExactScaleRefineSolver.FitMode.Top;
+                    setup.fitTargetV = obj.bboxY;
+                }
+                else
+                {
+                    setup.fitMode = ExactScaleRefineSolver.FitMode.Bottom;
+                    setup.fitTargetV = ResolveReliableBBoxBottomVEye(obj);
+                }
+            }
+        }
+
+        return true;
+    }
+
+    // 倍率の測り直し（exactScaleRefine）の中心: 配置が anchor に置く骨の今の world の位置。種別ではなくリグで決め、配置のコードと同じ骨を選ぶ:
+    //   Humanoid → Hips（AlignHumanoidHipsToSmplRoot が anchor へ置く骨。⑧ の基準 ResolveDepthReferenceWorld も同じ）。
+    //   それ以外 → 動物のリグのキャッシュが ready なら AnimalPlacementBoneSelector の骨（ApplyAnimalSkeletonPlacement・AlignAnimalRootToSkeleton が anchor へ置く骨）、
+    //   キャッシュが無い・ready でなければ root（そのとき配置は root を anchor へ置く）。
+    private Vector3 ResolveAnchorPlacementPivotWorld(GameObject instance, out string pivotName)
+    {
+        Animator animator = instance.GetComponentInChildren<Animator>(true);
+        if (animator != null && animator.isHuman)
+        {
+            HumanoidRigCache cache = GetOrBuildHumanoidCache(animator);
+            if (cache != null && cache.ready &&
+                cache.bones.TryGetValue(HumanBodyBones.Hips, out Transform hips) && hips != null)
+            {
+                pivotName = "Hips";
+                return hips.position;
+            }
+        }
+        else
+        {
+            AnimalRigCache animalCache = animalPoseApplier.PeekAnimalRigCache(instance);
+            Transform placementBone = animalCache != null && animalCache.ready
+                ? AnimalPlacementBoneSelector.Select(animalCache.spine, animalCache.neck, animalCache.tailBase, animalCache.root)
+                : null;
+            if (placementBone != null)
+            {
+                pivotName = placementBone.name;
+                return placementBone.position;
+            }
+        }
+
+        pivotName = "root";
+        return instance.transform.position;
+    }
+
+    // 投影の広がりを測る点（TryProjectBonesToEyeHeight と同じ集まり・同じ順。useSilhouetteProjectionExtent なら眼・Jaw を除き頭頂・足裏の代理点を足した点、
+    // そうでなければ ResolveProjectionBones）を camera 空間で camPoints に写す（2026-10-13、exactScaleRefine・bottomFitUsesProjectionPointDepth）。
+    // 目の後ろの点もそのまま入れる（投影の段で TryProjectCamLocalToEyePixel が外す。測り直しの拡大の上限を決めるのに要る）。
+    private bool TryCollectProjectionPointsCam(GameObject instance, Transform screen, List<Vector3> camPoints)
+    {
+        camPoints.Clear();
+        if (instance == null || manifest == null || manifest.eye_h <= 0 ||
+            !TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
+        {
+            return false;
+        }
+
+        Animator animator = instance.GetComponentInChildren<Animator>(true);
+        Quaternion worldToCam = Quaternion.Inverse(camRotation);
+        if (useSilhouetteProjectionExtent && TryBuildSilhouetteProjectionPoints(animator, silhouettePointBuffer))
+        {
+            for (int i = 0; i < silhouettePointBuffer.Count; i++)
+            {
+                camPoints.Add(worldToCam * (silhouettePointBuffer[i].Value - camOrigin));
+            }
+        }
+        else
+        {
+            System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, Transform>> bones = ResolveProjectionBones(instance, animator);
+            for (int i = 0; i < bones.Count; i++)
+            {
+                if (bones[i].Value != null)
+                {
+                    camPoints.Add(worldToCam * (bones[i].Value.position - camOrigin));
+                }
+            }
+        }
+
+        return camPoints.Count > 0;
+    }
+
+    // ⑦ の下端合わせで下端に使った投影点（TryProjectBonesToEyeHeight と同じ点・同じ順・同じ選び方: v が最大の最初の点）の camera 空間の深さ
+    // （2026-10-13、bottomFitUsesProjectionPointDepth）。TryProjectBonesToEyeHeight が false になる（投影が取れない・広がりが 0）ときは false。
+    private readonly List<Vector3> bottomFitPointBuffer = new List<Vector3>(128);
+
+    private bool TryResolveBottomProjectionPointDepth(GameObject instance, Transform screen, out float depth)
+    {
+        depth = 0f;
+        if (!TryGetProjectionIntrinsics(out float fx, out float fy, out _, out _) ||
+            !TryCollectProjectionPointsCam(instance, screen, bottomFitPointBuffer))
+        {
+            return false;
+        }
+
+        float minV = float.MaxValue;
+        float maxV = float.MinValue;
+        bool hasAny = false;
+        for (int i = 0; i < bottomFitPointBuffer.Count; i++)
+        {
+            Vector3 cam = bottomFitPointBuffer[i];
+            if (!PinholePlacementSpace.TryProjectCamLocalToEyePixel(manifest, cam, fx, fy, out Vector2 pixel))
+            {
+                continue;
+            }
+
+            if (pixel.y < minV)
+            {
+                minV = pixel.y;
+            }
+
+            if (pixel.y > maxV)
+            {
+                maxV = pixel.y;
+                depth = cam.z;
+            }
+
+            hasAny = true;
+        }
+
+        return hasAny && maxV - minV > 0.0001f;
+    }
+
+    // exactScaleRefine の確かめ用の記録（2026-10-13、logPlacementMeasurement のときだけ・振る舞いは変えない）。測り直した動画フレームから 3 フレームの間、
+    // ⑧ に入る生の比と、中心の骨（ResolveAnchorPlacementPivotWorld）の anchor からのずれ（camera の x・z。y は ⑦ が合わせ直すので見ない）を tick ごとに出す。
+    // ⑧ の [DEPTH8-INIT] は測り直した tick の値なので作り上 1.000 になり、過渡の有無は示さない。見込み: 生の比に段が無く（姿勢と bbox の変化だけで動く）、
+    // ずれも測り直しの tick の前後で段が無い。段があれば One-Euro の状態のずらし（ShiftRootPositionFilter）か中心の骨の選び方が配置と食い違っている。
+    // 人の Hips は anchor の深さを平滑した点に置くので、z のずれにはその平滑の遅れが入る（段にはならない）。
+    private readonly Dictionary<uint, int> exactScaleRefineWatchFrameByTrack = new Dictionary<uint, int>();
+    private const int ExactScaleRefineWatchVideoFrames = 3;
+
+    private void LogExactScaleRefineFollowUp(GameObject instance, MetaObj obj, Transform screen, float rawRatio)
+    {
+        if (!exactScaleRefineWatchFrameByTrack.TryGetValue(obj.trackId, out int startFrame))
+        {
+            return;
+        }
+
+        int frame = GetCurrentPlaybackFrame();
+        if (frame < startFrame || frame > startFrame + ExactScaleRefineWatchVideoFrames)
+        {
+            exactScaleRefineWatchFrameByTrack.Remove(obj.trackId);
+            return;
+        }
+
+        if (manifest == null || !TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation) ||
+            !ResolveAnchorToScreen(obj.anchorU, out _, out int uEye, out _))
+        {
+            return;
+        }
+
+        Quaternion worldToCam = Quaternion.Inverse(camRotation);
+        Vector3 pivot = worldToCam * (ResolveAnchorPlacementPivotWorld(instance, out string pivotName) - camOrigin);
+        Vector3 anchor = worldToCam * (AnchorUvZToWorldPinhole(
+            screen,
+            Mathf.Clamp(uEye, 0f, manifest.eye_w - 1f),
+            Mathf.Clamp(obj.anchorV, 0f, manifest.eye_h - 1f),
+            obj.anchorZ) - camOrigin);
+        float rootZ = (worldToCam * (instance.transform.position - camOrigin)).z;
+        Debug.Log(
+            $"[SCALEFIX-EXACT-NEXT] track={obj.trackId} frame={frame} sinceRefine={frame - startFrame} tick={Time.frameCount} raw={rawRatio:F4} " +
+            $"pivot={pivotName} pivotMinusAnchorX={(pivot.x - anchor.x) * 1000f:F1}mm pivotMinusAnchorZ={(pivot.z - anchor.z) * 1000f:F1}mm " +
+            $"pivotZ={pivot.z:F4} rootZ={rootZ:F4}");
+    }
+
+    // exactScaleRefine（2026-10-13）の解き方。transform に書かず、camera 空間の点だけで計算する（場面なしの EditMode のテストで確かめられるよう static）。
+    //   拡大: 一様な倍率 g を中心のまわりに掛けると、骨（と骨に付いた足裏・頭頂の代理点）の位置も world の AABB も「中心 + g × (点 − 中心)」へ写る
+    //     （root の localScale の一様な倍率は子孫のすべてのオフセットを同じ倍率にする。AABB は箱ごと写るので中心と半幅が g 倍）。
+    //   ⑦: FitDisplayedModelToBBox → AlignProjectedModelBottomToBBox と同じ式で camera の y だけ動かす（Bottom は一番下の点、Top は AABB の上端）。
+    //   広がり: TryProjectBonesToEyeHeight と同じ投影（PinholePlacementSpace.TryProjectCamLocalToEyePixel、目の後ろ 0.001 m 以内の点は外す）の縦の最大 − 最小。
+    //   ⑦ を当てない広がりは g について単調に増える（各点の投影は中心の投影から単調に離れる）。⑦ を当てると、端の点の深さの違いのぶん単調でなくなりうる・
+    //   一番下の点が入れ替わる g で段ができうるが、実際の ⑦ も同じ段を持つ。二分法は括りの中の段か解のどちらかに収まる（[SCALEFIX-EXACT] の predicted で見る）。
+    internal static class ExactScaleRefineSolver
+    {
+        // 続く ⑦ の縦の合わせ直しのどちらを当てるか。None は ⑦ が動かさない（AABB が取れない）。
+        internal enum FitMode
+        {
+            None,
+            Bottom,
+            Top,
+        }
+
+        internal struct Setup
+        {
+            public List<Vector3> points;        // 投影の広がりを測る点（camera 空間）
+            public Vector3 pivot;               // 倍率の中心（camera 空間）
+            public Vector3 aabbCenter;          // レンダラーの world AABB の中心（camera 空間）
+            public float aabbVerticalExtent;    // AABB の camera の上方向の半幅
+            public FitMode fitMode;
+            public float fitTargetV;            // Bottom: bbox の下端（eye px）、Top: bbox の上端
+            public bool bottomUsesPointDepth;   // Bottom の px → m を一番下の点の深さで換算するか（false なら AABB の中心の深さ。今の ⑦）
+            public ManifestData manifest;
+            public float fx;
+            public float fy;
+            public float cyPixels;              // TryGetProjectionIntrinsics の主点（AABB の投影に使う。TryProjectRendererBoundsToEyeHeight と同じ）
+        }
+
+        internal struct Result
+        {
+            public bool solved;
+            public string failure;              // 解けなかった理由（[SCALEFIX-SKIP] の reason）
+            public float g;                     // 今の倍率に対する比
+            public float extentAtOne;           // g = 1 で ⑦ を当てた後の広がり（px）
+            public float extentAtG;             // 解の g で ⑦ を当てた後の広がり（px）
+            public float upperLimit;            // 拡大の上限（一番近い点を minPointDepth に止める g。1 未満にはしない）
+            public bool clamped;                // 上限で止めた（目標まで大きくできなかった）
+            public int evaluations;
+        }
+
+        // 数値の設定（係数ではない）:
+        //   ExpandSteps = 8: 括りを g = 1 から 2 倍ずつ最大 8 回広げる（1/256〜256 倍）。比のガード 0.2〜3.0 の線形の答えは 1/3〜5 倍で、
+        //     投影の非線形（手前の点の拡大は最大で「中心の深さ ÷ 0.25 m」倍。画面距離 3 m でも 12 倍）を見込んでも 1/36〜60 倍に収まる。
+        //   RelativeTolerance = 1e-5: 括りの幅が g の 1e-5 倍を割ったら止める（広がり 1000 px で 0.01 px。bbox は 1 px 単位）。
+        //   MaxBisections = 40: 2 倍の括りから 1e-5 までは 17 回。40 回に届くのは丸めで幅が縮まないときだけ。
+        private const int ExpandSteps = 8;
+        private const float RelativeTolerance = 1e-5f;
+        private const int MaxBisections = 40;
+
+        // 倍率 g（今の倍率に対する比）で中心を動かさずに拡大し、⑦ を当てた後の投影の縦の広がり（px）。投影できる点が無い・広がりが 0 なら -1。
+        internal static float EvaluateExtent(in Setup s, float g)
+        {
+            if (s.points == null || s.manifest == null || s.manifest.eye_h <= 0)
+            {
+                return -1f;
+            }
+
+            float eyeH = s.manifest.eye_h;
+            float deltaCamY = 0f;
+            if (s.fitMode != FitMode.None)
+            {
+                Vector3 center = s.pivot + (s.aabbCenter - s.pivot) * g;
+                // TryProjectRendererBoundsToEyeHeight は AABB の上端・下端（中心と同じ深さ）が目の前 0.001 m 以内だと失敗し、⑦ は動かさない。
+                if (center.z > 0.001f)
+                {
+                    float depth = Mathf.Max(0.001f, center.z);
+                    if (s.fitMode == FitMode.Top)
+                    {
+                        float topY = center.y + s.aabbVerticalExtent * g;
+                        float topV = ((s.cyPixels / eyeH) - (topY * s.fy / center.z) * 0.5f) * eyeH;
+                        deltaCamY = -((s.fitTargetV - topV) * 2f / eyeH) * (depth / s.fy);
+                    }
+                    else
+                    {
+                        float bottomV = float.MinValue;
+                        float bottomZ = 0f;
+                        bool found = false;
+                        for (int i = 0; i < s.points.Count; i++)
+                        {
+                            Vector3 q = s.pivot + (s.points[i] - s.pivot) * g;
+                            if (!PinholePlacementSpace.TryProjectCamLocalToEyePixel(s.manifest, q, s.fx, s.fy, out Vector2 pixel))
+                            {
+                                continue;
+                            }
+
+                            if (pixel.y > bottomV)
+                            {
+                                bottomV = pixel.y;
+                                bottomZ = q.z;
+                            }
+
+                            found = true;
+                        }
+
+                        if (found)
+                        {
+                            float conversionDepth = s.bottomUsesPointDepth ? bottomZ : depth;
+                            deltaCamY = -((s.fitTargetV - bottomV) * 2f / eyeH) * (conversionDepth / s.fy);
+                        }
+                    }
+                }
+            }
+
+            float minV = float.MaxValue;
+            float maxV = float.MinValue;
+            bool hasAny = false;
+            for (int i = 0; i < s.points.Count; i++)
+            {
+                Vector3 q = s.pivot + (s.points[i] - s.pivot) * g;
+                q.y += deltaCamY;
+                if (!PinholePlacementSpace.TryProjectCamLocalToEyePixel(s.manifest, q, s.fx, s.fy, out Vector2 pixel))
+                {
+                    continue;
+                }
+
+                if (pixel.y < minV)
+                {
+                    minV = pixel.y;
+                }
+
+                if (pixel.y > maxV)
+                {
+                    maxV = pixel.y;
+                }
+
+                hasAny = true;
+            }
+
+            float height = maxV - minV;
+            return hasAny && height > 0.0001f ? height : -1f;
+        }
+
+        // ⑦ を当てた後の広がりが goalPixels になる g を、log g の二分法で求める。拡大の向きは一番近い点の深さが minPointDepth を割らない範囲に限る
+        // （目の直前では広がりが急に変わり、0.001 m を割った点は投影から外れて広がりが段で落ちる。minPointDepth は MinDistanceFromHeadMeters で、⑧ の奥行きの下限と同じ値）。
+        // 中心そのものが minPointDepth より手前なら解かない（配置が壊れている）。上限までに目標に届かなければ上限の g を返す（clamped）。
+        internal static Result Solve(in Setup s, float goalPixels, float minPointDepth)
+        {
+            Result r = new Result { g = 1f, upperLimit = float.PositiveInfinity };
+            if (s.points == null || s.points.Count == 0 || !(goalPixels > 0f))
+            {
+                r.failure = "exactNoPoints";
+                return r;
+            }
+
+            if (s.pivot.z <= minPointDepth)
+            {
+                r.failure = "exactPivotNear";
+                return r;
+            }
+
+            // 拡大すると中心より手前の点が目へ寄る（z' = zc + g (z − zc)）。今すでに minPointDepth を割っている点があれば拡大だけを止める（上限 1）。
+            // 縮める向きは止めない（点は中心へ寄る = 目から離れる）。
+            float upper = float.PositiveInfinity;
+            for (int i = 0; i < s.points.Count; i++)
+            {
+                float z = s.points[i].z;
+                if (z < s.pivot.z)
+                {
+                    upper = Mathf.Min(upper, (s.pivot.z - minPointDepth) / (s.pivot.z - z));
+                }
+            }
+
+            upper = Mathf.Max(1f, upper);
+            r.upperLimit = upper;
+
+            float e1 = EvaluateExtent(s, 1f);
+            r.evaluations = 1;
+            r.extentAtOne = e1;
+            if (e1 <= 0f)
+            {
+                r.failure = "exactProjectFail";
+                return r;
+            }
+
+            float lo;
+            float hi;
+            if (e1 > goalPixels)
+            {
+                hi = 1f;
+                lo = 0.5f;
+                float eLo = EvaluateExtent(s, lo);
+                r.evaluations++;
+                for (int step = 0; eLo > goalPixels && step < ExpandSteps; step++)
+                {
+                    hi = lo;
+                    lo *= 0.5f;
+                    eLo = EvaluateExtent(s, lo);
+                    r.evaluations++;
+                }
+
+                if (eLo > goalPixels)
+                {
+                    r.failure = "exactNoBracket";
+                    return r;
+                }
+            }
+            else
+            {
+                lo = 1f;
+                if (upper <= 1f)
+                {
+                    r.g = 1f;
+                    r.extentAtG = e1;
+                    r.clamped = e1 < goalPixels;
+                    r.solved = true;
+                    return r;
+                }
+
+                hi = Mathf.Min(2f, upper);
+                float eHi = EvaluateExtent(s, hi);
+                r.evaluations++;
+                for (int step = 0; eHi < goalPixels && hi < upper && step < ExpandSteps; step++)
+                {
+                    lo = hi;
+                    hi = Mathf.Min(hi * 2f, upper);
+                    eHi = EvaluateExtent(s, hi);
+                    r.evaluations++;
+                }
+
+                if (eHi < goalPixels)
+                {
+                    if (hi >= upper)
+                    {
+                        r.g = hi;
+                        r.extentAtG = eHi;
+                        r.clamped = true;
+                        r.solved = true;
+                        return r;
+                    }
+
+                    r.failure = "exactNoBracket";
+                    return r;
+                }
+            }
+
+            for (int i = 0; i < MaxBisections && hi > lo * (1f + RelativeTolerance); i++)
+            {
+                float mid = Mathf.Sqrt(lo * hi);
+                if (EvaluateExtent(s, mid) < goalPixels)
+                {
+                    lo = mid;
+                }
+                else
+                {
+                    hi = mid;
+                }
+
+                r.evaluations++;
+            }
+
+            r.g = Mathf.Sqrt(lo * hi);
+            r.extentAtG = EvaluateExtent(s, r.g);
+            r.evaluations++;
+            r.solved = true;
+            return r;
         }
     }
 
@@ -1975,6 +2585,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             alignDepth = bottomBoneDepth;
         }
+        // bottomFitUsesProjectionPointDepth（既定 OFF、2026-10-13、全リグ）: 上の換算を種別によらず行う。exactScaleRefine が ON なら OFF でも行う（測り直しが解く式の ⑦ と
+        // この ⑦ を一致させるため）。下端に使った点そのものの深さを使い、名前で骨を引き直さない（足裏の代理点 Sole* は ResolveProjectionBones に無く、名前で引くと
+        // AABB の深さに落ちる）。骨が投影できず AABB の下端で合わせたときは、点も取れないので今のまま。
+        // この換算の条件は 2 か所に写してある（ExactScaleRefineSolver.EvaluateExtent の bottomUsesPointDepth と、⑧ の厳密解の
+        // ExactDepthSecondFitUsesBottomPointDepth）。ここを変えたら両方も同じに変えること（2026-10-13 の合流）。
+        else if ((bottomFitUsesProjectionPointDepth || exactScaleRefine) &&
+                 TryResolveBottomProjectionPointDepth(instance, screen, out float bottomPointDepth))
+        {
+            alignDepth = bottomPointDepth;
+        }
 
         AlignProjectedModelBottomToBBox(instance.transform, screen, bottomV, alignDepth, targetBottomV);
     }
@@ -2204,6 +2824,249 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             TryApplyPersonPosePipeline(instance, obj, screen, frame);
         }
+    }
+
+    // ---- ⑧ の厳密解（depthRefineExactSolve、既定 OFF、2026-10-13。Docs/tmp/depthcap_20261013/README.md の U2）----
+    //
+    // ⑧ の一手（基準点の深さ × 比）の代わりに、「基準点の光線に沿って奥行きを s 倍へ平行移動 → 2 回目の ⑦ の縦の合わせ直し」のあとの
+    // 骨の投影の広がりが目標高に一致する s を、変換を書かずに解く（PinholePlacementSpace.TrySolveDepthMultiplierForExtent）。
+    //
+    // 平滑（SmoothProjectedDepthRatio）が入力を使うのは動画フレームの最初の tick だけ（同じフレームの 2 回目以降は前回の値を返す）なので、
+    // 解くのも track・動画フレーム・インスタンスごとに 1 回にして、同じフレームの残りの tick はキャッシュを返す。
+    // smoothDepthPerVideoFrame を切った・τ = 0 の設定（平滑が毎 tick 値を使う）でも、解き直さずにそのフレームの最初の解を使う。
+    //
+    // 確かめたこと（scratchpad の w1013/fix/D2。dci の記録の走りから I6 が再構成した ⑧ の前の状態、動物 1,456 tick・人 588 tick に、
+    // この解法の Python 移植 d2_solver.py を当てた）:
+    //   ・広がり − 目標の符号の変化は全 tick でちょうど 1 回（解は一意）。評価は 14〜23 回、解の残差は 0.012 px 以下
+    //   ・解いた奥行きの移動量の基準点による違い（root・骨の重心・spine の光線）: 中央 0.1〜0.3 mm、p95 2〜6 mm（動物）・8 mm（人の Hips と重心）。
+    //     残るのは、⑦ の下端合わせが AABB の中心の深さで換算する分と、⑦ が合わせる一番下の骨が光線の傾きで入れ替わる tick（Lynx で約 1%）
+    private struct ExactDepthSolveCacheEntry
+    {
+        public int frame;
+        public GameObject instance;
+        public float multiplier;
+    }
+
+    private readonly Dictionary<uint, ExactDepthSolveCacheEntry> exactDepthSolveCacheByTrack = new Dictionary<uint, ExactDepthSolveCacheEntry>();
+    // 投影点のカメラ空間の y・z と、⑦ がその点自身の深さで換算できる点か（名前で引ける骨。U1 の換算が ON なら代理点も。TryCollectExactDepthPoints）。
+    // フラグ ON で初めて解くときに確保し、足りなければ広げる。
+    private float[] exactDepthPointY;
+    private float[] exactDepthPointZ;
+    private bool[] exactDepthPointIsBone;
+
+    // 平滑へ渡す値: 解けたら深度倍率 s、解けなければ一手の比（linearRatio）のまま（キャッシュせず、次の tick でまた試す）。
+    // targetPixels は今の比の分母（targetH × 手動倍率）と同じ値。referenceCam は基準点（ResolveDepthReferenceWorld）のカメラ空間の位置。
+    private float ResolveExactDepthMultiplierOrLinear(
+        GameObject instance,
+        MetaObj obj,
+        Vector3 camOrigin,
+        Quaternion camRotation,
+        Vector3 referenceCam,
+        float targetPixels,
+        float linearRatio)
+    {
+        int frame = GetCurrentPlaybackFrame();
+        if (exactDepthSolveCacheByTrack.TryGetValue(obj.trackId, out ExactDepthSolveCacheEntry cached) &&
+            cached.frame == frame && cached.instance == instance)
+        {
+            return cached.multiplier;
+        }
+
+        if (!TryGetProjectionIntrinsics(out _, out float fy, out _, out float cyPixels) ||
+            !TryCollectExactDepthPoints(instance, camOrigin, camRotation, out int count) ||
+            !TryBuildExactDepthSecondFit(instance, obj, camOrigin, camRotation, cyPixels, out PinholePlacementSpace.SecondFitModel fit) ||
+            !PinholePlacementSpace.TrySolveDepthMultiplierForExtent(
+                manifest, fy, exactDepthPointY, exactDepthPointZ, exactDepthPointIsBone, count,
+                referenceCam.y, referenceCam.z, fit, targetPixels, linearRatio,
+                out float multiplier, out int evaluations, out float residualPixels, out bool saturated))
+        {
+            if (logDepthRefineStages)
+            {
+                Debug.Log($"[DEPTH8-EXACT] track={obj.trackId} frame={frame} failed linear={linearRatio:F4}");
+            }
+
+            return linearRatio;
+        }
+
+        exactDepthSolveCacheByTrack[obj.trackId] = new ExactDepthSolveCacheEntry { frame = frame, instance = instance, multiplier = multiplier };
+        if (logDepthRefineStages)
+        {
+            Debug.Log($"[DEPTH8-EXACT] track={obj.trackId} frame={frame} linear={linearRatio:F4} exact={multiplier:F4} " +
+                      $"fit={fit.mode} pointDepth={fit.bottomUsesPointDepth} evals={evaluations} residual={residualPixels:F3}px " +
+                      $"saturated={saturated} refZ={referenceCam.z:F4} points={count}");
+        }
+
+        return multiplier;
+    }
+
+    // ⑧ が測る投影点（TryProjectBonesToEyeHeight と同じ集合: useSilhouetteProjectionExtent なら眼・Jaw を外し頭頂・足裏の代理点を足した
+    // シルエット相当、そうでなければ ResolveProjectionBones）を、いまの配置のカメラ空間の y・z で写す。
+    private bool TryCollectExactDepthPoints(GameObject instance, Vector3 camOrigin, Quaternion camRotation, out int count)
+    {
+        count = 0;
+        if (instance == null)
+        {
+            return false;
+        }
+
+        Animator animator = instance.GetComponentInChildren<Animator>(true);
+        Quaternion worldToCam = Quaternion.Inverse(camRotation);
+        if (useSilhouetteProjectionExtent && TryBuildSilhouetteProjectionPoints(animator, silhouettePointBuffer))
+        {
+            EnsureExactDepthPointCapacity(silhouettePointBuffer.Count);
+            for (int i = 0; i < silhouettePointBuffer.Count; i++)
+            {
+                KeyValuePair<string, Vector3> point = silhouettePointBuffer[i];
+                Vector3 cam = worldToCam * (point.Value - camOrigin);
+                exactDepthPointY[count] = cam.y;
+                exactDepthPointZ[count] = cam.z;
+                // 頭頂・足裏の代理点（"Crown"・"Sole…"）は ResolveProjectionBones に無いので、animalBottomFitUsesBoneDepth の分岐（名前で骨を引く）では
+                // ⑦ が深さを引けず AABB の深さで換算する。U1 の bottomFitUsesProjectionPointDepth・exactScaleRefine の分岐は下端に使った点そのものの
+                // 深さで換算するので、そのときは代理点も点の深さで写す（2026-10-13 の合流。ExactDepthSecondFitUsesBottomPointDepth と組）。
+                exactDepthPointIsBone[count] = bottomFitUsesProjectionPointDepth || exactScaleRefine ||
+                    (point.Key != "Crown" && !point.Key.StartsWith("Sole", System.StringComparison.Ordinal));
+                count++;
+            }
+
+            return count > 0;
+        }
+
+        var bones = ResolveProjectionBones(instance, animator);
+        EnsureExactDepthPointCapacity(bones.Count);
+        for (int i = 0; i < bones.Count; i++)
+        {
+            Transform bone = bones[i].Value;
+            if (bone == null)
+            {
+                continue;
+            }
+
+            Vector3 cam = worldToCam * (bone.position - camOrigin);
+            exactDepthPointY[count] = cam.y;
+            exactDepthPointZ[count] = cam.z;
+            exactDepthPointIsBone[count] = true;
+            count++;
+        }
+
+        return count > 0;
+    }
+
+    private void EnsureExactDepthPointCapacity(int needed)
+    {
+        if (exactDepthPointY != null && exactDepthPointY.Length >= needed)
+        {
+            return;
+        }
+
+        int size = Mathf.Max(64, Mathf.NextPowerOfTwo(Mathf.Max(1, needed)));
+        exactDepthPointY = new float[size];
+        exactDepthPointZ = new float[size];
+        exactDepthPointIsBone = new bool[size];
+    }
+
+    // ⑧ が動かしたあとに走る 2 回目の ⑦（FitDisplayedModelToBBox）の判断を、いまの配置から写す（変換は書かない）。
+    // 上端・下端の選び方・合わせる bbox の端・px → m の換算の深さは ⑦ と同じ式。**⑦ の側を変えたら、ここも同じに変えること**
+    // （特に一番下の点の深さで換算する条件 ExactDepthSecondFitUsesBottomPointDepth と、代理点の扱い TryCollectExactDepthPoints）。
+    // IsBBoxBottomClipped と ResolveReliableBBoxBottomVEye は track の状態を書くが、同じ tick に何度呼んでも同じ値になる
+    // （この tick の 1 回目の ⑦ と ⑧ の目標高で既に呼ばれていて、2 回目の ⑦ も同じ値を読む）。
+    private bool TryBuildExactDepthSecondFit(
+        GameObject instance,
+        MetaObj obj,
+        Vector3 camOrigin,
+        Quaternion camRotation,
+        float cyPixels,
+        out PinholePlacementSpace.SecondFitModel fit)
+    {
+        fit = default(PinholePlacementSpace.SecondFitModel);
+        fit.mode = PinholePlacementSpace.SecondFitMode.None;
+        fit.cyPixels = cyPixels;
+        // ⑧ のあとに ⑦ を掛け直さない経路（ApplyMetaTarget の条件。今は常に掛け直す）。
+        if (ShouldUseHumanSmplRootPlacement(obj, GetCurrentPlaybackFrame()))
+        {
+            return true;
+        }
+
+        // TryProjectRendererBoundsToEyeHeight が false を返す（⑦ が何もしない）ケース。
+        if (!TryGetRendererWorldBounds(instance, out Bounds bounds))
+        {
+            return true;
+        }
+
+        Vector3 camUp = camRotation * Vector3.up;
+        Vector3 extents = bounds.extents;
+        float verticalExtent =
+            Mathf.Abs(Vector3.Dot(new Vector3(extents.x, 0f, 0f), camUp)) +
+            Mathf.Abs(Vector3.Dot(new Vector3(0f, extents.y, 0f), camUp)) +
+            Mathf.Abs(Vector3.Dot(new Vector3(0f, 0f, extents.z), camUp));
+        if (verticalExtent <= 0.000001f)
+        {
+            return true;
+        }
+
+        Vector3 centerCam = Quaternion.Inverse(camRotation) * (bounds.center - camOrigin);
+        fit.aabbCenterY = centerCam.y;
+        fit.aabbCenterZ = centerCam.z;
+        fit.aabbVerticalExtent = verticalExtent;
+        bool clippedBottom = IsBBoxBottomClipped(obj);
+        bool clippedTop = obj.bboxY <= 0;
+        if (alignTopWhenBottomClipped && clippedBottom && !clippedTop)
+        {
+            fit.mode = PinholePlacementSpace.SecondFitMode.Top;
+            fit.targetV = obj.bboxY;
+        }
+        else
+        {
+            fit.mode = PinholePlacementSpace.SecondFitMode.Bottom;
+            fit.targetV = ResolveReliableBBoxBottomVEye(obj);
+            fit.bottomUsesPointDepth = ExactDepthSecondFitUsesBottomPointDepth(obj);
+        }
+
+        return true;
+    }
+
+    // ⑦ の下端合わせが、一番下の点自身の深さで px → m を換算する条件（FitDisplayedModelToBBox の alignDepth の 2 つの分岐と同じ式）。
+    //   animalBottomFitUsesBoneDepth（animal だけ。名前で骨を引く）と、U1 の bottomFitUsesProjectionPointDepth・exactScaleRefine（全リグ。下端に使った点そのもの）。
+    // U1 の 2 つは 2026-10-13 の合流で足した（反論役 R1・R2 の指摘）。足さないと U1 と U2 を両方 ON にしたとき、ここは AABB の中心の深さで写し、
+    // 実際の 2 回目の ⑦ は点の深さで換算するので、解いた奥行きで 2 回目の ⑦ の後の広がりが目標から外れる。
+    // ⑦ の側を変えたら、ここと ExactScaleRefineSolver.EvaluateExtent も同時に変えること。
+    private bool ExactDepthSecondFitUsesBottomPointDepth(MetaObj obj)
+    {
+        return (animalBottomFitUsesBoneDepth && IsCategoryAnimal(obj.categoryId)) || bottomFitUsesProjectionPointDepth || exactScaleRefine;
+    }
+
+    // 投影に使う骨（ResolveProjectionBones）の重心のカメラ空間の深さ（depthRefineCapAtProjectionCentroid）。骨が無ければ false。
+    // TryResolveNearestProjectionBoneDepth と同じ骨の集合（useSilhouetteProjectionExtent の代理点は含めない）。
+    private bool TryResolveProjectionCentroidDepth(GameObject instance, Vector3 camOrigin, Quaternion camRotation, out float centroidDepth)
+    {
+        centroidDepth = 0f;
+        if (instance == null)
+        {
+            return false;
+        }
+
+        Animator animator = instance.GetComponentInChildren<Animator>(true);
+        var bones = ResolveProjectionBones(instance, animator);
+        Quaternion worldToCam = Quaternion.Inverse(camRotation);
+        float sum = 0f;
+        int n = 0;
+        for (int i = 0; i < bones.Count; i++)
+        {
+            if (bones[i].Value == null)
+            {
+                continue;
+            }
+
+            sum += (worldToCam * (bones[i].Value.position - camOrigin)).z;
+            n++;
+        }
+
+        if (n == 0)
+        {
+            return false;
+        }
+
+        centroidDepth = sum / n;
+        return true;
     }
 
 }

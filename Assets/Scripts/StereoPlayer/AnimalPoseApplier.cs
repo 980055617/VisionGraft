@@ -25,6 +25,13 @@ public sealed partial class AnimalPoseApplier
         }
     }
 
+    // exactScaleRefine（2026-10-13）: 倍率の測り直しが root を動かした量だけ、root の位置の平滑（AlignAnimalRootToSkeleton の One-Euro）の状態をずらす。
+    // 鍵は姿勢の適用と同じ instance の root。平滑の無い root（人・まだ姿勢を当てていない動物）では何もしない。
+    public void ShiftRootPositionFilter(Transform instanceRoot, Vector3 delta)
+    {
+        motionFilter.ShiftRootPosition(instanceRoot, delta);
+    }
+
     // Snapshot every resolved canonical bone's local rotation, so a caller can blend the body
     // pose back toward whatever the tracked pipeline writes next (mirroring
     // CaptureHumanoidBoneLocalRotations/BlendHumanoidBoneLocalRotations for Human) - without

@@ -265,6 +265,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     //   寄せられた 06_AmericanMink で 50 倍、体が頭の上へ飛ぶ）。上端合わせ（下端が切れているとき）はメッシュの投影上端なので今のまま。
     //   詳細は Docs/tmp/roster_20261009/README.md の 11-4。
     public bool animalBottomFitUsesBoneDepth = false;
+    // exactScaleRefine（2026-10-13、Docs/tmp/depthcap_20261013/README.md の U1、既存の欠陥の直し・既定 OFF・種別を問わない・新しい係数なし）: shot の頭の
+    //   倍率の測り直し（RefineLockedScaleFromProjectedBones）を、一手の線形補正（factor = 1 / 比。投影の広がりが倍率に比例すると仮定し、instance の root を
+    //   中心に拡大する）から、実際に投影して解く形にする。中心は配置が anchor に置く骨（Humanoid は Hips、動物は AnimalPlacementBoneSelector の骨。
+    //   リグのキャッシュが無ければ root）。候補の倍率 g ごとに投影の点を「中心 + g × (点 − 中心)」へ写し、続く ⑦ の縦の合わせ直しも同じ式で当ててから
+    //   広がりを測り、⑧ と同じ目標（ResolveUnclippedTargetHeight。体全体の gain と projectedBoneRatioTarget は今の版と同じく掛ける）に一致する g を
+    //   二分法で求める（transform には書かない。ExactScaleRefineSolver）。比のガードも ⑧ と同じ（分母が同じ目標、範囲 depthRefineMinRatio〜3.0）。
+    //   書くのは「localScale × g、root は中心が動かない位置」で、動物の root の位置の平滑（One-Euro）の状態も同じだけずらし、次の tick に過渡を作らない。
+    //   直す欠陥（README の R2・R9）: root が体の奥にあるモデルは拡大で体が手前へ寄り、測り直した直後の比が 1 にならない（Lynx 1.16〜1.58、Labrador 1.02〜1.30）。
+    //   ⑧ の平滑はそこから τ 1.2 s で減る（遅れ）。測り直しと ⑧ でガードの分母と下限が違い、Mammoth の本物のカット f1613 は測り直しだけ見送られた（3.018 対 2.809）。
+    //   ON のときは ⑦ の px → m を一番下の投影点の深さで換算する（下の bottomFitUsesProjectionPointDepth を強制）。解く式の ⑦ と実際の ⑦ を一致させるためと、
+    //   下限を 0.2 に下げると 10/09 の 31_GrayWolf の浮き（Docs/tmp/roster_20261009/README.md の 11-3）が出るため。
+    //   ON のとき refineLockedScaleAgainstSmoothedTarget（B1）は使わない（⑧ と目標を揃えるのが目的なので）。animalScaleRefineMinRatioFromDepthRefine も意味が無くなる
+    //   （下限はいつも depthRefineMinRatio）。⑧ そのもの（一手の線形）は変えない（U2 の担当）。
+    public bool exactScaleRefine = false;
+    // bottomFitUsesProjectionPointDepth（2026-10-13、U1 の一部・既存の欠陥の直し・既定 OFF・全リグ・新しい係数なし）: ⑦ の下端合わせで、一番下の投影点
+    //   （TryProjectBonesToEyeHeight の下端。シルエットの足裏の代理点を含む）に合わせるときの px → m の換算を、レンダラーの AABB の中心の深さではなく、
+    //   その点自身の深さで行う。上の animalBottomFitUsesBoneDepth（動物だけ・名前で骨を引き直す）を全リグにしたもの。名前で引き直さないので、
+    //   useSilhouetteProjectionExtent の足裏の代理点（Sole*、ResolveProjectionBones に無い）でも効く。exactScaleRefine が ON なら OFF でも効く。
+    //   上端合わせ（下端が切れているとき）は今のまま（合わせる AABB の上端は AABB の中心と同じ深さにあるので、今の換算で合っている）。
+    //   換算が正しいと、⑦ の後の配置が ⑦ の前の縦の位置（足首の高さ合わせ・root の高さの保持）に依らなくなる（一番下の点がちょうど bbox の下端に来る）。
+    public bool bottomFitUsesProjectionPointDepth = false;
 
     // ⑧ の平滑化を速める相対誤差のしきい値。lo 以下は従来どおりの平滑化、hi 以上で
     // ほぼ即座に追従する。1.0 に設定すると実質無効（従来の挙動）。
@@ -278,6 +299,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // scale 固定のぶんが見かけの大きさの跳ねになる（実機でユーザー指摘、bundle_animal f60 / f81 / f1212〜1218）。
     // OFF なら animal は τ の平滑化だけで動く。human は従来どおり速追従あり。
     public bool depthRefineFastTrackForAnimal = false;
+    // ⑧ の比の扱いを全カテゴリで同じにする（U3、2026-10-13、既存の欠陥の直し）。**既定 OFF。** ON のとき次の 2 つを組で外す（⑨・⑩ は変えない）。
+    //   (a) 速追従（depthRefineFastTrackLow / High）を全カテゴリで切る。animal は上の depthRefineFastTrackForAnimal で 09-18 から切ってあり、人の経路にだけ
+    //       残っていた分岐。ON なら depthRefineFastTrackForAnimal が true でも切る（Playback.partial.cs の SmoothProjectedDepthRatio）。
+    //   (b) Else との順序の丸め（ClampRatioPreservingOtherOrder）を外す。projectedDepthOrderEpsilonMeters = 0 と同じ結果で、シーンの 0.04 は書き換えない。
+    //       丸めの根拠（前後一致 86 → 91%、08-20）は ⑨ より前の、ボールが anchor の深さにいた頃の測定。今は ⑨（ApplyOtherDepthFollowForFrame）が毎 tick
+    //       ⑧ の後にボールを「人の ⑧ 後の Hips の深さ − 平滑した anchorZ の差」へ置き直すので、描画される前後は ⑨ の差の符号で決まる。
+    //   人の跳び（bundle_human f209・f841、上限なしで 293 mm）は、ボールの anchorZ が人の anchorZ をまたいだ瞬間に丸めが上限側から下限側へ切り替わって
+    //   ⑧ の入力が一段跳び（f209 で 0.998 → 1.560）、速追従（1 フレームの重み 0.027 → 0.708）がそれを 1 フレームで追って作っていた。
+    //   丸めだけを外さない: 本物の後転（f850）で −672 mm（上限ありで −338 mm）跳ぶ（丸めが速追従の反応を抑えていた）。速追従だけ外すと跳びは消えるが、
+    //   丸めの切り替えの段が τ で滑る（最大 18 mm）。
+    //   10/13 のバッチ（同じ設定を既存のつまみで作った dca2_hu_*）で、1 フレームの Hips の最大の動きは 上限あり / なし 120 / 293 → 10 / 17 mm。
+    //   代わりに人にも τ（1.2 s）の遅れが出る。丸めは人の深さをボールの anchorZ から 4 cm 離れた側に留める止め具でもあったので、外すと、上限ありでは
+    //   人とボールが同じ上限に貼り付くフレームが増え（13 → 75）ボールの前後（[DEPTH9] の gapAfter と intended の符号）の一致が 0.875 → 0.825 に下がり、
+    //   上限なしでは前後の一致は 0.875 のままだが、丸めが効いていた区間で人が奥へ下がる（f195〜260 の Hips の中央 1.11 → 1.30 m、
+    //   [MESH2D] のシルエット ÷ 枠 1.15 → 0.99。2D の大きさと立体の奥行きの交換、README の R6）。
+    //   今ある bundle で骨格と Else が同時にいるのは bundle_human だけで、animal の track は 09-18 から速追従が無いので変わらない。
+    //   詳細は Docs/tmp/depthcap_20261013/README.md の R8・U3。
+    public bool depthRefineUniformSmoothing = false;
 
     // Animal の接近を scale でも追う（C4-T）。**既定 OFF（2026-10-03、試作）。10/1 の「⑧・範囲・shot 内の scale は変えない」
     // を開き直す変更。** 詳細は AnimalScaleTrend.partial.cs。
@@ -358,6 +397,42 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 平滑の値は差し替え・偽のカットでは消えない）のときは今までどおり。保持している間は比を更新せず、平滑の刻み（動画フレーム）だけ進める
     // （抜けた最初の tick が保持した比から 1 フレーム分だけ動く）。2 回目の ⑦ が走る tick が増えるので、C（animalBottomFitUsesBoneDepth）と組で見る。
     public bool depthRefineHoldOnGuard = false;
+    // ⑧ の奥行きを実際の投影で解く（2026-10-13、U2。Docs/tmp/depthcap_20261013/README.md の「調査」）。**既定 OFF。**
+    // 今の ⑧ は「基準点（人は Hips、動物は root）の深さ × 平滑した比」の一手で動かす。投影高 ∝ 1/深さ を基準点 1 点で近似しているので、
+    // 基準点が投影の上下を決める骨（耳・足先・牙）の実効深度からずれた分（てこ: 人 1.05、動物 1.5〜3.1、姿勢で動く）だけ行き過ぎ・寄りすぎる。
+    // さらに ⑧ の後の 2 回目の ⑦（縦の合わせ直し）が、上下の端の骨の深さの違いで広がりを 0.86〜1.10 倍変える（README の R1・R3）。
+    // ON にすると、anchor から作った今の配置を基準点の光線に沿って奥行き s 倍へ平行移動し、2 回目の ⑦ まで写した骨の投影の広がりが
+    // 目標高（今の比の分母と同じ）に一致する s を二分法で求めて、比の代わりに平滑へ渡す（τ・動画フレームごと・順序の丸め・ガードは今のまま）。
+    // 解くのは平滑が値を使う動画フレームの最初の tick だけ（ResolveExactDepthMultiplierOrLinear）。解いた奥行きの移動量は、2 回目の ⑦ が上端合わせか、
+    // 一番下の点自身の深さで換算する下端合わせなら基準点に依らない（基準点は光線の向き = 横の位置を決めるだけ）。今の既定の、AABB の中心の深さで換算する
+    // 下端合わせでは基準点による差が残る（dci の再構成で p95 2〜6 mm（動物）・8 mm（人）、scratchpad の w1013/fix/D2/d2_checks_out.txt）。
+    // 点自身の深さで換算するのは、exactScaleRefine か bottomFitUsesProjectionPointDepth（U1）が ON のとき（全リグ）と、animal で
+    // animalBottomFitUsesBoneDepth が ON のとき（⑦ と同じ条件。ExactDepthSecondFitUsesBottomPointDepth、2026-10-13 の合流）。
+    // 上限・下限に当たらない間は人と動物の分岐が要らない。
+    // 下限（頭から 0.25 m）は全リグで一番近い投影の骨に掛ける（animalDepthFloorAtNearestBone を全リグに）。上限は今と同じ点（基準点）に掛ける
+    // （上限を骨の重心に掛けるのは下の depthRefineCapAtProjectionCentroid）。
+    // 新しい係数は無い（二分法の打ち切りは数値上の設定。PinholePlacementSpace.TrySolveDepthMultiplierForExtent）。
+    public bool depthRefineExactSolve = false;
+    // ⑧ の奥行きの上限（スクリーン。allowDepthBehindScreen なら 3 倍）を、基準点（人は Hips、動物は root）ではなく投影に使う骨の重心に掛ける
+    // （2026-10-13、U2 の付帯。**既定 OFF。** depthRefineExactSolve と独立に効く）。移動は基準点の光線に沿ったまま、上限だけ
+    // 「基準点の深さ − 重心の深さ」ずらす（下限を一番近い骨に掛けるのと同じ形。全リグ同じ式で、係数は無い）。
+    // 動物の root は体の後ろ・下にあり、そのずれはモデルの倍率に比例する（Lynx では画面距離 2.0 m で 1.0 m のときの約 2.4 倍）。上限を root に掛けたままだと、
+    // 体がスクリーンより手前にあっても root がスクリーンに当たって前へ引かれ、U1・U2 を入れても上限の有無で配置が変わる。
+    // U1・U2 を入れた模擬で、root に掛けると画面距離 1.0 m でも shot の途中の Lynx f1560〜1612 で当たる（D1 の U1 で模擬した scratchpad の
+    // w1013/fix/D4/out/animals_runs_windows.json、59/128 tick・上限あり・なしの差 最大 149 mm。shot の頭から始まる窓は当たらない）。2.0 m では U1 を移植できた
+    // Lynx の 6 窓すべてで当たる（w1013/fix/D2/d2_sim2_out.txt、U1 は I6 の近似、s21 で 149 mm・全フレーム）。重心に掛けると、U1・U2 を入れて
+    // 模擬したかぎり当たらない（D2 の 12 窓の 1.0 m・2.0 m。D4 の 1.0 m の模擬は光線ごと重心にした形で、これも当たらない。
+    // Lynx f1560〜1612 の 2.0 m は U1 込みでは模擬していない）。
+    // 人では重心は Hips より −0.12〜+0.08 m（中央 −8 mm、姿勢で動く）なので、上限に当たるフレーム（bundle_human で 3〜6 割: README の計測の走り 32%、
+    // 全フレームを通る記録の走り dci_hu_cur で 57%）の奥行きがその分変わる。
+    // 上限に当たっている間の基準点の深さは「上限 + 基準点の深さ − 重心の深さ」を毎 tick 平滑なしで使うので、重心のぶれがそのまま奥行きのぶれになる
+    // （今は上限に当たると基準点はスクリーンに止まって動かない）。人の重心は 55 骨のうち 30 が指で、腕の動きで動く。dci の再構成（scratchpad の
+    // w1013/fix/R2/centroid_cap_jitter_out.txt）で、今の版で上限に当たっている続きのフレームの組（183 組）の「基準点 − 重心」の 1 フレームの変化は
+    // p50 1.5 mm・p95 13.2 mm・最大 22.7 mm（f210）。⑧ の前の Hips そのものの変化は、記録の窓全体で最大 3.8 mm。動物（root − 重心）は
+    // Lynx で p95 4.4 mm・最大 10.3 mm（f1581）、ほかは最大 5 mm 以下（I6 の点の集合で測った）。
+    // ⑨（Else を Hips の深さに付ける）は Hips のまま見るので、人が重心で上限に当たって Hips がスクリーンより奥に残ると、Hips より奥にいるはずの
+    // ボールが ⑨ の上限でスクリーンに止まり、前後が入れ替わりうる。採否は前後の絵で決める（上限そのものを外すなら要らない）。
+    public bool depthRefineCapAtProjectionCentroid = false;
 
     // 検証用（既定 空 = OFF、2026-10-04）: 姿勢と配置が全部終わった時点の骨の world の位置・回転を、tick ごとに
     // このファイルへ JSON 1 行で書き出す（BoneWorldDump.partial.cs）。割り当て（SMPL / SMAL → モデルの骨）の再調査で、
@@ -768,6 +843,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 135mm 動いて跳ねる。ratio 側を制限すれば跳ねずに全体の前後一致は ⑧ OFF 並みに戻るが、
     // 後段の平滑化が制約を破るため前傾区間は改善しない。
     // 前傾区間の根本解決には Else 側の深度精度（D-004）が要る。
+    // 2026-10-13: 上の表は ⑨（ボールを人の ⑧ 後の深さに付け直す）より前の測定。depthRefineUniformSmoothing が ON なら値によらず丸めない。
     [Min(0f)] public float projectedDepthOrderEpsilonMeters = 0.040f;
 
     // ⑧ の各段階（補正前 → 比率補正 → 順序クランプ → screen クランプ）を [DEPTH8] に出す。

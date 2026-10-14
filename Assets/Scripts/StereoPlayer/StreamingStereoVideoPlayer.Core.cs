@@ -375,7 +375,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 8/20 にスクリーンを背景描画（ZWrite Off）にしてからは描画上の理由が無い。人が「スクリーンより奥」に写る区間
     // （bundle_human f240〜899）では ⑧ が深度を上限に貼り付け、モデルが 1 割前後大きく見えていた。
     // ⑧（人・動物）・⑨（Else の追従）・めり込み解消・最初の配置の 4 か所を同時に外す（片方だけ外すと人とボールがずれる）。
-    public bool allowDepthBehindScreen = false;
+    // **2026-10-14 夜にユーザーが体験のため既定 ON（「人の上限なしFP1 真ん中合わせを入れてほしいけどな」「再度pushしてほしい」）。** 戻すときはこのコミットを revert する。
+    public bool allowDepthBehindScreen = true;
     // 外したときの安全上限（スクリーン距離の倍数）。⑧ の比のガード（3.0）より奥へは行かない目安。
     [Min(1f)] public float depthBehindScreenMaxFactor = 3f;
     // allowDepthBehindScreen と同じことを animal 以外（人・Else）にだけ行う（2026-10-10、H-BALL FP3s）。**既定 OFF。**

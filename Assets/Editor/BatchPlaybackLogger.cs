@@ -1223,6 +1223,7 @@ public static partial class BatchPlaybackLogger
             if (SessionState.GetBool(KeyStarted, false))
             {
                 Debug.Log("[BATCH] playmode exited, quitting");
+                RestoreQualityLevel();
                 EditorUtility.audioMasterMute = savedAudioMute;
                 SessionState.SetBool(KeyRunning, false);
                 EditorApplication.update -= Tick;
@@ -1239,6 +1240,7 @@ public static partial class BatchPlaybackLogger
             EditorUtility.audioMasterMute = true;
             ApplyTargetFrameRate();
             ApplyRecordTimestep();
+            ApplyLightingArgs();
             if (SessionState.GetBool(KeyNoStackTrace, false))
             {
                 Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.None);

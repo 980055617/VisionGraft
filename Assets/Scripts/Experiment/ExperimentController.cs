@@ -790,6 +790,7 @@ public sealed class ExperimentController : MonoBehaviour
         {
             // 実行時生成オブジェクトを試行シーンに属させるため必須。
             SceneManager.SetActiveScene(trialScene);
+            DisableTrialLightsDuplicatingBase(trialScene);
         }
 
         cachedPlayer = FindPlayerInScene(trialScene);
@@ -799,6 +800,54 @@ public sealed class ExperimentController : MonoBehaviour
             // 次に開いたシーンが前の試行の指示で再生を始めないように捨てる。
             ExperimentTrialHandoff.Clear();
         }
+    }
+
+    // TrialScene の Directional Light は単体で開いたとき用で、ExperimentScene の光と同じ設定（強さ 2・同じ向き）。
+    // Additive で重ねると 2 灯になり、モデルが 15〜30% 明るく、明るい所が白く飛んでいた。Quest の URP では 2 灯目に
+    // 影が付かないので、モデル自身の影も埋まっていた（P01〜P13 は 2 灯で見ている。バッチの撮影は TestScene の 1 灯）。
+    // ベースシーンに有効な Directional Light があるときだけ試行シーン側を消す。手と controller の見た目はベースシーンに
+    // あり、試行の外でも同じ光で照らすのでベース側を残す（2026-10-17 ユーザー「ライトは1でいいじゃないの」、
+    // Docs/tmp/light_20261016/README.md）。
+    private void DisableTrialLightsDuplicatingBase(Scene trialScene)
+    {
+        if (!baseScene.IsValid() || !HasEnabledDirectionalLight(baseScene))
+        {
+            return;
+        }
+
+        int disabled = 0;
+        foreach (GameObject root in trialScene.GetRootGameObjects())
+        {
+            foreach (Light light in root.GetComponentsInChildren<Light>(true))
+            {
+                if (light.type == LightType.Directional && light.enabled)
+                {
+                    light.enabled = false;
+                    disabled++;
+                }
+            }
+        }
+
+        if (disabled > 0)
+        {
+            Debug.Log($"[Experiment] 試行シーンの Directional Light を {disabled} 灯消した（ベースシーンの光と重なるため）");
+        }
+    }
+
+    private static bool HasEnabledDirectionalLight(Scene scene)
+    {
+        foreach (GameObject root in scene.GetRootGameObjects())
+        {
+            foreach (Light light in root.GetComponentsInChildren<Light>(false))
+            {
+                if (light.type == LightType.Directional && light.isActiveAndEnabled)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     // bundle の展開と Prepare が終わって実際に再生が始まるまで待つ（bundle_human.svb は 165MB あり、

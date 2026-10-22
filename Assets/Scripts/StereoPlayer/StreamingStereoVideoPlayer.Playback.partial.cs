@@ -34,6 +34,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             metaFrameObjects.Clear();
             HideUnselectedTrackInstances(NoTracks);
             ApplyElseFrameOutForFrame(metaFrameUsed);
+            // 誰も映っていないフレームでも、1 周に 1 回のくじの周の頭・巻き戻りは進める（候補は空なので動かない）。
+            ResolveRandomMotionOncePerLoop(metaFrameUsed);
             return;
         }
 

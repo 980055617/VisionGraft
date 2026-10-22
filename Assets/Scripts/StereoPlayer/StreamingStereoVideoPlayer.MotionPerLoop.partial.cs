@@ -23,6 +23,45 @@ public partial class StreamingStereoVideoPlayer
     private bool randomMotionLoopPausedLastTick;
     private float randomMotionLoopGraceUntil = -1f;
 
+    // 動ける体（人・動物、enableElseInteractiveMotion なら人や動物の居ないときの車）が映っているフレーム（昇順）。
+    // くじはこの中から引く。読み込み時に meta.bin を全フレーム読んで作る（ON のときだけ。30 秒 = 900 フレーム）。
+    private int[] randomMotionEligibleFrames;
+
+    private void PrecomputeRandomMotionEligibleFramesOnLoad()
+    {
+        randomMotionEligibleFrames = null;
+        int numFrames = (int)metaHeader.numFrames;
+        if (!randomMotionOncePerLoop || numFrames <= 0)
+        {
+            return;
+        }
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var buffer = new List<MetaObj>(16);
+        var frames = new List<int>(numFrames);
+        for (int f = 0; f < numFrames; f++)
+        {
+            if (!TryReadFrameObjects(f, buffer))
+            {
+                continue;
+            }
+
+            for (int i = 0; i < buffer.Count; i++)
+            {
+                byte category = buffer[i].categoryId;
+                if (IsCategoryPerson(category) || IsCategoryAnimal(category) ||
+                    (enableElseInteractiveMotion && IsCategoryOther(category)))
+                {
+                    frames.Add(f);
+                    break;
+                }
+            }
+        }
+
+        randomMotionEligibleFrames = frames.ToArray();
+        Debug.Log($"[MOTION] per-loop eligible frames {randomMotionEligibleFrames.Length}/{numFrames} ({stopwatch.ElapsedMilliseconds}ms)");
+    }
+
     // UpdateInteractiveMotionSchedule から（ON のとき、その track が今 動ける状態なら）。
     private void CollectRandomMotionLoopCandidate(uint trackId, MetaObj obj)
     {
@@ -59,11 +98,15 @@ public partial class StreamingStereoVideoPlayer
             if (randomMotionLoopPending && metaHeader.numFrames > 0)
             {
                 float fps = metaHeader.fps > 0f ? metaHeader.fps : (manifest != null && manifest.fps > 0f ? manifest.fps : 30f);
+                // 最初の周は今が周の頭。loopPointReached の後は巻き戻りを待つ。
+                bool firstLoop = randomMotionLoop.LoopIndex < 0;
                 randomMotionLoop.BeginLoop((int)metaHeader.numFrames, fps,
-                    randomMotionLoopStartMarginSeconds, randomMotionLoopEndMarginSeconds, Random.value);
+                    randomMotionLoopStartMarginSeconds, randomMotionLoopEndMarginSeconds, Random.value,
+                    randomMotionEligibleFrames, firstLoop);
                 randomMotionLoopPending = false;
                 Debug.Log($"[MOTION] per-loop begin loop={randomMotionLoop.LoopIndex} trigger={randomMotionLoop.TriggerFrame} " +
-                          $"({randomMotionLoop.TriggerFrame / fps:F2}s / {metaHeader.numFrames / fps:F2}s) frame={frame}");
+                          $"({randomMotionLoop.TriggerFrame / fps:F2}s / {metaHeader.numFrames / fps:F2}s) frame={frame} " +
+                          $"eligible={(randomMotionEligibleFrames != null ? randomMotionEligibleFrames.Length : -1)}");
             }
 
             // 止まっていても今のフレームは見せる（周の頭で巻き戻ったことを覚えるため）。

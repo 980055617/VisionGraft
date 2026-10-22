@@ -144,6 +144,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 // 止まりは読み込み中へ移るだけで、消えてはいない（実機の時間は [BUNDLETIME] meta.bin で測る）。
                 PrecomputeAnimalScaleTrendTableOnLoad();
                 PrecomputeManualEditRangesOnLoad();
+                // 1 周に 1 回の Random モーションのくじを引くフレーム（2026-10-23、randomMotionOncePerLoop のときだけ）。
+                PrecomputeRandomMotionEligibleFramesOnLoad();
             }
         }
         catch

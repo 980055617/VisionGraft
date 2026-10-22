@@ -14,6 +14,8 @@ Models/Human/13_Male_B_03
 Models/Human/14_Female_Carla
 Models/Human/15_Female_Claudia
 Models/Human/16_Male_Eric
+Models/Human/17_Male_Meshy
+Models/Human/18_Female_Meshy
 Models/Animal/00_Dog
 Models/Animal/01_Wolf
 Models/Animal/02_WildBoar
@@ -66,6 +68,8 @@ Models/Animal/48_Puma
 Models/Animal/49_Rabbit
 Models/Animal/50_Racoon
 Models/Animal/51_Warthog
+Models/Animal/52_MeshyDog
+Models/Animal/53_MeshyCat
 Models/Else/00_Baseball
 Models/Else/01_Basketball
 Models/Else/02_Football
@@ -82,3 +86,9 @@ Models/Else/12_SportCar_4_Silver
 Models/Else/13_SportCar_5_Blue
 Models/Else/14_SportCar_5_Green
 Models/Else/15_SportCar_5_White
+Models/Else/16_Car_Meshy_Red
+Models/Else/17_Car_Meshy_Navy
+Models/Else/18_Car_Meshy_Van
+Models/Else/19_Balloon_Meshy
+Models/Else/20_Soccer_Meshy
+Models/Else/21_Tennis_Meshy

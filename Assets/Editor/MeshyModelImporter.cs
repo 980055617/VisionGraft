@@ -10,7 +10,8 @@ using UnityEngine;
 //   - 番号は各フォルダの末尾に続ける。既存の番号・過去のログの index を動かさないため（振り直しはユーザー判断。
 //     Human は 06_ が欠番のままなので、17_ / 18_ の実行時の index は 16 / 17）
 //   - 人・動物: 作者の prefab の Variant。Animator の controller（走る・歩く）は外す（姿勢は bundle で動かす）
-//   - 車: 作者の *_lights prefab を展開してライト（CarLights と "lights" の子）を外し、既存の車 9 台と同じく root に
+//   - 車: 作者の *_lights prefab を展開し、ランプの光（CarLights、既定は全部消灯。点ける時刻は CarLightSchedule）は残して
+//         スポットライト（"lights" の子）だけ外す。既存の車 9 台と同じく root に
 //         Y 180°（前 = 視点側。ElseModelImporter.SportCarFacingRotation）を持たせ、FL / FR / RL / RR の目印を置く
 //         （走行イベントの前の向き。InteractiveMotion.partial.cs の TryResolveRigidWheels。Meshy の車は 1 枚のメッシュで
 //         ホイールの部品が無いので、目印は空の GameObject。ホイールは回らない）
@@ -22,7 +23,6 @@ public static class MeshyModelImporter
 {
     private const string SourcePrefabDir = "Assets/MeshyModels/Prefabs";
     private const string LogTag = "[MeshyImport]";
-    private const string CarLightsTypeName = "MeshyModels.CarLights";
     private static readonly Quaternion CarFacingRotation = Quaternion.Euler(0f, 180f, 0f);
 
     private sealed class Entry
@@ -85,6 +85,30 @@ public static class MeshyModelImporter
         Report();
     }
 
+    // 車 3 台だけを作り直す（同じパスへ上書きするので GUID・名前は変わらない）。2026-10-22 にランプの光を残す形へ変えたときに使った。
+    [MenuItem("Tools/VisionGraft/Rebuild Meshy Cars (keep lamp glow)")]
+    public static void RebuildCars()
+    {
+        foreach (Entry entry in Entries.Where(e => e.car))
+        {
+            string sourcePath = $"{SourcePrefabDir}/{entry.source}.prefab";
+            GameObject source = AssetDatabase.LoadAssetAtPath<GameObject>(sourcePath);
+            if (source == null)
+            {
+                Debug.LogError($"{LogTag} source missing: {sourcePath}");
+                continue;
+            }
+
+            if (SaveCar(source, DestPath(entry), entry.dest) != null)
+            {
+                Debug.Log($"{LogTag} rebuilt {DestPath(entry)}");
+            }
+        }
+
+        AssetDatabase.SaveAssets();
+        Report();
+    }
+
     // 作ったものの中身を確かめる（大きさ・Humanoid か・骨・実行時の index）。何も変えない。
     [MenuItem("Tools/VisionGraft/Report Meshy Models")]
     public static void Report()
@@ -114,6 +138,12 @@ public static class MeshyModelImporter
                     Animator animator = instance.GetComponentInChildren<Animator>(true);
                     int skinned = instance.GetComponentsInChildren<SkinnedMeshRenderer>(true).Length;
                     int lights = instance.GetComponentsInChildren<Light>(true).Length;
+                    MeshyModels.CarLights carLights = instance.GetComponentInChildren<MeshyModels.CarLights>(true);
+                    if (carLights != null)
+                    {
+                        Debug.Log($"{LogTag} report {entry.dest} carLights head={carLights.headlights} tail={carLights.tailLights} blinker={carLights.blinker} " +
+                                  $"target={(carLights.target != null ? carLights.target.name : "null")} lampColor={(carLights.lampColor != null)} shader={(carLights.composeShader != null)}");
+                    }
                     string markers = string.Join(",", instance.GetComponentsInChildren<Transform>(true)
                         .Where(t => t.name == "FL" || t.name == "FR" || t.name == "RL" || t.name == "RR")
                         .Select(t => $"{t.name}({t.localPosition.x:F2},{t.localPosition.y:F2},{t.localPosition.z:F2})"));
@@ -177,6 +207,29 @@ public static class MeshyModelImporter
                         System.IO.Path.Combine(outDir, $"{entry.category}_{entry.dest}_viewer.png"));
                     RenderView(cam, b.center, new Vector3(1f, 0.15f, 0f), distance,
                         System.IO.Path.Combine(outDir, $"{entry.category}_{entry.dest}_side.png"));
+
+                    // 車はランプの点き方も撮る（前 = 視聴者の側、後ろ = その反対）。点滅は点いている位相（t = 0.1 s）で止める。
+                    MeshyModels.CarLights carLights = instance.GetComponentInChildren<MeshyModels.CarLights>(true);
+                    if (carLights != null)
+                    {
+                        var states = new (string tag, bool head, bool tail, MeshyModels.CarLights.Blinker blinker)[]
+                        {
+                            ("off", false, false, MeshyModels.CarLights.Blinker.Off),
+                            ("headtail", true, true, MeshyModels.CarLights.Blinker.Off),
+                            ("hazard", false, false, MeshyModels.CarLights.Blinker.Hazard),
+                        };
+                        foreach (var s in states)
+                        {
+                            carLights.headlights = s.head;
+                            carLights.tailLights = s.tail;
+                            carLights.blinker = s.blinker;
+                            carLights.Apply(0.1f);
+                            RenderView(cam, b.center, new Vector3(-0.6f, 0.3f, -1f), distance,
+                                System.IO.Path.Combine(outDir, $"lights_{entry.dest}_{s.tag}_front.png"));
+                            RenderView(cam, b.center, new Vector3(0.6f, 0.3f, 1f), distance,
+                                System.IO.Path.Combine(outDir, $"lights_{entry.dest}_{s.tag}_rear.png"));
+                        }
+                    }
                 }
                 finally
                 {
@@ -256,15 +309,20 @@ public static class MeshyModelImporter
             PrefabUtility.UnpackPrefabInstance(body, PrefabUnpackMode.Completely, InteractionMode.AutomatedAction);
             body.name = "Body";
 
-            foreach (MonoBehaviour behaviour in body.GetComponentsInChildren<MonoBehaviour>(true))
+            // ランプの光（Emission、CarLights）は残す（2026-10-22 ユーザー「必要です」。点ける時刻は CarLightSchedule の表）。
+            // 既定は全部消灯にし、表の区間だけ点ける。作者の既定（ヘッド・テール点灯、赤いセダンはハザード）のままだと、表に無い動画でも光る。
+            foreach (MeshyModels.CarLights carLights in body.GetComponentsInChildren<MeshyModels.CarLights>(true))
             {
-                if (behaviour != null && behaviour.GetType().FullName == CarLightsTypeName)
-                {
-                    Object.DestroyImmediate(behaviour);
-                }
+                carLights.headlights = false;
+                carLights.tailLights = false;
+                carLights.blinker = MeshyModels.CarLights.Blinker.Off;
+                carLights.headBeams = new Light[0];
+                carLights.amberLeft = new Light[0];
+                carLights.amberRight = new Light[0];
             }
 
-            // ライトの入れ物（"lights"）ごと外す。実機（Quest）で動的なスポットライトを車の数だけ増やさないため。
+            // まわりを照らすスポットライト（ヘッドライトの光線・ウィンカーの照り返し、1 台 5〜6 灯）は外す。
+            // 照らす地面がシーンに無く（背景は動画）、ほかのモデルだけが照らされる。実機（Quest）で動的なライトを車の数だけ増やさないため。
             List<GameObject> lightObjects = body.GetComponentsInChildren<Transform>(true)
                 .Where(t => t != body.transform && (t.name == "lights" || t.GetComponent<Light>() != null))
                 .Select(t => t.gameObject)

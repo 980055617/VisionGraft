@@ -225,6 +225,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         SceneObjectWriter.ApplyActive(instance, true);
+        // 車のライト（2026-10-22、CarLightSchedule の表）。モーション中（下で return する）も動画の再生位置で決める。
+        ApplyCarLightSchedule(target.trackId, instance, frame);
         // 脚の骨長合わせはインスタンスごとに一度だけ。モデルを切り替えると
         // TrackInstanceLifecycle がインスタンスを作り直すので、新しいモデルにも掛かる。
         TryApplyHumanBoneLengthCorrection(instance, target);

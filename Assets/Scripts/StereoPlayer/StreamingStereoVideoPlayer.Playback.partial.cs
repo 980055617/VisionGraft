@@ -44,6 +44,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (TryApplyDisplayedTracks(frame))
         {
+            // 1 周に 1 回の Random モーション（2026-10-23）。全 track の配置が済んでから、集めた候補から決める。
+            ResolveRandomMotionOncePerLoop(frame);
             ApplyOtherDepthFollowForFrame();
             ApplyOtherPenetrationResolveForFrame();
             ApplyElseFrameOutForFrame(frame);
@@ -62,6 +64,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         ApplyMetaTarget(target, frame);
+        ResolveRandomMotionOncePerLoop(frame);
         ApplyOtherDepthFollowForFrame();
         ApplyOtherPenetrationResolveForFrame();
         ApplyElseFrameOutForFrame(frame);

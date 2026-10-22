@@ -348,6 +348,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             interactiveMotionMinIntervalSeconds = ExperimentTrialRequest.TutorialInteractiveMotionMinIntervalSeconds;
             interactiveMotionMaxIntervalSeconds = ExperimentTrialRequest.TutorialInteractiveMotionMaxIntervalSeconds;
+            // 練習は秒数の時計のまま（本番の「1 周に 1 回」だと、練習の短い動画で待たせる。2026-10-23）。
+            randomMotionOncePerLoop = false;
         }
 
         Debug.Log(
@@ -429,6 +431,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private void OnVideoLoopPointReached(VideoPlayer source)
     {
         ExperimentLog.VideoLooped();
+        NoteRandomMotionLoopEnded();
     }
 
 

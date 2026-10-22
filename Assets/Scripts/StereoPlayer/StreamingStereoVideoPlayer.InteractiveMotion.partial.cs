@@ -235,6 +235,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // 1 周に 1 回（2026-10-23、randomMotionOncePerLoop）: この track は「今 動ける」候補として渡すだけ。いつ・どれを動かすかは
+        // その tick の配置が済んだ後の ResolveRandomMotionOncePerLoop が決める（MotionPerLoop.partial.cs）。下の秒数の時計は使わない。
+        if (randomMotionOncePerLoop)
+        {
+            if (vp != null && vp.isPlaying)
+            {
+                CollectRandomMotionLoopCandidate(trackId, obj);
+            }
+            return;
+        }
+
         // **動画が止まっている間は発火させない。**止まっている動画を「中断」する意味は無く、しかも誰が
         // 止めたか（被験者の A / Model パネル / シークバーの掴み）を知らずに発火すると、そちらの再開処理と
         // モーションの一時停止が衝突して、モーション中に動画が動き出したり、パネルが開いたまま再生が

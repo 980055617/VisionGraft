@@ -478,6 +478,7 @@ MonoBehaviour:
   - {fileID: 11400000, guid: cbd6419643807bc4793fb2652fd65cc5, type: 2}
   interactiveMotionMinIntervalSeconds: 12
   interactiveMotionMaxIntervalSeconds: 24
+  randomMotionOncePerLoop: 1
   staticAnimationDurationSeconds: 2.4
   interactiveHandoffBlendSeconds: 0.45
   humanApproachStopDistanceMeters: 0.6

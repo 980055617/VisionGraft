@@ -548,9 +548,10 @@ public class ExperimentTutorialHandoffTests
         string tutorial = catalog.Resolve(ExperimentVideo.Tutorial);
 
         Assert.That(tutorial, Is.EqualTo(ExperimentBundleCatalog.DefaultTutorialBundleFileName));
-        Assert.That(tutorial, Is.Not.EqualTo(catalog.Resolve(ExperimentVideo.Human)));
-        Assert.That(tutorial, Is.Not.EqualTo(catalog.Resolve(ExperimentVideo.Animal)));
-        Assert.That(tutorial, Is.Not.EqualTo(catalog.Resolve(ExperimentVideo.Car)));
+        foreach (ExperimentVideo video in ExperimentPlan.ResolveVideoOrder(1))
+        {
+            Assert.That(tutorial, Is.Not.EqualTo(catalog.Resolve(video)), video.ToString());
+        }
     }
 
     // チュートリアルは次のブロックと同じ表示条件で再生する。単眼なら normal mode + 単眼。
@@ -579,7 +580,7 @@ public class ExperimentTutorialHandoffTests
     {
         // 試行（本番）は絞り込みも既定モデルの差し替えもしない。
         ExperimentTrialRequest request = new ExperimentTrialRequest(
-            "bundle_human.svb", ExperimentDisplayMode.StereoOnly, 0, ExperimentVideo.Human);
+            "bundle_video1.svb", ExperimentDisplayMode.StereoOnly, 0, ExperimentVideo.Video1);
 
         Assert.That(request.onlyCategory, Is.Null);
         Assert.That(request.preferredAnimalModelName, Is.Null);

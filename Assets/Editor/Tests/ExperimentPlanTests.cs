@@ -2,15 +2,19 @@ using System;
 using System.Collections.Generic;
 using NUnit.Framework;
 
+// 2026-10-22 に 3 動画 × 3 条件 = 9 試行から 6 動画 × 3 条件 = 18 試行へ変えた（30 秒 × 6 本）。
 public class ExperimentPlanTests
 {
+    private const int VideoCount = 6;
+
     [Test]
-    public void BuildTrials_ProducesNineTrials()
+    public void BuildTrials_ProducesEighteenTrials()
     {
         ExperimentTrial[] trials = ExperimentPlan.BuildTrials(ExperimentGroup.A, 1);
 
-        Assert.That(trials.Length, Is.EqualTo(9));
-        Assert.That(ExperimentPlan.TrialCount, Is.EqualTo(9));
+        Assert.That(trials.Length, Is.EqualTo(18));
+        Assert.That(ExperimentPlan.TrialCount, Is.EqualTo(18));
+        Assert.That(ExperimentPlan.TrialsPerBlock, Is.EqualTo(VideoCount));
         Assert.That(ExperimentPlan.BlockCount, Is.EqualTo(3));
     }
 
@@ -22,9 +26,10 @@ public class ExperimentPlanTests
         {
             ExperimentTrial[] trials = ExperimentPlan.BuildTrials(group, 1);
 
-            Assert.That(trials[0].mode, Is.EqualTo(ExperimentDisplayMode.Monocular), $"group {group}");
-            Assert.That(trials[1].mode, Is.EqualTo(ExperimentDisplayMode.Monocular), $"group {group}");
-            Assert.That(trials[2].mode, Is.EqualTo(ExperimentDisplayMode.Monocular), $"group {group}");
+            for (int i = 0; i < ExperimentPlan.TrialsPerBlock; i++)
+            {
+                Assert.That(trials[i].mode, Is.EqualTo(ExperimentDisplayMode.Monocular), $"group {group} trial {i}");
+            }
         }
     }
 
@@ -34,12 +39,15 @@ public class ExperimentPlanTests
     {
         ExperimentTrial[] trials = ExperimentPlan.BuildTrials(ExperimentGroup.A, 1);
 
-        Assert.That(trials[3].mode, Is.EqualTo(ExperimentDisplayMode.StereoOnly));
-        Assert.That(trials[4].mode, Is.EqualTo(ExperimentDisplayMode.StereoOnly));
-        Assert.That(trials[5].mode, Is.EqualTo(ExperimentDisplayMode.StereoOnly));
-        Assert.That(trials[6].mode, Is.EqualTo(ExperimentDisplayMode.ModelReplaced));
-        Assert.That(trials[7].mode, Is.EqualTo(ExperimentDisplayMode.ModelReplaced));
-        Assert.That(trials[8].mode, Is.EqualTo(ExperimentDisplayMode.ModelReplaced));
+        for (int i = 6; i < 12; i++)
+        {
+            Assert.That(trials[i].mode, Is.EqualTo(ExperimentDisplayMode.StereoOnly), $"trial {i}");
+        }
+
+        for (int i = 12; i < 18; i++)
+        {
+            Assert.That(trials[i].mode, Is.EqualTo(ExperimentDisplayMode.ModelReplaced), $"trial {i}");
+        }
     }
 
     // 群 B は 単眼 → ModelReplaced → StereoOnly。後半 2 ブロックの入れ替えで順序効果を相殺する。
@@ -48,10 +56,10 @@ public class ExperimentPlanTests
     {
         ExperimentTrial[] trials = ExperimentPlan.BuildTrials(ExperimentGroup.B, 1);
 
-        Assert.That(trials[3].mode, Is.EqualTo(ExperimentDisplayMode.ModelReplaced));
-        Assert.That(trials[5].mode, Is.EqualTo(ExperimentDisplayMode.ModelReplaced));
-        Assert.That(trials[6].mode, Is.EqualTo(ExperimentDisplayMode.StereoOnly));
-        Assert.That(trials[8].mode, Is.EqualTo(ExperimentDisplayMode.StereoOnly));
+        Assert.That(trials[6].mode, Is.EqualTo(ExperimentDisplayMode.ModelReplaced));
+        Assert.That(trials[11].mode, Is.EqualTo(ExperimentDisplayMode.ModelReplaced));
+        Assert.That(trials[12].mode, Is.EqualTo(ExperimentDisplayMode.StereoOnly));
+        Assert.That(trials[17].mode, Is.EqualTo(ExperimentDisplayMode.StereoOnly));
     }
 
     // 3 ブロックとも同じ動画順を使う（同じ動画が全条件で同じ位置に来る）。
@@ -62,8 +70,8 @@ public class ExperimentPlanTests
 
         for (int i = 0; i < ExperimentPlan.TrialsPerBlock; i++)
         {
-            Assert.That(trials[i + 3].video, Is.EqualTo(trials[i].video), $"block 1 index {i}");
-            Assert.That(trials[i + 6].video, Is.EqualTo(trials[i].video), $"block 2 index {i}");
+            Assert.That(trials[i + 6].video, Is.EqualTo(trials[i].video), $"block 1 index {i}");
+            Assert.That(trials[i + 12].video, Is.EqualTo(trials[i].video), $"block 2 index {i}");
         }
     }
 
@@ -74,16 +82,16 @@ public class ExperimentPlanTests
 
         Assert.That(trials[0].blockIndex, Is.EqualTo(0));
         Assert.That(trials[0].indexInBlock, Is.EqualTo(0));
-        Assert.That(trials[2].blockIndex, Is.EqualTo(0));
-        Assert.That(trials[2].indexInBlock, Is.EqualTo(2));
-        Assert.That(trials[3].blockIndex, Is.EqualTo(1));
-        Assert.That(trials[3].indexInBlock, Is.EqualTo(0));
-        Assert.That(trials[5].blockIndex, Is.EqualTo(1));
-        Assert.That(trials[5].indexInBlock, Is.EqualTo(2));
-        Assert.That(trials[6].blockIndex, Is.EqualTo(2));
+        Assert.That(trials[5].blockIndex, Is.EqualTo(0));
+        Assert.That(trials[5].indexInBlock, Is.EqualTo(5));
+        Assert.That(trials[6].blockIndex, Is.EqualTo(1));
         Assert.That(trials[6].indexInBlock, Is.EqualTo(0));
-        Assert.That(trials[8].blockIndex, Is.EqualTo(2));
-        Assert.That(trials[8].indexInBlock, Is.EqualTo(2));
+        Assert.That(trials[11].blockIndex, Is.EqualTo(1));
+        Assert.That(trials[11].indexInBlock, Is.EqualTo(5));
+        Assert.That(trials[12].blockIndex, Is.EqualTo(2));
+        Assert.That(trials[12].indexInBlock, Is.EqualTo(0));
+        Assert.That(trials[17].blockIndex, Is.EqualTo(2));
+        Assert.That(trials[17].indexInBlock, Is.EqualTo(5));
     }
 
     [Test]
@@ -97,7 +105,7 @@ public class ExperimentPlanTests
         }
     }
 
-    // 各ブロックは 3 動画をちょうど 1 回ずつ含む。
+    // 各ブロックは 6 動画をちょうど 1 回ずつ含む。
     [Test]
     public void BuildTrials_EachBlockContainsEachVideoExactlyOnce()
     {
@@ -117,7 +125,7 @@ public class ExperimentPlanTests
                     }
                 }
 
-                Assert.That(seen.Count, Is.EqualTo(3), $"pattern {pattern} block {block}");
+                Assert.That(seen.Count, Is.EqualTo(VideoCount), $"pattern {pattern} block {block}");
             }
         }
     }
@@ -133,9 +141,10 @@ public class ExperimentPlanTests
         {
             ExperimentVideo[] order = ExperimentPlan.ResolveVideoOrder(pattern);
 
-            Assert.That(order.Length, Is.EqualTo(3));
-            Assert.That(new HashSet<ExperimentVideo>(order).Count, Is.EqualTo(3),
+            Assert.That(order.Length, Is.EqualTo(VideoCount));
+            Assert.That(new HashSet<ExperimentVideo>(order).Count, Is.EqualTo(VideoCount),
                 $"pattern {pattern} に同じ動画が複数あります。");
+            Assert.That(order, Has.No.Member(ExperimentVideo.Tutorial), $"pattern {pattern}");
             Assert.That(seen.Add(string.Join(",", order)), Is.True,
                 $"pattern {pattern} が他のパターンと重複しています。");
         }
@@ -143,24 +152,57 @@ public class ExperimentPlanTests
         Assert.That(seen.Count, Is.EqualTo(6));
     }
 
+    // ラテン方格: どの位置（何本目か）にも、6 パターンを通して各動画がちょうど 1 回ずつ来る。
     [Test]
-    public void ResolveVideoOrder_Pattern1IsHumanAnimalCar()
+    public void ResolveVideoOrder_EachVideoAppearsOnceAtEachPosition()
     {
-        ExperimentVideo[] order = ExperimentPlan.ResolveVideoOrder(1);
+        for (int position = 0; position < VideoCount; position++)
+        {
+            HashSet<ExperimentVideo> seen = new HashSet<ExperimentVideo>();
+            for (int pattern = ExperimentPlan.MinVideoOrderPattern; pattern <= ExperimentPlan.MaxVideoOrderPattern; pattern++)
+            {
+                Assert.That(seen.Add(ExperimentPlan.ResolveVideoOrder(pattern)[position]), Is.True,
+                    $"{position + 1} 本目に同じ動画が 2 回来ます（pattern {pattern}）。");
+            }
 
-        Assert.That(order[0], Is.EqualTo(ExperimentVideo.Human));
-        Assert.That(order[1], Is.EqualTo(ExperimentVideo.Animal));
-        Assert.That(order[2], Is.EqualTo(ExperimentVideo.Car));
+            Assert.That(seen.Count, Is.EqualTo(VideoCount), $"{position + 1} 本目");
+        }
+    }
+
+    // 釣り合い型（Williams）: 「X の直後に Y」という並びが、X ≠ Y の 30 通りすべてでちょうど 1 回ずつ現れる。
+    // 直前に見た動画の持ち越し効果を、どの動画にも同じだけ割り振るため。
+    [Test]
+    public void ResolveVideoOrder_EveryOrderedPairIsAdjacentExactlyOnce()
+    {
+        Dictionary<string, int> counts = new Dictionary<string, int>();
+        for (int pattern = ExperimentPlan.MinVideoOrderPattern; pattern <= ExperimentPlan.MaxVideoOrderPattern; pattern++)
+        {
+            ExperimentVideo[] order = ExperimentPlan.ResolveVideoOrder(pattern);
+            for (int i = 0; i + 1 < order.Length; i++)
+            {
+                string key = $"{order[i]}>{order[i + 1]}";
+                counts.TryGetValue(key, out int n);
+                counts[key] = n + 1;
+            }
+        }
+
+        Assert.That(counts.Count, Is.EqualTo(VideoCount * (VideoCount - 1)));
+        foreach (KeyValuePair<string, int> pair in counts)
+        {
+            Assert.That(pair.Value, Is.EqualTo(1), pair.Key);
+        }
     }
 
     [Test]
-    public void ResolveVideoOrder_Pattern6IsCarAnimalHuman()
+    public void ResolveVideoOrder_Pattern1IsTheFirstWilliamsRow()
     {
-        ExperimentVideo[] order = ExperimentPlan.ResolveVideoOrder(6);
+        ExperimentVideo[] order = ExperimentPlan.ResolveVideoOrder(1);
 
-        Assert.That(order[0], Is.EqualTo(ExperimentVideo.Car));
-        Assert.That(order[1], Is.EqualTo(ExperimentVideo.Animal));
-        Assert.That(order[2], Is.EqualTo(ExperimentVideo.Human));
+        Assert.That(order, Is.EqualTo(new[]
+        {
+            ExperimentVideo.Video1, ExperimentVideo.Video2, ExperimentVideo.Video6,
+            ExperimentVideo.Video3, ExperimentVideo.Video5, ExperimentVideo.Video4,
+        }));
     }
 
     // 返した配列を書き換えても内部テーブルが壊れないこと。
@@ -168,10 +210,10 @@ public class ExperimentPlanTests
     public void ResolveVideoOrder_ReturnsIndependentCopy()
     {
         ExperimentVideo[] first = ExperimentPlan.ResolveVideoOrder(1);
-        first[0] = ExperimentVideo.Car;
+        first[0] = ExperimentVideo.Video6;
 
         ExperimentVideo[] second = ExperimentPlan.ResolveVideoOrder(1);
-        Assert.That(second[0], Is.EqualTo(ExperimentVideo.Human));
+        Assert.That(second[0], Is.EqualTo(ExperimentVideo.Video1));
     }
 
     // 割り付けミスを既定値で握りつぶさない。
@@ -222,11 +264,11 @@ public class ExperimentPlanTests
     }
 
     [Test]
-    public void DescribeAssignment_ListsAllThreeBlocks()
+    public void DescribeAssignment_ListsTheOrderAndAllThreeBlocks()
     {
         string text = ExperimentPlan.DescribeAssignment(ExperimentGroup.B, 2);
 
-        Assert.That(text, Does.Contain("Human → Car → Animal"));
+        Assert.That(text, Does.Contain("Video2 → Video3 → Video1 → Video4 → Video6 → Video5"));
         Assert.That(text, Does.Contain("[Monocular] → [ModelReplaced] → [StereoOnly]"));
     }
 

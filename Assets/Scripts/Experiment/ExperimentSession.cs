@@ -93,7 +93,7 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
         get { return CurrentTrialIndex + 1 < Trials.Length; }
     }
 
-    // 直前に 1 ブロック（3 本）を見終えたところか。**アンケートは 3 本見終わってから 1 回**で、
+    // 直前に 1 ブロック（6 本。2026-10-21 までは 3 本）を見終えたところか。**アンケートは 1 ブロック見終わってから 1 回**で、
     // 動画ごとではない（2026-10-01 ユーザー指示）。次の試行がブロックの先頭で、かつ既に 1 本以上
     // 始めていれば、その直前でブロックが終わっている。最後のブロックの後は HasNextTrial が false なので
     // ここでは false（終了画面が最後のアンケートを案内する）。

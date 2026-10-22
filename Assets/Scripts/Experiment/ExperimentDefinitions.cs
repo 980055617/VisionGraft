@@ -1,19 +1,21 @@
 // 被験者実験の条件を表す型定義。
-// 実験デザイン: 3動画 × 3表示条件 = 9試行を 1 セッションで実施する。
+// 実験デザイン: 6動画 × 3表示条件 = 18試行を 1 セッションで実施する（2026-10-22 に 3 動画 9 試行から変更）。
 // 詳細は Docs/experiment-flow.md を参照。
 
-// 提示する動画（= bundle）。
+// 提示する動画（= bundle）。2026-10-22 に 30 秒 × 6 本へ変えた。
+// 中身（人・動物・物の内訳）は生成待ちなので、番号の枠だけ置く。中身が決まったら名前を付け直してよい
+// （trials.csv の video 列にこの名前が出る。どの bundle かは bundle_file・bundle_sha256 列で分かる）。
+// 3 本 × 3 条件の旧実験（Human / Animal / Car）はタグ experiment-v2-final にある。
 public enum ExperimentVideo
 {
-    Human,
-    Animal,
+    Video1,
+    Video2,
+    Video3,
+    Video4,
+    Video5,
+    Video6,
 
-    // 2026-09-17 に Train から置き換えた（列車クリップは研究対象から外れ、高速道路の車
-    // クリップになった。docs/bundle-shared/README.md の同期ログ 2026-09-17）。
-    // 列挙の位置（= 2）は Train のまま据え置き。後ろの Tutorial の番号を動かさないため。
-    Car,
-
-    // 操作チュートリアル用。実験の 3 本とは別のクリップを使う（2026-09-11）。
+    // 操作チュートリアル用。実験の 6 本とは別のクリップを使う（2026-09-11）。
     // ExperimentPlan の試行には含まれない。
     Tutorial,
 }
@@ -26,7 +28,7 @@ public enum ExperimentTutorialTiming
     // 最初の試行の前に 1 回（単眼の内容のみ）。
     BeforeFirstTrial,
 
-    // 各条件ブロックの先頭で 1 回ずつ（BlockCount = 3 回）。**既定**（ExperimentController.tutorialTiming）。
+    // 各条件ブロック（6 本）の先頭で 1 回ずつ（BlockCount = 3 回）。**既定**（ExperimentController.tutorialTiming）。
     BeforeEachBlock,
 }
 
@@ -60,9 +62,9 @@ public enum ExperimentDisplayMode
 // 入れ替えて順序効果を相殺する（2026-09-11 に 2 ブロック → 3 ブロックへ変更）。
 public enum ExperimentGroup
 {
-    // Monocular 3 本 → StereoOnly 3 本 → ModelReplaced 3 本
+    // Monocular 6 本 → StereoOnly 6 本 → ModelReplaced 6 本
     A,
 
-    // Monocular 3 本 → ModelReplaced 3 本 → StereoOnly 3 本
+    // Monocular 6 本 → ModelReplaced 6 本 → StereoOnly 6 本
     B,
 }

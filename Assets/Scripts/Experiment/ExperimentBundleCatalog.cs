@@ -13,52 +13,53 @@ using System;
 [Serializable]
 public sealed class ExperimentBundleCatalog
 {
-    public string humanBundleFileName = DefaultHumanBundleFileName;
-    public string animalBundleFileName = DefaultAnimalBundleFileName;
-    public string carBundleFileName = DefaultCarBundleFileName;
-    // 操作チュートリアル用。実験の 3 本とは別のクリップで、置換ありモードで再生する
+    // 2026-10-22: 30 秒 × 6 本の新しい実験。要素 i が ExperimentVideo.Video(i+1)。
+    // 動画は生成中なので、名前は仮（bundle_video1.svb …）。届いたら StreamingAssets に置く名前に
+    // 合わせて ExperimentScene の Inspector（ここ）か DefaultVideoBundleFileNames を書き換える。
+    // 要素が足りない・空のときは既定名に落ちる（Inspector で配列の長さを変えても壊れない）。
+    //
+    // 旧実験（3 本 × 3 条件）の bundle_human / animal / car.svb は
+    // Build/archive/experiment-v2_20261022/ にコピーし、sha256 を控えた（タグ experiment-v2-final）。
+    public string[] videoBundleFileNames = (string[])DefaultVideoBundleFileNames.Clone();
+    // 操作チュートリアル用。実験の 6 本とは別のクリップで、置換ありモードで再生する
     // （Model ボタンを教えるため）。人か動物が 1 体は写っていること、video.mp4 が
     // H.264 であること（Quest は mp4v を再生できない。ADR 0003）が条件。
     public string tutorialBundleFileName = DefaultTutorialBundleFileName;
 
-    // 2026-08-28: StreamingAssets を「動画ごとに最新 1 本」へ整理した。名前は据え置きで、
-    // 中身が再生成版に差し替わっていく。
-    // 動画の同一性は manifest.inputs.video_mp4 で見ること。ファイル名は当てにならない。
-    //
-    // 2026-09-17 現在の中身（生成側の 720 行世代への再納品。D-010〜D-015、
-    // 中身の同一性は docs/bundle-shared/recommended_bundles.json の sha256 で照合する）:
-    //   bundle_human.svb  : bundle_fullframe_20260917（FINNAL_HUMAN、165 MB）
-    //                       ← 背景ドリフト補正 + mask 中央値 anchor。**inpaintfix 系を入れないこと**。
-    //   bundle_animal.svb : bundle_fullframe_20260917（FINNAL_ANIMAL、124 MB、shots 28、anchor v の鏡映修正済み）
-    //   bundle_car.svb    : bundle_fullframe_20260917（FINNAL_CAR、129 MB、other 5 track）
-    //                       ← quant_pos_scale = 0.0001（D-008 と同じ遠景対策）
-    //   train は研究対象から外れた（2026-09-17）。bundle_train.svb は置かない。
-    // 3 本とも eye 1280x720（旧世代は 640 行）。旧世代と混ぜて置かないこと。
-    //
     // **StreamingAssets は APK に丸ごと焼かれる。** 検証用の古い bundle を置きっぱなしに
     // しないこと（2026-09-05 に 737MB → 380MB まで戻した）。
-    public const string DefaultHumanBundleFileName = "bundle_human.svb";
-    public const string DefaultAnimalBundleFileName = "bundle_animal.svb";
-    public const string DefaultCarBundleFileName = "bundle_car.svb";
+    // 動画の同一性は manifest.inputs.video_mp4 で見ること。ファイル名は当てにならない。
+    public static readonly string[] DefaultVideoBundleFileNames =
+    {
+        "bundle_video1.svb",
+        "bundle_video2.svb",
+        "bundle_video3.svb",
+        "bundle_video4.svb",
+        "bundle_video5.svb",
+        "bundle_video6.svb",
+    };
+
     // 2026-09-11 時点の中身: 旧 bundle.svb（01_dog クリップ、289 フレーム）の video.mp4 を
     // H.264 に再エンコードした暫定版。生成側が正式なチュートリアル用 bundle を出したら差し替える。
     public const string DefaultTutorialBundleFileName = "bundle_tutorial.svb";
 
     public string Resolve(ExperimentVideo video)
     {
-        switch (video)
+        if (video == ExperimentVideo.Tutorial)
         {
-            case ExperimentVideo.Human:
-                return FallbackIfBlank(humanBundleFileName, DefaultHumanBundleFileName);
-            case ExperimentVideo.Animal:
-                return FallbackIfBlank(animalBundleFileName, DefaultAnimalBundleFileName);
-            case ExperimentVideo.Car:
-                return FallbackIfBlank(carBundleFileName, DefaultCarBundleFileName);
-            case ExperimentVideo.Tutorial:
-                return FallbackIfBlank(tutorialBundleFileName, DefaultTutorialBundleFileName);
-            default:
-                throw new ArgumentOutOfRangeException(nameof(video), video, "未知の動画種別です。");
+            return FallbackIfBlank(tutorialBundleFileName, DefaultTutorialBundleFileName);
         }
+
+        int index = (int)video - (int)ExperimentVideo.Video1;
+        if (index < 0 || index >= DefaultVideoBundleFileNames.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(video), video, "未知の動画種別です。");
+        }
+
+        string configured = videoBundleFileNames != null && index < videoBundleFileNames.Length
+            ? videoBundleFileNames[index]
+            : null;
+        return FallbackIfBlank(configured, DefaultVideoBundleFileNames[index]);
     }
 
     private static string FallbackIfBlank(string value, string fallback)

@@ -249,7 +249,7 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                     }
 
                     return
-                        "次の 3 本では動画の人や動物が\n" +
+                        $"次の {ExperimentPlan.TrialsPerBlock} 本では動画の人や動物が\n" +
                         "3D モデルに置き換わり、ときどき自分から\n" +
                         "動きます。動くあいだ動画は止まります。\n" +
                         "1 回動くまで見ていてください。";
@@ -311,17 +311,17 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                 // 立体のみのブロックでは「Model」ボタンも Settings の Motion の切り替えも消える
                 // （2026-09-30 の 5 回目の監査）。両群で真になる書き方にする。
                 return
-                    "次の 3 本は立体（奥行きあり）で\n" +
+                    $"次の {ExperimentPlan.TrialsPerBlock} 本は立体（奥行きあり）で\n" +
                     "見えます。\n" +
                     "操作は A ボタンと下のつまみです。\n" +
                     "見終わったら画面の上の\n" +
                     "「視聴を終了」を押してください。";
             default:
-                // 置換ありでできること 3 つ（替える・回す・切り替える）をまとめて言う。「次の 3 本」と書くのは、
+                // 置換ありでできること 3 つ（替える・回す・切り替える）をまとめて言う。「次の 6 本」（1 ブロックの本数）と書くのは、
                 // 群 B では置換ありの後に立体のみが来て、そこでは Model も Motion も無いため（WatchMotion の
-                // 「次の 3 本では…」と同じ言い方）。
+                // 「次の 6 本では…」と同じ言い方）。
                 return
-                    "操作は以上です。次の 3 本では、モデルの\n" +
+                    $"操作は以上です。次の {ExperimentPlan.TrialsPerBlock} 本では、モデルの\n" +
                     "交換・掴んで回す・Motion の切り替えが\n" +
                     "いつでもできます。\n" +
                     "見終わったら画面の上の\n" +

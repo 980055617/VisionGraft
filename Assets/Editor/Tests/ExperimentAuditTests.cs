@@ -491,12 +491,12 @@ public class ExperimentQuestionnaireTimingTests
         Assert.That(questionnaire, Does.Contain("「この動画を開始」"));
     }
 
-    // **アンケートは 3 本（1 ブロック）見終わってから 1 回**（2026-10-01 ユーザー指示）。
-    // 以前は 2 本目以降の毎回、待機画面にアンケートの案内が出ていた。9 本のうち案内が要るのは
-    // 4 本目と 7 本目の前だけ（最後のブロックの分は終了画面で案内する）。
+    // **アンケートは 1 ブロック見終わってから 1 回**（2026-10-01 ユーザー指示。当時は 3 本、2026-10-22 から 6 本）。
+    // 以前は 2 本目以降の毎回、待機画面にアンケートの案内が出ていた。18 本のうち案内が要るのは
+    // 7 本目と 13 本目の前だけ（最後のブロックの分は終了画面で案内する）。
     [TestCase(ExperimentGroup.A, 1)]
     [TestCase(ExperimentGroup.B, 4)]
-    public void QuestionnaireIsDueOnlyRightAfterEachBlockOfThree(ExperimentGroup group, int pattern)
+    public void QuestionnaireIsDueOnlyRightAfterEachBlock(ExperimentGroup group, int pattern)
     {
         ExperimentSession session = new ExperimentSession("P01", group, pattern, null, () => 0d, () => 0f);
         List<int> dueBeforeTrial = new List<int>();
@@ -518,7 +518,7 @@ public class ExperimentQuestionnaireTimingTests
             ExperimentLog.Sink = null;
         }
 
-        Assert.That(dueBeforeTrial, Is.EqualTo(new[] { 3, 6 }), "4 本目と 7 本目の前だけ（0 始まりで 3 と 6）");
+        Assert.That(dueBeforeTrial, Is.EqualTo(new[] { 6, 12 }), "7 本目と 13 本目の前だけ（0 始まりで 6 と 12）");
         Assert.That(session.HasNextTrial, Is.False);
         Assert.That(session.IsQuestionnaireDueBeforeNextTrial, Is.False, "最後のブロックの後は終了画面が案内する");
     }
@@ -530,16 +530,20 @@ public class ExperimentQuestionnaireTimingTests
         ExperimentSession session = new ExperimentSession("P01", ExperimentGroup.A, 1, null, () => 0d, () => 0f);
         try
         {
-            session.BeginTrial(0, "bundle.svb");
-            session.EndTrial(false);
-            session.BeginTrial(1, "bundle.svb");
-            session.EndTrial(false);
-            session.BeginTrial(2, "bundle.svb");
+            int last = ExperimentPlan.TrialsPerBlock - 1;
+            for (int i = 0; i < last; i++)
+            {
+                session.BeginTrial(i, "bundle.svb");
+                session.EndTrial(false);
+                Assert.That(session.IsQuestionnaireDueBeforeNextTrial, Is.False, $"{i + 1} 本目はブロックの途中");
+            }
+
+            session.BeginTrial(last, "bundle.svb");
             session.EndTrial(true, "load_timeout");
-            Assert.That(session.IsQuestionnaireDueBeforeNextTrial, Is.True, "3 本目まで来た（失敗でもブロックの区切り）");
+            Assert.That(session.IsQuestionnaireDueBeforeNextTrial, Is.True, "ブロックの最後まで来た（失敗でもブロックの区切り）");
 
             Assert.That(session.RetryCurrentTrial(), Is.True);
-            Assert.That(session.IsQuestionnaireDueBeforeNextTrial, Is.False, "3 本目をやり直すので、まだ区切りではない");
+            Assert.That(session.IsQuestionnaireDueBeforeNextTrial, Is.False, "最後の 1 本をやり直すので、まだ区切りではない");
         }
         finally
         {
@@ -556,14 +560,14 @@ public class ExperimentTrialParticipantDescribeTests
     {
         ExperimentTrial trial = new ExperimentTrial
         {
-            trialIndex = 2, blockIndex = 0, indexInBlock = 2, video = ExperimentVideo.Car, mode = ExperimentDisplayMode.Monocular,
+            trialIndex = 2, blockIndex = 0, indexInBlock = 2, video = ExperimentVideo.Video3, mode = ExperimentDisplayMode.Monocular,
         };
 
         string text = trial.DescribeForParticipant(ExperimentPlan.TrialCount);
-        Assert.That(text, Is.EqualTo("3 / 9 本目の動画"));
-        Assert.That(text, Does.Not.Contain("Car"));
+        Assert.That(text, Is.EqualTo("3 / 18 本目の動画"));
+        Assert.That(text, Does.Not.Contain("Video"));
         Assert.That(text, Does.Not.Contain("Monocular"));
-        Assert.That(trial.Describe(ExperimentPlan.TrialCount), Is.EqualTo("3/9  Car / Monocular"), "ログ用はそのまま");
+        Assert.That(trial.Describe(ExperimentPlan.TrialCount), Is.EqualTo("3/18  Video3 / Monocular"), "ログ用はそのまま");
     }
 }
 

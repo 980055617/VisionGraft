@@ -1,20 +1,23 @@
 using System;
 
-// 参加者ごとの割り付け（群 + 動画順パターン）から 9 試行の提示順を組み立てる。
+// 参加者ごとの割り付け（群 + 動画順パターン）から 18 試行の提示順を組み立てる。
 //
-// 実験デザイン（2026-09-11 に 2 条件 → 3 条件へ変更）:
-//   - 動画 3 本（Human / Animal / Car）× 表示条件 3 種 = 9 試行（2026-09-17 に Train → Car）
-//   - 表示条件はブロック化する。**最初のブロックは両群とも Monocular（単眼）**。
+// 実験デザイン（2026-10-22 に 30 秒 × 6 本へ変更。3 本 × 3 条件 = 9 試行の旧実験はタグ experiment-v2-final）:
+//   - 動画 6 本 × 表示条件 3 種 = 18 試行（ユーザー指示「6 本 × 3 条件 = 18 本」）
+//   - 表示条件はブロック化する（1 ブロック = 6 本、アンケートはブロックごとに 1 回）。
+//     **最初のブロックは両群とも Monocular（単眼）**。
 //     残り 2 ブロックは 群 A が StereoOnly → ModelReplaced、群 B が ModelReplaced → StereoOnly。
 //     単眼を先に置くのは「平面の動画 → 立体 → 置換」の順で体験させるため。順序効果の相殺は
 //     後半 2 ブロックの入れ替えで行う。
-//   - 動画順は 3! = 6 パターンを番号で指定する。3 ブロックとも同じ順序を使う
-//     （同じ動画が全条件で同じ位置に来るので、条件間の比較が直接的になる）。
+//   - 動画順は 6 × 6 の釣り合い型ラテン方格（Williams 法）の 6 行を番号で指定する。6! = 720 通りは
+//     回せないので、各動画が各位置に 1 回ずつ来て、どの 2 本の並び（A の直後に B）も 1 回ずつ現れる
+//     6 通りに絞る。3 ブロックとも同じ順序を使う（同じ動画が全条件で同じ位置に来るので、条件間の
+//     比較が直接的になる）。
 //
-// 群 2 通り × 動画順 6 パターン = 12 通りの割り付けを実験者が参加者に手動で振る。
+// 群 2 通り × 動画順 6 パターン = 12 通りの割り付けを参加者番号から決める（ResolveAssignment）。
 public static class ExperimentPlan
 {
-    public const int TrialsPerBlock = 3;
+    public const int TrialsPerBlock = 6;
     public const int BlockCount = 3;
     public const int TrialCount = TrialsPerBlock * BlockCount;
 
@@ -35,17 +38,18 @@ public static class ExperimentPlan
         videoOrderPattern = MinVideoOrderPattern + index / 2;
     }
 
-    // パターン番号 → 動画順。Human < Animal < Car を基準にした 3 要素の全順列を辞書順に並べたもの。
-    // 2026-09-17 に Train の席へ Car を入れた。表の並びは変えていない（参加者番号 → パターンの
-    // 対応が ResolveAssignment で決まるので、並べ替えると P01〜P12 が見た順序の記録が変わる）。
+    // パターン番号 → 動画順。6 × 6 の Williams 方格: 行 r は (r, r+1, r+5, r+2, r+4, r+3) mod 6。
+    // 各列（何本目か）に各動画が 1 回ずつ、隣り合う順序対（X の直後に Y）が全 30 通り 1 回ずつ現れる
+    // （ExperimentPlanTests が確かめる）。参加者番号 → パターンは ResolveAssignment で決まるので、
+    // 実験を始めたら表の並びを変えないこと（変えると参加者が見た順序の記録と合わなくなる）。
     private static readonly ExperimentVideo[][] VideoOrderPatterns =
     {
-        new[] { ExperimentVideo.Human,  ExperimentVideo.Animal, ExperimentVideo.Car    }, // 1
-        new[] { ExperimentVideo.Human,  ExperimentVideo.Car,    ExperimentVideo.Animal }, // 2
-        new[] { ExperimentVideo.Animal, ExperimentVideo.Human,  ExperimentVideo.Car    }, // 3
-        new[] { ExperimentVideo.Animal, ExperimentVideo.Car,    ExperimentVideo.Human  }, // 4
-        new[] { ExperimentVideo.Car,    ExperimentVideo.Human,  ExperimentVideo.Animal }, // 5
-        new[] { ExperimentVideo.Car,    ExperimentVideo.Animal, ExperimentVideo.Human  }, // 6
+        new[] { ExperimentVideo.Video1, ExperimentVideo.Video2, ExperimentVideo.Video6, ExperimentVideo.Video3, ExperimentVideo.Video5, ExperimentVideo.Video4 }, // 1
+        new[] { ExperimentVideo.Video2, ExperimentVideo.Video3, ExperimentVideo.Video1, ExperimentVideo.Video4, ExperimentVideo.Video6, ExperimentVideo.Video5 }, // 2
+        new[] { ExperimentVideo.Video3, ExperimentVideo.Video4, ExperimentVideo.Video2, ExperimentVideo.Video5, ExperimentVideo.Video1, ExperimentVideo.Video6 }, // 3
+        new[] { ExperimentVideo.Video4, ExperimentVideo.Video5, ExperimentVideo.Video3, ExperimentVideo.Video6, ExperimentVideo.Video2, ExperimentVideo.Video1 }, // 4
+        new[] { ExperimentVideo.Video5, ExperimentVideo.Video6, ExperimentVideo.Video4, ExperimentVideo.Video1, ExperimentVideo.Video3, ExperimentVideo.Video2 }, // 5
+        new[] { ExperimentVideo.Video6, ExperimentVideo.Video1, ExperimentVideo.Video5, ExperimentVideo.Video2, ExperimentVideo.Video4, ExperimentVideo.Video3 }, // 6
     };
 
     public static bool IsValidVideoOrderPattern(int pattern)
@@ -126,7 +130,7 @@ public static class ExperimentPlan
         }
 
         ExperimentVideo[] order = ResolveVideoOrder(videoOrderPattern);
-        string orderText = $"{order[0]} → {order[1]} → {order[2]}";
+        string orderText = string.Join(" → ", order);
         string[] blocks = new string[BlockCount];
         for (int block = 0; block < BlockCount; block++)
         {

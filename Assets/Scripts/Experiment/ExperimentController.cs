@@ -16,7 +16,7 @@ using UnityEngine.SceneManagement;
 //     シーンをまたいでカメラを探すため、ベースシーンのリグがそのまま使われる
 //
 // 操作チュートリアル（2026-09-11）:
-//   - 試行と同じ仕組み（TrialScene を Additive ロード）で、実験の 3 本とは別の bundle を
+//   - 試行と同じ仕組み（TrialScene を Additive ロード）で、実験の 6 本とは別の bundle を
 //     次のブロックと同じ表示条件で再生し、ExperimentTutorial が段階を進める
 //   - tutorialTiming で「最初の試行の前に 1 回」「各ブロックの前に 1 回ずつ（既定）」を選ぶ
 //   - 被験者実験の中でだけ走る。Home からの単独起動は 2026-09-11 に外した
@@ -99,8 +99,9 @@ public sealed class ExperimentController : MonoBehaviour
     // 試行を終えられるまでの最短時間（秒）。すぐ次へ行かせないため。パネルは最初から出しておき
     // （急に出ると押したくなる）、この時間までボタンを押せなくする。残り時間は出さない（2026-09-11）。
     // 最初は動画 1 周（human 72 s）より長い 90 s にしたが、同日「1:30 → 1:10」の指示で 70 s に緩めた。
+    // 2026-10-22: 新しい実験の動画が 30 秒になったので 30 s に（ユーザー指示。P01〜P13 の実験は 70 s）。
     // テスト用の P00 には掛けない（ResolveTrialMinimumViewingSeconds）。チュートリアルにも掛けない。
-    [Min(0f)] public float trialMinimumViewingSeconds = 70f;
+    [Min(0f)] public float trialMinimumViewingSeconds = 30f;
 
     [Header("Logging")]
     public bool logHeadPose = true;
@@ -124,8 +125,8 @@ public sealed class ExperimentController : MonoBehaviour
     private float nextHeadPoseSampleTime;
     private float nextLogFlushTime;
     private bool trialEndRequested;
-    // 実験者が試行中に「実験者用: 中止」を 2 度押しした。70 秒の待ちに関係なく効く。
-    // 以前は試行中に押せるボタンが「視聴を終了」（70 秒は押せない）だけで、被験者が体調を崩しても
+    // 実験者が試行中に「実験者用: 中止」を 2 度押しした。最短視聴時間の待ちに関係なく効く。
+    // 以前は試行中に押せるボタンが「視聴を終了」（最短視聴時間までは押せない）だけで、被験者が体調を崩しても
     // ヘッドセットを外すかアプリを落とすしかなく、その試行は trials.csv に行が残らなかった
     // （2026-09-29 の 4 回目の監査）。
     private bool trialAbortRequested;
@@ -239,8 +240,8 @@ public sealed class ExperimentController : MonoBehaviour
     private void OnApplicationPause(bool paused)
     {
         // **ヘッドセットを外したこと自体を記録する。**以前は flush だけで、operations.csv に何も残らず、
-        // 「最短視聴時間 70 秒（実時間）のうちどれだけ装着していなかったか」を後から追えなかった
-        // （2026-09-25 の監査 F-6）。装着時間の記録は 70 秒の基準を実時間のままにする判断
+        // 「最短視聴時間（実時間）のうちどれだけ装着していなかったか」を後から追えなかった
+        // （2026-09-25 の監査 F-6）。装着時間の記録は最短視聴時間の基準を実時間のままにする判断
         // （同日ユーザー指示）と対で要る。
         if (paused)
         {
@@ -484,7 +485,7 @@ public sealed class ExperimentController : MonoBehaviour
             case ExperimentTutorialTiming.BeforeFirstTrial:
                 return "最初の動画の前に 1 回";
             case ExperimentTutorialTiming.BeforeEachBlock:
-                return $"3 本ごとの前に 1 回（計 {ExperimentPlan.BlockCount} 回）";
+                return $"{ExperimentPlan.TrialsPerBlock} 本ごとの前に 1 回（計 {ExperimentPlan.BlockCount} 回）";
             default:
                 return "なし";
         }
@@ -634,7 +635,7 @@ public sealed class ExperimentController : MonoBehaviour
             $"参加者 ID: {session.ParticipantId}\n" +
             $"次: {next.DescribeForParticipant(ExperimentPlan.TrialCount)}\n\n" +
             // ログの保存先はここに出さない（被験者が知る必要はない。2026-09-11 指示）。Debug.Log には残る。
-            // アンケートの案内はブロックの区切り（3 本見終わった直後）だけ。同じ区切りでは 1 回だけ。
+            // アンケートの案内はブロックの区切り（1 ブロック = TrialsPerBlock 本を見終わった直後）だけ。同じ区切りでは 1 回だけ。
             ResolveTrialWaitingInstruction(TakeQuestionnaireCue(), next.indexInBlock);
 
         List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
@@ -647,8 +648,8 @@ public sealed class ExperimentController : MonoBehaviour
         panel.Show("待機中", body, specs);
     }
 
-    // アンケートの案内を出すか。**3 本（1 ブロック）見終わった直後の最初の待機系の画面で 1 回だけ**
-    // （2026-10-01 ユーザー指示）。出したら覚えるので、同じ区切りで 2 回目以降に呼ぶと false。
+    // アンケートの案内を出すか。**1 ブロック（2026-10-22 から 6 本、それまでは 3 本）見終わった直後の
+    // 最初の待機系の画面で 1 回だけ**（2026-10-01 ユーザー指示）。出したら覚えるので、同じ区切りで 2 回目以降に呼ぶと false。
     private bool TakeQuestionnaireCue()
     {
         if (session == null || !session.IsQuestionnaireDueBeforeNextTrial)
@@ -673,8 +674,9 @@ public sealed class ExperimentController : MonoBehaviour
                $"戻ったら{buttonPhrase}を押してください。";
     }
 
-    // 待機画面（次の動画の前）の指示。**実験者の合図を待たせるのはブロックの頭（1・4・7 本目の前）だけ。**
-    // ブロックの途中（2・3・5・6・8・9 本目の前）は被験者が自分のペースで「この動画を開始」を押す
+    // 待機画面（次の動画の前）の指示。**実験者の合図を待たせるのはブロックの頭（1・7・13 本目の前。
+    // 3 本ブロックだった 2026-10-21 までは 1・4・7 本目）だけ。**
+    // ブロックの途中は被験者が自分のペースで「この動画を開始」を押す
     // （2026-10-01 ユーザー「1,2,3 / 4,5,6 / 7,8,9 で三個一組。指示が要るのは 3-4・6-7 の間だけ」）。
     // 以前は全部の待機画面が「実験者の合図があったら」で、アンケートを動画ごとに答えると思い込んで
     // 書いた 9/11 の文面の名残だった（アンケートの案内は 10/1 にブロックごとへ直したが、こちらが残っていた）。
@@ -1291,7 +1293,7 @@ public sealed class ExperimentController : MonoBehaviour
 
         trialEndEnabled = true;
         panel.SetButtonState(0, TrialEndButtonLabel, true);
-        // **押せるようになった時点で動画が実際に何秒進んでいたかを残す。**70 秒は実時間で数える判断
+        // **押せるようになった時点で動画が実際に何秒進んでいたかを残す。**最短視聴時間は実時間で数える判断
         // （2026-09-25 ユーザー指示）なので、一時停止・モーションの自動停止・ヘッドセット脱着の分だけ
         // 実際の視聴は短い。解析でその差を見られるようにする。
         ExperimentLog.Operation(
@@ -1418,8 +1420,8 @@ public sealed class ExperimentController : MonoBehaviour
         phase = Phase.Finished;
         PreparePanel(FullPanelSizeMeters, Vector2.zero, ExperimentPanel.DefaultLayout);
 
-        // 最後のブロック（7〜9 本目）のアンケートはここで案内する。ほかのブロックと同じく
-        // 「3 本見終わってから 1 回」（2026-10-01 ユーザー指示）。
+        // 最後のブロック（13〜18 本目）のアンケートはここで案内する。ほかのブロックと同じく
+        // 「1 ブロック見終わってから 1 回」（2026-10-01 ユーザー指示「3 本見終わってから 1 回」。2026-10-22 から 6 本）。
         string body =
             $"参加者 ID: {session.ParticipantId}\n" +
             $"全 {ExperimentPlan.TrialCount} 本の動画が終わりました。\n\n" +
@@ -1565,7 +1567,7 @@ public sealed class ExperimentController : MonoBehaviour
         // 被験者も見る画面なので内部の enum 名は出さない（2026-09-25 の監査）。「ブロック」「組」も出さない。
         return next.blockIndex == 0
             ? "最初の動画の前"
-            : $"次の 3 本（{DescribeDisplayModeForParticipant(next.mode)}）の前";
+            : $"次の {ExperimentPlan.TrialsPerBlock} 本（{DescribeDisplayModeForParticipant(next.mode)}）の前";
     }
 
     private void BeginTutorial()
@@ -1828,7 +1830,7 @@ public sealed class ExperimentController : MonoBehaviour
         // （2026-09-29 の 3 回目の監査）。押し切ったときはその練習を「済み」にせず待機画面へ戻す（RunTutorialRoutine）。
         // **最終段階でも出す。**出さないと練習の「視聴を終了」だけが中央に来て、本番（試行バーは
         // 「視聴を終了」＋「実験者用: 中止」の 2 個）では左にずれる。練習で覚えた位置に本番では
-        // 別のボタンがあることになり、被験者が覚えた場所を押す → 反応しない（70 秒は灰色）→
+        // 別のボタンがあることになり、被験者が覚えた場所を押す → 反応しない（最短視聴時間までは灰色）→
         // 少し右を押す、で実験者用のボタンに触れてしまう（2026-09-30 の 5 回目の監査）。
         if (tutorial != null)
         {

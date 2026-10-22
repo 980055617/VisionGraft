@@ -2,54 +2,59 @@ using NUnit.Framework;
 
 public class ExperimentBundleCatalogTests
 {
+    // 2026-10-22: 動画は 30 秒 × 6 本。名前は生成待ちの仮（bundle_video1.svb …）。
     [Test]
-    public void Resolve_DefaultsMatchStreamingAssetsBundles()
+    public void Resolve_DefaultsAreTheSixVideoSlots()
     {
         ExperimentBundleCatalog catalog = new ExperimentBundleCatalog();
 
-        // 既定名は StreamingAssets に実在するファイルでなければならない。
-        Assert.That(catalog.Resolve(ExperimentVideo.Human), Is.EqualTo("bundle_human.svb"));
-        Assert.That(catalog.Resolve(ExperimentVideo.Animal), Is.EqualTo("bundle_animal.svb"));
-        Assert.That(catalog.Resolve(ExperimentVideo.Car), Is.EqualTo("bundle_car.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Video1), Is.EqualTo("bundle_video1.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Video6), Is.EqualTo("bundle_video6.svb"));
+        Assert.That(catalog.videoBundleFileNames, Is.EqualTo(ExperimentBundleCatalog.DefaultVideoBundleFileNames));
+        Assert.That(catalog.videoBundleFileNames, Is.Not.SameAs(ExperimentBundleCatalog.DefaultVideoBundleFileNames),
+            "インスタンスごとの配列（Inspector で書き換えても既定の表を壊さない）");
     }
 
     [Test]
     public void Resolve_HonoursInspectorOverride()
     {
-        ExperimentBundleCatalog catalog = new ExperimentBundleCatalog
-        {
-            humanBundleFileName = "custom_human.svb",
-        };
+        ExperimentBundleCatalog catalog = new ExperimentBundleCatalog();
+        catalog.videoBundleFileNames[0] = "custom_first.svb";
 
-        Assert.That(catalog.Resolve(ExperimentVideo.Human), Is.EqualTo("custom_human.svb"));
-        Assert.That(catalog.Resolve(ExperimentVideo.Animal), Is.EqualTo("bundle_animal.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Video1), Is.EqualTo("custom_first.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Video2), Is.EqualTo("bundle_video2.svb"));
     }
 
-    // Inspector で空欄にされた場合に空文字を返すと bundle 読み込みが謎の失敗をするので、
+    // Inspector で空欄にされた・配列を短くされた場合に空文字を返すと bundle 読み込みが謎の失敗をするので、
     // 既定名にフォールバックする。
     [Test]
-    public void Resolve_BlankOverrideFallsBackToDefault()
+    public void Resolve_BlankOrMissingOverrideFallsBackToDefault()
     {
         ExperimentBundleCatalog catalog = new ExperimentBundleCatalog
         {
-            carBundleFileName = string.Empty,
+            videoBundleFileNames = new[] { string.Empty, "custom_second.svb" },
         };
 
-        Assert.That(catalog.Resolve(ExperimentVideo.Car), Is.EqualTo("bundle_car.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Video1), Is.EqualTo("bundle_video1.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Video2), Is.EqualTo("custom_second.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Video5), Is.EqualTo("bundle_video5.svb"));
+
+        catalog.videoBundleFileNames = null;
+        Assert.That(catalog.Resolve(ExperimentVideo.Video3), Is.EqualTo("bundle_video3.svb"));
     }
 
     [Test]
     public void Resolve_EveryVideoHasADistinctBundle()
     {
         ExperimentBundleCatalog catalog = new ExperimentBundleCatalog();
+        System.Collections.Generic.HashSet<string> seen = new System.Collections.Generic.HashSet<string>();
 
-        string human = catalog.Resolve(ExperimentVideo.Human);
-        string animal = catalog.Resolve(ExperimentVideo.Animal);
-        string car = catalog.Resolve(ExperimentVideo.Car);
+        foreach (ExperimentVideo video in ExperimentPlan.ResolveVideoOrder(1))
+        {
+            Assert.That(seen.Add(catalog.Resolve(video)), Is.True, video.ToString());
+        }
 
-        Assert.That(human, Is.Not.EqualTo(animal));
-        Assert.That(animal, Is.Not.EqualTo(car));
-        Assert.That(human, Is.Not.EqualTo(car));
+        Assert.That(seen, Has.No.Member(catalog.Resolve(ExperimentVideo.Tutorial)));
     }
 }
 
@@ -77,7 +82,7 @@ public class ExperimentTrialHandoffTests
     public void Consume_ReturnsPendingRequest()
     {
         ExperimentTrialRequest request = new ExperimentTrialRequest(
-            "bundle_human.svb", ExperimentDisplayMode.StereoOnly, 0, ExperimentVideo.Human);
+            "bundle_human.svb", ExperimentDisplayMode.StereoOnly, 0, ExperimentVideo.Video1);
         ExperimentTrialHandoff.SetPending(request);
 
         Assert.That(ExperimentTrialHandoff.Consume(), Is.SameAs(request));
@@ -89,7 +94,7 @@ public class ExperimentTrialHandoffTests
     public void Consume_IsSingleUse()
     {
         ExperimentTrialHandoff.SetPending(new ExperimentTrialRequest(
-            "bundle_animal.svb", ExperimentDisplayMode.ModelReplaced, 1, ExperimentVideo.Animal));
+            "bundle_animal.svb", ExperimentDisplayMode.ModelReplaced, 1, ExperimentVideo.Video2));
 
         Assert.That(ExperimentTrialHandoff.Consume(), Is.Not.Null);
         Assert.That(ExperimentTrialHandoff.Consume(), Is.Null);
@@ -102,11 +107,11 @@ public class ExperimentTrialHandoffTests
     public void StartInNormalMode_IsTrueForStereoOnlyAndMonocular()
     {
         ExperimentTrialRequest stereoOnly = new ExperimentTrialRequest(
-            "bundle_human.svb", ExperimentDisplayMode.StereoOnly, 3, ExperimentVideo.Human);
+            "bundle_human.svb", ExperimentDisplayMode.StereoOnly, 3, ExperimentVideo.Video1);
         ExperimentTrialRequest modelReplaced = new ExperimentTrialRequest(
-            "bundle_human.svb", ExperimentDisplayMode.ModelReplaced, 6, ExperimentVideo.Human);
+            "bundle_human.svb", ExperimentDisplayMode.ModelReplaced, 6, ExperimentVideo.Video1);
         ExperimentTrialRequest monocular = new ExperimentTrialRequest(
-            "bundle_human.svb", ExperimentDisplayMode.Monocular, 0, ExperimentVideo.Human);
+            "bundle_human.svb", ExperimentDisplayMode.Monocular, 0, ExperimentVideo.Video1);
 
         Assert.That(stereoOnly.StartInNormalMode, Is.True);
         Assert.That(stereoOnly.StartMonocular, Is.False);
@@ -123,11 +128,11 @@ public class ExperimentTrialHandoffTests
     public void InteractiveMotionEnabled_IsTrueOnlyForModelReplaced()
     {
         ExperimentTrialRequest monocular = new ExperimentTrialRequest(
-            "bundle_human.svb", ExperimentDisplayMode.Monocular, 0, ExperimentVideo.Human);
+            "bundle_human.svb", ExperimentDisplayMode.Monocular, 0, ExperimentVideo.Video1);
         ExperimentTrialRequest stereoOnly = new ExperimentTrialRequest(
-            "bundle_human.svb", ExperimentDisplayMode.StereoOnly, 3, ExperimentVideo.Human);
+            "bundle_human.svb", ExperimentDisplayMode.StereoOnly, 3, ExperimentVideo.Video1);
         ExperimentTrialRequest modelReplaced = new ExperimentTrialRequest(
-            "bundle_human.svb", ExperimentDisplayMode.ModelReplaced, 6, ExperimentVideo.Human);
+            "bundle_human.svb", ExperimentDisplayMode.ModelReplaced, 6, ExperimentVideo.Video1);
         ExperimentTrialRequest tutorialReplaced = new ExperimentTrialRequest(
             "bundle_tutorial.svb", ExperimentDisplayMode.ModelReplaced, -1, ExperimentVideo.Tutorial, null, "36_LabradorDog", true);
 
@@ -143,11 +148,11 @@ public class ExperimentTrialHandoffTests
     public void LockInteractiveMotion_IsFalseOnlyForModelReplaced()
     {
         ExperimentTrialRequest monocular = new ExperimentTrialRequest(
-            "bundle_human.svb", ExperimentDisplayMode.Monocular, 0, ExperimentVideo.Human);
+            "bundle_human.svb", ExperimentDisplayMode.Monocular, 0, ExperimentVideo.Video1);
         ExperimentTrialRequest stereoOnly = new ExperimentTrialRequest(
-            "bundle_human.svb", ExperimentDisplayMode.StereoOnly, 3, ExperimentVideo.Human);
+            "bundle_human.svb", ExperimentDisplayMode.StereoOnly, 3, ExperimentVideo.Video1);
         ExperimentTrialRequest modelReplaced = new ExperimentTrialRequest(
-            "bundle_human.svb", ExperimentDisplayMode.ModelReplaced, 6, ExperimentVideo.Human);
+            "bundle_human.svb", ExperimentDisplayMode.ModelReplaced, 6, ExperimentVideo.Video1);
         ExperimentTrialRequest tutorialReplaced = new ExperimentTrialRequest(
             "bundle_tutorial.svb", ExperimentDisplayMode.ModelReplaced, -1, ExperimentVideo.Tutorial, null, "36_LabradorDog", true);
 
@@ -167,7 +172,7 @@ public class ExperimentTrialHandoffTests
         ExperimentTrialRequest tutorialMonocular = new ExperimentTrialRequest(
             "bundle_tutorial.svb", ExperimentDisplayMode.Monocular, -1, ExperimentVideo.Tutorial, null, "36_LabradorDog", true);
         ExperimentTrialRequest trialReplaced = new ExperimentTrialRequest(
-            "bundle_human.svb", ExperimentDisplayMode.ModelReplaced, 6, ExperimentVideo.Human);
+            "bundle_human.svb", ExperimentDisplayMode.ModelReplaced, 6, ExperimentVideo.Video1);
 
         Assert.That(tutorialReplaced.UseTutorialInteractiveMotionInterval, Is.True);
         Assert.That(tutorialMonocular.UseTutorialInteractiveMotionInterval, Is.False);
@@ -181,11 +186,11 @@ public class ExperimentTrialHandoffTests
     public void Request_KeepsTrialMetadata()
     {
         ExperimentTrialRequest request = new ExperimentTrialRequest(
-            "bundle_car.svb", ExperimentDisplayMode.ModelReplaced, 4, ExperimentVideo.Car);
+            "bundle_car.svb", ExperimentDisplayMode.ModelReplaced, 4, ExperimentVideo.Video3);
 
         Assert.That(request.bundleFileName, Is.EqualTo("bundle_car.svb"));
         Assert.That(request.trialIndex, Is.EqualTo(4));
-        Assert.That(request.video, Is.EqualTo(ExperimentVideo.Car));
+        Assert.That(request.video, Is.EqualTo(ExperimentVideo.Video3));
         Assert.That(request.mode, Is.EqualTo(ExperimentDisplayMode.ModelReplaced));
     }
 }
@@ -195,12 +200,11 @@ public class ExperimentTrialDescribeTests
     [Test]
     public void Describe_ShowsOneBasedPositionAndCondition()
     {
-        ExperimentTrial trial = ExperimentPlan.BuildTrials(ExperimentGroup.A, 1)[5];
+        // 群 A・動画順 1 の 8 本目 = 2 ブロック目（StereoOnly）の 2 本目 = Video2。
+        ExperimentTrial trial = ExperimentPlan.BuildTrials(ExperimentGroup.A, 1)[7];
 
         string text = trial.Describe(ExperimentPlan.TrialCount);
 
-        Assert.That(text, Does.StartWith("6/9"));
-        Assert.That(text, Does.Contain("Car"));
-        Assert.That(text, Does.Contain("StereoOnly"));
+        Assert.That(text, Is.EqualTo("8/18  Video2 / StereoOnly"));
     }
 }

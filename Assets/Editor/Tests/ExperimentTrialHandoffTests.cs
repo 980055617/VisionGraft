@@ -2,7 +2,7 @@ using NUnit.Framework;
 
 public class ExperimentBundleCatalogTests
 {
-    // 2026-10-22: 動画は 30 秒 × 6 本。2026-10-23 に届いた 4 本を Video1〜4 に（名前の順）、Video5・6 は作成中の仮名。
+    // 2026-10-22: 動画は 30 秒 × 6 本。2026-10-23 に届いた 4 本を Video1〜4 に（名前の順）、10/24 に届いた car2・dog を Video5・6 に。
     [Test]
     public void Resolve_DefaultsAreTheSixVideoSlots()
     {
@@ -12,7 +12,8 @@ public class ExperimentBundleCatalogTests
         Assert.That(catalog.Resolve(ExperimentVideo.Video2), Is.EqualTo("bundle_cat.svb"));
         Assert.That(catalog.Resolve(ExperimentVideo.Video3), Is.EqualTo("bundle_soccer.svb"));
         Assert.That(catalog.Resolve(ExperimentVideo.Video4), Is.EqualTo("bundle_tv.svb"));
-        Assert.That(catalog.Resolve(ExperimentVideo.Video6), Is.EqualTo("bundle_video6.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Video5), Is.EqualTo("bundle_car2.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Video6), Is.EqualTo("bundle_dog.svb"));
         Assert.That(catalog.videoBundleFileNames, Is.EqualTo(ExperimentBundleCatalog.DefaultVideoBundleFileNames));
         Assert.That(catalog.videoBundleFileNames, Is.Not.SameAs(ExperimentBundleCatalog.DefaultVideoBundleFileNames),
             "インスタンスごとの配列（Inspector で書き換えても既定の表を壊さない）");
@@ -40,7 +41,7 @@ public class ExperimentBundleCatalogTests
 
         Assert.That(catalog.Resolve(ExperimentVideo.Video1), Is.EqualTo("bundle_balloon.svb"));
         Assert.That(catalog.Resolve(ExperimentVideo.Video2), Is.EqualTo("custom_second.svb"));
-        Assert.That(catalog.Resolve(ExperimentVideo.Video5), Is.EqualTo("bundle_video5.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Video5), Is.EqualTo("bundle_car2.svb"));
 
         catalog.videoBundleFileNames = null;
         Assert.That(catalog.Resolve(ExperimentVideo.Video3), Is.EqualTo("bundle_soccer.svb"));

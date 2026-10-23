@@ -36,8 +36,8 @@ public sealed class ExperimentBundleCatalog
         "bundle_cat.svb",
         "bundle_soccer.svb",
         "bundle_tv.svb",
-        "bundle_video5.svb",
-        "bundle_video6.svb",
+        "bundle_car2.svb",
+        "bundle_dog.svb",
     };
 
     // 2026-09-11 時点の中身: 旧 bundle.svb（01_dog クリップ、289 フレーム）の video.mp4 を

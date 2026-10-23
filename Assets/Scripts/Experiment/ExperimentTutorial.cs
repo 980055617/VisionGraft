@@ -209,11 +209,14 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                         "左右に動かすと、動画の位置を\n" +
                         "変えられます。動かしてみてください。";
                 case Step.ChangeModel:
+                    // 2026-10-24 から Model ボタンは一覧の窓を出さず、2 組のモデル（既定1・既定2）を切り替えるだけ
+                    // （ユーザー「被験者実験に関してはmodelを押すとそのwindowが出てくるのではなくモデルを既定1,既定2で
+                    // 切り替えれるようにするだけでいいです」。ExperimentModelPresets）。
                     return
-                        "モデルは好きなものに替えられます。\n" +
-                        "下のバーの「Model」ボタンを押し、\n" +
-                        "一覧から選んでください。\n" +
-                        "（「表示しない」と「編集」は使いません）";
+                        "モデルは 2 種類あります。\n" +
+                        "下のバーの「Model」ボタンを押すと\n" +
+                        "もう一方のモデルに替わります。\n" +
+                        "押してみてください（もう一度押すと戻ります）。";
                 case Step.WatchMotion:
                     // モデルを全部消されていると、そもそも動く対象が無い。戻し方を先に出す。
                     if (AllModelsHidden)
@@ -383,7 +386,10 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                 NoteModelVisibility(detail);
                 // 「表示しない」（prefab=(none)）はモデルを替えたことにしない（2026-10-10）。数えると替え方を覚えないまま
                 // 2/4 が済み、1 体だけ消した場合は以降の段に案内も出なかった（AllModelsHidden は全部消えたときだけ真）。
-                if (detail == null || detail.IndexOf(HiddenPrefabToken, StringComparison.Ordinal) < 0)
+                // **2/4 を表示している間の切り替えだけ数える**（2026-10-24、ほかの段と同じ）。Model ボタンが 1 回押すだけの切り替えになり、
+                // 1/4 の間にうっかり押すと 2/4 が先に済んで、切り替えの説明（2 種類あること・もう一度押すと戻ること）が一度も出なかった。
+                if (CurrentStep == Step.ChangeModel &&
+                    (detail == null || detail.IndexOf(HiddenPrefabToken, StringComparison.Ordinal) < 0))
                 {
                     SetDone(Step.ChangeModel);
                 }

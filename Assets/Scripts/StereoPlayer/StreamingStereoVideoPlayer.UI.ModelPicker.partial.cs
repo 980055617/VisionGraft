@@ -445,6 +445,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // 被験者実験（置換ありの試行・その練習）は一覧の窓を出さず、既定1 ⇄ 既定2 を切り替えるだけ
+        // （2026-10-24。StreamingStereoVideoPlayer.ExperimentModelPreset.partial.cs）。
+        if (UsesModelPresetToggle)
+        {
+            ToggleExperimentModelPreset();
+            return;
+        }
+
         // 開く前の再生状態を覚えておき、閉じたら戻す（2026-09-25 の監査 F-4）。
         modelPickerWasPlayingBeforeOpen = vp != null && vp.isPlaying;
         runtimeModelPickerOpen = true;
@@ -1105,6 +1113,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void ApplyBatchSwapModelSpecForFrame(int frame)
     {
+        // 実験の Model ボタン（既定1 ⇄ 既定2）のバッチの押下も同じ時点で行う（2026-10-24）。
+        ApplyBatchModelPresetToggleForFrame(frame);
+
         if (string.IsNullOrEmpty(batchSwapModelSpec))
         {
             return;

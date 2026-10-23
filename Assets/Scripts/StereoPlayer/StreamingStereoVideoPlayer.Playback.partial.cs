@@ -705,6 +705,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             scaleTargetHeightMeters = ComputeTargetHeightMeters(scaleBBoxH, scaleAnchorZ);
             scaleReferenceFrame = shotBoundaries.GetStartFrame(lastAppliedShotIndex);
         }
+        else if (lockingNow && TryResolveModelPresetRelockReference(obj, out MetaObj presetReferenceObj, out int presetReferenceFrame))
+        {
+            // 被験者実験の Model（既定1 ⇄ 既定2）で作り直した track（2026-10-24、modelPresetToggleKeepsScalePerModel）: shot の途中から現れた
+            // track でも、同じ shot で前に倍率を決めた基準フレームで決め直す（押したフレームを基準にしない。ExperimentModelPreset.partial.cs）。
+            scaleBBoxH = presetReferenceObj.bboxH;
+            scaleAnchorZ = presetReferenceObj.anchorZ;
+            scaleTargetHeightMeters = ComputeTargetHeightMeters(scaleBBoxH, scaleAnchorZ);
+            scaleReferenceFrame = presetReferenceFrame;
+        }
         else if (lockingNow && TryResolveSettledAppearanceReference(obj, out MetaObj settledObj, out int settledFrame))
         {
             // shot の途中から現れた track（scaleReferenceSkipsPartialAppearance、既定 ON、2026-10-23）: 見切れた最初のフレームではなく、
@@ -2295,6 +2304,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             return lockedScale;
         }
+
+        // 被験者実験の Model（既定1 ⇄ 既定2）で替えたとき（2026-10-24、modelPresetToggleKeepsScalePerModel。ExperimentModelPreset.partial.cs）:
+        // 離れるモデルの倍率をしまい、同じ基準で前に測った倍率があれば戻す（下の「同じ prefab の持ち越し」に乗る）。奥行きの平滑も始め直す。
+        PrepareModelPresetRelock(trackId);
 
         // 補正倍率が残っていれば、それは**同じ shot の同じ track**で一度測った結果。
         // モデルを替えただけで測り直すと、差し替えた瞬間の姿勢が焼き込まれて大きさが跳ねる

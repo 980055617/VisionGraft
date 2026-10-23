@@ -157,7 +157,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // 一度きりにしない理由: 再生が再開すると CloseEditPanelsForResume が閉じるので、
             // バッチでは開いた状態を保てない（実機では人が開くので問題にならない）。
             // 検証用に、閉じられたら開き直す。
-            if (batchOpenModelPickerOnStart && !runtimeModelPickerOpen && metaLoaded)
+            // 実験の Model（既定1 ⇄ 既定2）の走りでは開かない（開く呼び出しが押下になり、組が逆になる。2026-10-24）。
+            if (batchOpenModelPickerOnStart && !runtimeModelPickerOpen && metaLoaded && !UsesModelPresetToggle)
             {
                 batchModelPickerForcedOpen = true;
                 if (!string.IsNullOrEmpty(batchModelPickerTab) && batchModelPickerTab == "edit")

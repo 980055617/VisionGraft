@@ -114,4 +114,12 @@ public sealed class ExperimentTrialRequest
     {
         get { return video == ExperimentVideo.Tutorial && mode == ExperimentDisplayMode.ModelReplaced; }
     }
+
+    // Model ボタンを一覧の窓ではなく「既定1 ⇄ 既定2 の切り替え」にするか（2026-10-24 ユーザー「被験者実験に関しては
+    // modelを押すとそのwindowが出てくるのではなくモデルを既定1,既定2で切り替えれるようにするだけでいいです」）。
+    // Model ボタンが出るのは置換ありだけ。練習も本番と同じ操作を教えるので含める。組は ExperimentModelPresets（動画 × track）。
+    public bool UsesModelPresetToggle
+    {
+        get { return mode == ExperimentDisplayMode.ModelReplaced; }
+    }
 }

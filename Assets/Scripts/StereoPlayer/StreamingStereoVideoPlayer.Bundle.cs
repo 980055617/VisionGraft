@@ -237,6 +237,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         // 復元の**あと**に流す。バッチ検証の指定を保存値に勝たせるため。
         ApplyBatchManualOverrideSpecs();
+        // 被験者実験の Model ボタン（既定1 ⇄ 既定2）: 表の track は既定1 で始める。復元したモデル名より後に入れて勝たせる（2026-10-24）。
+        SeedExperimentModelPresets();
 
         modelModePlaybackVideoPath = extractedVideoPath.Replace("\\", "/");
         hasNormalModeVideo = File.Exists(extractedNormalModeVideoPath);

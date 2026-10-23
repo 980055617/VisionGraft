@@ -335,6 +335,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         experimentPreferredAnimalModelName = request.preferredAnimalModelName;
         experimentSkipTrackCustomizationRestore = request.skipTrackCustomizationRestore;
         experimentMonocular = request.StartMonocular;
+        // Model ボタン = 既定1 ⇄ 既定2（2026-10-24、ExperimentModelPreset.partial.cs）。
+        experimentModelPresetToggle = request.UsesModelPresetToggle;
 
         // モーションは条件で決める（置換あり = ON、それ以外 = OFF）。シーンの serialize 値
         // （TrialScene は 0）より優先する（2026-09-25）。
@@ -358,7 +360,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             $"motion={enableInteractiveMotion}{(experimentLockInteractiveMotion ? "(locked)" : "(switchable)")} " +
             $"onlyCategory={(string.IsNullOrEmpty(request.onlyCategory) ? "(all)" : request.onlyCategory)} " +
             $"animalModel={(string.IsNullOrEmpty(request.preferredAnimalModelName) ? "(inspector)" : request.preferredAnimalModelName)} " +
-            $"skipRestore={request.skipTrackCustomizationRestore}");
+            $"skipRestore={request.skipTrackCustomizationRestore} modelToggle={experimentModelPresetToggle}");
     }
 
 

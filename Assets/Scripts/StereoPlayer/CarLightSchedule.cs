@@ -85,16 +85,19 @@ public struct CarLightState : IEquatable<CarLightState>
 
 public static class CarLightSchedule
 {
-    // ★ 新しい動画（30 秒 × 6 本）が届いたら、動画を見て光っている区間をここに書く（2026-10-22 時点では空 = 全部消灯）。
-    //   書き方の例:
-    //     new CarLightCue("bundle_video5.svb", 2, 4.0f, 6.5f, blinker: CarLightBlinker.Left),        // track 2 が 4.0〜6.5 秒に左ウィンカー
-    //     new CarLightCue("bundle_video5.svb", 2, 10.0f, 10.3f, headlights: true),                   // 10.0 秒に一瞬ヘッドライト（パッシング）
-    //     new CarLightCue("bundle_video5.svb", CarLightCue.AllTracks, 0f, 30f, tailLights: true),    // 全部の車のテールを通して点ける
-    //   （bundle 名は実際の車の動画の名前にする。2026-10-23 時点で届いた 4 本に車は無い。作成中の 2 本のどちらかと思われる）
+    // 動画を見て光っている区間を書く。どの区間にも入らない時刻は全部消灯。書き方の例:
+    //     new CarLightCue("bundle_car2.svb", 2, 4.0f, 6.5f, blinker: CarLightBlinker.Left),          // track 2 が 4.0〜6.5 秒に左ウィンカー
+    //     new CarLightCue("bundle_car2.svb", 2, 10.0f, 10.3f, headlights: true),                     // 10.0 秒に一瞬ヘッドライト（パッシング）
     //   track の番号は Settings の Track 表示か、ログの [CARLIGHT] / [PLACE] の track= で分かる。
     //   バッチでは -carLightCue "bundle:track:start:end:flags"（flags は H=ヘッド T=テール L/R=ウィンカー Z=ハザード）で足せる。
     public static readonly CarLightCue[] Cues =
     {
+        // bundle_car2（2026-10-24 に届いた Video5。夕暮れの道を 3 台が順に手前へ来る: track 0 赤いセダン 0〜9.1 秒、
+        // track 1 白い軽バン 6.1〜18.9 秒、track 2 紺の車 16.3〜28.9 秒）。3 台とも映っている間ずっとヘッドライトが点いている
+        // （元の動画の全フレームで車の枠の中の明るさを測り、消える・点滅する・ウィンカーの橙が周期的に出るところは無かった。
+        // 下がるのは車が画面の外へ出るときだけ。Docs/tmp/bundles_20261023/README.md の car2）。テールは映らないが、夕暮れで
+        // ヘッドライトを点けた車として一緒に点ける。
+        new CarLightCue("bundle_car2.svb", CarLightCue.AllTracks, 0f, 30f, headlights: true, tailLights: true),
     };
 
     public static CarLightState Resolve(IReadOnlyList<CarLightCue> cues, string bundleName, uint trackId, double videoSec)

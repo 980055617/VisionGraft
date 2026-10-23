@@ -14,8 +14,9 @@ using System;
 public sealed class ExperimentBundleCatalog
 {
     // 2026-10-22: 30 秒 × 6 本の新しい実験。要素 i が ExperimentVideo.Video(i+1)。
-    // 動画は生成中なので、名前は仮（bundle_video1.svb …）。届いたら StreamingAssets に置く名前に
-    // 合わせて ExperimentScene の Inspector（ここ）か DefaultVideoBundleFileNames を書き換える。
+    // 2026-10-23: 届いた 4 本を名前の順に割り当てた（ユーザー「好きなようにでいいよ」。どの割り当てでも動画順の方格で相殺される）:
+    //   Video1 = bundle_balloon（風船）、Video2 = bundle_cat（猫）、Video3 = bundle_soccer（人とボール）、Video4 = bundle_tv（廊下の女性）。
+    //   Video5・Video6 は作成中の 2 本（仮名のまま。届いたら StreamingAssets に置く名前に合わせて、ここと ExperimentScene の Inspector を書き換える）。
     // 要素が足りない・空のときは既定名に落ちる（Inspector で配列の長さを変えても壊れない）。
     //
     // 旧実験（3 本 × 3 条件）の bundle_human / animal / car.svb は
@@ -31,10 +32,10 @@ public sealed class ExperimentBundleCatalog
     // 動画の同一性は manifest.inputs.video_mp4 で見ること。ファイル名は当てにならない。
     public static readonly string[] DefaultVideoBundleFileNames =
     {
-        "bundle_video1.svb",
-        "bundle_video2.svb",
-        "bundle_video3.svb",
-        "bundle_video4.svb",
+        "bundle_balloon.svb",
+        "bundle_cat.svb",
+        "bundle_soccer.svb",
+        "bundle_tv.svb",
         "bundle_video5.svb",
         "bundle_video6.svb",
     };

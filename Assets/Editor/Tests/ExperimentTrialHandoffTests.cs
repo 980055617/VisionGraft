@@ -2,13 +2,16 @@ using NUnit.Framework;
 
 public class ExperimentBundleCatalogTests
 {
-    // 2026-10-22: 動画は 30 秒 × 6 本。名前は生成待ちの仮（bundle_video1.svb …）。
+    // 2026-10-22: 動画は 30 秒 × 6 本。2026-10-23 に届いた 4 本を Video1〜4 に（名前の順）、Video5・6 は作成中の仮名。
     [Test]
     public void Resolve_DefaultsAreTheSixVideoSlots()
     {
         ExperimentBundleCatalog catalog = new ExperimentBundleCatalog();
 
-        Assert.That(catalog.Resolve(ExperimentVideo.Video1), Is.EqualTo("bundle_video1.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Video1), Is.EqualTo("bundle_balloon.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Video2), Is.EqualTo("bundle_cat.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Video3), Is.EqualTo("bundle_soccer.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Video4), Is.EqualTo("bundle_tv.svb"));
         Assert.That(catalog.Resolve(ExperimentVideo.Video6), Is.EqualTo("bundle_video6.svb"));
         Assert.That(catalog.videoBundleFileNames, Is.EqualTo(ExperimentBundleCatalog.DefaultVideoBundleFileNames));
         Assert.That(catalog.videoBundleFileNames, Is.Not.SameAs(ExperimentBundleCatalog.DefaultVideoBundleFileNames),
@@ -22,7 +25,7 @@ public class ExperimentBundleCatalogTests
         catalog.videoBundleFileNames[0] = "custom_first.svb";
 
         Assert.That(catalog.Resolve(ExperimentVideo.Video1), Is.EqualTo("custom_first.svb"));
-        Assert.That(catalog.Resolve(ExperimentVideo.Video2), Is.EqualTo("bundle_video2.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Video2), Is.EqualTo("bundle_cat.svb"));
     }
 
     // Inspector で空欄にされた・配列を短くされた場合に空文字を返すと bundle 読み込みが謎の失敗をするので、
@@ -35,12 +38,12 @@ public class ExperimentBundleCatalogTests
             videoBundleFileNames = new[] { string.Empty, "custom_second.svb" },
         };
 
-        Assert.That(catalog.Resolve(ExperimentVideo.Video1), Is.EqualTo("bundle_video1.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Video1), Is.EqualTo("bundle_balloon.svb"));
         Assert.That(catalog.Resolve(ExperimentVideo.Video2), Is.EqualTo("custom_second.svb"));
         Assert.That(catalog.Resolve(ExperimentVideo.Video5), Is.EqualTo("bundle_video5.svb"));
 
         catalog.videoBundleFileNames = null;
-        Assert.That(catalog.Resolve(ExperimentVideo.Video3), Is.EqualTo("bundle_video3.svb"));
+        Assert.That(catalog.Resolve(ExperimentVideo.Video3), Is.EqualTo("bundle_soccer.svb"));
     }
 
     [Test]

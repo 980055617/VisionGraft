@@ -87,9 +87,10 @@ public static class CarLightSchedule
 {
     // ★ 新しい動画（30 秒 × 6 本）が届いたら、動画を見て光っている区間をここに書く（2026-10-22 時点では空 = 全部消灯）。
     //   書き方の例:
-    //     new CarLightCue("bundle_video3.svb", 2, 4.0f, 6.5f, blinker: CarLightBlinker.Left),        // track 2 が 4.0〜6.5 秒に左ウィンカー
-    //     new CarLightCue("bundle_video3.svb", 2, 10.0f, 10.3f, headlights: true),                   // 10.0 秒に一瞬ヘッドライト（パッシング）
-    //     new CarLightCue("bundle_video3.svb", CarLightCue.AllTracks, 0f, 30f, tailLights: true),    // 全部の車のテールを通して点ける
+    //     new CarLightCue("bundle_video5.svb", 2, 4.0f, 6.5f, blinker: CarLightBlinker.Left),        // track 2 が 4.0〜6.5 秒に左ウィンカー
+    //     new CarLightCue("bundle_video5.svb", 2, 10.0f, 10.3f, headlights: true),                   // 10.0 秒に一瞬ヘッドライト（パッシング）
+    //     new CarLightCue("bundle_video5.svb", CarLightCue.AllTracks, 0f, 30f, tailLights: true),    // 全部の車のテールを通して点ける
+    //   （bundle 名は実際の車の動画の名前にする。2026-10-23 時点で届いた 4 本に車は無い。作成中の 2 本のどちらかと思われる）
     //   track の番号は Settings の Track 表示か、ログの [CARLIGHT] / [PLACE] の track= で分かる。
     //   バッチでは -carLightCue "bundle:track:start:end:flags"（flags は H=ヘッド T=テール L/R=ウィンカー Z=ハザード）で足せる。
     public static readonly CarLightCue[] Cues =

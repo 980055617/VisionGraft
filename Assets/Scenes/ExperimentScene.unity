@@ -991,10 +991,10 @@ MonoBehaviour:
   videoOrderPattern: 1
   bundleCatalog:
     videoBundleFileNames:
-    - bundle_video1.svb
-    - bundle_video2.svb
-    - bundle_video3.svb
-    - bundle_video4.svb
+    - bundle_balloon.svb
+    - bundle_cat.svb
+    - bundle_soccer.svb
+    - bundle_tv.svb
     - bundle_video5.svb
     - bundle_video6.svb
     tutorialBundleFileName: bundle_tutorial.svb

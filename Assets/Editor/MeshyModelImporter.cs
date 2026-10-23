@@ -18,6 +18,10 @@ using UnityEngine;
 //   - ボール・風船: 作者の prefab の Variant
 // 犬・猫は骨の名前が AnimalRigDefinition の正規名と違い（Hips / chest / head / frontleg0..2 / backleg0..2 / tail*、
 // 首の骨が無く背骨も chest 1 本）、このままでは SMAL FK に乗らない（位置と向きだけ合う）。
+// 2026-10-24: 「新しい10個」（前の 10 個の近しいもの、unitypackage「3Dモデル新しい10個」→ 同じ Assets/MeshyModels。
+// Assets/MeshyModels/README_新しい10個.txt）を同じやり方で足した（batch = 2）。並びは前の 10 個と同じ順にし、
+// 対になるものの番号の差を一定にする（人・動物 +2、物 +6）。乗り物 3 台は作者の部品にライトが無い（CarLights なし）。
+// 狼・キツネの骨は犬・猫と同じ Meshy の四足（SMAL FK に乗らない）。
 // Unity を閉じたバッチで -executeMethod MeshyModelImporter.ImportAll。済みのものは飛ばす。
 public static class MeshyModelImporter
 {
@@ -31,6 +35,7 @@ public static class MeshyModelImporter
         public string source;
         public string dest;
         public bool car;
+        public int batch = 1;
     }
 
     private static readonly Entry[] Entries =
@@ -45,6 +50,18 @@ public static class MeshyModelImporter
         new Entry { category = "Else",   source = "balloon",         dest = "19_Balloon_Meshy" },
         new Entry { category = "Else",   source = "soccer_ball",     dest = "20_Soccer_Meshy" },
         new Entry { category = "Else",   source = "tennis_ball",     dest = "21_Tennis_Meshy" },
+
+        // 2026-10-24「新しい10個」。かっこの中は対になる前の 10 個。
+        new Entry { category = "Human",  source = "soccer_woman_run", dest = "19_Female_Meshy_Soccer", batch = 2 },   // ← 17 男性
+        new Entry { category = "Human",  source = "zombie_run",       dest = "20_Female_Meshy_Zombie", batch = 2 },   // ← 18 女性
+        new Entry { category = "Animal", source = "wolf_walk",        dest = "54_MeshyWolf",           batch = 2 },   // ← 52 犬
+        new Entry { category = "Animal", source = "fox_walk",         dest = "55_MeshyFox",            batch = 2 },   // ← 53 猫
+        new Entry { category = "Else",   source = "carriage",         dest = "22_Car_Meshy_Carriage",  car = true, batch = 2 },   // ← 16 赤
+        new Entry { category = "Else",   source = "flying_car",       dest = "23_Car_Meshy_Flying",    car = true, batch = 2 },   // ← 17 紺
+        new Entry { category = "Else",   source = "tuktuk",           dest = "24_Car_Meshy_TukTuk",    car = true, batch = 2 },   // ← 18 軽バン
+        new Entry { category = "Else",   source = "star_balloon",     dest = "25_Balloon_Meshy_Star",  batch = 2 },   // ← 19 風船
+        new Entry { category = "Else",   source = "volleyball",       dest = "26_Volleyball_Meshy",    batch = 2 },   // ← 20 サッカーボール
+        new Entry { category = "Else",   source = "baseball",         dest = "27_Baseball_Meshy",      batch = 2 },   // ← 21 テニスボール
     };
 
     [MenuItem("Tools/VisionGraft/Import Meshy Models (Human / Animal / Else)")]
@@ -147,12 +164,32 @@ public static class MeshyModelImporter
                     string markers = string.Join(",", instance.GetComponentsInChildren<Transform>(true)
                         .Where(t => t.name == "FL" || t.name == "FR" || t.name == "RL" || t.name == "RR")
                         .Select(t => $"{t.name}({t.localPosition.x:F2},{t.localPosition.y:F2},{t.localPosition.z:F2})"));
+                    // 三角形・頂点の数（2026-10-24、新しい 10 個の乗り物が 54 万〜200 万三角形あり、Quest の負荷を前の 10 個と比べるため）。
+                    long triangles = 0;
+                    long vertices = 0;
+                    foreach (Renderer renderer in instance.GetComponentsInChildren<Renderer>(true))
+                    {
+                        Mesh mesh = renderer is SkinnedMeshRenderer smr
+                            ? smr.sharedMesh
+                            : renderer.GetComponent<MeshFilter>() != null ? renderer.GetComponent<MeshFilter>().sharedMesh : null;
+                        if (mesh == null)
+                        {
+                            continue;
+                        }
+
+                        vertices += mesh.vertexCount;
+                        for (int sub = 0; sub < mesh.subMeshCount; sub++)
+                        {
+                            triangles += (long)mesh.GetIndexCount(sub) / 3;
+                        }
+                    }
                     Debug.Log(
                         $"{LogTag} report {category}/{entry.dest} runtime_index={names.IndexOf(entry.dest)} of {names.Count} " +
                         $"size=({bounds.size.x:F3},{bounds.size.y:F3},{bounds.size.z:F3}) center=({bounds.center.x:F3},{bounds.center.y:F3},{bounds.center.z:F3}) " +
                         $"rootEuler={instance.transform.localRotation.eulerAngles} skinned={skinned} lights={lights} " +
                         $"animator={(animator != null)} isHuman={(animator != null && animator.isHuman)} " +
-                        $"controller={(animator != null && animator.runtimeAnimatorController != null)} markers=[{markers}]");
+                        $"controller={(animator != null && animator.runtimeAnimatorController != null)} markers=[{markers}] " +
+                        $"tris={triangles} verts={vertices}");
                     if (category == "Animal")
                     {
                         string bones = string.Join(",", instance.GetComponentsInChildren<Transform>(true)
@@ -174,7 +211,19 @@ public static class MeshyModelImporter
     [MenuItem("Tools/VisionGraft/Capture Meshy Models")]
     public static void Capture()
     {
-        string outDir = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Docs/tmp/meshy_models_20261022/raw");
+        CaptureBatch(1, "Docs/tmp/meshy_models_20261022/raw");
+    }
+
+    // 2026-10-24 の新しい 10 個だけを撮る（出力は Docs/tmp/meshy_models_20261024/raw/）。
+    [MenuItem("Tools/VisionGraft/Capture New Meshy Models (10/24)")]
+    public static void CaptureNew()
+    {
+        CaptureBatch(2, "Docs/tmp/meshy_models_20261024/raw");
+    }
+
+    private static void CaptureBatch(int batch, string relativeOutDir)
+    {
+        string outDir = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), relativeOutDir);
         System.IO.Directory.CreateDirectory(outDir);
 
         Light light = new GameObject("CaptureLight").AddComponent<Light>();
@@ -189,7 +238,7 @@ public static class MeshyModelImporter
         cam.farClipPlane = 100f;
         try
         {
-            foreach (Entry entry in Entries)
+            foreach (Entry entry in Entries.Where(e => e.batch == batch))
             {
                 GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(DestPath(entry));
                 if (prefab == null)

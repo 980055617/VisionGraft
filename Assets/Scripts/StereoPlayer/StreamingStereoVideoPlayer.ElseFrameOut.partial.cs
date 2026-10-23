@@ -68,7 +68,15 @@ public partial class StreamingStereoVideoPlayer
         public Vector3 velocity3D;
         public float scaleRatePerFrame;
         public float coastScaleRate;       // 慣性中の scale の増分 / frame
+        // 覚えている scale がどのモデルの単位か（baseLocalScale.x ÷ モデルの高さ。同じ bbox なら localScale はこれに比例する）。
+        // モデルを替えたら（ピッカー・実験の Model の切り替え）覚えている scale をこの比で直す（2026-10-24。直さないと、端に掛かった車を
+        // 背の高いモデルに替えたとき前のモデルの保持した scale が勝ち、馬車が bbox の 1.57 倍で出た）。0 = まだ測っていない。
+        public float scaleUnit;
     }
+
+    // モデルを替えたら、端の処理が覚えている scale を新しいモデルの単位へ直す（2026-10-24、既定 ON。ElseFrameOutState.scaleUnit）。
+    // OFF は直す前の振る舞い（前のモデルの保持した scale が勝つ）。比べる絵を撮るため。
+    public bool elseFrameOutRescaleOnModelChange = true;
 
     private const float ElseFrameOutVelocitySmoothing = 0.3f;
     private const int ElseFrameOutMaxGapFrames = 3;
@@ -141,6 +149,26 @@ public partial class StreamingStereoVideoPlayer
             {
                 st = new ElseFrameOutState();
                 elseFrameOutByTrack[obj.trackId] = st;
+            }
+
+            // モデルを替えたら、覚えている scale を新しいモデルの単位へ直す（位置・速度はそのまま）。
+            float scaleUnit = model.GetModelHeightMeters() > 0f ? model.baseLocalScale.x / model.GetModelHeightMeters() : 0f;
+            if (scaleUnit > 0f && elseFrameOutRescaleOnModelChange)
+            {
+                if (st.scaleUnit > 0f && Mathf.Abs(scaleUnit - st.scaleUnit) > st.scaleUnit * 1e-4f)
+                {
+                    float r = scaleUnit / st.scaleUnit;
+                    st.unclippedLocalScale *= r;
+                    st.heldLocalScale *= r;
+                    st.lastLocalScale *= r;
+                    st.motionScale *= r;
+                    st.scaleRatePerFrame *= r;
+                    st.coastScaleRate *= r;
+                    Debug.Log($"[FRAMEOUT] f={frame} track={obj.trackId} モデルが替わったので覚えている scale を x{r:F3} に直す " +
+                              $"(held={(st.hasHeldScale ? st.heldLocalScale.x.ToString("F4") : "-")} model={instance.name})");
+                }
+
+                st.scaleUnit = scaleUnit;
             }
 
             // 巻き戻し・ループ・シークで frame が戻ったら覚え直す。

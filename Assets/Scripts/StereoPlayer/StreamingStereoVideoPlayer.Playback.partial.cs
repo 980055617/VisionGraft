@@ -705,6 +705,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             scaleTargetHeightMeters = ComputeTargetHeightMeters(scaleBBoxH, scaleAnchorZ);
             scaleReferenceFrame = shotBoundaries.GetStartFrame(lastAppliedShotIndex);
         }
+        else if (lockingNow && TryResolveSettledAppearanceReference(obj, out MetaObj settledObj, out int settledFrame))
+        {
+            // shot の途中から現れた track（scaleReferenceSkipsPartialAppearance、既定 ON、2026-10-23）: 見切れた最初のフレームではなく、
+            // bbox が出そろったフレームで倍率を決める（ScaleReference.partial.cs）。
+            scaleBBoxH = settledObj.bboxH;
+            scaleAnchorZ = settledObj.anchorZ;
+            scaleTargetHeightMeters = ComputeTargetHeightMeters(scaleBBoxH, scaleAnchorZ);
+            scaleReferenceFrame = settledFrame;
+        }
 
         // C4-T（animalScaleFollowApproachTrend）の倍率の基準フレーム。ロックした回だけ書く。
         if (lockingNow)
@@ -1472,6 +1481,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (!lockedModelLocalScaleByTrack.TryGetValue(obj.trackId, out Vector3 locked))
         {
             NoteScaleRefineSkip(obj, "noLock", 0f, bboxH);
+            return;
+        }
+
+        // scaleReferenceSkipsPartialAppearance（既定 ON、2026-10-23）: 倍率の基準を後のフレームにずらした track は、そこに来るまで測り直さない。
+        if (IsBeforeScaleReferenceFrame(obj.trackId))
+        {
+            NoteScaleRefineSkip(obj, "beforeReference", 0f, bboxH);
             return;
         }
 

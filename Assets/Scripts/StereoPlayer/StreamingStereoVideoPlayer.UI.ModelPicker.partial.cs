@@ -1155,9 +1155,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void RecreateTrackInstanceForModelSelection(uint trackId)
     {
-        // 走行中のモーションは新しいインスタンスへ持ち越さない。持ち越すと Human は破棄済みの Animator を
-        // 見たまま bind pose で滑り、動画の一時停止も宙に浮く（2026-09-29 の監査）。非表示と同じ後始末。
-        StopInteractiveMotionForHiddenTrack(trackId);
+        // 走行中の Random イベントは、keepInteractiveMotionOnModelChange（既定 ON、2026-10-24）なら止めずに新しいインスタンスで続ける。
+        // 古いモデルに結び付いた物（クリップの再生・車輪）はここで外し、新しいモデルが作られた tick に結び直す（InteractiveMotion.partial.cs）。
+        // OFF・frame-out 起因のイベントは従来どおり止める: そのまま持ち越すと Human は破棄済みの Animator を見たまま bind pose で滑り、
+        // 動画の一時停止も宙に浮く（2026-09-29 の監査）。非表示と同じ後始末。
+        if (!TrySuspendInteractiveMotionForModelChange(trackId))
+        {
+            StopInteractiveMotionForHiddenTrack(trackId);
+        }
 
         if (trackInstances.TryGetValue(trackId, out GameObject existing) && existing != null)
         {

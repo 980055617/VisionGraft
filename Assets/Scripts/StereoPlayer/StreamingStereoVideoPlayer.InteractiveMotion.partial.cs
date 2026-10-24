@@ -127,6 +127,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public readonly List<RigidWheel> rigidWheels = new List<RigidWheel>();
         public bool rigidHandoffLogged;
 
+        // モデルの差し替え（Model ボタン・ピッカー）をまたいでイベントを続ける（keepInteractiveMotionOnModelChange、2026-10-24）。
+        // 差し替えた tick に古いモデルに結び付いた物（人のクリップの再生・車輪）だけ外して rebindPending を立て、新しいモデルが作られた最初の
+        // tick に結び直す（FinishInteractiveMotionRebind）。displayedAnchorWorld は displayedPosition を控えた tick の meta の anchor（モデルに
+        // よらない映像の中の対象の位置）。モデルの差だけを取り出すのに使う。
+        public bool rebindPending;
+        public AnimationClip rebindClip;
+        public bool rebindClipLoop;
+        public Vector3 displayedAnchorWorld;
+        public Vector3 rebindOldDisplayedPosition;
+        public Vector3 rebindOldAnchorWorld;
+        public bool rebindHasOldSample;
+
         public readonly Dictionary<HumanBodyBones, Quaternion> fallbackBoneBaseLocalRotations = new Dictionary<HumanBodyBones, Quaternion>();
         public readonly Dictionary<HumanBodyBones, Quaternion> handoffFromBoneLocalRotations = new Dictionary<HumanBodyBones, Quaternion>();
         public readonly Dictionary<Transform, Quaternion> handoffFromAnimalBoneLocalRotations = new Dictionary<Transform, Quaternion>();
@@ -139,6 +151,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public Animator animator;
         public bool loop;
     }
+
+    // モデルを替えても（Model ボタンの既定1 ⇄ 既定2・ピッカー）、自分から動いている最中の Random イベントを止めずに新しいモデルで続ける
+    // （2026-10-24 ユーザー「なんでそうなる？修正できないの」。止めると、その周の 1 回（randomMotionOncePerLoop）が動き始めた時点で
+    // 使われたまま失われていた）。追従へ戻す最後の混ぜの途中なら、そこでイベントを終えたことにする。false で従来どおり止める。
+    [Header("Interactive Motion: keep across model change (2026-10-24)")]
+    public bool keepInteractiveMotionOnModelChange = true;
 
     private readonly Dictionary<uint, InteractiveMotionState> interactiveMotionByTrack = new Dictionary<uint, InteractiveMotionState>();
     private readonly Dictionary<uint, InteractiveClipPlayback> interactiveClipPlaybackByTrack = new Dictionary<uint, InteractiveClipPlayback>();
@@ -195,7 +213,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // the model's grounded feet position, so freezing to it pops the model upward. Skipped on
     // frames whose bbox just collapsed (see BBoxQualityMinAreaRatio), so the sample used to
     // start a frame-out walk is the last reliable frame, not a corrupted edge-of-frame one.
-    private void ObserveInteractiveMotionDisplayedRoot(uint trackId, GameObject instance)
+    private void ObserveInteractiveMotionDisplayedRoot(uint trackId, GameObject instance, Vector3 anchorWorld)
     {
         if (instance == null)
         {
@@ -208,6 +226,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.displayedPosition = instance.transform.position;
         state.displayedRotation = instance.transform.rotation;
         state.hasDisplayedSample = true;
+        state.displayedAnchorWorld = anchorWorld;
         if (state.hasLiveSample && !state.hasReliableBBoxThisFrame)
         {
             return;
@@ -2796,6 +2815,141 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.drivePath = null;
     }
 
+    // --- Keep a running event across a model change (keepInteractiveMotionOnModelChange) ------
+    //
+    // イベントの動きは時刻（phaseStartTime からの経過）と world の位置・向き・姿勢のデータで決まっていて、モデルに結び付いているのは
+    // 人のクリップの再生（古い Animator に繋いだ PlayableGraph）・車輪（古いモデルの子）・追従へ戻す混ぜの起点の骨だけ。
+    // 差し替えの tick にそれらを外し、新しいモデルの最初の tick に追従の配置を 1 回通して（倍率のロック・姿勢の下地）から結び直す。
+
+    // RecreateTrackInstanceForModelSelection から（古いインスタンスを壊す前）。続けるなら true（呼んだ側は止めない）。
+    private bool TrySuspendInteractiveMotionForModelChange(uint trackId)
+    {
+        if (!keepInteractiveMotionOnModelChange ||
+            !interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) ||
+            state == null ||
+            state.stage == InteractiveEventStage.Inactive ||
+            state.triggerSource != InteractiveTriggerSource.Random)
+        {
+            return false;
+        }
+
+        RuntimeClock.TickContext tick = GetRuntimeTickContext();
+        if (state.stage == InteractiveEventStage.HandoffBlend)
+        {
+            // 追従へ戻す最後の混ぜ（interactiveHandoffBlendSeconds）の途中: 動きはもう終わっているので、ここで終わったことにする
+            // （混ぜの起点は古いモデルの骨。新しいモデルは追従の姿勢で出る）。終わりの行・動画の再開は混ぜ終えたときと同じ。
+            state.stage = InteractiveEventStage.Inactive;
+            state.nextTriggerTime = RuntimeClock.ResolveNextTime(tick.now, RandomInteractiveInterval());
+            state.handoffFromBoneLocalRotations.Clear();
+            state.handoffFromAnimalBoneLocalRotations.Clear();
+            Debug.Log($"[MOTION] model change during handoff track={trackId}: the event ends here");
+            EndRandomInteractiveMotionVideoPause(trackId);
+            return true;
+        }
+
+        state.rebindClip = null;
+        state.rebindClipLoop = false;
+        if (interactiveClipPlaybackByTrack.TryGetValue(trackId, out InteractiveClipPlayback playback) && playback != null)
+        {
+            state.rebindClip = playback.clip;
+            state.rebindClipLoop = playback.loop;
+        }
+
+        StopHumanClipPlayback(trackId);
+        state.rigidWheels.Clear();
+        state.fallbackBoneBaseLocalRotations.Clear();
+        state.rebindOldDisplayedPosition = state.displayedPosition;
+        state.rebindOldAnchorWorld = state.displayedAnchorWorld;
+        state.rebindHasOldSample = state.hasDisplayedSample;
+        state.rebindPending = true;
+        Debug.Log($"[MOTION] keep across model change track={trackId} subject={state.subject} kind={state.kind} phase={state.dynamicPhase} " +
+                  $"elapsed={RuntimeClock.ResolveElapsed(tick.now, state.phaseStartTime):F2}s/{state.phaseDuration:F2}s " +
+                  $"clip={(state.rebindClip != null ? state.rebindClip.name : "-")}");
+        return true;
+    }
+
+    // ApplyMetaTarget から: この track の新しいモデルを、まだイベントに結び直していないか。
+    private bool IsInteractiveMotionRebindPending(uint trackId)
+    {
+        return interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) &&
+               state != null &&
+               state.rebindPending &&
+               state.stage == InteractiveEventStage.Owned;
+    }
+
+    // ApplyMetaTarget から（新しいモデルを追従の配置で 1 回置いた後、その tick のイベントの姿勢を書く前）。
+    private void FinishInteractiveMotionRebind(uint trackId, GameObject instance)
+    {
+        if (!interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) || state == null || !state.rebindPending)
+        {
+            return;
+        }
+
+        state.rebindPending = false;
+        if (state.stage != InteractiveEventStage.Owned || instance == null)
+        {
+            return;
+        }
+
+        // イベントの位置（起点・身ぶりの位置・歩く道・走る道）を、古いモデルと新しいモデルの「追従で置いたときの位置の差」だけずらす。
+        // モデルごとに原点・下端・奥行きの合わせ方が違う分（サッカーの男性 → 女性で、ずらさないと動作中だけ足元が約 20 cm 下がり、
+        // 終わりの受け渡しで戻った。10/24 の確かめ）。古いモデルを置いたのはイベントの始め、新しいモデルはこの tick で、その間に
+        // 動画が少し進む（止める前の音のフェード）ので、どちらも meta の anchor（モデルによらない対象の位置）からの差で比べ、対象の動きは除く。
+        Vector3 delta = Vector3.zero;
+        bool shifted = false;
+        if (state.rebindHasOldSample && state.hasDisplayedSample)
+        {
+            delta = (state.displayedPosition - state.displayedAnchorWorld) - (state.rebindOldDisplayedPosition - state.rebindOldAnchorWorld);
+            shifted = delta.magnitude <= MaxInteractiveMotionRebindShiftMeters;
+            if (shifted)
+            {
+                ShiftInteractiveMotionPositions(state, delta);
+            }
+        }
+
+        if (state.subject == InteractiveMotionSubject.Person && state.rebindClip != null)
+        {
+            // クリップの時刻は phaseStartTime からの経過で決まる（ApplyHumanClipPlayback）ので、新しい Animator で続きから再生される。
+            StartHumanClipPlayback(trackId, instance, state.rebindClip, state.rebindClipLoop);
+        }
+        else if (state.subject == InteractiveMotionSubject.Rigid)
+        {
+            Quaternion rootRotation = instance.transform.rotation;
+            if (TryResolveRigidWheels(instance, rootRotation, state.rigidWheels, out Vector3 forwardLocal))
+            {
+                Vector3 upLocal = Quaternion.Inverse(rootRotation) * Vector3.up;
+                state.rigidAxleLocal = Vector3.Cross(upLocal, forwardLocal).normalized;
+            }
+        }
+
+        Debug.Log($"[MOTION] rebind track={trackId} model={instance.name} shift=({delta.x:F3},{delta.y:F3},{delta.z:F3}) {(shifted ? "applied" : "skipped")} " +
+                  $"clip={(state.rebindClip != null ? state.rebindClip.name : "-")} wheels={state.rigidWheels.Count} frame={GetCurrentPlaybackFrame()} tick={Time.frameCount}");
+        state.rebindClip = null;
+    }
+
+    // モデルの差としてずらす上限。超えたら別の理由（shot の切れ目・跳び）とみなし、ずらさない（終わりの受け渡しで追従の位置へ混ぜる）。
+    private const float MaxInteractiveMotionRebindShiftMeters = 0.5f;
+
+    private static void ShiftInteractiveMotionPositions(InteractiveMotionState state, Vector3 delta)
+    {
+        if (delta.sqrMagnitude <= 0f)
+        {
+            return;
+        }
+
+        state.originPosition += delta;
+        state.gesturePosition += delta;
+        state.phaseFromPosition += delta;
+        state.phaseToPosition += delta;
+        if (state.drivePath != null)
+        {
+            for (int i = 0; i < state.drivePath.points.Count; i++)
+            {
+                state.drivePath.points[i] += delta;
+            }
+        }
+    }
+
     private void StopInteractiveMotion(uint trackId)
     {
         if (interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState state) && state != null)
@@ -2806,6 +2960,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                                    state.triggerSource == InteractiveTriggerSource.Random;
             state.stage = InteractiveEventStage.Inactive;
             state.humanClip = null;
+            state.rebindPending = false;
+            state.rebindClip = null;
             RestoreRigidWheels(state);
             if (wasRandomActive)
             {

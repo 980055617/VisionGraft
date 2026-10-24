@@ -260,7 +260,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         TryStopSystemTriggerOnVisibleFrame(target.trackId);
 
-        if (TryApplyOwnedInteractiveMotion(target.trackId, instance, screen, frame))
+        // モデルの差し替えをまたいで続けるイベント（keepInteractiveMotionOnModelChange、2026-10-24）: 新しいモデルの最初の tick は、追従の配置を
+        // 1 回通して倍率のロック・姿勢の下地を作ってから結び直し、この tick のイベントの姿勢を書く（下の ApplyInteractiveHandoffBlendIfActive の後）。
+        bool rebindingInteractiveMotion = IsInteractiveMotionRebindPending(target.trackId);
+        if (!rebindingInteractiveMotion && TryApplyOwnedInteractiveMotion(target.trackId, instance, screen, frame))
         {
             return;
         }
@@ -309,7 +312,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             FitDisplayedModelToBBox(instance, target, screen, bboxHAdjusted);
         }
-        ObserveInteractiveMotionDisplayedRoot(target.trackId, instance);
+        ObserveInteractiveMotionDisplayedRoot(target.trackId, instance, anchorWorld);
         // 発火の判定はこの tick の配置と表示位置の記録の後（interactiveScheduleAfterPlacement、2026-10-06）。起点・倍率・凍結姿勢が
         // この tick の値になる（前に置くと、再び現れた最初の tick・shot の切れ目の最初の tick で前の出番の値から始まる）。
         if (interactiveScheduleAfterPlacement)
@@ -317,6 +320,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             UpdateInteractiveMotionSchedule(target.trackId, target, frame);
         }
         ApplyInteractiveHandoffBlendIfActive(target.trackId, instance, frame);
+        if (rebindingInteractiveMotion)
+        {
+            // イベント中の tick と同じく、追従の確かめ用の記録（下の Log*・Dump*）は書かない。
+            FinishInteractiveMotionRebind(target.trackId, instance);
+            TryApplyOwnedInteractiveMotion(target.trackId, instance, screen, frame);
+            return;
+        }
         LogAnimalHeadPinEndOfTickIfEnabled(target, instance, screen);
         LogPlacementMeasurementIfEnabled(target, instance, screen, frame);
         LogHorizontalPlacementIfEnabled(target, instance, screen, frame);

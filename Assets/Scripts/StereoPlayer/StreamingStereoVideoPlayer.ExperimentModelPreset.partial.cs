@@ -8,7 +8,8 @@ using UnityEngine;
 //     研究者の基準ファイル（model_selection.json）とセッション上書きのモデル名は、表の track では使わない（向き・大きさのキーはそのまま）
 //   - 押すたびに表の track を全部もう一方の組へ。名前を預け、track が次に置かれるときに index へ直す（ResolvePendingModelSelection）。
 //     まだ映っていない track（car2 の 2・3 台目など）は、現れたときに今の組で出る。今映っている track はピッカーで選んだときと同じく
-//     インスタンスを作り直す（RecreateTrackInstanceForModelSelection。走っているモーションは止まる）。映っていないのに残っている
+//     インスタンスを作り直す（RecreateTrackInstanceForModelSelection。走っている自発的なモーションは、keepInteractiveMotionOnModelChange
+//     （既定 ON、10/24 夜）で止めずに新しいモデルで続く。追従へ戻す最後の混ぜの途中ならそこで終わる）。映っていないのに残っている
 //     インスタンス（画面の外へ進み続ける車）は作り直さない（押した瞬間に消えないように）
 //   - 保存しない（PersistModelSelection を呼ばない）。試行のやり直し・次の試行は必ず既定1 から始まる
 //   - 記録: operations.csv に押すたびに change_model を 1 行（via=toggle preset=1|2 tracks=<track>:<prefab>|… now=<その場で作り直した track>|…）。
@@ -214,7 +215,30 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 continue;
             }
 
-            if (!int.TryParse(parts[i].Trim(), out int atFrame))
+            // "m<秒>" / "h<秒>": Random のイベントが動き始めて（m）・追従へ戻す混ぜに入って（h）から <秒> 経った tick に押す（2026-10-24、
+            // keepInteractiveMotionOnModelChange の確かめ用。イベント中は動画が止まりフレームが進まないので、フレームでは途中を狙えない）。
+            string part = parts[i].Trim();
+            if (part.Length > 1 && (part[0] == 'm' || part[0] == 'h'))
+            {
+                if (!float.TryParse(part.Substring(1), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float afterSeconds))
+                {
+                    Debug.LogWarning($"[ModelPreset] batchModelPresetToggleFrames を解釈できません: '{parts[i]}'");
+                    batchModelPresetToggleDone.Add(i);
+                    continue;
+                }
+
+                if (!TryGetRandomMotionElapsedForBatch(part[0] == 'h', out uint motionTrack, out float elapsed) || elapsed < afterSeconds)
+                {
+                    continue;
+                }
+
+                batchModelPresetToggleDone.Add(i);
+                Debug.Log($"[ModelPreset] batch press at {(part[0] == 'h' ? "handoff" : "motion")} +{elapsed:F2}s track={motionTrack} f={frame}");
+                ToggleExperimentModelPreset();
+                continue;
+            }
+
+            if (!int.TryParse(part, out int atFrame))
             {
                 Debug.LogWarning($"[ModelPreset] batchModelPresetToggleFrames を解釈できません: '{parts[i]}'");
                 batchModelPresetToggleDone.Add(i);
@@ -229,6 +253,30 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             batchModelPresetToggleDone.Add(i);
             ToggleExperimentModelPreset();
         }
+    }
+
+    // バッチの "m<秒>" / "h<秒>" 用: 走っている Random イベント（handoff = false なら動いている段、true なら追従へ戻す混ぜ）の経過秒数。
+    private bool TryGetRandomMotionElapsedForBatch(bool handoff, out uint trackId, out float elapsed)
+    {
+        trackId = 0;
+        elapsed = 0f;
+        float now = GetRuntimeTickContext().now;
+        foreach (KeyValuePair<uint, InteractiveMotionState> kv in interactiveMotionByTrack)
+        {
+            InteractiveMotionState state = kv.Value;
+            if (state == null || state.triggerSource != InteractiveTriggerSource.Random ||
+                state.stage != (handoff ? InteractiveEventStage.HandoffBlend : InteractiveEventStage.Owned))
+            {
+                continue;
+            }
+
+            float start = handoff ? state.handoffStartTime : (state.subject == InteractiveMotionSubject.Rigid ? state.phaseStartTime : state.eventStartTime);
+            trackId = kv.Key;
+            elapsed = RuntimeClock.ResolveElapsed(now, start);
+            return true;
+        }
+
+        return false;
     }
 
     // modelPresetToggleKeepsScalePerModel: 切り替えで作り直した表の track は、同じ shot の中で前に倍率を決めた基準フレームで決め直す。

@@ -184,7 +184,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 }
             }
 
-            if (onScreen)
+            // 画面の端から出て進んでいる人・動物（BodyFrameOut.partial.cs）は、車の慣性と同じく作り直さない（押した瞬間に消えないように）。
+            if (onScreen && !IsBodyFrameOutActive(entry.trackId))
             {
                 RecreateTrackInstanceForModelSelection(entry.trackId);
                 now.Add(entry.trackId.ToString());

@@ -32,7 +32,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // 次の track が出るまで置き去りになり（track 3 は f1036 → 1340 の 10 秒、track 4 は動画の最後まで）、
             // 空の区間へシークしても直前のモデルがその場に残っていた（実機のユーザー指摘）。
             metaFrameObjects.Clear();
-            HideUnselectedTrackInstances(NoTracks);
+            // 人・動物の frame out 継続（BodyFrameOut.partial.cs）: 端から出て進んでいる track だけ残す（テレビの女性は f580 から track が無い）。
+            bodyFrameOutKeepTracks.Clear();
+            ApplyBodyFrameOutForAbsentTracks(bodyFrameOutKeepTracks, metaFrameUsed, null);
+            HideUnselectedTrackInstances(bodyFrameOutKeepTracks);
             ApplyElseFrameOutForFrame(metaFrameUsed);
             // 誰も映っていないフレームでも、1 周に 1 回のくじの周の頭・巻き戻りは進める（候補は空なので動かない）。
             ResolveRandomMotionOncePerLoop(metaFrameUsed);
@@ -110,7 +113,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             {
                 appliedTracks.Add(trackId);
             }
-            else if (TryApplyInteractiveSystemTriggerTrack(trackId, frame))
+        }
+
+        // 人・動物の frame out 継続（BodyFrameOut.partial.cs）を先に。端から出て進めている track は、既存の system frame-out にしない。
+        ApplyBodyFrameOutForAbsentTracks(appliedTracks, frame, selectedTracks);
+        foreach (uint trackId in selectedTracks)
+        {
+            if (!appliedTracks.Contains(trackId) && TryApplyInteractiveSystemTriggerTrack(trackId, frame))
             {
                 appliedTracks.Add(trackId);
             }
@@ -147,6 +156,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
         }
 
+        // 人・動物の frame out 継続（BodyFrameOut.partial.cs）: このフレームに居ない track のうち、端から出て進めているもの。
+        ApplyBodyFrameOutForAbsentTracks(appliedTracks, frame, null);
         HideUnselectedTrackInstances(appliedTracks);
         return true;
     }
@@ -218,6 +229,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // つまり 0=far/1=near の正規化深度でメートルではないため runtime 配置には使えない
         // （そのまま world に流すと前後関係が反転する）。sidecar は debug 可視化専用。
         Vector3 anchorWorld = AnchorUvZToWorldPinhole(screen, uEyeF, vEyeF, target.anchorZ);
+
+        // 人・動物の frame out 継続（2026-10-24、BodyFrameOut.partial.cs）: 左右の端で anchor が止まった（生成側の hold）track は、
+        // 追従をやめて、端に掛かる前の動きで画面の外へ進める（端で立ち止まってから消えるのを避ける）。インスタンスを取る前に呼ぶ
+        // （続きの最中に Model の切り替えで名前が替わっても、作り直さずに今のモデルを進める）。
+        if (TryApplyBodyFrameOutWhilePresent(target, frame))
+        {
+            return;
+        }
 
         GameObject instance = GetOrCreateTrackInstance(target.trackId, target.categoryId);
         if (instance == null)
@@ -313,6 +332,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             FitDisplayedModelToBBox(instance, target, screen, bboxHAdjusted);
         }
         ObserveInteractiveMotionDisplayedRoot(target.trackId, instance, anchorWorld);
+        ObserveBodyFrameOutTracked(target, instance, frame);
         // 発火の判定はこの tick の配置と表示位置の記録の後（interactiveScheduleAfterPlacement、2026-10-06）。起点・倍率・凍結姿勢が
         // この tick の値になる（前に置くと、再び現れた最初の tick・shot の切れ目の最初の tick で前の出番の値から始まる）。
         if (interactiveScheduleAfterPlacement)

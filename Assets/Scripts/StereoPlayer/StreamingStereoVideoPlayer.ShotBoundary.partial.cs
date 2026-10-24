@@ -405,5 +405,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // Else の連結順と向きの記憶も shot をまたがせない。
         ResetElseChainStateForShotBoundary();
         ResetElseFrameOutStateForShotBoundary();
+        // 人・動物の frame out 継続（BodyFrameOut.partial.cs）も Else と同じく shot をまたがせない。
+        ResetBodyFrameOutForShotBoundary();
     }
 }

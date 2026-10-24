@@ -57,8 +57,8 @@ public static class ExperimentModelPresets
         new ExperimentModelPreset("bundle_soccer.svb", 1, ExperimentModelPreset.Else, "20_Soccer_Meshy", "26_Volleyball_Meshy"),
         // Video4 廊下の女性 → ゾンビの女性
         new ExperimentModelPreset("bundle_tv.svb", 0, ExperimentModelPreset.Human, "18_Female_Meshy", "20_Female_Meshy_Zombie"),
-        // Video5 車 3 台: 赤いセダン → 馬車、白い軽バン → トゥクトゥク、紺の車 → 空飛ぶ車
-        new ExperimentModelPreset("bundle_car2.svb", 0, ExperimentModelPreset.Else, "16_Car_Meshy_Red", "22_Car_Meshy_Carriage"),
+        // Video5 車 3 台: 赤いセダン → クラシックカー（10/24 夕に馬車から替わった）、白い軽バン → トゥクトゥク、紺の車 → 空飛ぶ車
+        new ExperimentModelPreset("bundle_car2.svb", 0, ExperimentModelPreset.Else, "16_Car_Meshy_Red", "22_Car_Meshy_Classic"),
         new ExperimentModelPreset("bundle_car2.svb", 1, ExperimentModelPreset.Else, "18_Car_Meshy_Van", "24_Car_Meshy_TukTuk"),
         new ExperimentModelPreset("bundle_car2.svb", 2, ExperimentModelPreset.Else, "17_Car_Meshy_Navy", "23_Car_Meshy_Flying"),
         // Video6 犬 → 狼、テニスボール → 野球のボール

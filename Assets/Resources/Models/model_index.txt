@@ -96,7 +96,7 @@ Models/Else/18_Car_Meshy_Van
 Models/Else/19_Balloon_Meshy
 Models/Else/20_Soccer_Meshy
 Models/Else/21_Tennis_Meshy
-Models/Else/22_Car_Meshy_Carriage
+Models/Else/22_Car_Meshy_Classic
 Models/Else/23_Car_Meshy_Flying
 Models/Else/24_Car_Meshy_TukTuk
 Models/Else/25_Balloon_Meshy_Star

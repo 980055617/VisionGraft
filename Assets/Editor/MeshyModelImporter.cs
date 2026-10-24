@@ -56,7 +56,8 @@ public static class MeshyModelImporter
         new Entry { category = "Human",  source = "zombie_run",       dest = "20_Female_Meshy_Zombie", batch = 2 },   // ← 18 女性
         new Entry { category = "Animal", source = "wolf_walk",        dest = "54_MeshyWolf",           batch = 2 },   // ← 52 犬
         new Entry { category = "Animal", source = "fox_walk",         dest = "55_MeshyFox",            batch = 2 },   // ← 53 猫
-        new Entry { category = "Else",   source = "carriage",         dest = "22_Car_Meshy_Carriage",  car = true, batch = 2 },   // ← 16 赤
+        // 2026-10-24 夕: 作者が馬車をクラシックカーに替えた（ユーザー「馬車がclassic carになったので，それだけ対応してほしい，馬車はもう使わない」）。
+        new Entry { category = "Else",   source = "classic_car",      dest = "22_Car_Meshy_Classic",   car = true, batch = 2 },   // ← 16 赤
         new Entry { category = "Else",   source = "flying_car",       dest = "23_Car_Meshy_Flying",    car = true, batch = 2 },   // ← 17 紺
         new Entry { category = "Else",   source = "tuktuk",           dest = "24_Car_Meshy_TukTuk",    car = true, batch = 2 },   // ← 18 軽バン
         new Entry { category = "Else",   source = "star_balloon",     dest = "25_Balloon_Meshy_Star",  batch = 2 },   // ← 19 風船

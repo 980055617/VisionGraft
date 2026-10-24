@@ -124,7 +124,135 @@ public static class MeshyModelImporter
         }
 
         AssetDatabase.SaveAssets();
+        // 作者の部品にライトが無い乗り物 3 台は、作り直すとライトが外れるので付け直す（画像は Assets にあるもの）。
+        AddLightsToNewVehicles();
         Report();
+    }
+
+    // 2026-10-24 ユーザー「ライト作っていいよ同じ方法で」: 作者の部品にライトが無い乗り物 3 台（batch 2）に、作者の 3 台と同じ組を付ける。
+    //   - ランプの画像 3 枚（lamp_mask: R ヘッド・G 左のオレンジ・B 右のオレンジ・A テール / lamp_color / emis_default）は、Blender と
+    //     スクリプトで作った（作者の 3 台の画像から色と明るさの決まりを写した。作り方と道具の写しは
+    //     Docs/tmp/meshy_models_20261024/README.md）。取り込みの設定は作者の赤いセダンの同じ名前の画像と同じ（.meta を写して guid だけ新しく）
+    //   - 材質は今の材質（FBX の中の材質）の写しに Emission（emis_default、強さ = headGlow）を足した <名前>_lit.mat
+    //   - CarLights は既存の車と同じく Body に付け、既定は全部消灯（点ける時刻は CarLightSchedule の表）。スポットライトは付けない（SaveCar と同じ）
+    //   - ヘッドライトの明るさは、近しいもとの車と同じ（クラシックカー ← 赤いセダン 1.2、トゥクトゥク ← 軽バン 1.4、空飛ぶ車 ← 紺の車 2.0）
+    // バッチ: -executeMethod MeshyModelImporter.AddLightsToNewVehicles -lampSrc <フォルダ>（<フォルダ>/<classic_car|tuktuk|flying_car>/out/*.png
+    // を Assets へ写してから付ける）。-lampSrc を省くと Assets にある画像をそのまま使う。
+    private const string CarLightsDir = "Assets/MeshyModels/CarLights";
+    private static readonly string[] LampImages = { "lamp_mask", "lamp_color", "emis_default" };
+    private static readonly (string dest, string lampName, float headGlow)[] NewVehicleLights =
+    {
+        ("22_Car_Meshy_Classic", "classic_car", 1.2f),
+        ("23_Car_Meshy_Flying", "flying_car", 2.0f),
+        ("24_Car_Meshy_TukTuk", "tuktuk", 1.4f),
+    };
+
+    [MenuItem("Tools/VisionGraft/Add Lights To New Vehicles (10/24)")]
+    public static void AddLightsToNewVehicles()
+    {
+        string lampSrc = null;
+        string[] args = System.Environment.GetCommandLineArgs();
+        for (int i = 0; i < args.Length - 1; i++)
+        {
+            if (args[i] == "-lampSrc")
+            {
+                lampSrc = args[i + 1];
+            }
+        }
+
+        if (!string.IsNullOrEmpty(lampSrc))
+        {
+            foreach (var vehicle in NewVehicleLights)
+            {
+                string dir = $"{CarLightsDir}/{vehicle.lampName}";
+                System.IO.Directory.CreateDirectory(dir);
+                foreach (string image in LampImages)
+                {
+                    string from = System.IO.Path.Combine(lampSrc, vehicle.lampName, "out", image + ".png");
+                    string to = $"{dir}/{image}.png";
+                    System.IO.File.Copy(from, to, true);
+                    if (!System.IO.File.Exists(to + ".meta"))
+                    {
+                        string meta = System.IO.File.ReadAllText($"{CarLightsDir}/car_red/{image}.png.meta");
+                        meta = System.Text.RegularExpressions.Regex.Replace(meta, @"(?m)^guid: [0-9a-f]{32}", "guid: " + GUID.Generate());
+                        System.IO.File.WriteAllText(to + ".meta", meta);
+                    }
+
+                    Debug.Log($"{LogTag} lights: copied {from} -> {to}");
+                }
+            }
+
+            AssetDatabase.Refresh();
+        }
+
+        Shader compose = AssetDatabase.LoadAssetAtPath<Shader>($"{CarLightsDir}/LampCompose.shader");
+        foreach (var vehicle in NewVehicleLights)
+        {
+            string dir = $"{CarLightsDir}/{vehicle.lampName}";
+            Texture2D mask = AssetDatabase.LoadAssetAtPath<Texture2D>($"{dir}/lamp_mask.png");
+            Texture2D color = AssetDatabase.LoadAssetAtPath<Texture2D>($"{dir}/lamp_color.png");
+            Texture2D emission = AssetDatabase.LoadAssetAtPath<Texture2D>($"{dir}/emis_default.png");
+            string prefabPath = $"Assets/Resources/Models/Else/{vehicle.dest}.prefab";
+            if (mask == null || color == null || emission == null || compose == null)
+            {
+                Debug.LogError($"{LogTag} lights: missing images or shader for {vehicle.dest} (mask={mask != null} color={color != null} " +
+                               $"emission={emission != null} compose={compose != null})");
+                continue;
+            }
+
+            GameObject root = PrefabUtility.LoadPrefabContents(prefabPath);
+            try
+            {
+                Transform body = root.transform.Find("Body");
+                Renderer renderer = body != null ? body.GetComponentInChildren<Renderer>(true) : null;
+                if (renderer == null || renderer.sharedMaterial == null)
+                {
+                    Debug.LogError($"{LogTag} lights: no Body renderer in {prefabPath}");
+                    continue;
+                }
+
+                string materialPath = $"{dir}/{vehicle.lampName}_lit.mat";
+                Material lit = AssetDatabase.LoadAssetAtPath<Material>(materialPath);
+                if (lit == null)
+                {
+                    lit = new Material(renderer.sharedMaterial) { name = vehicle.lampName + "_lit" };
+                    AssetDatabase.CreateAsset(lit, materialPath);
+                }
+
+                lit.SetTexture("_EmissionMap", emission);
+                lit.SetColor("_EmissionColor", new Color(vehicle.headGlow, vehicle.headGlow, vehicle.headGlow, 1f));
+                lit.EnableKeyword("_EMISSION");
+                lit.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
+                EditorUtility.SetDirty(lit);
+                renderer.sharedMaterial = lit;
+
+                MeshyModels.CarLights lights = body.GetComponent<MeshyModels.CarLights>();
+                if (lights == null)
+                {
+                    lights = body.gameObject.AddComponent<MeshyModels.CarLights>();
+                }
+
+                lights.headlights = false;
+                lights.tailLights = false;
+                lights.blinker = MeshyModels.CarLights.Blinker.Off;
+                lights.headGlow = vehicle.headGlow;
+                lights.target = renderer;
+                lights.lampColor = color;
+                lights.lampMask = mask;
+                lights.composeShader = compose;
+                lights.headBeams = new Light[0];
+                lights.amberLeft = new Light[0];
+                lights.amberRight = new Light[0];
+                PrefabUtility.SaveAsPrefabAsset(root, prefabPath, out bool ok);
+                Debug.Log($"{LogTag} lights: {(ok ? "saved" : "FAILED")} {prefabPath} material={materialPath} renderer={renderer.name} headGlow={vehicle.headGlow}");
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(root);
+            }
+        }
+
+        AssetDatabase.SaveAssets();
     }
 
     // 作ったものの中身を確かめる（大きさ・Humanoid か・骨・実行時の index）。何も変えない。

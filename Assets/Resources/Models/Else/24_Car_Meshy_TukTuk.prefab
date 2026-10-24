@@ -102,6 +102,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 2794577272136338466}
+  - component: {fileID: 8651820264517400018}
   m_Layer: 0
   m_Name: Body
   m_TagString: Untagged
@@ -125,6 +126,35 @@ Transform:
   - {fileID: 5938452725343906105}
   m_Father: {fileID: 8230013586369919331}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &8651820264517400018
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3191581613690814574}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 898c149b034666b468bacdde5055a2f7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  headlights: 0
+  tailLights: 0
+  blinker: 0
+  blinkPeriod: 0.8
+  blinkOnRatio: 0.5
+  headGlow: 1.4
+  amberGlow: 1.3
+  tailGlow: 1.5
+  headBeam: 14
+  amberLight: 0.3
+  target: {fileID: 4804840769640455028}
+  lampColor: {fileID: 2800000, guid: 0345d787b735e544ea49641aa85bfb20, type: 3}
+  lampMask: {fileID: 2800000, guid: 9d27bc9cbe0202646aa48dd9a1586236, type: 3}
+  composeShader: {fileID: 4800000, guid: 80d08206d614c5d4497cf42f40ca5988, type: 3}
+  headBeams: []
+  amberLeft: []
+  amberRight: []
 --- !u!1 &3288521979521194885
 GameObject:
   m_ObjectHideFlags: 0
@@ -256,7 +286,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: -6478536213147159724, guid: f0cf0905254f155468f8e349f599a2c6, type: 3}
+  - {fileID: 2100000, guid: 726da860a7b266c408573f6eca590ccb, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0

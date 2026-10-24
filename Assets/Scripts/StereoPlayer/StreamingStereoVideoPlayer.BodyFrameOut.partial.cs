@@ -18,7 +18,9 @@ using UnityEngine.Playables;
 //      最後の追従の姿勢に歩きのクリップ（animalWalkClips）を重ねる
 //   4. 終える: 視界から映らなくなったら非表示（車と同じ IsCoastingInstanceInView）。安全弁は 180 フレーム・表示した身長の 6 倍
 //   5. 戻る: track の anchor がまた動いたら（入ってきた・周回・シーク）、続きを捨てて追従へ（混ぜない）
-//   6. すぐ戻る出口（bodyFrameOutReturnSkipSeconds 以内にまた映る。練習の犬）では始めない（前と同じく端で消えて戻る）
+//   6. 本当に出ていく出口だけ（meta を先読み）: 止まってから bodyFrameOutLeaveWithinSeconds（1.5 秒）のうちに track が消え、
+//      消えてから bodyFrameOutReturnSkipSeconds（3 秒）のうちに戻らない。端で立ち止まって anchor が同じになるだけの track
+//      （旧実験の動物で 46 か所）や、すぐ戻る出口（練習の犬）では始めない（前と同じく端で消えて戻る）
 // 再出現の地点へ歩いて戻る動き（既存の system frame-out、表示する track を指定したバッチだけで走る）はしない。
 public partial class StreamingStereoVideoPlayer
 {
@@ -29,6 +31,8 @@ public partial class StreamingStereoVideoPlayer
     // この秒数のうちに同じ track がまた映るなら（ちょっと出てすぐ戻る。練習の犬は f77 で右へ出て f102 に戻る）、続きは始めない。
     // 外へ歩き続けた後に戻る地点へ跳ぶより、前と同じく端で消えて戻るほうが自然なため。
     [Min(0f)] public float bodyFrameOutReturnSkipSeconds = 3f;
+    // 端で anchor が止まってから、この秒数のうちに track が消える出口だけで始める（本当に出ていく。実験の 3 つの出口は 5〜13 フレームで消える）。
+    [Min(0.1f)] public float bodyFrameOutLeaveWithinSeconds = 1.5f;
     public bool logBodyFrameOut = true;
 
     private const float BodyFrameOutVelocitySmoothing = 0.3f;
@@ -58,8 +62,9 @@ public partial class StreamingStereoVideoPlayer
         // 続き
         public bool active;
         public bool ended;
-        // この出口はすぐ戻ってくるので続きを始めない（WillTrackReturnSoon を出口ごとに 1 回だけ見る）。anchor がまた動いたら外す。
-        public bool skipThisExit;
+        // この出口で始めてよいか（ShouldStartBodyFrameOut の先読み、動画のフレームごとに 1 回）。
+        public int exitDecisionFrame = -1;
+        public bool exitAllowed;
         public GameObject instance;
         public int startFrame;
         public double startVideoTime;
@@ -120,17 +125,13 @@ public partial class StreamingStereoVideoPlayer
                 // 周回・シークで戻った。覚えていた動きと続きを捨てる。
                 EndBodyFrameOut(target.trackId, st, false, "frame went back");
                 st.ended = false;
-                st.skipThisExit = false;
+                st.exitDecisionFrame = -1;
                 st.hasVelocity = false;
                 st.measureFrame = -1;
             }
 
             st.heldNow = st.anchorFrame >= 0 && frame == st.anchorFrame + 1 &&
                          target.anchorU == st.anchorU && target.anchorV == st.anchorV && target.anchorZ01 == st.anchorZ01;
-            if (!st.heldNow && ResolveBodyFrameOutClipSide(target) == 0)
-            {
-                st.skipThisExit = false;
-            }
             st.anchorFrame = frame;
             st.anchorU = target.anchorU;
             st.anchorV = target.anchorV;
@@ -179,8 +180,8 @@ public partial class StreamingStereoVideoPlayer
             return true;
         }
 
-        if (instance != null && clipSide != 0 && st.heldNow && st.hasVelocity && !st.skipThisExit && IsInteractiveMotionInactive(target.trackId) &&
-            !SkipBodyFrameOutForReturn(target.trackId, st, frame) &&
+        if (instance != null && clipSide != 0 && st.heldNow && st.hasVelocity && IsInteractiveMotionInactive(target.trackId) &&
+            ShouldStartBodyFrameOut(target.trackId, st, frame) &&
             StartBodyFrameOut(target.trackId, st, instance, frame, "anchor hold at the edge"))
         {
             ApplyBodyFrameOutStep(target.trackId, st, instance, frame);
@@ -252,9 +253,9 @@ public partial class StreamingStereoVideoPlayer
             if (!st.active)
             {
                 // hold の無いまま端から消えた（消えた直後だけ）。
-                bool justLeftByEdge = !st.ended && !st.skipThisExit && st.lastClipSide != 0 && st.hasVelocity && st.lastSeenFrame >= 0 &&
+                bool justLeftByEdge = !st.ended && st.lastClipSide != 0 && st.hasVelocity && st.lastSeenFrame >= 0 &&
                                       frame - st.lastSeenFrame <= BodyFrameOutMaxGapFrames && instance.activeSelf &&
-                                      IsInteractiveMotionInactive(trackId) && !SkipBodyFrameOutForReturn(trackId, st, st.lastSeenFrame);
+                                      IsInteractiveMotionInactive(trackId) && ShouldStartBodyFrameOut(trackId, st, st.lastSeenFrame);
                 if (!justLeftByEdge || !StartBodyFrameOut(trackId, st, instance, frame, "track ended at the edge"))
                 {
                     continue;
@@ -458,6 +459,12 @@ public partial class StreamingStereoVideoPlayer
             st.graph.Destroy();
         }
 
+        // 歩きのクリップのために有効にした Animator は無効に戻す（人の Animator は再生しない決まり。追従の経路も毎 tick 無効にする）。
+        if (st.animator != null)
+        {
+            SceneObjectWriter.ApplyAnimatorEnabled(st.animator, false);
+        }
+
         if (hide && st.instance != null)
         {
             SceneObjectWriter.ApplyActive(st.instance, false);
@@ -504,52 +511,47 @@ public partial class StreamingStereoVideoPlayer
 
     private readonly List<MetaObj> bodyFrameOutScanObjects = new List<MetaObj>(16);
 
-    // すぐ戻ってくる出口なら、この出口のあいだは始めない（判定は出口ごとに 1 回）。
-    private bool SkipBodyFrameOutForReturn(uint trackId, BodyFrameOutState st, int frame)
+    // この出口で続きを始めてよいか（meta を先読みする。判定は動画のフレームごとに 1 回）:
+    //   - 本当に出ていく: bodyFrameOutLeaveWithinSeconds のうちに track が消える。端で立ち止まって anchor が同じになるだけの track
+    //     （旧実験の動物は端に大きく写ったまま 1〜8 フレーム止まるのが 46 か所。その後も映り続ける）では始めない
+    //   - すぐ戻らない: 消えてから bodyFrameOutReturnSkipSeconds のうちにまた映るなら始めない（練習の犬）
+    // 動画の終わりで打ち切る（周回の先頭は見ない。周回では frame が戻ったときに続きを捨てる）。
+    private bool ShouldStartBodyFrameOut(uint trackId, BodyFrameOutState st, int frame)
     {
-        if (st.skipThisExit)
+        if (st.exitDecisionFrame == frame)
         {
-            return true;
+            return st.exitAllowed;
         }
 
-        st.skipThisExit = WillTrackReturnSoon(trackId, frame);
-        return st.skipThisExit;
-    }
-
-    // この track が今の出番を終えた後、bodyFrameOutReturnSkipSeconds のうちにまた映るか（meta を先読みする。出ていくときに 1 回だけ）。
-    // 動画の終わりで打ち切る（周回の先頭は見ない。周回では frame が戻ったときに続きを捨てる）。
-    private bool WillTrackReturnSoon(uint trackId, int frame)
-    {
+        st.exitDecisionFrame = frame;
+        st.exitAllowed = false;
         int numFrames = (int)metaHeader.numFrames;
-        int window = Mathf.RoundToInt(bodyFrameOutReturnSkipSeconds * Mathf.Max(1f, ResolveMetaFps()));
-        if (window <= 0 || numFrames <= 0)
+        float fps = Mathf.Max(1f, ResolveMetaFps());
+        int leaveWindow = Mathf.Max(1, Mathf.RoundToInt(bodyFrameOutLeaveWithinSeconds * fps));
+        int returnWindow = Mathf.RoundToInt(bodyFrameOutReturnSkipSeconds * fps);
+        if (numFrames <= 0)
         {
             return false;
         }
 
-        int gapStart = -1;
+        int exitFrame = -1;
         for (int f = frame + 1; f < numFrames; f++)
         {
-            if (!TryReadFrameObjects(f, bodyFrameOutScanObjects))
-            {
-                continue;
-            }
-
-            bool present = false;
-            for (int i = 0; i < bodyFrameOutScanObjects.Count; i++)
-            {
-                if (bodyFrameOutScanObjects[i].trackId == trackId)
-                {
-                    present = true;
-                    break;
-                }
-            }
-
-            if (gapStart < 0)
+            bool present = IsTrackInFrame(trackId, f);
+            if (exitFrame < 0)
             {
                 if (!present)
                 {
-                    gapStart = f;
+                    exitFrame = f;
+                }
+                else if (f - frame > leaveWindow)
+                {
+                    if (logBodyFrameOut)
+                    {
+                        Debug.Log($"[BODYFRAMEOUT] skip track={trackId} f={frame}: still on screen after {leaveWindow} frames (not leaving)");
+                    }
+
+                    return false;
                 }
 
                 continue;
@@ -559,15 +561,35 @@ public partial class StreamingStereoVideoPlayer
             {
                 if (logBodyFrameOut)
                 {
-                    Debug.Log($"[BODYFRAMEOUT] skip track={trackId} f={frame}: comes back at f{f} ({f - gapStart} frames out)");
+                    Debug.Log($"[BODYFRAMEOUT] skip track={trackId} f={frame}: comes back at f{f} ({f - exitFrame} frames out)");
                 }
 
-                return true;
+                return false;
             }
 
-            if (f - gapStart > window)
+            if (f - exitFrame > returnWindow)
             {
-                return false;
+                break;
+            }
+        }
+
+        // 動画の終わりまで映り続けるなら、出ていかない。
+        st.exitAllowed = exitFrame >= 0 || frame + 1 >= numFrames;
+        return st.exitAllowed;
+    }
+
+    private bool IsTrackInFrame(uint trackId, int frame)
+    {
+        if (!TryReadFrameObjects(frame, bodyFrameOutScanObjects))
+        {
+            return false;
+        }
+
+        for (int i = 0; i < bodyFrameOutScanObjects.Count; i++)
+        {
+            if (bodyFrameOutScanObjects[i].trackId == trackId)
+            {
+                return true;
             }
         }
 

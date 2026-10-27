@@ -328,7 +328,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return 1f;
         }
 
-        float zLock = DecodeAnchorDepthMetersFromBundle(t.anchorZ01[lockFrame]);
+        // S（2026-10-16）: ロックしたフレームの深さも、比べる obj.anchorZ（ApplyMetaTarget の S の複製）と同じ k 倍にする。S の状態が無ければ × 1（同じ値）。
+        float zLock = DecodeAnchorDepthMetersFromBundle(t.anchorZ01[lockFrame]) * ResolveStereoDepthFactor(obj.trackId);
         if (zLock <= 0.0001f || obj.anchorZ <= 0.0001f)
         {
             return 1f;

@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Serialization;
@@ -459,6 +459,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // （HM の F3 (e) / LM の H-2）。2026-10-04、既定 OFF。H-1 だけだと手と前腕の相対ねじれが悪化するので組で使う。
     public bool fkReferenceFromAvatarTPose = false;
     public bool handFkFromForearmFrame = false;
+    // Meshy の人の手のねじれの直し（2026-10-25、既定 0 = OFF・試作。ユーザー「人の手っておかしくない？今までと合わせれないの？」）。
+    // Meshy の 4 人は FBX の基準の姿勢で手のひらが前を向いたまま Unity の T ポーズになり、手の FK の補正（handBindCorrection、muscles=0）に
+    // 手のひら前向きが入る（今までのモデルは T ポーズで手のひらが下）。表のモデルだけ、手を前腕の軸の回りに回す（回内）:
+    // 1 = 手だけ（手首の皮膚がねじれやすい）、2 = 前腕も同じだけ（ねじれは肘へ）、3 = 前腕は半分。追従の手の FK（ApplyHandFkWithCanonicalArmDirection、
+    // 調査役 H1 の式 C' = AngleAxis(θ, 前) × C）と、Humanoid のクリップ（自分から動く動作・画面の外へ歩く所）の評価の直後の両方に当てる。
+    // 表に無いモデル・OFF は今と全く同じ。純 FK（enableKeypointAimAt OFF）と handFkFromForearmFrame は対象外（実験では使っていない）。
+    // 量と原因は Docs/tmp/human_rig_20261023/README.md「人の手のねじれ」（17 男性 42〜45°・19 サッカー 65〜72° は固定、18・20 は絵で決める）。
+    public int humanHandRollFixMode = 0;
+    // 回す量の表: 「prefab 名:左の度:右の度」をカンマで区切る（-setFields の区切りの ; と = は使わない）。prefab 名は ReplaceableModel.sourcePrefabName と
+    // 完全一致（試作の -humanPrefab は名前が違うので当たらない）。既定は確かめ役の値（17・19 は V_H1 の指の付け根の面、18・20 は V_H2 の手のひら）。
+    // リグのキャッシュを作るときに読む（バッチの -setFields は再生前に入るので効く）。
+    public string humanHandRollFixTable = "17_Male_Meshy:-43.9:43.4,18_Female_Meshy:-59.8:54.9,19_Female_Meshy_Soccer:-74.0:74.0,20_Female_Meshy_Zombie:-60.5:58.4";
     // 人の指（2026-10-08、全関節の監査 J-12。どれも既定 OFF、新しい振る舞い）。今は指 30 本を毎 tick muscles=0（1 関節 34〜37° 曲がった半握り）に戻し、
     // SMPL の 22・23（手）は読むが使わない。詳細・予測・副作用は HumanFingers.partial.cs。採否は絵で。
     // humanFingerRestFromAvatarTPose: 指 30 本だけ Avatar の T ポーズ（ほぼまっすぐ）の局所回転に戻す。前提「SMPL のゼロ姿勢の手は平ら」は未確認
@@ -581,7 +593,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     // 下端が画面外に切れているフレームで、⑦ の基準を bbox 下端から bbox 上端に切り替えるか。
     // 切れた下端に合わせると下半身を画面内へ持ち上げてしまうため。上下とも切れている
-    // フレームは従来どおり下端合わせにフォールバックする。
+    // フレームは従来どおり下端合わせにフォールバックする（その欠陥の直しが下の bottomFitBorderEdgesAsBounds、既定 OFF）。
     public bool alignTopWhenBottomClipped = true;
 
     // 「下端が画面の下端で切れているか」の判定にヒステリシスを付ける（2026-10-06、実機のちらつきの直し）。⑦（合わせる基準: 上端 / 下端）と
@@ -594,6 +606,23 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool bboxBottomClipHysteresis = true;
     public int bboxBottomClipEnterMarginPixels = 2;
     public int bboxBottomClipLeaveMarginPixels = 4;
+
+    // bottomFitBorderEdgesAsBounds（2026-10-25、既存の欠陥の直し・振る舞いの選択があるので既定 OFF・種別を問わない・新しい係数なし）:
+    //   ⑦（FitDisplayedModelToBBox）は、画面の縁に付いた box の辺を「被写体は少なくともそこまである」という範囲として扱い、合わせる位置にしない。
+    //   (1) 下端が画面の下の縁で切れて上端は切れていない tick: 今の上端合わせ（AABB の上端 → bbox の上端）が、モデルの一番下の投影点を
+    //       画面の下の縁より上（画の中）へ持ち上げるなら、一番下の点を縁に置く（2 つの移動の低い方）。下で切れた被写体は縁より下へ続くので、
+    //       足を画の中に浮かせない。モデルが bbox より大きい（⑧ が追いついている）ときは今の上端合わせと同じ。
+    //       今は下端が縁に着いた最初のフレームで、⑧ の遅れのぶん（モデルが bbox より短い量）だけ体全体が 1 フレームで跳ね上がる
+    //       （bundle_tv の vf 527 → 528 で 41 px。足が床から離れる）。
+    //   (2) 上端も下端も縁で切れている tick: 今は一番下の点を画面の下の縁（被写体の下端ではない）に合わせ、モデルの足を画の中へ持ち上げる
+    //       （bundle_tv の vf 541〜568 で実物より約 125 px 上、頭が 0.6 秒早く画面の上から出る）。代わりに、直前の ⑦ の後の ⑧ の基準点
+    //       （ResolveDepthReferenceWorld: 人は Hips）のカメラ空間の高さを保つ。⑧ が奥行きを変えても高さが同じなので、像は主点のまわりに伸び縮みする
+    //       （まっすぐ近づく実物と同じ）。(1) と同じく一番下の点を縁より上へは持ち上げない。保つ値が無い（切れた状態で現れた）ときは今のまま。
+    //   animal の頭合わせ（animalBottomClippedHeadPin）が置けた tick は変えない。保つ値は ⑦ が合わせた後に毎回書き、shot の切れ目と track の欠けで消す。
+    //   U1・U2 の解く式（TryBuildExactScaleRefineSetup・TryBuildExactDepthSecondFit）も同じ判断を写す。
+    //   今ある bundle で (2) が走るのは bundle_tv の人の vf 541〜576 だけ（569 から画面の外の歩きが置くので見えるのは 568 まで）。
+    //   (1) は bundle_tv の vf 528〜540 と、頭合わせが置けなかった animal の tick。調査は scratchpad の validate/obvious_inv/O6。
+    public bool bottomFitBorderEdgesAsBounds = false;
 
     // animalBottomClippedHeadPin（2026-10-14、新しい振る舞い・既定 OFF・種別を問わない（animal のリグなら全部）・新しい係数なし。
     //   Docs/tmp/headpin_20261014/README.md）: 下端が画面の下で切れて上端が切れていない tick の ⑦（alignTopWhenBottomClipped の上端合わせ）で、
@@ -624,6 +653,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // SMAL body_pose の平滑の半減期（秒）。詳細は AnimalSmalFkApplier.smalSmoothHalfLifeSec。
     // 既定 0.12 は従来の定数と同じ（2026-10-02 に検証用に外へ出しただけで挙動は変えていない）。
     public float smalSmoothHalfLifeSec = 0.12f;
+    // SMAL の骨のリグ（2026-10-23 の試作）の SkinnedMeshRenderer.quality。0 = 触らない（Auto = 品質の設定。Android の Mobile は 2 本）、
+    // 1 / 2 / 4 = 1 頂点を動かす骨の数。確かめ用で既定 0。詳細は AnimalPoseApplier.smalNativeSkinQuality。
+    public int smalNativeSkinQuality = 0;
+    // SMAL の骨のリグの脚の横の寄せをモデルの肩・腰の幅に合わせる（2026-10-25、既定 OFF・試作。キツネの前脚が X に交差するのの直し）。
+    // 詳細は AnimalPoseApplier.smalNativeLimbWidthScale。
+    public bool smalNativeLimbWidthScale = true;
+    // SMAL の骨のリグ（作り直した動物）の頭を視聴者へ向けるときの「頭の前」を SMAL の頭の座標の前にする（2026-10-25、既定 OFF・試作。
+    // キツネ・狼・犬の頭が動作中に 37〜43° 反る直し）。詳細は AnimalPoseApplier.smalNativeLookAtHeadFrame。
+    public bool smalNativeLookAtHeadFrame = true;
+    // 頭のジェスチャ（HeadShake・HeadTilt）の軸の「頭の前」も SMAL の頭の座標の前にする（2026-10-25、既定 OFF・試作。上と別の判断）。
+    // 詳細は AnimalPoseApplier.smalNativeGestureHeadFrame。
+    public bool smalNativeGestureHeadFrame = true;
     // body_pose（SMAL 関節 1〜34）だけの平滑の半減期（秒）。**負なら smalSmoothHalfLifeSec と同じ（従来）。**
     // 2026-10-03 の試作: 根（worldFk0、体全体の向き）は 0.12 のまま、脚の形だけ 0.03 にする。
     // 走りの脚の振れを 0.12 は 3 割前後しか残さない（歩様 2.3〜3.3 Hz）。詳細は AnimalSmalFkApplier.smalBodyPoseSmoothHalfLifeSec。
@@ -679,6 +720,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public float animalLookAtViewerMaxYawDegrees = 140f;
     public float animalLookAtViewerNeckShare = 0.4f;
     public float animalLookAtViewerBlendSeconds = 0.35f;
+    // 身ぶりで頭を体の前の側へ向ける（2026-10-18、新しい振る舞い・既定 OFF）。視線をそらす（SampleLookAway_v1、体の左へ 30°）は向きが資産で決まっていて、視聴者が
+    // 体の左にいると頭が肩越しへ回った（lynx_left の撮影で体の前から −92.4° → −125.8°。Docs/tmp/remake_20261005/newgestures_20261017/4_final.md の G1・J7）。
+    // ON: 静的な身ぶりを始めるとき、資産のとおりに足すと頭が体の前からさらに離れる側へ向く（資産の頭と首の up の向きが、身ぶりの間の頭の向き = 頭を視聴者へ向ける層の
+    // 目標と同じ側）なら、そのイベントだけ左右を入れ替えて足す（対の点を反対側へ、up と forward の符号を反転。AnimalGesturePosePlayer.ApplyToRigCache の mirror）。
+    // 首振り・首かしげ・前足・身震い・あくびのように頭の向きが片側に偏らない身ぶりと、頭がほぼ体の前（±5°）のときは入れ替えない。判定はイベントごとに
+    // [GESTURE-MIRROR] の行に出す（StreamingStereoVideoPlayer.ResolveAnimalGestureMirror）。OFF なら判定もログもせず、今と同じ。
+    public bool animalGestureTurnTowardBodyFront = false;
+    // 顎の骨が無いモデルでは顎の点を持つ身ぶり（あくび）を選ばない（2026-10-18、新しい振る舞い・既定 OFF）。00_Dog（新しい動画の既定のモデル）は顎の骨が無く、あくびを
+    // 足すと口が開かずに鼻を 10° 上げて下ろすだけの 2.5 s になる。ON: そのモデルの静的な身ぶりの一覧から顎の点の身ぶりを外して一様に選ぶ
+    // （StreamingStereoVideoPlayer.ResolvePlayableAnimalStaticClips。外したときは [GESTURE-SKIP] の行）。顎の点を持つ資産が一覧に無ければ ON でも何も変わらない。
+    public bool animalGestureSkipClipsMissingJaw = false;
 
     // 向きの切り分け用。詳細は AnimalSmalFkApplier.forceRootYawFix。
     public int forceRootYawFix;
@@ -781,6 +833,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 書式 "<prefab 名に含む文字列>|frontLUpper=LeftShoulder01;frontLLower=front_l_upper;..."（| が無ければ全 animal）。
     // 空なら何もしない。適用は ApplyAnimalBoneOverride（Playback.partial.cs）。
     public string batchAnimalBoneOverrideSpec = "";
+    // 検証用（batchmode のみ、2026-10-24）: Resources の外に置いた試作の prefab（Assets/MeshyModels/Pilot/）を、その実行の間だけ
+    // モデルの一覧の末尾に足して選ぶ。BatchPlaybackLogger の -humanPrefab / -animalPrefab が入れる（シーンには保存しない）。
+    // 末尾に足すので既存の番号はずれない。適用は AppendBatchExtraPrefabs（Core.partial.cs）。
+    [HideInInspector] public GameObject batchExtraHumanPrefab;
+    [HideInInspector] public GameObject batchExtraAnimalPrefab;
 
     // バッチ検証専用。設定パネルを開いた状態で始める。
     // パネルの配置は目で見るしか確認できず、実機では VR に入らないと開けない。
@@ -1251,6 +1308,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public bool animalApproachByNearestPoint = true;
     public float interactiveApproachMinTravelMeters = 0.10f;
     public bool animalApproachNoRoomFallsBackToStatic = true;
+    // 人も、歩いて近づく余地が無ければ歩かずにその場の身ぶりにする（2026-10-25、既存の不具合の直し）。新しい実験の動画では人は視聴者から
+    // 水平に 0.42〜0.47 m の所に置かれ、止まる距離 humanApproachStopDistanceMeters（0.6 m）より近い。行き先が起点より遠くなり、
+    // 「歩いて近づく」段が視聴者から離れる向きに 0.13〜0.19 m 歩いていた（背中を向けて遠ざかり、身ぶりの後に近づいて戻る。
+    // Docs/tmp/survey_20261025/）。歩ける距離 = 水平距離 − 止まる距離 が interactiveApproachMinTravelMeters 未満なら静的イベントにする（動物と同じ形）。
+    public bool humanApproachNeedsRoom = true;
+    // 人の自分から動く動作（身ぶり・歩きのクリップ）の間、体（Hips）を発火した tick の体の位置に合わせ、終わりの受け渡しは体の向きと位置を
+    // world で混ぜる（2026-10-25、既存の不具合の直し）。人の追従は Hips を root から離して置くことがあり（テレビの女性は体が root より奥）、
+    // クリップに替えた瞬間に体が root の上へ跳んで大きくカメラ側へ寄り、受け渡しでは root の向き（視聴者向き → 追従の root）と
+    // 骨の局所の回転を別々に混ぜるので体が半回転して戻っていた（Docs/tmp/survey_20261025/）。BodyFrameOut の Hips 合わせと同じ考え。
+    public bool humanMotionKeepsBodyInPlace = true;
     // 動物のランダムのイベントを既定の姿勢（prefab の bind の立ち姿）に戻してから動かす（2026-10-07、ユーザーの要望「human みたいにデフォルトのポーズに
     // 戻してからやる方がいい。動物だと変な体勢の時にアニメーションが起こることを避けたい」）。今は発火した tick の SMAL を凍結して FK に通し、その曲がりの上に
     // 身ぶりを足していた。発火から animalDefaultPoseBlendSeconds の段 to_default で FK の入力を既定の姿勢へ混ぜ（AnimalSmalFkApplier.smalDefaultPoseWeight）、
@@ -1327,6 +1394,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     public float elseApproachStopDistanceMeters = 0.45f;
     public float elseDriveSpeedMetersPerSecond = 0.35f;
     [Min(0f)] public float elseTurnRadiusMeters = 0f;
+    // ホイールの無い剛体（FL/FR/RL/RR の子が無いモデル = 風船 19・25 とボール）は走行イベントの間、向きを変えない（2026-10-25、既定 OFF・採否はユーザー。確かめ役 V_O7: これだけでは星の横の跳びと丸い風船の横の動きは残る）。
+    // 9/28 の実装から、上の説明・InteractiveMotion.partial.cs の説明・docs の表は「ホイールが無いモデルは向きを変えずに滑る」と書いていたが、
+    // ApplyRigidDrive はホイールの有無によらず経路の接線で yaw を回していた。U ターンの半径は描画 bounds の進行方向の幅 × 0.25 なので、薄い星の風船
+    // （25_Balloon_Meshy_Star）は半径 0.021 m・半円 0.066 m を 0.19 s で回り、視聴者の目の前で 180° を 2 回（約 950°/s）回っていた
+    // （review_tail/balloon_p2 の t357-371・t482-495）。車は全 16 台に FL/FR/RL/RR があるので変わらない。false（既定）で従来どおり回す。
+    public bool elseWheellessKeepsHeading = false;
+    // ホイールの無い剛体の走行イベントを「視聴者の手前まで同じ線をまっすぐ漂って来て、同じ線を戻る」にする（2026-10-25、既定 OFF、採否はユーザー）。
+    // 車の経路（ElseDrivePath.Build）は手前の点の U ターンで横へ 2R ずれ、ずれた線を戻って出発点の奥でもう 1 回半円を描く。向きを止めても、
+    // 丸い風船は目の前で横へ 0.084 m（撮影で 181 px）を 0.37 s で跳んでいた（review_tail/balloon_p1 の t209-236）。ON にすると U ターンを使わず、
+    // 出発・手前の点・到着の 3 か所で速さ 0 になる緩急（ElseDrivePath.EaseOutAndBack）で往復する。最大の速さは elseDriveSpeedMetersPerSecond、
+    // 時間は π × 片道 ÷ 速さ（片道 0.49 m で 4.37 s。車の経路の 3.45 s より長く、動画の一時停止も同じだけ延びる）。ON なら向きも変えない。
+    public bool elseWheellessFloatStraight = false;
     // 車の走行イベントを今の表示位置から始める（2026-10-11、既存の不具合の直し。10/05 の interactiveRandomOriginFromDisplayed の直し漏れ）。**2026-10-11 にユーザーが採用し既定 ON。**
     // StartRigidDriveMotion は出発点・向き・視聴者までの距離・止まる点・前方向に門つきの livePosition / liveRotation を使っていた。門の基準の面積は
     // 戻らないので、car クリップの 2 周目以降、track 1〜4 が奥に小さく再登場した最初の tick（発火が集まる tick）では門が閉じたまま、前の周に画面の下から

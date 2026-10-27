@@ -35,18 +35,20 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
     private double trialVideoPlayedSeconds;
 
     // realtimeProvider: 経過秒の時計（null なら Time.realtimeSinceStartup）。テストが差し替える。
+    // trialsOverride: 試行の表を差し替える（実験者のデバッグ。ExperimentPlan.BuildDebugTrials）。null なら群と動画順から作る。
     public ExperimentSession(
         string participantId,
         ExperimentGroup group,
         int videoOrderPattern,
         ExperimentLogWriter writer,
         Func<double> videoTimeProvider,
-        Func<float> realtimeProvider = null)
+        Func<float> realtimeProvider = null,
+        ExperimentTrial[] trialsOverride = null)
     {
         ParticipantId = participantId;
         Group = group;
         VideoOrderPattern = videoOrderPattern;
-        Trials = ExperimentPlan.BuildTrials(group, videoOrderPattern);
+        Trials = trialsOverride ?? ExperimentPlan.BuildTrials(group, videoOrderPattern);
         StartedAt = DateTime.Now;
         CurrentTrialIndex = -1;
 
@@ -167,7 +169,9 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
         bool boneLengthCorrection,
         float displayHz,
         bool manualRotationResetAtCut = false,
-        bool manualScaleResetAtCut = false)
+        bool manualScaleResetAtCut = false,
+        // S・F2（2026-10-16、既定 OFF）: StreamingStereoVideoPlayer.StereoDepthTrialState（ON のものだけ。OFF なら空で今の行と同じ）。ModelReplaced の試行だけ足す。
+        string stereoDepthState = null)
     {
         if (!trialInProgress)
         {
@@ -192,7 +196,8 @@ public sealed class ExperimentSession : IExperimentLogSink, IDisposable
             $"monocular={ExperimentCsv.Format(monocular)} screen_dist={ExperimentCsv.Format(screenDistanceMeters)} " +
             $"bone_length_correction={ExperimentCsv.Format(boneLengthCorrection)} display_hz={ExperimentCsv.Format(displayHz)}" +
             (manualRotationResetAtCut ? " manual_reset_at_cut=1" : "") +
-            (manualScaleResetAtCut ? " scale_reset_at_cut=1" : ""));
+            (manualScaleResetAtCut ? " scale_reset_at_cut=1" : "") +
+            (CurrentTrial.mode == ExperimentDisplayMode.ModelReplaced && !string.IsNullOrEmpty(stereoDepthState) ? stereoDepthState : ""));
         // 視聴開始の刻（解析の起点）。周期 flush まで 10 秒あるので、ここでも書き切る。
         writer?.Flush();
     }

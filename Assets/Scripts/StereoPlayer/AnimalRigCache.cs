@@ -64,6 +64,16 @@ internal sealed class AnimalRigCache
     public bool headNoseValid;
     public Vector3 headNoseLocal;
     public string headNoseSource = string.Empty;
+    // SMAL の頭の座標の前（頭ローカル、AnimalPoseApplier.ResolveSmalHeadForward、2026-10-25）。smalNativeLookAtHeadFrame か smalNativeGestureHeadFrame が
+    // ON の SMAL の骨のリグだけ求める。視聴者へ向ける（ResolveHeadAim）・頭のジェスチャの軸（ResolveGestureHeadForward）がそれぞれの切り替えで使い、
+    // OFF なら今までどおり headNoseLocal（顔の骨）。
+    public bool smalHeadForwardResolved;
+    public bool hasSmalHeadForward;
+    public Vector3 smalHeadForwardLocal;
+    // SMAL の骨のリグ（AnimalSmalNativeRig.TryApplySmalNativeRoles）が bind で控える: 2 つの切り替えと頭(16)→口(32) の bind の区間（world）。
+    public bool smalNativeHeadFrameAim;
+    public bool smalNativeGestureHeadFrame;
+    public Vector3 smalNativeHeadMouthBindWorld;
     // 頭のジェスチャを解剖学的な軸で回す写像（頭ローカル、AnimalPoseApplier.ResolveHeadGestureRemap、2026-10-05）。
     public bool headGestureRemapResolved;
     public bool headGestureRemapValid;
@@ -77,6 +87,8 @@ internal sealed class AnimalRigCache
     public Transform gestureScapulaRight;
     public Transform gestureEarLeft;
     public Transform gestureEarRight;
+    // 顎（2026-10-18、ジェスチャの点 Jaw。EnsureGestureAnatomy）。頭の子に顎の骨が無いモデル（00_Dog）は null（顎の点は何もしない）。
+    public Transform gestureJaw;
     public readonly Dictionary<Transform, Quaternion> gestureAxesFrame = new Dictionary<Transform, Quaternion>();
     public readonly Dictionary<Transform, float> gestureSwingSign = new Dictionary<Transform, float>();
     // 非四足モード（AnimalPoseApplier.smalNonQuadrupedRig、2026-10-08、2026-10-09 に既定 ON）。キャッシュを作るとき 1 回だけ決める（ApplyNonQuadrupedRoles）。どちらも既定 false。

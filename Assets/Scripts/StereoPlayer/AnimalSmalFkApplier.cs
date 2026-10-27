@@ -641,6 +641,16 @@ public sealed partial class AnimalPoseApplier
             }
         }
 
+        // SMAL の骨にそろえたリグ（2026-10-23 の試作、AnimalSmalNativeRig.cs）: 35 関節を体の写像で書いて返す。今の 54 体はここを通らない。
+        if (TryGetSmalNativeRig(cache, out SmalNativeRig nativeRig))
+        {
+            ApplySmalNativeRigFk(cache, nativeRig, pose, state, worldFk0, SmalDataAxisCorrection * state.rootYawFix * modelOrientFix,
+                bodySmoothAlpha, defaultPoseWeight, tw, smalAccum);
+            state.smoothingInitialized = true;
+            cache.smalFkWrittenFrame = Time.frameCount;
+            return;
+        }
+
         // Walk joints 1-34 in topological order
         for (int i = 0; i < SmalJointTopologicalOrder.Length; i++)
         {

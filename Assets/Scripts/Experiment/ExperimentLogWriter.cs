@@ -78,6 +78,12 @@ public sealed class ExperimentLogWriter : IDisposable
         get { return Path.Combine(Application.persistentDataPath, "ExperimentLogs"); }
     }
 
+    // 実験者のデバッグ（動画を 1 本選んで開く、2026-10-25）の記録の置き場所。参加者の記録（ExperimentLogs）と混ざらないよう分ける。
+    public static string DebugRootDirectory
+    {
+        get { return Path.Combine(Application.persistentDataPath, "ExperimentLogs_debug"); }
+    }
+
     // 参加者 ID は実験者の手入力なので、パス区切りや無効文字が混ざり得る。
     public static string SanitizeForFileName(string value)
     {

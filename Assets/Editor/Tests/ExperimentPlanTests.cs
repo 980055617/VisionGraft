@@ -18,6 +18,38 @@ public class ExperimentPlanTests
         Assert.That(ExperimentPlan.BlockCount, Is.EqualTo(3));
     }
 
+    // 実験者のデバッグの表（2026-10-25）: 条件 3 つ × 動画 6 本がちょうど 1 回ずつで、番号から引いた試行が選んだ組と一致する
+    // （trials.csv の video・mode 列が開いた動画・条件と同じになる）。
+    [Test]
+    public void BuildDebugTrials_CoversEveryModeAndVideoOnce()
+    {
+        ExperimentTrial[] trials = ExperimentPlan.BuildDebugTrials();
+        Assert.That(trials.Length, Is.EqualTo(ExperimentPlan.DebugModes.Length * VideoCount));
+        var seen = new System.Collections.Generic.HashSet<string>();
+        for (int i = 0; i < trials.Length; i++)
+        {
+            Assert.That(trials[i].trialIndex, Is.EqualTo(i));
+            Assert.That(seen.Add($"{trials[i].mode}/{trials[i].video}"), Is.True, $"duplicate at {i}");
+            Assert.That(ExperimentPlan.DebugTrialIndex(trials[i].mode, trials[i].video), Is.EqualTo(i));
+        }
+
+        Assert.That(ExperimentPlan.DebugModes[0], Is.EqualTo(ExperimentDisplayMode.ModelReplaced), "the default debug mode is the 3D model condition");
+        Assert.That(ExperimentPlan.DebugTrialIndex(ExperimentDisplayMode.ModelReplaced, ExperimentVideo.Tutorial), Is.EqualTo(-1));
+    }
+
+    [Test]
+    public void Session_UsesTheDebugTableWhenGiven()
+    {
+        ExperimentTrial[] table = ExperimentPlan.BuildDebugTrials();
+        var session = new ExperimentSession("DEBUG", ExperimentGroup.A, 1, null, () => 0d, () => 0f, table);
+        Assert.That(session.Trials, Is.SameAs(table));
+        int index = ExperimentPlan.DebugTrialIndex(ExperimentDisplayMode.ModelReplaced, ExperimentVideo.Video6);
+        session.BeginTrial(index, "bundle_dog.svb");
+        Assert.That(session.CurrentTrial.video, Is.EqualTo(ExperimentVideo.Video6));
+        Assert.That(session.CurrentTrial.mode, Is.EqualTo(ExperimentDisplayMode.ModelReplaced));
+        session.EndTrial(false);
+    }
+
     // 最初のブロックは両群とも Monocular（単眼）。2026-09-11 の設計変更。
     [Test]
     public void BuildTrials_FirstBlockIsMonocularForBothGroups()

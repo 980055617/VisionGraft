@@ -174,6 +174,34 @@ public static class ElseDrivePath
         return path;
     }
 
+    // ホイールの無い剛体（風船・ボール）の往復（2026-10-25、elseWheellessFloatStraight）: O から S（視聴者の手前）まで主線をまっすぐ行き、
+    // 同じ線を O へ戻る。U ターンが無いので横へずれない。向きは回さない前提（呼ぶ側が yaw を 0 にする。折り返しで接線は −dIn に替わる）。
+    // 区間は行きが drive_in、帰りが drive_back（u_turn は無い）。進み方の緩急は EaseOutAndBack。
+    public static Path BuildStraightOutAndBack(Vector3 origin, Vector3 stopPoint, Vector3 up)
+    {
+        Vector3 safeUp = up.sqrMagnitude > 0.000001f ? up.normalized : Vector3.up;
+        Vector3 toStop = Vector3.ProjectOnPlane(stopPoint - origin, safeUp);
+        Vector3 dIn = toStop.sqrMagnitude > 0.000001f ? toStop.normalized : Vector3.ProjectOnPlane(Vector3.forward, safeUp).normalized;
+        Vector3 stop = origin + dIn * toStop.magnitude;               // 高さは origin に揃える（Build と同じ）
+
+        Path path = new Path();
+        path.Add(origin, dIn, SegmentDriveIn);
+        path.Add(stop, dIn, SegmentDriveIn);          // 行き（長さは drive_in に入る）
+        path.Add(stop, -dIn, SegmentDriveBack);       // 同じ点: 折り返しから先を drive_back にする（Add は同じ点を積まず、接線と区間だけ替える）
+        path.Add(origin, -dIn, SegmentDriveBack);     // 帰り
+        return path;
+    }
+
+    // 往復 1 回の緩急: 時間の割合 u（0〜1）→ 進んだ距離の割合（0 → 0.5 = 手前の点 → 1）。u = 0・0.5・1 で速さ 0、
+    // 最大の速さは u = 0.25・0.75 で（全長 × π/2）÷ 時間 = π × 片道 ÷ 時間。
+    public static float EaseOutAndBack(float u)
+    {
+        u = Mathf.Clamp01(u);
+        return u < 0.5f
+            ? 0.25f * (1f - Mathf.Cos(2f * Mathf.PI * u))
+            : 0.5f + 0.25f * (1f - Mathf.Cos(2f * Mathf.PI * (u - 0.5f)));
+    }
+
     // 3 次エルミート曲線。接線の大きさは弦の長さ（曲率が自然になる）。
     private static void AddHermite(Path path, Vector3 p0, Vector3 t0, Vector3 p1, Vector3 t1, int samples, int segment)
     {

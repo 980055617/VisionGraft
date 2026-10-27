@@ -279,6 +279,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 continue;
             }
 
+            // partialAppearanceMode（既定 Off、PartialAppearance.partial.cs）: 外した映り始めのフレームの姿勢は混ぜない
+            // （テレビの女性 vf 101・102 は、扉の陰の足先から推定した座った姿勢）。
+            if (IsPartialAppearanceFrameRemoved(f, trackId))
+            {
+                continue;
+            }
+
             // 前後のフレームはふつう RepairIsolatedBBoxSpikes が先読み済み。無ければここで読む。
             if (!TryGetHumanSmplPose(f, trackId, out HumanSmplPose p) &&
                 (!TryReadFrameObjectsMemo(f, out _) || !TryGetHumanSmplPose(f, trackId, out p)))
@@ -426,7 +433,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         Vector3 leftArm = state.lastWorldGlobalOrient * (state.smplFk[SmplLeftElbow] * restDirs[SmplAimSegLeftForeArm]);
         Vector3 rightArm = state.lastWorldGlobalOrient * (state.smplFk[SmplRightElbow] * restDirs[SmplAimSegRightForeArm]);
-        ApplyHandFkWithCanonicalArmDirection(cache, state, HumanBodyBones.LeftHand, 20, leftArm);
-        ApplyHandFkWithCanonicalArmDirection(cache, state, HumanBodyBones.RightHand, 21, rightArm);
+        int handRollMode = HumanHandRollModeFor(cache);
+        ApplyHandFkWithCanonicalArmDirection(cache, state, HumanBodyBones.LeftHand, 20, leftArm, handRollMode);
+        ApplyHandFkWithCanonicalArmDirection(cache, state, HumanBodyBones.RightHand, 21, rightArm, handRollMode);
     }
 }

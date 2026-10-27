@@ -6,6 +6,10 @@ public sealed partial class AnimalPoseApplier
 {
     private readonly AnimalMotionFilter motionFilter;
     private readonly Dictionary<Transform, AnimalRigCache> animalRigCaches = new Dictionary<Transform, AnimalRigCache>();
+    // S（2026-10-16）: 直前の Apply の root と、骨に姿勢を書いたか、SMAL の FK の分岐（制御点なし）を通ったか。
+    private Transform lastApplyRoot;
+    private bool lastApplyPosedBones;
+    private bool lastApplyRanSmalFk;
 
     public AnimalPoseApplier(AnimalFilterConfig filterConfig = default)
     {
@@ -30,6 +34,24 @@ public sealed partial class AnimalPoseApplier
     public void ShiftRootPositionFilter(Transform instanceRoot, Vector3 delta)
     {
         motionFilter.ShiftRootPosition(instanceRoot, delta);
+    }
+
+    // S（2026-10-16）: root の位置の平滑の状態を目のまわりに factor 倍する。鍵は instance の root。
+    public void ScaleRootPositionFilterAbout(Transform instanceRoot, Vector3 origin, float factor)
+    {
+        motionFilter.ScaleRootPositionAbout(instanceRoot, origin, factor);
+    }
+
+    // S（2026-10-16）: この root の直前の Apply が SMAL の FK の分岐を通ったか（制御点の sidecar の姿勢は含めない）。
+    internal bool LastApplyRanSmalFk(Transform instanceRoot)
+    {
+        return instanceRoot != null && lastApplyRoot == instanceRoot && lastApplyRanSmalFk;
+    }
+
+    // S（2026-10-16）: この root の直前の Apply が骨に姿勢を書いたか（入口・リグのキャッシュで戻った Apply は false）。
+    internal bool LastApplyPosedBones(Transform instanceRoot)
+    {
+        return instanceRoot != null && lastApplyRoot == instanceRoot && lastApplyPosedBones;
     }
 
     // animalBottomClippedHeadPin（2026-10-14）: AlignAnimalRootToSkeleton の One-Euro が今 root を生の目標からずらしている量（world）。鍵は instance の root。読むだけ。
@@ -131,12 +153,12 @@ public sealed partial class AnimalPoseApplier
     public void ApplyLookAtViewer(Transform instanceRoot, Vector3 viewerWorld, float weight, LookAtViewerSettings settings)
     {
         if (weight <= 0.001f || !TryGetRigCacheForInstance(instanceRoot, out AnimalRigCache cache) || cache.head == null ||
-            cache.smalFkWrittenFrame != Time.frameCount || !ResolveHeadNoseLocal(cache))
+            cache.smalFkWrittenFrame != Time.frameCount || !ResolveHeadAim(cache, out Vector3 aimLocal))
         {
             return;
         }
 
-        Vector3 nose0 = (cache.head.rotation * cache.headNoseLocal).normalized;
+        Vector3 nose0 = (cache.head.rotation * aimLocal).normalized;
         Transform neck = cache.neck != null && cache.neck != cache.head && cache.head.IsChildOf(cache.neck) ? cache.neck : null;
         float neckShare = settings.neckShare;
         if (settings.bodyRelative && TryGetBodyForward(cache, out Vector3 bodyForward))
@@ -145,7 +167,7 @@ public sealed partial class AnimalPoseApplier
             Vector3 bodyFlat = Vector3.ProjectOnPlane(bodyForward, Vector3.up);
             if (bodyFlat.magnitude >= LookAtMinFlat * bodyForward.magnitude)
             {
-                ApplyLookAtViewerBodyRelative(cache, neck, viewerWorld, weight, bodyFlat.normalized, nose0, settings);
+                ApplyLookAtViewerBodyRelative(cache, neck, viewerWorld, weight, bodyFlat.normalized, nose0, aimLocal, settings);
                 return;
             }
         }
@@ -171,7 +193,7 @@ public sealed partial class AnimalPoseApplier
             }
         }
 
-        Vector3 nose1 = (cache.head.rotation * cache.headNoseLocal).normalized;
+        Vector3 nose1 = (cache.head.rotation * aimLocal).normalized;
         TransformWriter.ApplyWorldRotation(cache.head, YawThenPitch(nose1, want) * cache.head.rotation);
         LevelHeadRoll(cache, want, weight);
     }
@@ -222,7 +244,7 @@ public sealed partial class AnimalPoseApplier
         Quaternion inv = Quaternion.Inverse(headBind);
         Vector3 r = inv * cache.bodyRightBindWorld;
         Vector3 u = inv * Vector3.up;
-        Vector3 c = Vector3.Cross(cache.headNoseLocal, r);
+        Vector3 c = Vector3.Cross(ResolveHeadAim(cache, out Vector3 aimLocal) ? aimLocal : cache.headNoseLocal, r);
         if (c.sqrMagnitude < 1e-6f || u.sqrMagnitude < 1e-6f)
         {
             return 0f;
@@ -293,7 +315,7 @@ public sealed partial class AnimalPoseApplier
     //     イベントの途中で向ける / 向けないが切り替わることはない
     // 移植と検算: scratchpad/rev2/lookat_body_relative.py（鼻が真上・真下でないとき、重み 1 で鼻先の誤差 0.0000°、首なしの傾きの変化 0.000°、体の前を通る）。
     // 査読の厳密な移植: scratchpad/review_lookat/cs_port.py。
-    private static void ApplyLookAtViewerBodyRelative(AnimalRigCache cache, Transform neck, Vector3 viewerWorld, float weight, Vector3 bodyFlat, Vector3 nose0, LookAtViewerSettings settings)
+    private static void ApplyLookAtViewerBodyRelative(AnimalRigCache cache, Transform neck, Vector3 viewerWorld, float weight, Vector3 bodyFlat, Vector3 nose0, Vector3 aimLocal, LookAtViewerSettings settings)
     {
         if (!TryGetBearing(bodyFlat, nose0, out float noseYaw) ||
             !TryResolveBodyRelativeAim(bodyFlat, viewerWorld - cache.head.position, weight, settings, out float w, out float aimYaw, out float aimPitch))
@@ -320,7 +342,7 @@ public sealed partial class AnimalPoseApplier
 
         // 首を回した後の鼻は、元の鼻と目標の仰角の間に収まる（目標は ±maxPitchDegrees）ので、既定値では真上・真下にならない（査読で 22913 件中 0 件）。
         // maxPitchDegrees を 75° より大きくしたときだけ最小回転に落ちる。
-        Vector3 nose1 = (cache.head.rotation * cache.headNoseLocal).normalized;
+        Vector3 nose1 = (cache.head.rotation * aimLocal).normalized;
         Vector3 want = DirectionFromBearing(bodyFlat, wantYaw, wantPitch);
         Quaternion headDelta = TryGetBearing(bodyFlat, nose1, out float nose1Yaw)
             ? YawPitchDelta(nose1, wantYaw - nose1Yaw, wantPitch - ElevationDegrees(nose1))
@@ -391,14 +413,122 @@ public sealed partial class AnimalPoseApplier
 
     // インタラクティブモーション: root を置き直して頭を視聴者へ向けた後に、ジェスチャを足す（ApplyGestureOverlay と同じもの）。
     // Apply がジェスチャを足す地点まで来た frame だけ（cache.gestureOverlayFrame。HEAD では Apply が早く返るとジェスチャも足さなかった）。
-    public void ApplyGestureOverlayAfterPlacement(Transform instanceRoot, AnimalGesturePose clip, float normalizedTime, bool onCanonicalLimbs, bool anatomicalHeadAxes = false)
+    // mirror: 左右を入れ替えて足す（animalGestureTurnTowardBodyFront、2026-10-18。AnimalGesturePosePlayer.ApplyToRigCache）。
+    public void ApplyGestureOverlayAfterPlacement(Transform instanceRoot, AnimalGesturePose clip, float normalizedTime, bool onCanonicalLimbs, bool anatomicalHeadAxes = false, bool mirror = false)
     {
         if (clip == null || !TryGetRigCacheForInstance(instanceRoot, out AnimalRigCache cache) || cache.gestureOverlayFrame != Time.frameCount)
         {
             return;
         }
 
-        AnimalGesturePosePlayer.ApplyToRigCache(clip, normalizedTime, cache, onCanonicalLimbs, ResolveHeadGestureRemap(cache, anatomicalHeadAxes));
+        AnimalGesturePosePlayer.ApplyToRigCache(clip, normalizedTime, cache, onCanonicalLimbs, ResolveHeadGestureRemap(cache, anatomicalHeadAxes), mirror);
+    }
+
+    // 身ぶりの左右（StreamingStereoVideoPlayer.animalGestureTurnTowardBodyFront、2026-10-18、既定 OFF）: 身ぶりの間の頭の向きの見込み。体の前からの水平の方位（度、
+    // + = 体の右 = world の上から見て時計回り。資産の anatomicalAxes の up の + と同じ向き）。体の前は TryGetBodyForward（頭を視聴者へ向ける層・FaceViewer と同じ）。
+    // bodyTurn: これから root まわりに回す向き替え（world の上まわり。回さないなら identity）、rootPositionAfter: その後の root の位置。
+    // lookAt: 頭を視聴者へ向ける層が働くイベント。層は毎 tick、向き替えの後の体で頭を目標（体の前からの視聴者の方位を ±bodyMaxYawDegrees に収めたもの、
+    // TryResolveBodyRelativeAim。方位は頭の位置から測る）へ寄せ、身ぶりの頭・首の曲線はそこからのずれになる。
+    // - 重み 1（視聴者が体の前から ±bodyMaxYawDegrees 以内。静的なイベントは体を回して 80° 以内にするのでいつもこれ）: 目標の方位を返す（source = lookat。
+    //   ApplyLookAtViewer と同じく顔の骨の鼻と、鼻の水平の向きが要る）
+    // - 途中の重み（体を回さず視聴者が体の横〜後ろ）: 層は鼻と目標を重みで混ぜるが、向き替えの後の鼻はここでは分からないので決めない（source = lookat_partial、入れ替えない）
+    // - 重み 0（視聴者が体の後ろ）: 層は働かないので、今の骨の鼻で決める
+    // - 頭の向き基準（bodyRelative = false）の層は鼻から最大 maxDegrees まで回し、重みを鼻と視聴者の角度で落とす。その見込みは作っていないので決めない
+    //   （source = lookat_head_relative、入れ替えない。両シーンとも既定の true）
+    // それ以外は今の骨の鼻の方位（root まわりの向き替えでは変わらない。顔の骨が無いモデルは頭の体の軸の Z、source = bones）。ただし頭の上（頭の体の軸の Y）が
+    // 水平から 15° 以内〜下を向いているときは決めない（資産の up の左右が逆になる。source = bones_head_not_upright）。読むだけ（骨は書かない）。
+    public bool TryEstimateGestureHeadYaw(Transform instanceRoot, Quaternion bodyTurn, Vector3 rootPositionAfter, Vector3 viewerWorld, bool lookAt,
+        LookAtViewerSettings settings, out float headYaw, out string source)
+    {
+        headYaw = 0f;
+        source = "none";
+        if (instanceRoot == null || !TryGetRigCacheForInstance(instanceRoot, out AnimalRigCache cache) || cache.head == null ||
+            !TryGetBodyForward(cache, out Vector3 bodyForward))
+        {
+            return false;
+        }
+
+        Vector3 bodyFlat = Vector3.ProjectOnPlane(bodyForward, Vector3.up);
+        if (bodyFlat.magnitude < LookAtMinFlat * bodyForward.magnitude)
+        {
+            return false;
+        }
+
+        bodyFlat.Normalize();
+        float noseYaw = 0f;
+        bool noseFlat = ResolveHeadAim(cache, out Vector3 aimLocal) && TryGetBearing(bodyFlat, cache.head.rotation * aimLocal, out noseYaw);
+        if (lookAt && noseFlat && IsAnimalRigReadyForSmalFk(cache))
+        {
+            if (!settings.bodyRelative)
+            {
+                source = "lookat_head_relative";
+                return false;
+            }
+
+            Vector3 bodyFlatAfter = Vector3.ProjectOnPlane(bodyTurn * bodyFlat, Vector3.up).normalized;
+            Vector3 headAfter = rootPositionAfter + bodyTurn * (cache.head.position - instanceRoot.position);
+            if (TryResolveBodyRelativeAim(bodyFlatAfter, viewerWorld - headAfter, 1f, settings, out float w, out float aimYaw, out _))
+            {
+                if (w >= 0.999f)
+                {
+                    headYaw = aimYaw;
+                    source = "lookat";
+                    return true;
+                }
+
+                source = "lookat_partial";
+                return false;
+            }
+        }
+
+        if (cache.gestureAxesFrame.TryGetValue(cache.head, out Quaternion headUpFrame) &&
+            Vector3.Dot(cache.head.rotation * (headUpFrame * Vector3.up), Vector3.up) < LookAtMinFlat)
+        {
+            source = "bones_head_not_upright";
+            return false;
+        }
+
+        if (noseFlat)
+        {
+            headYaw = noseYaw;
+            source = "bones";
+            return true;
+        }
+
+        if (cache.gestureAxesFrame.TryGetValue(cache.head, out Quaternion headFrame) &&
+            TryGetBearing(bodyFlat, cache.head.rotation * (headFrame * Vector3.forward), out headYaw))
+        {
+            source = "bones";
+            return true;
+        }
+
+        headYaw = 0f;
+        return false;
+    }
+
+    // 身ぶりを左右を入れ替えて足せるか（animalGestureTurnTowardBodyFront、2026-10-18）。AnimalGesturePosePlayer.CanMirror を参照。リグのキャッシュがまだ無ければ false。
+    public bool CanMirrorGesture(Transform instanceRoot, AnimalGesturePose clip, bool onCanonicalLimbs, out string reason)
+    {
+        if (!TryGetRigCacheForInstance(instanceRoot, out AnimalRigCache cache))
+        {
+            reason = "no_rig";
+            return false;
+        }
+
+        return AnimalGesturePosePlayer.CanMirror(clip, cache, onCanonicalLimbs, out reason);
+    }
+
+    // 身ぶりの顎の点を足す骨があるか（2026-10-18、StreamingStereoVideoPlayer.ResolvePlayableAnimalStaticClips）。リグのキャッシュがまだ無ければ false（分からない）。
+    public bool TryGetGestureJawPresent(Transform instanceRoot, out bool hasJaw)
+    {
+        hasJaw = false;
+        if (!TryGetRigCacheForInstance(instanceRoot, out AnimalRigCache cache) || !cache.gestureAnatomyResolved)
+        {
+            return false;
+        }
+
+        hasJaw = cache.gestureJaw != null;
+        return true;
     }
 
     // 頭のジェスチャ（HeadShake・HeadTiltAndTailWag の頭の点）を、頭の骨の局所軸ではなくモデルの解剖学的な軸で回すための写像（2026-10-05）。
@@ -418,15 +548,15 @@ public sealed partial class AnimalPoseApplier
         {
             cache.headGestureRemapResolved = true;
             cache.headGestureRemapValid = false;
-            if (ResolveHeadNoseLocal(cache) && cache.bodyRightBindWorld.sqrMagnitude >= 0.5f &&
+            if (ResolveGestureHeadForward(cache, out Vector3 headForward) && cache.bodyRightBindWorld.sqrMagnitude >= 0.5f &&
                 cache.bindRotWorld.TryGetValue(cache.head, out Quaternion headBind))
             {
                 float side = UprightLevelSide(cache, headBind);
                 Vector3 r = Quaternion.Inverse(headBind) * cache.bodyRightBindWorld;
-                Vector3 up = Vector3.Cross(cache.headNoseLocal, r) * side;
+                Vector3 up = Vector3.Cross(headForward, r) * side;
                 if (side != 0f && up.sqrMagnitude > 1e-6f)
                 {
-                    cache.headGestureRemap = Quaternion.LookRotation(up.normalized, cache.headNoseLocal);
+                    cache.headGestureRemap = Quaternion.LookRotation(up.normalized, headForward);
                     cache.headGestureRemapValid = true;
                 }
             }
@@ -436,6 +566,31 @@ public sealed partial class AnimalPoseApplier
         }
 
         return cache.headGestureRemapValid ? cache.headGestureRemap : (Quaternion?)null;
+    }
+
+    // 口にボールをくわえさせる（StreamingStereoVideoPlayer.AnimalCarry.partial.cs、2026-10-25）: 頭・顎（EnsureGestureAnatomy の gestureJaw）・
+    // 顎の bind の局所回転（キャッシュを作るとき、まだ誰も書いていない bind で控えたもの）・左右の耳。cacheReady = リグのキャッシュがもうあるか。
+    // 顎か耳が無ければ false。
+    public bool TryGetJawRig(Transform instanceRoot, out Transform head, out Transform jaw, out Quaternion jawBindLocal,
+        out Transform earLeft, out Transform earRight, out bool cacheReady)
+    {
+        head = null;
+        jaw = null;
+        jawBindLocal = Quaternion.identity;
+        earLeft = null;
+        earRight = null;
+        cacheReady = TryGetRigCacheForInstance(instanceRoot, out AnimalRigCache cache) && cache.gestureAnatomyResolved;
+        if (!cacheReady || cache.head == null || cache.gestureJaw == null || cache.gestureEarLeft == null || cache.gestureEarRight == null ||
+            !cache.gestureBindLocal.TryGetValue(cache.gestureJaw, out jawBindLocal))
+        {
+            return false;
+        }
+
+        head = cache.head;
+        jaw = cache.gestureJaw;
+        earLeft = cache.gestureEarLeft;
+        earRight = cache.gestureEarRight;
+        return true;
     }
 
     private bool TryGetRigCacheForInstance(Transform instanceRoot, out AnimalRigCache cache)
@@ -514,6 +669,87 @@ public sealed partial class AnimalPoseApplier
         return false;
     }
 
+    // 頭を視聴者へ向けるときに「頭の前」とする向き（頭ローカル）。既定は顔の骨の鼻（ResolveHeadNoseLocal、今までどおり）。
+    // smalNativeLookAtHeadFrame（2026-10-25、既定 OFF）が ON の SMAL の骨のリグだけ、SMAL の頭の座標の前（ResolveSmalHeadForward）。
+    private static bool ResolveHeadAim(AnimalRigCache cache, out Vector3 aimLocal)
+    {
+        bool noseOk = ResolveHeadNoseLocal(cache);
+        if (cache.smalNativeHeadFrameAim && ResolveSmalHeadForward(cache))
+        {
+            aimLocal = cache.smalHeadForwardLocal;
+            return true;
+        }
+
+        aimLocal = cache.headNoseLocal;
+        return noseOk;
+    }
+
+    // 頭のジェスチャの軸（EnsureGestureAnatomy の頭の Z・ResolveHeadGestureRemap）で「頭の前」とする向き（頭ローカル）。既定は顔の骨の鼻。
+    // smalNativeGestureHeadFrame（2026-10-25、既定 OFF）が ON の SMAL の骨のリグだけ、SMAL の頭の座標の前。
+    private static bool ResolveGestureHeadForward(AnimalRigCache cache, out Vector3 forwardLocal)
+    {
+        bool noseOk = ResolveHeadNoseLocal(cache);
+        if (cache.smalNativeGestureHeadFrame && ResolveSmalHeadForward(cache))
+        {
+            forwardLocal = cache.smalHeadForwardLocal;
+            return true;
+        }
+
+        forwardLocal = cache.headNoseLocal;
+        return noseOk;
+    }
+
+    // SMAL の頭の座標の前を一度だけ求める（2 つの切り替えのどちらかが ON の SMAL の骨のリグだけ）。root の今の向きを使うので、
+    // 最初の呼び出しはリグのキャッシュを作るとき（CreateRigCache の EnsureGestureAnatomy の直後、まだ誰も骨を書いていない bind）に済ませる。
+    private static bool ResolveSmalHeadForward(AnimalRigCache cache)
+    {
+        if (!cache.smalHeadForwardResolved)
+        {
+            cache.smalHeadForwardResolved = true;
+            cache.hasSmalHeadForward = (cache.smalNativeHeadFrameAim || cache.smalNativeGestureHeadFrame) &&
+                                       TryResolveSmalNativeHeadForward(cache, out cache.smalHeadForwardLocal);
+            if (cache.hasSmalHeadForward)
+            {
+                float fromNose = ResolveHeadNoseLocal(cache) ? Vector3.Angle(cache.headNoseLocal, cache.smalHeadForwardLocal) : -1f;
+                Debug.Log($"[LOOKAT-AIM] {(cache.root != null ? cache.root.name : "?")} aim=smal_head_frame local={cache.smalHeadForwardLocal:F3} " +
+                          $"down={SmalNativeHeadMouthRestDownDegrees():F2}deg fromNose={fromNose:F1}deg " +
+                          $"lookAt={cache.smalNativeHeadFrameAim} gesture={cache.smalNativeGestureHeadFrame}");
+            }
+        }
+
+        return cache.hasSmalHeadForward;
+    }
+
+    // SMAL の頭の座標の前（頭ローカル）: bind の頭→口（cache.smalNativeHeadMouthBindWorld）を、体の水平の前 F・上 U（ResolveAnimalModelBasis の
+    // modelForwardLocal を root のローカルで水平にしたもの・modelUpLocal を F に直交させたもの。SMAL の FK の modelOrientFix と同じ作り方）の中で、
+    // SMAL の基準の骨格の頭→口（F から 36.85° 下）へ合わせる最小の回転の逆で F を運んだ向き（= ApplySmalNativeRigFk の既定の姿勢の区間の合わせで F に来る向き）。
+    private static bool TryResolveSmalNativeHeadForward(AnimalRigCache cache, out Vector3 local)
+    {
+        local = Vector3.zero;
+        if (cache.head == null || cache.root == null || cache.smalNativeHeadMouthBindWorld.sqrMagnitude < 1e-10f ||
+            !cache.bindRotWorld.TryGetValue(cache.head, out Quaternion headBind))
+        {
+            return false;
+        }
+
+        Vector3 fRaw = cache.modelForwardLocal.sqrMagnitude > 0.001f ? cache.modelForwardLocal.normalized : Vector3.back;
+        Vector3 fFlat = new Vector3(fRaw.x, 0f, fRaw.z);
+        Vector3 fLoc = fFlat.sqrMagnitude > 0.001f ? fFlat.normalized : fRaw;
+        Vector3 uLoc = Vector3.ProjectOnPlane(cache.modelUpLocal.sqrMagnitude > 0.001f ? cache.modelUpLocal.normalized : Vector3.up, fLoc);
+        if (uLoc.sqrMagnitude < 1e-6f)
+        {
+            return false;
+        }
+
+        Vector3 f = cache.root.TransformDirection(fLoc).normalized;
+        Vector3 u = cache.root.TransformDirection(uLoc.normalized).normalized;
+        float a = SmalNativeHeadMouthRestDownDegrees() * Mathf.Deg2Rad;
+        Vector3 restSegment = f * Mathf.Cos(a) - u * Mathf.Sin(a);
+        Vector3 g = Quaternion.Inverse(Quaternion.FromToRotation(cache.smalNativeHeadMouthBindWorld.normalized, restSegment)) * f;
+        local = (Quaternion.Inverse(headBind) * g).normalized;
+        return local.sqrMagnitude > 0.5f;
+    }
+
     // [LOOKAT] のログに体の前（spine ローカル）を足す。オフラインの移植で体の向き基準を再現するため（spine の world の回転に掛ける）。
     private static string BodyForwardLogText(AnimalRigCache cache)
     {
@@ -582,6 +818,11 @@ public sealed partial class AnimalPoseApplier
         if (instanceRoot == null)
             return;
 
+        lastApplyRoot = instanceRoot;
+        lastApplyPosedBones = false;
+        lastApplyRanSmalFk = false;
+        float rootBetaScale = request.rootFilterBetaScale > 0f ? request.rootFilterBetaScale : 1f;
+
         bool hasJoints = pose.jointsWorld != null && pose.jointVis != null && pose.jointCount >= 20;
         if (!hasJoints && !request.hasSmalPose)
             return;
@@ -596,7 +837,9 @@ public sealed partial class AnimalPoseApplier
 
         if (request.hasSmalPose && IsAnimalRigReadyForSmalFk(cache))
         {
-            AlignAnimalRootToSkeleton(instanceRoot, cache, pose.rootWorld, true, tick);
+            lastApplyPosedBones = true;
+            lastApplyRanSmalFk = !pose.hasAnimalControl;
+            AlignAnimalRootToSkeleton(instanceRoot, cache, pose.rootWorld, true, tick, rootBetaScale);
             smalDefaultPoseWeight = request.defaultPoseWeight;
             TryApplyAnimalSmalFk(cache, request.smalPose, request.settings, pose.jointsWorld, pose.jointVis, instanceRoot);
             if (enableAnimalKeypointAimAt)
@@ -608,8 +851,9 @@ public sealed partial class AnimalPoseApplier
             return;
         }
 
+        lastApplyPosedBones = true;
         TryApplyAnimalRootOrientation(instanceRoot, cache, pose.jointsWorld, pose.jointVis, Mathf.Clamp01(request.settings.animalRootRotateAlpha), pose.hasAnimalControl, pose.animalControl, request.settings, tick);
-        AlignAnimalRootToSkeleton(instanceRoot, cache, pose.rootWorld, true, tick);
+        AlignAnimalRootToSkeleton(instanceRoot, cache, pose.rootWorld, true, tick, rootBetaScale);
 
         float alpha = Mathf.Clamp01(request.settings.boneApplyAlpha);
         ApplyAnimalHeadPose(cache, pose.jointsWorld, pose.jointVis, alpha, pose.hasAnimalControl, pose.animalControl, tick);
@@ -642,7 +886,7 @@ public sealed partial class AnimalPoseApplier
         }
 
         AnimalGesturePosePlayer.ApplyToRigCache(request.gestureOverlayClip, request.gestureOverlayNormalizedTime, cache, request.gestureOnCanonicalLimbs,
-            ResolveHeadGestureRemap(cache, request.gestureAnatomicalHeadAxes));
+            ResolveHeadGestureRemap(cache, request.gestureAnatomicalHeadAxes), request.gestureMirror);
     }
 
     // SMAL FK needs confident front/rear and left/right identification of all four leg
@@ -879,7 +1123,7 @@ public sealed partial class AnimalPoseApplier
         return cache;
     }
 
-    private void AlignAnimalRootToSkeleton(Transform instanceRoot, AnimalRigCache cache, Vector3 skeletonRoot, bool smooth, RuntimeClock.TickContext tick)
+    private void AlignAnimalRootToSkeleton(Transform instanceRoot, AnimalRigCache cache, Vector3 skeletonRoot, bool smooth, RuntimeClock.TickContext tick, float betaScale = 1f)
     {
         if (instanceRoot == null || cache == null)
         {
@@ -892,7 +1136,7 @@ public sealed partial class AnimalPoseApplier
             skeletonRoot);
         if (smooth)
         {
-            targetPosition = SmoothAnimalRootPosition(instanceRoot, targetPosition, tick.deltaTime);
+            targetPosition = SmoothAnimalRootPosition(instanceRoot, targetPosition, tick.deltaTime, betaScale);
         }
 
         TrackPlacementWriter.Apply(
@@ -903,14 +1147,14 @@ public sealed partial class AnimalPoseApplier
                 instanceRoot.localScale));
     }
 
-    private Vector3 SmoothAnimalRootPosition(Transform root, Vector3 targetPosition, float deltaTime)
+    private Vector3 SmoothAnimalRootPosition(Transform root, Vector3 targetPosition, float deltaTime, float betaScale = 1f)
     {
         if (root == null)
         {
             return targetPosition;
         }
 
-        return motionFilter.FilterRootPosition(root, targetPosition, deltaTime);
+        return motionFilter.FilterRootPosition(root, targetPosition, deltaTime, betaScale);
     }
 
     private static Transform ResolveAnimalPlacementBone(AnimalRigCache cache)
@@ -2054,6 +2298,9 @@ public sealed partial class AnimalPoseApplier
         cache.rightRearToe = ResolveBone(bones, boneOverride?.rearRToe, AnimalRigDefinition.RightRearToe);
         cache.tailMid = ResolveBone(bones, boneOverride?.tailMid, AnimalRigDefinition.TailMid);
         cache.tailTip = ResolveBone(bones, boneOverride?.tailTip, AnimalRigDefinition.TailTip);
+        // SMAL の骨にそろえたリグ（2026-10-23 の試作、AnimalSmalNativeRig.cs）: 35 関節の名前がそろっていれば役を SMAL の関節に付け替え、bind を控える。
+        // そろっていないモデル（今の 54 体）は何もしない。
+        TryApplySmalNativeRoles(cache, bones);
         // 既定 ON（2026-10-08、非四足モード smalNonQuadrupedRig。2026-10-09 に採用）: 名簿のモデルだけ、役を AnimalNonQuadrupedRig.Table の行で付け替え、cache.smalNonQuadruped・
         // smalNoFrontLimbs を決める。役を決めた直後なので、この後に控える bind（modelForwardLocal・bindRotWorld/Local・bindDirLocal・胴の鎖など）は新しい役で採る。
         ApplyNonQuadrupedRoles(cache, bones);
@@ -2128,6 +2375,8 @@ public sealed partial class AnimalPoseApplier
         // 前に呼んでいたときは頭の軸が作られず、anatomicalAxes の資産の頭が骨の局所軸のまま回った（鼻まわりのつもりの首振りが左右の首振りに、
         // 2026-10-05 の R3 で実測）。PrimeAnimalBinds は読むだけなので、ここでもまだ誰も骨を書いていない bind。
         EnsureGestureAnatomy(cache);
+        // SMAL の頭の座標の前（smalNativeLookAtHeadFrame・smalNativeGestureHeadFrame、既定 OFF）はここで求める（root の向きも bind のうち）。
+        ResolveSmalHeadForward(cache);
         // 尾の鎖（smalTailFullChain、2026-10-07）の bind（局所回転・局所位置・弧長・長さの比）を控える。ここもまだ誰も骨を書いていない bind。
         CaptureSmalTailChainBind(cache);
 
@@ -3061,13 +3310,29 @@ public sealed partial class AnimalPoseApplier
             }
         }
 
+        // 顎（2026-10-18、あくび）: 頭の子で名前に jaw を含む最初の骨。上顎（upper）と末端（_end）は除く（AnimalSmalFkApplier.GetSmalJawBind と同じ規則。
+        // Labrador は Jaw、Lynx は fJaw。prefab を読んだ 47 体では 00_Dog 以外の 46 体で見つかる: w1017gest/final/jaw_roster.py）。役の骨は使わない
+        cache.gestureJaw = null;
+        if (cache.head != null)
+        {
+            for (int i = 0; i < cache.head.childCount && cache.gestureJaw == null; i++)
+            {
+                Transform child = cache.head.GetChild(i);
+                string lower = child.name.ToLowerInvariant();
+                if (lower.Contains("jaw") && !lower.Contains("upper") && !lower.EndsWith("_end") && !roles.Contains(child))
+                {
+                    cache.gestureJaw = child;
+                }
+            }
+        }
+
         // FK が書かない新しい点の骨は bind の局所を控える
         foreach (Transform t in cache.trunkChain)
         {
             cache.gestureBindLocal[t] = t.localRotation;
         }
 
-        foreach (Transform t in new[] { cache.gestureScapulaLeft, cache.gestureScapulaRight, cache.gestureEarLeft, cache.gestureEarRight })
+        foreach (Transform t in new[] { cache.gestureScapulaLeft, cache.gestureScapulaRight, cache.gestureEarLeft, cache.gestureEarRight, cache.gestureJaw })
         {
             if (t != null)
             {
@@ -3112,7 +3377,7 @@ public sealed partial class AnimalPoseApplier
             // 頭は Z = 鼻（顔の骨から。取れなければ体の前）
             if (cache.head != null && cache.bindRotWorld.TryGetValue(cache.head, out Quaternion headBind))
             {
-                Vector3 nose = ResolveHeadNoseLocal(cache) ? cache.headNoseLocal : Quaternion.Inverse(headBind) * f;
+                Vector3 nose = ResolveGestureHeadForward(cache, out Vector3 headForward) ? headForward : Quaternion.Inverse(headBind) * f;
                 Vector3 rl = Vector3.ProjectOnPlane(Quaternion.Inverse(headBind) * r, nose);
                 if (rl.sqrMagnitude > 1e-6f)
                 {
@@ -3122,12 +3387,35 @@ public sealed partial class AnimalPoseApplier
                     cache.gestureSwingSign[cache.head] = ResolveGestureSwingSign(headBind, rl, nose, u);
                 }
             }
+
+            // 顎は頭と同じ解剖学的な軸で回す: 頭の軸（Z = 鼻、X = 鼻に垂直にした体の右 = 頭の左右 = 顎の蝶番、Y = 頭の上）を顎の局所へ移す。取れなければ体の軸。
+            // 体の右をそのまま使うと、bind で頭が横を向いたモデル（34_Hyena・38_LionessV2・45_MountainGoat は約 50°）で蝶番が斜めになる。Labrador・Lynx では
+            // 体の右との差は 0.1°・0.6° で、顎の局所 Z・X（蝶番）と 0.2°・2.6°（w1017gest/final/jaw_hinge_roster.py、jaw_axis_check.py）。
+            // right の符号は先 = 鼻の向きで決める（最初の子の舌の付け根は Labrador で蝶番のほぼ真上にあり、向きで符号が決まらない）。+ で先が上 = 閉じる側（符号は −1）。
+            // キャッシュを作るとき（まだ誰も書いていない bind）に呼ぶので、今の回転が bind
+            if (cache.gestureJaw != null && !cache.gestureAxesFrame.ContainsKey(cache.gestureJaw))
+            {
+                Quaternion jawBind = cache.gestureJaw.rotation;
+                Quaternion jawInv = Quaternion.Inverse(jawBind);
+                Vector3 jawRight = r, jawUp = u, jawForward = f;
+                if (cache.head != null && cache.gestureAxesFrame.TryGetValue(cache.head, out Quaternion headFrame) &&
+                    cache.bindRotWorld.TryGetValue(cache.head, out Quaternion headBindWorld))
+                {
+                    Quaternion headAxesWorld = headBindWorld * headFrame;
+                    jawRight = headAxesWorld * Vector3.right;
+                    jawUp = headAxesWorld * Vector3.up;
+                    jawForward = headAxesWorld * Vector3.forward;
+                }
+
+                cache.gestureAxesFrame[cache.gestureJaw] = Quaternion.LookRotation(jawInv * jawForward, jawInv * jawUp);
+                cache.gestureSwingSign[cache.gestureJaw] = ResolveGestureSwingSign(jawBind, jawInv * jawRight, jawInv * jawForward, jawUp);
+            }
         }
 
         string Name(Transform t) => t != null ? t.name : "-";
         Debug.Log($"[GESTURE-ANATOMY] {Name(cache.root)} trunk=[{string.Join(",", cache.trunkChain.ConvertAll(t => t.name))}] girdle={Name(girdle)} " +
                   $"scapula={Name(cache.gestureScapulaLeft)}/{Name(cache.gestureScapulaRight)} ears={Name(cache.gestureEarLeft)}/{Name(cache.gestureEarRight)} " +
-                  $"axesFrames={cache.gestureAxesFrame.Count} bodyRight={(bodyRight.sqrMagnitude > 0.5f ? "yes" : "none")}");
+                  $"axesFrames={cache.gestureAxesFrame.Count} bodyRight={(bodyRight.sqrMagnitude > 0.5f ? "yes" : "none")} jaw={Name(cache.gestureJaw)}");
     }
 
     // 肩甲骨 = 役の上腕の親。肩甲帯（girdle）の直下に限る: 表が当たらず上腕の役が 1 本下の正規名の骨のままだと、親は本当の上腕で肩甲帯との間に 2 本以上入る

@@ -120,7 +120,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Debug.Log(
             $"[Customization] restored video={key} models={restoredModels} yawTracks={restoredYaw} " +
             $"scaleTracks={restoredScale} " +
-            $"session={(ExperimentSessionOverrides.Active ? "experiment(読むだけ)" : "normal(書き込み可)")}");
+            $"session={ExperimentSessionOverrides.DescribeWriteMode()}");
     }
 
 
@@ -241,7 +241,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     // ---- 保存 ----
 
-    // 実験中は基準ファイルに書かず、セッション上書きへ入れる。
+    // 参加者のセッションの間は基準ファイルに書かず、セッション上書きへ入れる。実験者のデバッグのセッションは基準へ書く（2026-10-27）。
+    // 決まりは ExperimentSessionOverrides.ResolveWritable の 1 か所。
     private VideoCustomization ResolveWritableCustomization()
     {
         if (!rememberTrackCustomization || string.IsNullOrEmpty(trackCustomizationVideoKey))
@@ -250,9 +251,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         int frames = manifest != null ? manifest.num_frames : 0;
-        return ExperimentSessionOverrides.Active
-            ? ExperimentSessionOverrides.GetOrCreate(trackCustomizationVideoKey, frames)
-            : TrackCustomizationStore.GetOrCreate(trackCustomizationVideoKey, frames);
+        return ExperimentSessionOverrides.ResolveWritable(trackCustomizationVideoKey, frames);
     }
 
 
@@ -321,10 +320,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    // 実験中は基準ファイルを書き換えないので、要求そのものを立てない。
+    // 参加者のセッションの間は基準ファイルを書き換えないので、要求そのものを立てない（デバッグのセッションは書く）。
+    // 試行の終わりにシーンが閉じても、OnDestroy の FlushTrackCustomizationSaveNow が待ちの分を書く。
     private void RequestTrackCustomizationSave()
     {
-        if (ExperimentSessionOverrides.Active)
+        if (!ExperimentSessionOverrides.WritesToBaseline)
         {
             return;
         }

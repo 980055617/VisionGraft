@@ -93,6 +93,69 @@ public static class AnimalGestureSampleTools
         }
     }
 
+    // 身震いの作り直し v3 の候補（v3・v3s）だけを書く（2026-10-17）。CreateRemakeCandidateAssets は採用済みの候補も書き直すので分けた。バッチ:
+    //   Unity.exe -batchmode -quit -projectPath ... -executeMethod AnimalGestureSampleTools.CreateBodyShakeV3CandidateAssets
+    // 資産の trunkProfile を読むプレイヤー（AnimalGesturePose.trunkProfile・AnimalGesturePosePlayer.ApplyTrunk の 2026-10-17 の変更）が先に入っていること。
+    [MenuItem("VisionGraft/Interactive Motion/Create Body Shake v3 Candidate Assets")]
+    public static void CreateBodyShakeV3CandidateAssets()
+    {
+        EnsureDirectory(CandidatesFolder);
+        var created = new List<Object>
+        {
+            // v3: 肩甲帯 ±16°・頭 ±28°・首 ±6°（頭が肩の 1.75 倍）
+            CreateBodyShakeV3Candidate("SampleBodyShake_v3", 28f, 6f, 16f),
+            // v3s: 胴を強め、頭を肩と同じに（肩甲帯 ±22°・頭 ±22°・首 ±4°）
+            CreateBodyShakeV3Candidate("SampleBodyShake_v3s", 22f, 4f, 22f),
+        };
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+        foreach (Object o in created)
+        {
+            Debug.Log($"[GESTURE-CANDIDATE] {AssetDatabase.GetAssetPath(o)}");
+        }
+    }
+
+    // 新しい身ぶりの候補（2026-10-18、ユーザー 10/17「ほかにいいアニメーションがあればそれも追加してほしい」）。今のプレイヤーのまま動く「視線をそらす」と、
+    // 撮影で比べる基準（点を持たない資産）を書く。どれも Candidates/ に書く（Static/ に置くと OnValidate の自動割り当てに拾われる）。バッチ:
+    //   Unity.exe -batchmode -quit -projectPath ... -executeMethod AnimalGestureSampleTools.CreateNewGestureCandidateAssets
+    // あくび（SampleYawn_v1・SampleYawnWide_v1）は顎の点（AnimalGesturePoint.Jaw）を足すプレイヤーの変更が要るので CreateYawnCandidateAssets に分けた（その変更と同じ版でだけ足す）。
+    [MenuItem("VisionGraft/Interactive Motion/Create New Gesture Candidate Assets")]
+    public static void CreateNewGestureCandidateAssets()
+    {
+        EnsureDirectory(CandidatesFolder);
+        var created = new List<Object>
+        {
+            CreateLookAwayCandidate(),
+            CreateStillReferenceAsset(),
+        };
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+        foreach (Object o in created)
+        {
+            Debug.Log($"[GESTURE-CANDIDATE] {AssetDatabase.GetAssetPath(o)}");
+        }
+    }
+
+    // あくびの候補（SampleYawn_v1 = 顎 44°、SampleYawnWide_v1 = 顎 52°）だけを書く（2026-10-18）。顎の点（AnimalGesturePoint.Jaw・AnimalRigCache.gestureJaw・
+    // EnsureGestureAnatomy の顎）を足すプレイヤーの変更が先に入っていること（無いとこのファイルがコンパイルできない）。バッチ:
+    //   Unity.exe -batchmode -quit -projectPath ... -executeMethod AnimalGestureSampleTools.CreateYawnCandidateAssets
+    [MenuItem("VisionGraft/Interactive Motion/Create Yawn Candidate Assets")]
+    public static void CreateYawnCandidateAssets()
+    {
+        EnsureDirectory(CandidatesFolder);
+        var created = new List<Object>
+        {
+            CreateYawnCandidate("SampleYawn_v1", 44f),
+            CreateYawnCandidate("SampleYawnWide_v1", 52f),
+        };
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+        foreach (Object o in created)
+        {
+            Debug.Log($"[GESTURE-CANDIDATE] {AssetDatabase.GetAssetPath(o)}");
+        }
+    }
+
     // 首を振る（犬の耳を払う頭振り）: 鼻の軸まわりのロール ±35°・5 Hz・4 周期（0.8 s）、0.15 s 待ってから 0.1 s で立ち上げ、最後の 1.5 周期で減衰。
     // ヨー ±9° を 1/4 周期ずらして足し（楕円の振り）、耳を 1/8 周期遅れで ±30° ばたつかせる。犬の頭振りは「頭が左右に向く、または回転して耳が上下に繰り返し動く」
     // （den Uijl et al. 2017 PLoS ONE 12:e0188481）。周波数は推定（Labrador の身震い 4.5±0.25 Hz、Dickerson et al. 2012 より頭は小さく速い）。
@@ -319,6 +382,293 @@ public static class AnimalGestureSampleTools
         };
         EditorUtility.SetDirty(asset);
         return asset;
+    }
+
+    // ---- 身震いの作り直し v3（2026-10-17）----
+    // ユーザー（10/17）「身震いなんかやりすぎじゃない？本当に動物がする動き？」「身ぶるいモットうまく作って」。v2 は判定役 2 人とも「胴の回転が見えず、首振り（＋尾振り）に見える」。
+    // v2 は胴の鎖の中ほどだけを ±28° ねじり（肩甲帯 7.4°・骨盤 0°）、軸が背中の線なので腹だけが振れ、頭（world で ±40°）と耳（±30°）が目立った。v3 は:
+    // - 肩甲帯（胴の鎖の最後の骨）を girdleDeg 回す。胴の点の曲線を「骨盤に対する肩甲帯の回転」にし、鎖への配り方を trunkProfile（(0,0)(0.6,1.2)(1,1) の折れ線、
+    //   胴の中ほどが肩甲帯の 1.2 倍）で決める
+    // - 肩甲骨を肩甲帯と同じだけ逆に回して前脚の向きを保つ（足先は肩甲骨の根の移動だけ動く。移植の予測で Labrador 0.6 cm・Lynx 0.9 cm、v2 は 2.0・4.8 cm）。
+    //   上腕は回さない（肩甲骨の無い 00_Dog で前脚が振れないように）。骨盤・後脚・尾の付け根は回さない（後ろ足は動かない）
+    // - 頭 → 首 → 肩甲帯 → 耳 → 尾の付け根 → 中ほど → 先の順に遅れる波（頭 0・首 1/16・肩甲帯 2/16・耳 4/16・尾 6/16・8/16・10/16 周期、1/16 周期 = 14 ms。
+    //   遅れは推定）。頭は world で headDeg（鼻の軸まわり）
+    // - 首の world のロールは neckDeg に抑える。視聴者へ向けた頭は首・胴のロールを受け継ぐので、頭の向きが体の前から ψ ずれていると鼻が上下に振れる。
+    //   肩甲帯 16° で首も 16° 回すと ψ 57° で ±13°、首 6° なら ±8°（v2 は ±6°。移植、scratchpad の w1017shake/final/nod_neck_final.py）
+    // - 各部位 3 周期（立ち上げ 0.75・持続 1.25・減衰 1）、0.45 s から（視聴者が体の前から 80° より外のとき、体の向き替えが最初の 0.4〜0.6 s にある。
+    //   0.45 s なら向き替えが 0.45 s 以内（134° まで）のときは重ならない）。振る前に鼻を 8° 下げて構え（0.15〜0.40 s）、振り終えてから戻す（1.15〜1.45 s）
+    // 周波数は Labrador の実測 4.5 Hz（Dickerson, Mills & Hu 2012 J R Soc Interface 9:3208。4〜260 kg の動物は 4〜6 Hz）。四本足で立って振り、足は地面に着いたまま
+    // （同論文。立ってから振るのはイベントの to_default の段が済ませている）。頭から尾へ伝わる順はマウスの高速度撮影（Halberstadt & Geyer 2013）と犬についての
+    // 研究者の談話（2010 の報道）だけが出典で、振幅・遅れ・周期数・構えは推定。値は world でのロール（頭は鼻の軸、ほかは体の長軸、+ で上が体の左へ）で決め、
+    // 局所の曲線は「その部位 − 親の部位」にする（体の長軸まわりの回転は足し算で重なる）。
+    // **この資産は trunkProfile を読むプレイヤーと同じビルドでしか出さない**。古いプレイヤーは trunkProfile を読まず肩甲帯に 26.5% しか届かないので、
+    // 肩甲骨の逆回し（100%）が勝って前脚が逆に約 12° 傾き、足先が滑る。
+    private static AnimalGesturePose CreateBodyShakeV3Candidate(string assetName, float headDeg, float neckDeg, float girdleDeg)
+    {
+        const float duration = 1.5f;
+        AnimalGesturePose asset = LoadOrCreateAsset(CandidatesFolder + "/" + assetName + ".asset");
+        asset.duration = duration;
+        asset.onRoleBones = true;
+        asset.anatomicalAxes = true;
+        asset.trunkProfile = BuildLinearCurve(new Vector2(0f, 0f), new Vector2(0.6f, 1.2f), new Vector2(1f, 1f));
+        var w = new ShakeWave { hz = 4.5f, start = 0.45f, attackCycles = 0.75f, sustainCycles = 1.25f, decayCycles = 1f };
+        float Head(float t) => ShakeValue(w, headDeg, 0f, t);
+        float Neck(float t) => ShakeValue(w, neckDeg, 1f / 16f, t);
+        float Girdle(float t) => ShakeValue(w, girdleDeg, 2f / 16f, t);
+        // 尾の world での横振り（度、体の上まわり）。付け根 → 中ほど → 先と遅れる。符号は肩甲帯が上を左へ傾けたとき尾の先が右へ出る側
+        float TailBase(float t) => -ShakeValue(w, 12f, 6f / 16f, t);
+        float TailMid(float t) => -ShakeValue(w, 20f, 8f / 16f, t);
+        float TailEnd(float t) => -ShakeValue(w, 26f, 10f / 16f, t);
+        // 耳（耳の根の骨）は頭のロールに 1/4 周期遅れて左右交互にばたつく（+ で耳の先が上。首振り v2 と同じ形で小さく）
+        float Ear(float t) => ShakeValue(w, 14f, 4f / 16f, t);
+        AnimationCurve S(System.Func<float, float> f) => BuildSampledCurve(duration, w.hz, f);
+        asset.pointCurves = new List<AnimalGesturePointCurve>
+        {
+            new AnimalGesturePointCurve { point = AnimalGesturePoint.Trunk, forward = S(Girdle) },
+            new AnimalGesturePointCurve { point = AnimalGesturePoint.Neck, forward = S(t => Neck(t) - Girdle(t)) },
+            new AnimalGesturePointCurve
+            {
+                point = AnimalGesturePoint.HeadTip,
+                forward = S(t => Head(t) - Neck(t)),
+                right = BuildHoldCurve(duration, 0.15f, 0.25f, 0.75f, 0.30f, -8f, 0f, 0f),
+            },
+            new AnimalGesturePointCurve { point = AnimalGesturePoint.LeftEar, right = S(Ear) },
+            new AnimalGesturePointCurve { point = AnimalGesturePoint.RightEar, right = S(t => -Ear(t)) },
+            new AnimalGesturePointCurve { point = AnimalGesturePoint.TailBase, up = S(TailBase) },
+            new AnimalGesturePointCurve { point = AnimalGesturePoint.TailMid, up = S(t => TailMid(t) - TailBase(t)) },
+            new AnimalGesturePointCurve { point = AnimalGesturePoint.TailTip, up = S(t => TailEnd(t) - TailMid(t)) },
+            new AnimalGesturePointCurve { point = AnimalGesturePoint.FrontLeftScapula, forward = S(t => -Girdle(t)) },
+            new AnimalGesturePointCurve { point = AnimalGesturePoint.FrontRightScapula, forward = S(t => -Girdle(t)) },
+        };
+        WarnDuplicatePoints(asset);
+        EditorUtility.SetDirty(asset);
+        return asset;
+    }
+
+    // 身震いの波。部位の値 = 包絡 × amplitude × sin(2π·hz·u)、u = t − start − lagCycles / hz（秒）。包絡（立ち上げ attackCycles・持続 sustainCycles・
+    // 減衰 decayCycles、smoothstep）は全部位で同じ形を lagCycles / hz だけ遅らせる: 頭が先に始まって先に終わり、尾が最後に始まって最後に終わる。
+    private struct ShakeWave
+    {
+        public float hz;
+        public float start;
+        public float attackCycles;
+        public float sustainCycles;
+        public float decayCycles;
+    }
+
+    private static float ShakeValue(ShakeWave w, float amplitude, float lagCycles, float t)
+    {
+        float period = 1f / Mathf.Max(0.1f, w.hz);
+        float u = t - w.start - lagCycles * period;
+        float attack = w.attackCycles * period;
+        float sustain = w.sustainCycles * period;
+        float decay = w.decayCycles * period;
+        if (u <= 0f || u >= attack + sustain + decay)
+        {
+            return 0f;
+        }
+
+        float env = u < attack ? Mathf.SmoothStep(0f, 1f, u / Mathf.Max(1e-4f, attack))
+            : u <= attack + sustain ? 1f
+            : 1f - Mathf.SmoothStep(0f, 1f, (u - attack - sustain) / Mathf.Max(1e-4f, decay));
+        return env * amplitude * Mathf.Sin(2f * Mathf.PI * w.hz * u);
+    }
+
+    // 秒の関数 f(t) を BuildOscillationCurve と同じ細かさ（1 周期 16 キー以上、最低でも 1/72 s ごと）でキーにする。
+    private static AnimationCurve BuildSampledCurve(float duration, float hz, System.Func<float, float> f)
+    {
+        float period = 1f / Mathf.Max(0.1f, hz);
+        float step = Mathf.Min(period / 16f, 1f / 72f);
+        var curve = new AnimationCurve();
+        for (float t = 0f; t <= duration + 1e-5f; t += step)
+        {
+            curve.AddKey(new Keyframe(Mathf.Clamp01(t / duration), f(t)));
+        }
+
+        for (int i = 0; i < curve.length; i++)
+        {
+            curve.SmoothTangents(i, 0f);
+        }
+
+        return curve;
+    }
+
+    // 折れ線の曲線（trunkProfile 用）。接線を隣の線分の傾きにし、さらに Linear にする（Inspector で触っても滑らかに直されない）。
+    private static AnimationCurve BuildLinearCurve(params Vector2[] points)
+    {
+        var curve = new AnimationCurve();
+        for (int i = 0; i < points.Length; i++)
+        {
+            float inSlope = i > 0 ? (points[i].y - points[i - 1].y) / Mathf.Max(1e-6f, points[i].x - points[i - 1].x) : 0f;
+            float outSlope = i + 1 < points.Length ? (points[i + 1].y - points[i].y) / Mathf.Max(1e-6f, points[i + 1].x - points[i].x) : 0f;
+            curve.AddKey(new Keyframe(points[i].x, points[i].y, i > 0 ? inSlope : outSlope, i + 1 < points.Length ? outSlope : inSlope));
+        }
+
+        for (int i = 0; i < curve.length; i++)
+        {
+            AnimationUtility.SetKeyLeftTangentMode(curve, i, AnimationUtility.TangentMode.Linear);
+            AnimationUtility.SetKeyRightTangentMode(curve, i, AnimationUtility.TangentMode.Linear);
+        }
+
+        return curve;
+    }
+
+    // 点は 1 つにつき 1 行にする（ApplyToRigCache は行ごとに bone.localRotation = 土台 × 回転 を書くので、同じ点が 2 行あると最後の行だけが効く）。
+    private static void WarnDuplicatePoints(AnimalGesturePose asset)
+    {
+        var seen = new HashSet<AnimalGesturePoint>();
+        foreach (AnimalGesturePointCurve c in asset.pointCurves)
+        {
+            if (c != null && !seen.Add(c.point))
+            {
+                Debug.LogError($"[GESTURE-CANDIDATE] DUPLICATE-POINT {asset.name}: 点 {c.point} が 2 行ある（最後の行だけが効く）");
+            }
+        }
+    }
+
+    // ---- 新しい身ぶりの候補（2026-10-18）----
+    // どれも首・頭・耳（あくびは顎も）だけを回すので、足先は動かない（脚・胴・root・肩甲骨の点を持たない）。0.45 s までは何もしない
+    // （立ち上がりの名残で胴・首がまだ回っている間と、視聴者が体の前から 80° より外のときの体の向き替え 0.4〜0.6 s に重ねない）。
+    // 頭・首の曲線は「視聴者へ向けた頭」からのずれ（頭を向ける層の後に足される）。軸は anatomicalAxes: right + = 先が上（頭は鼻が上、首は頭が上、顎は顎先が上 = 閉じる側）、
+    // up + = 体の右へ向く（上から見て時計回り）、forward + = 頭の上が体の左へ。耳は up（耳の根を鉛直まわりに回す = 耳の向きを変える）だけを使う
+    // （耳の right は Labrador の垂れ耳では耳たぶを持ち上げ、Lynx の立ち耳では起こす側で、猫の「耳を前へ」と犬で向きがそろわない。移植 w1017gest/design/ear_right_check.py）。
+
+    // 視線をそらして戻す（SampleLookAway_v1）: 立ち上がって視聴者を見てから 0.80 s おき、頭と首を合わせて体の左へ 30°（首 12°・頭 18°、頭を向ける層と同じ首 4 割）を
+    // 0.80 s から 0.30 s で向け（ease-out、向き始めが速い）、0.65 s 保持し、0.40 s で戻す（2.15 s で終わる）。耳（耳の根）は 0.65 s から 0.15 s で −25° 先に向け、
+    // 頭が向くにつれて戻して world では目標（体の左 30°）を向いたままにする（頭に対して 0 になるのは頭が向き終わる 1.10 s。その後は頭と一緒に戻る）。
+    // 出典: 見知らぬ人が中立に近づくと犬の 94%（威嚇的なら 81%）が頭を横へ向けた（head turning、Pedretti et al. 2023 Anim Cogn 26:943、53 頭。定義は補遺で未確認）。
+    // 犬の視線の行き来は 2 秒以内に顔と対象を見比べる形で記録される（gaze alternation、Commauda et al. 2026 Animals 16:760）。見知らぬ人の直視は猫には脅威になりうる
+    // （2022 AAFP/ISFM の猫の扱いの指針）。猫は音の方を向くとき耳が目・頭より先に動く（Populin & Yin 1998 J Neurosci 18:4233 の要旨。遅れの数値は未確認）。
+    // 角度・速さ・保持・耳の先行（約 0.14 s）・向き（体の左）は推定。向きは資産で決まる: 視聴者が体の右にいれば体の前へ戻る側、左にいれば肩越しにそれる側
+    // （静的イベントは体を回して視聴者を体の前から 80° 以内に収めるので最大で体の前から約 110°、歩けずに体を回さないイベントだけ最大約 130°）。
+    // 頭が視聴者より高く鼻が下を向いているときは、頭の上まわりに回すので頭が少し傾く（移植の予測で Lynx の立ち f1685 で 5.6°）。
+    private static AnimalGesturePose CreateLookAwayCandidate()
+    {
+        const float duration = 2.25f;
+        const float total = -30f;
+        const float neckShare = 0.4f;
+        const float onset = 0.80f, rise = 0.30f, hold = 0.65f, fall = 0.40f;
+        const float earLead = -25f, earOnset = 0.65f, earRise = 0.15f;
+        AnimalGesturePose asset = LoadOrCreateAsset(CandidatesFolder + "/SampleLookAway_v1.asset");
+        asset.duration = duration;
+        asset.onRoleBones = true;
+        asset.anatomicalAxes = true;
+        // 耳の根（頭に対して）: 頭が動く前に目標の側へ先に向き（最大 earLead）、頭が来るにつれて「目標 − 頭」へ戻る（耳の world の向き = 頭 + 耳 = 目標）。
+        // 頭が向き終わった後は 0（頭と一緒に戻る。戻りでもう一度先に向けると垂れ耳が 2 回ばたつく）
+        float Ear(float t)
+        {
+            if (t <= earOnset || t >= onset + rise)
+            {
+                return 0f;
+            }
+
+            float head = total * HoldShape(t, onset, rise, hold, fall);
+            return Mathf.SmoothStep(0f, 1f, (t - earOnset) / earRise) * Mathf.Clamp(total - head, earLead, 0f);
+        }
+
+        AnimationCurve ear = BuildSampledCurve(duration, 1f, Ear);
+        asset.pointCurves = new List<AnimalGesturePointCurve>
+        {
+            new AnimalGesturePointCurve { point = AnimalGesturePoint.Neck, up = BuildHoldCurve(duration, onset, rise, hold, fall, total * neckShare, 0f, 0f) },
+            new AnimalGesturePointCurve { point = AnimalGesturePoint.HeadTip, up = BuildHoldCurve(duration, onset, rise, hold, fall, total * (1f - neckShare), 0f, 0f) },
+            new AnimalGesturePointCurve { point = AnimalGesturePoint.LeftEar, up = ear },
+            new AnimalGesturePointCurve { point = AnimalGesturePoint.RightEar, up = ear },
+        };
+        WarnDuplicatePoints(asset);
+        EditorUtility.SetDirty(asset);
+        return asset;
+    }
+
+    // 撮影で比べる基準（SampleStillRef_v1）: 点を 1 つも持たない 2.5 s の資産。立ち上がって視聴者へ頭を向けたまま止まるので、同じ場面の
+    // 「身ぶりを足す前の姿勢」が tick ごとに取れる（新しい身ぶりの撮影から引く）。撮影専用で、シーンの一覧（animalStaticGestureClips）には入れない。
+    private static AnimalGesturePose CreateStillReferenceAsset()
+    {
+        AnimalGesturePose asset = LoadOrCreateAsset(CandidatesFolder + "/SampleStillRef_v1.asset");
+        asset.duration = 2.5f;
+        asset.onRoleBones = true;
+        asset.anatomicalAxes = true;
+        asset.pointCurves = new List<AnimalGesturePointCurve>();
+        EditorUtility.SetDirty(asset);
+        return asset;
+    }
+
+    // BuildHoldCurve と同じ形（揺れなし）を 0..1 で返す（秒）: onset まで 0、rise 秒で 1 へ（ease-out）、hold 秒 1、fall 秒で 0 へ（smoothstep）、その後 0。
+    private static float HoldShape(float t, float onset, float rise, float hold, float fall)
+    {
+        float holdStart = onset + rise;
+        float holdEnd = holdStart + hold;
+        if (t <= onset)
+        {
+            return 0f;
+        }
+
+        if (t < holdStart)
+        {
+            float u = (t - onset) / Mathf.Max(1e-4f, rise);
+            return 1f - (1f - u) * (1f - u);
+        }
+
+        if (t <= holdEnd)
+        {
+            return 1f;
+        }
+
+        return t < holdEnd + fall ? 1f - Mathf.SmoothStep(0f, 1f, (t - holdEnd) / Mathf.Max(1e-4f, fall)) : 0f;
+    }
+
+    // あくび（SampleYawn_v1 = 顎 44°、SampleYawnWide_v1 = 顎 52°）: 顎を 0.45 s から 0.95 s で開け（smoothstep）、0.30 s 開けたまま、0.70 s で閉じる（2.40 s で閉じ終わる）。
+    // 開く間に鼻先を 10° 上げ（首 3°・頭 7°、顎より少し後に上げ始める）、顎と同じ 2.40 s に下ろす。
+    // 出典: 犬のあくびは 2.04 ± 0.59 s（272 回・198 頭）、Labrador は 2.21 ± 0.46 s（12 頭）。口が閉じた最後の瞬間から再び閉じるまで。「吸気とともに大きく開け、
+    // 短い頂点の後、短い呼気で受動的に閉じる」（Gallup, Moscatello & Massen 2019 Curr Zool 66:401）ので閉じる方を短くした。猫は平均 1.97 s（Gallup et al. 2016、報道からの孫引き）。
+    // メーカーの Lynx のあくび（idle_stretching_01 の中）は顎 81°・開き 0.62 s・閉じ 0.46 s（10〜90%）で、その間に頭が上がる。メーカーは Labrador にあくびを付けておらず、
+    // 物をくわえる動きで顎を 41〜49° 開けている（唇の骨は回さない）。44° はその範囲の中、52° は少し外（口角の伸びを撮影で確かめる）。開く角度・時間の配分・鼻の上げ幅は推定。
+    // 目は細めない・耳は動かさない（まぶたの点が無い。耳は犬と猫で倒す向きの軸がそろわない）。
+    // **顎の点（AnimalGesturePoint.Jaw）を足すプレイヤーの変更と同じ版でしか出さない**（古いプレイヤーには顎の点が無く、鼻を上げて下ろすだけになる。顎の骨が無いモデル 00_Dog でも同じ）。
+    private static AnimalGesturePose CreateYawnCandidate(string assetName, float jawDeg)
+    {
+        const float duration = 2.5f;
+        AnimalGesturePose asset = LoadOrCreateAsset(CandidatesFolder + "/" + assetName + ".asset");
+        asset.duration = duration;
+        asset.onRoleBones = true;
+        asset.anatomicalAxes = true;
+        // 顎は right の − で開く（+ は顎先が上 = 閉じる側）
+        float Jaw(float t) => -jawDeg * SmoothPulse(t, 0.45f, 0.95f, 0.30f, 0.70f);
+        float Neck(float t) => 3f * SmoothPulse(t, 0.50f, 0.90f, 0.30f, 0.70f);
+        float Head(float t) => 7f * SmoothPulse(t, 0.55f, 0.90f, 0.25f, 0.70f);
+        AnimationCurve S(System.Func<float, float> f) => BuildSampledCurve(duration, 1f, f);
+        asset.pointCurves = new List<AnimalGesturePointCurve>
+        {
+            new AnimalGesturePointCurve { point = AnimalGesturePoint.Jaw, right = S(Jaw) },
+            new AnimalGesturePointCurve { point = AnimalGesturePoint.Neck, right = S(Neck) },
+            new AnimalGesturePointCurve { point = AnimalGesturePoint.HeadTip, right = S(Head) },
+        };
+        WarnDuplicatePoints(asset);
+        EditorUtility.SetDirty(asset);
+        return asset;
+    }
+
+    // 0..1 のなめらかなこぶ（秒）: start まで 0、rise 秒で 1 へ（smoothstep）、hold 秒 1、fall 秒で 0 へ（smoothstep）、その後 0。
+    private static float SmoothPulse(float t, float start, float rise, float hold, float fall)
+    {
+        if (t <= start)
+        {
+            return 0f;
+        }
+
+        float u = t - start;
+        if (u < rise)
+        {
+            return Mathf.SmoothStep(0f, 1f, u / Mathf.Max(1e-4f, rise));
+        }
+
+        u -= rise;
+        if (u <= hold)
+        {
+            return 1f;
+        }
+
+        u -= hold;
+        return u < fall ? 1f - Mathf.SmoothStep(0f, 1f, u / Mathf.Max(1e-4f, fall)) : 0f;
     }
 
     // 振動の形（秒）。onset だけ待ってから attack で立ち上げ、sustainCycles 周期持続し、decayCycles 周期で 0 へ減衰する（包絡は smoothstep）。

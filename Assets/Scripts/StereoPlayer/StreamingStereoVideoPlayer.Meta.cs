@@ -60,6 +60,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public Vector3 otherAnchorCameraXyz;
         public Vector3 otherProxyCenter;
         public Vector3 otherProxySize;
+        // partialAppearanceMode = Slide（既定 Off、2026-10-25、PartialAppearance.partial.cs）: 画面の上でずらす量（eye px）。
+        // 端の外へ出る値になるので ushort の anchor とは別に持つ。使うのは ApplyMetaTarget と Else の下端合わせだけ。
+        public bool hasScreenShift;
+        public float screenShiftU;
+        public float screenShiftV;
     }
 
     private bool metaLoaded;
@@ -121,9 +126,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         rawFrameObjectsMemo.Clear();
         rawFrameObjectsMemoOrder.Clear();
         loggedBBoxSpikeKeys.Clear();
+        // partialAppearanceMode の表も bundle ごとに作り直す（下の PrecomputePartialAppearanceOnLoad）。作るまでは何も外さない。
+        partialAppearanceFrames = null;
         // C4-T の先読みの表と基準も bundle ごとに捨てる（展開先の meta.bin のパスは bundle によらず同じなので、パスでは区別できない）。
         InvalidateAnimalScaleTrendTable();
         InvalidateManualEditRanges();
+        // S（2026-10-16）: ロックは読み込み直しを越えて残る（既存の欠陥）ので、S の k は先に外して（÷k）捨てる。Else（車）の対象も bundle ごとに作り直す。
+        UndoStereoDepthStates("reload", true);
+        InvalidateStereoDepthElseEligibility();
 
         try
         {
@@ -140,12 +150,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (metaLoaded)
             {
                 CalibrateAnchorDepthRange();
+                // partialAppearanceMode（既定 Off、2026-10-25、PartialAppearance.partial.cs）: 映り始めの一部しか映っていないフレームの表。
+                // ほかの先読み（C4-T・くじ・S）より前に作り、そちらも外した後のフレームを見るようにする。
+                PrecomputePartialAppearanceOnLoad();
+                // V のその場の表（placementFollowVideoDepthHoldWhileFeetStill、既定 OFF、2026-10-27、VideoDepthFollowStill.partial.cs）。
+                PrecomputeVideoDepthFollowStillOnLoad();
                 // C4-T / B1 の先読みの表をここで作る（どちらかのフラグが ON のときだけ）。遅延で作ると再生中の最初のフレームで 265〜320 ms 止まる。
                 // 止まりは読み込み中へ移るだけで、消えてはいない（実機の時間は [BUNDLETIME] meta.bin で測る）。
                 PrecomputeAnimalScaleTrendTableOnLoad();
                 PrecomputeManualEditRangesOnLoad();
                 // 1 周に 1 回の Random モーションのくじを引くフレーム（2026-10-23、randomMotionOncePerLoop のときだけ）。
                 PrecomputeRandomMotionEligibleFramesOnLoad();
+                // S（2026-10-16）: ⑨ が付けない Else（車）の対象を読み込み中に作る（S が ON のときだけ。全フレームを読む）。
+                PrecomputeStereoDepthElseEligibilityOnLoad();
             }
         }
         catch
@@ -334,6 +351,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (rejectIsolatedBBoxSpikes)
         {
             RepairIsolatedBBoxSpikes(frameIndex, outObjs);
+        }
+
+        // partialAppearanceMode（既定 Off、PartialAppearance.partial.cs）: 映り始めの一部しか映っていないフレームを外す・出そろったフレームからずらす。
+        if (partialAppearanceFrames != null)
+        {
+            ApplyPartialAppearanceToFrameObjects(frameIndex, outObjs);
         }
 
         return true;

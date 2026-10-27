@@ -155,8 +155,11 @@ public static partial class BatchPlaybackLogger
         float fov = ResolveScreenFitFov(cam, (float)W / H);
         RenderRecordView(cam, cam.transform.position, cam.transform.rotation, fov, cam.nearClipPlane, cam.farClipPlane,
             W, H, Path.Combine(dir, name + ".jpg"), null);
+        // 影の地図の texel とずらしを、今撮った 1 枚の URP の値から出す（2026-10-25、補助カメラを撮る前に読む）。
+        if (recordTick % 72 == 0) { LogShadowParams(name); }
         RecordAuxViews(cam, dir, name);
         WriteRecordPose(dir, name, cam);
+        WriteSkinCheck(dir, name, cam, cur);
 
         var inv = CultureInfo.InvariantCulture;
         recordIndex.WriteLine(string.Join(",", name, recordWindows[w][0].ToString(inv), recordTick.ToString(inv),
@@ -183,7 +186,9 @@ public static partial class BatchPlaybackLogger
             recordPose.WriteLine("name,frameCount,vx,vy,vz,hpx,hpy,hpz,hqx,hqy,hqz,hqw,nqx,nqy,nqz,nqw,rpx,rpy,rpz,rqx,rqy,rqz,rqw," +
                 "npx,npy,npz,spx,spy,spz,sqx,sqy,sqz,sqw," +
                 "flpx,flpy,flpz,frpx,frpy,frpz,rlpx,rlpy,rlpz,rrpx,rrpy,rrpz,tbx,tby,tbz,tmx,tmy,tmz,ttx,tty,ttz," +
-                "flux,fluy,fluz,frux,fruy,fruz,rlux,rluy,rluz,rrux,rruy,rruz");
+                "flux,fluy,fluz,frux,fruy,fruz,rlux,rluy,rluz,rrux,rruy,rruz," +
+                // 2026-10-18 追記（新しい身ぶりの検算）: 顎（頭の子で名前に jaw、上顎・末端を除く最初の骨）と左右の耳の根の world の回転。無ければ単位回転
+                "jqx,jqy,jqz,jqw,elqx,elqy,elqz,elqw,erqx,erqy,erqz,erqw");
         }
 
         // 撮る track は補助カメラの指定の最初の "Track_N/..." から決める（既定 Track_0。Lynx は実験と同じ track 1 で撮る）。
@@ -234,7 +239,27 @@ public static partial class BatchPlaybackLogger
         V(P(cache?.rightFrontUpper));
         V(P(cache?.leftRearUpper));
         V(P(cache?.rightRearUpper));
+        Transform jaw = FindRecordJaw(head);
+        Q(jaw != null ? jaw.rotation : Quaternion.identity);
+        Q(cache != null && cache.gestureEarLeft != null ? cache.gestureEarLeft.rotation : Quaternion.identity);
+        Q(cache != null && cache.gestureEarRight != null ? cache.gestureEarRight.rotation : Quaternion.identity);
         recordPose.WriteLine(string.Join(",", cols));
+    }
+
+    // 頭の子で名前に jaw を含む最初の骨（上顎・末端は除く。AnimalSmalFkApplier.GetSmalJawBind と同じ規則）。記録用（2026-10-18）。
+    private static Transform FindRecordJaw(Transform head)
+    {
+        for (int i = 0; head != null && i < head.childCount; i++)
+        {
+            Transform child = head.GetChild(i);
+            string lower = child.name.ToLowerInvariant();
+            if (lower.Contains("jaw") && !lower.Contains("upper") && !lower.EndsWith("_end"))
+            {
+                return child;
+            }
+        }
+
+        return null;
     }
 
     private static string ResolveRecordPoseTrack()
@@ -330,6 +355,39 @@ public static partial class BatchPlaybackLogger
             // 7 つ目が "all" なら、対象のモデルだけでなく全 track（Track_N の下）を写す（2026-10-10。人とボールの前後を横・上から見る用。
             // 今までは対象のモデル以外を全部隠していたので、横の絵にボールが写らなかった）。動画の画面など track 以外は今までどおり隠す。
             bool keepAllTracks = p.Length >= 7 && p[6] == "all";
+            // "eyetop[:half[:height]]": 視聴者の目（main カメラ）の真上から真下を見る固定の絵（2026-10-26、画面の外へ出た物・人・動物が
+            // 視聴者の横を通るかを見る用。ほかの補助カメラはモデルを追うので目が写らない）。絵の中心 = 目、絵の上 = 目の前（main カメラの前を水平にしたもの）、
+            // 絵の右 = 目の右。half = 絵の縦の半分に入る距離（m、目の高さで、既定 1.2）、height = 目からの高さ（m、既定 1.5）。何も隠さない（動画の画面は線に見える）。
+            if (p[0] == "eyetop")
+            {
+                float half = 1.2f;
+                float height = 1.5f;
+                if (p.Length >= 2 && float.TryParse(p[1], style, inv, out float halfArg)) { half = halfArg; }
+                if (p.Length >= 3 && float.TryParse(p[2], style, inv, out float heightArg)) { height = heightArg; }
+                half = Mathf.Max(0.05f, half);
+                height = Mathf.Max(0.1f, height);
+                Vector3 topForward = Vector3.ProjectOnPlane(mainCam.transform.forward, Vector3.up);
+                if (topForward.sqrMagnitude < 1e-8f) { topForward = Vector3.forward; }
+                topForward.Normalize();
+                float topFov = 2f * Mathf.Atan(half / height) * Mathf.Rad2Deg;
+                RenderRecordView(mainCam, mainCam.transform.position + Vector3.up * height, Quaternion.LookRotation(Vector3.down, topForward), topFov,
+                    Mathf.Max(0.01f, height * 0.05f), height + 5f, 960, 720, Path.Combine(dir, $"{name}_eyetop.jpg"), null);
+                continue;
+            }
+
+            // "eyewide[:fov]": 視聴者の目（main カメラ）の位置・向きのまま、縦の画角だけ広げた絵（2026-10-26、画面の外にはみ出したモデルと、
+            // 画面の縁の見えない枠 stereoFrameOccluder で隠れる所を見る用。本の絵は画面の 4 隅に合わせて画角を絞るので画面の外が写らず、
+            // ほかの補助カメラは track 以外（枠も）を隠す）。fov = 縦の画角（度、既定 90）。何も隠さない。
+            if (p[0] == "eyewide")
+            {
+                float wideFov = 90f;
+                if (p.Length >= 2 && float.TryParse(p[1], style, inv, out float wideFovArg)) { wideFov = wideFovArg; }
+                wideFov = Mathf.Clamp(wideFov, 10f, 150f);
+                RenderRecordView(mainCam, mainCam.transform.position, mainCam.transform.rotation, wideFov,
+                    mainCam.nearClipPlane, mainCam.farClipPlane, 1280, 720, Path.Combine(dir, $"{name}_eyewide.jpg"), null);
+                continue;
+            }
+
             // "viewer": 視聴者の目（main カメラの位置）からモデルを寄りで撮る（2026-10-04、頭が視聴者を見ているかを確かめる用）。
             // 2 つ目 = 枠に入れる大きさ（モデルの大きさの倍数）、画角は距離から毎 tick 決める。6 つ目が "c" なら bounds の中心を見る。
             if (p.Length >= 3 && p[2] == "viewer")
@@ -485,7 +543,11 @@ public static partial class BatchPlaybackLogger
         }
         else if (TryFindSiblingBone(target, "Spine4", out Transform front) ||
                  TryFindSiblingBone(target, "neck", out front) ||
-                 TryFindSiblingBone(target, "head", out front))
+                 TryFindSiblingBone(target, "head", out front) ||
+                 // SMAL の 35 関節にそろえたリグ（2026-10-23）は Neck / Head が大文字で、上の 3 つに当たらず、横のはずの絵が
+                 // カメラ基準の角度（ほぼ正面）になっていた。spine3 があるリグだけ見る（ほかのモデルの撮り方は変えない）
+                 (TryFindSiblingBone(target, "spine3", out _) &&
+                  (TryFindSiblingBone(target, "Neck", out front) || TryFindSiblingBone(target, "Head", out front))))
         {
             Transform origin = TryFindSiblingBone(target, "spine", out Transform spine) && spine != front ? spine : target;
             fwd = front.position - origin.position;
@@ -543,7 +605,8 @@ public static partial class BatchPlaybackLogger
             tex.Apply();
             cam.targetTexture = null;
             RenderTexture.active = prevActive;
-            File.WriteAllBytes(path, tex.EncodeToJPG(92));
+            // .png は画素の比べ用（2026-10-23、皮膚の確かめ。JPEG の圧縮の揺れを入れない）
+            File.WriteAllBytes(path, path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ? tex.EncodeToPNG() : tex.EncodeToJPG(92));
             UnityEngine.Object.DestroyImmediate(tex);
             rt.Release();
             UnityEngine.Object.DestroyImmediate(rt);

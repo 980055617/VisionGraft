@@ -78,7 +78,7 @@ public sealed class AnimalMotionFilter
         return GetOrCreateRootFilter(rootUpFilters, root).Filter(up, deltaTime);
     }
 
-    public Vector3 FilterRootPosition(Transform root, Vector3 target, float deltaTime)
+    public Vector3 FilterRootPosition(Transform root, Vector3 target, float deltaTime, float betaScale = 1f)
     {
         if (!rootPositionFilters.TryGetValue(root, out RuntimeOneEuroVector3Filter filter) || filter == null)
         {
@@ -87,7 +87,7 @@ public sealed class AnimalMotionFilter
             filter.Reset(target);
             return target;
         }
-        return filter.Filter(target, deltaTime);
+        return filter.Filter(target, deltaTime, betaScale);
     }
 
     // shot の頭の倍率の測り直し（exactScaleRefine、2026-10-13）が root を動かした量だけ、root の位置の平滑の状態をずらす（次の tick に過渡を作らない）。
@@ -97,6 +97,15 @@ public sealed class AnimalMotionFilter
         if (root != null && rootPositionFilters.TryGetValue(root, out RuntimeOneEuroVector3Filter filter) && filter != null)
         {
             filter.Shift(delta);
+        }
+    }
+
+    // S（2026-10-16）: root の位置の平滑の状態を origin（目）のまわりに factor 倍する。平滑がまだ無い root では何もしない。
+    public void ScaleRootPositionAbout(Transform root, Vector3 origin, float factor)
+    {
+        if (root != null && rootPositionFilters.TryGetValue(root, out RuntimeOneEuroVector3Filter filter) && filter != null)
+        {
+            filter.ScaleAbout(origin, factor);
         }
     }
 

@@ -57,6 +57,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         new Dictionary<(uint, GameObject), ModelPresetScaleStash>();
     // track ごとに、最後にロックを作ったときの prefab（モデルが替わったかを見る）。
     private readonly Dictionary<uint, GameObject> modelPresetLastLockedPrefabByTrack = new Dictionary<uint, GameObject>();
+    // PrepareModelPresetRelock がモデルの替わったロックの作り直しを見つけた track。同じ GetOrLockModelLocalScale の終わりの NoteStereoDepthLockCreated が使って消す。
+    private readonly HashSet<uint> modelPresetSwapRelockTracks = new HashSet<uint>();
 
     private bool UsesModelPresetToggle
     {
@@ -363,6 +365,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 2. モデルが替わったら ⑧ の奥行きの平滑を新しいモデルの値から始め直す。消さないと前のモデルの比から 1 秒ほどかけて寄っていく。
         if (modelChanged)
         {
+            // S（stereoDepthKeepsKAcrossModelPresetSwap）: この後の NoteStereoDepthLockCreated に「Model の切り替えで作り直したロック」と知らせる。
+            modelPresetSwapRelockTracks.Add(trackId);
             smoothedProjectedDepthRatioByTrack.Remove(trackId);
             smoothedDepthRatioFrameByTrack.Remove(trackId);
             smoothedDepthRatioPrefabByTrack.Remove(trackId);

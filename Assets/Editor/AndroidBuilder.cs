@@ -129,6 +129,8 @@ public static class AndroidBuilder
                 $"{Path.GetFileName(apkPath)};{DateTime.Now:yyyy-MM-ddTHH:mm:ss};{(string.IsNullOrEmpty(stamp) ? "nostamp" : stamp)}";
             File.WriteAllText(path, line + "\n");
             AssetDatabase.ImportAsset("Assets/Resources/" + fileName, ImportAssetOptions.ForceSynchronousImport);
+            // 続くビルドの前処理（BuildInfoStampForEditorBuilds）にこのスタンプを残させる。
+            BuildInfoStampForEditorBuilds.WrittenByAndroidBuilder = true;
             Debug.Log($"[BUILD] build_info: {line}");
         }
         catch (Exception ex)

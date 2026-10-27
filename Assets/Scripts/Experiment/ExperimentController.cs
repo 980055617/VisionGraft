@@ -154,6 +154,14 @@ public sealed class ExperimentController : MonoBehaviour
     // 判定のたびに生のフィールドを読むより、セッションと一緒に固定するほうが安全。
     private float sessionMinimumViewingSeconds;
 
+    // 実験者のデバッグ（2026-10-25、ユーザー「被験者実験で空間動画+3dモデルだけデバッグしたいときに全部の動画見ないといけないから，
+    // どうにかできない？デバッグモードで動画選べるようにしたい」）: セットアップ画面から 6 本のどれかを選び、本番の試行と同じ手順
+    // （RunTrialRoutine。同じシーン・置き換え・Model ボタン・自分から動く動作）で 1 本だけ開く。練習・アンケート・最短視聴時間は無し、
+    // 見終わったら動画の選択へ戻る。記録は参加者の記録と混ざらないよう ExperimentLogs_debug に分ける（参加者 ID は DEBUG）。
+    private const string DebugParticipantId = "DEBUG";
+    private bool debugSession;
+    private ExperimentDisplayMode debugMode = ExperimentDisplayMode.ModelReplaced;
+
     // 画面基準で置いたパネルの基準（画面の中心と右方向）。画面が動いたら置き直す（ReanchorPanelIfScreenMoved）。
     private enum AnchoredPanelKind { None, Loading, Trial, Tutorial }
     private AnchoredPanelKind anchoredPanelKind = AnchoredPanelKind.None;
@@ -316,6 +324,8 @@ public sealed class ExperimentController : MonoBehaviour
         ExperimentLog.Sink = null;
         session.Dispose();
         session = null;
+        // デバッグの印もセッションと一緒に下ろす（残ると、次に始めた参加者のセッションの待機画面がデバッグの選択へ回る）。
+        debugSession = false;
 
         // 実験を抜けたあと手動でシーンを開いたときに前の参加者の調整が残らないように。
         // ExperimentTrialHandoff.Clear() と同じ配慮。**基準ファイルは消さない。**
@@ -444,10 +454,186 @@ public sealed class ExperimentController : MonoBehaviour
         }
 
         specs.Add(ExperimentPanel.ButtonSpec.Create("セッション開始", StartSession));
+        // ボタンの字は 1 行に収まる長さにする（8 個のときの枠は約 226 px、32 px の字で 7 字まで）。
+        specs.Add(ExperimentPanel.ButtonSpec.Create("デバッグ", ShowDebugPanel));
         // 間違えて入ったときの戻り道（2026-09-11 実機「被験者実験を押すと戻れない」）。
         specs.Add(ExperimentPanel.ButtonSpec.Create("Home へ戻る", ReturnToHome));
 
         panel.Show("実験セットアップ", BuildSetupBody(), specs);
+    }
+
+    // ── 実験者のデバッグ（動画を 1 本選んで開く） ──────────────────────────
+
+    private static readonly Dictionary<string, string> DebugVideoNames = new Dictionary<string, string>
+    {
+        { "bundle_balloon.svb", "風船" },
+        { "bundle_cat.svb", "猫" },
+        { "bundle_soccer.svb", "サッカー" },
+        { "bundle_tv.svb", "テレビ" },
+        { "bundle_car2.svb", "車" },
+        { "bundle_dog.svb", "犬" },
+    };
+
+    private string DescribeVideoForDebug(ExperimentVideo video)
+    {
+        string bundle = bundleCatalog.Resolve(video);
+        if (!string.IsNullOrEmpty(bundle) && DebugVideoNames.TryGetValue(bundle, out string name))
+        {
+            return name;
+        }
+
+        return string.IsNullOrEmpty(bundle) ? video.ToString() : System.IO.Path.GetFileNameWithoutExtension(bundle);
+    }
+
+    private static string DescribeModeForDebug(ExperimentDisplayMode mode)
+    {
+        switch (mode)
+        {
+            case ExperimentDisplayMode.ModelReplaced:
+                return "空間動画＋3D モデル";
+            case ExperimentDisplayMode.StereoOnly:
+                return "空間動画だけ";
+            case ExperimentDisplayMode.Monocular:
+                return "単眼";
+            default:
+                return mode.ToString();
+        }
+    }
+
+    // 読み込み中・試行中のパネルの見出し。デバッグでは何を開いたかを出す（被験者は見ない）。
+    private string DescribeTrialTitle(ExperimentTrial trial)
+    {
+        return debugSession
+            ? $"デバッグ: {DescribeVideoForDebug(trial.video)} / {DescribeModeForDebug(trial.mode)}"
+            : trial.DescribeForParticipant(ExperimentPlan.TrialCount);
+    }
+
+    private void ShowDebugPanel()
+    {
+        // 参加者のセッションの途中からは入らない（セットアップ画面か、デバッグの中からだけ）。
+        if (session != null && !debugSession)
+        {
+            return;
+        }
+
+        phase = Phase.Waiting;
+        PreparePanel(FullPanelSizeMeters, Vector2.zero, ExperimentPanel.DefaultLayout);
+
+        var specs = new List<ExperimentPanel.ButtonSpec>();
+        for (int i = 0; i < ExperimentPlan.TrialsPerBlock; i++)
+        {
+            ExperimentVideo video = (ExperimentVideo)i;
+            specs.Add(ExperimentPanel.ButtonSpec.Create($"{i + 1} {DescribeVideoForDebug(video)}", () => BeginDebugTrial(video)));
+        }
+
+        specs.Add(ExperimentPanel.ButtonSpec.Create("条件切替", CycleDebugMode));
+        specs.Add(ExperimentPanel.ButtonSpec.Create("戻る", EndDebugToSetup));
+        panel.Show("デバッグ: 動画を選ぶ", BuildDebugBody(), specs);
+    }
+
+    // 本文は 1 行 28 字まで（1080 px ÷ 36 px）。
+    private string BuildDebugBody()
+    {
+        return
+            $"条件: {DescribeModeForDebug(debugMode)}（「条件切替」で変更）\n" +
+            "本番と同じように 1 本だけ開きます。\n" +
+            "「視聴を終了」はすぐ押せて、終えるとここへ戻ります。\n" +
+            "練習・アンケートは出ません。「戻る」でセットアップへ。\n" +
+            "記録は別のフォルダ（ExperimentLogs_debug）に残ります。\n" +
+            "回した向き・大きさは本番にも残ります。";
+    }
+
+    private void CycleDebugMode()
+    {
+        if (phase != Phase.Waiting)
+        {
+            return;
+        }
+
+        int next = (System.Array.IndexOf(ExperimentPlan.DebugModes, debugMode) + 1) % ExperimentPlan.DebugModes.Length;
+        debugMode = ExperimentPlan.DebugModes[next];
+        // パネルを作り直す（本文だけ変えると、VR のレイが 1 フレームに複数回押したとき 2 つ進む。作り直しで 0.4 秒の押下抑止が掛かる）。
+        ShowDebugPanel();
+    }
+
+    private void BeginDebugTrial(ExperimentVideo video)
+    {
+        if (phase != Phase.Waiting || !EnsureDebugSession())
+        {
+            return;
+        }
+
+        int index = ExperimentPlan.DebugTrialIndex(debugMode, video);
+        if (index < 0 || index >= session.Trials.Length)
+        {
+            Debug.LogError($"[Experiment] デバッグ: 試行の表に無い組 {video} / {debugMode}");
+            return;
+        }
+
+        StartCoroutine(RunTrialRoutine(session.Trials[index]));
+    }
+
+    // デバッグのセッションを作る（最初に動画を選んだとき。表は ExperimentPlan.BuildDebugTrials）。
+    private bool EnsureDebugSession()
+    {
+        if (session != null)
+        {
+            return debugSession;
+        }
+
+        string sessionDir = ExperimentLogWriter.BuildSessionDirectory(ExperimentLogWriter.DebugRootDirectory, DebugParticipantId, System.DateTime.Now);
+        ExperimentLogWriter writer;
+        try
+        {
+            writer = new ExperimentLogWriter(sessionDir);
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogError($"[Experiment] デバッグの記録の保存先を作れません: {sessionDir} | {ex.Message}");
+            ShowLogDirectoryFailedPanel();
+            return false;
+        }
+
+        if (writer.HasFailedFiles)
+        {
+            Debug.LogError($"[Experiment] デバッグの記録ファイルを開けません: {sessionDir}");
+            writer.Dispose();
+            ShowLogDirectoryFailedPanel();
+            return false;
+        }
+
+        session = new ExperimentSession(
+            DebugParticipantId,
+            ExperimentGroup.A,
+            ExperimentPlan.MinVideoOrderPattern,
+            writer,
+            () => cachedPlayer != null ? cachedPlayer.CurrentVideoTimeSeconds : 0d,
+            null,
+            ExperimentPlan.BuildDebugTrials());
+        debugSession = true;
+        // デバッグで回した向き・大きさは基準ファイルへ書く（2026-10-27、参加者のセッションは書かない）。
+        ExperimentSessionOverrides.BeginSession(writesBaseline: true);
+        sessionMinimumViewingSeconds = 0f;
+        Debug.Log($"[Experiment] デバッグのセッション開始。ログ出力先: {sessionDir}");
+        session.RecordOperation("session_begin", $"debug=1 trials={session.Trials.Length} app_build={ExperimentBuildInfo.Resolve()}");
+        session.FlushLogs();
+        return true;
+    }
+
+    private void EndDebugToSetup()
+    {
+        if (phase != Phase.Waiting)
+        {
+            return;
+        }
+
+        if (debugSession)
+        {
+            FinishSessionIfRunning(false, "debug_end");
+        }
+
+        debugSession = false;
+        ShowSetupPanel();
     }
 
     // 参加者番号から群と動画順を決める（自動割り付けが ON のとき）。
@@ -605,6 +791,13 @@ public sealed class ExperimentController : MonoBehaviour
 
     private void ShowWaitingPanel()
     {
+        // デバッグでは、試行の後・読み込み失敗の後（「待機画面へ」「この動画を飛ばす」「同じ動画をやり直す」）も動画の選択へ戻る。
+        if (debugSession)
+        {
+            ShowDebugPanel();
+            return;
+        }
+
         phase = Phase.Waiting;
         PreparePanel(FullPanelSizeMeters, Vector2.zero, ExperimentPanel.DefaultLayout);
 
@@ -715,7 +908,7 @@ public sealed class ExperimentController : MonoBehaviour
         yield return null;
 
         string bundleFileName = bundleCatalog.Resolve(trial.video);
-        string loadingTitle = trial.DescribeForParticipant(ExperimentPlan.TrialCount);
+        string loadingTitle = DescribeTrialTitle(trial);
         Debug.Log($"[Experiment] 読み込み: {trial.Describe(ExperimentPlan.TrialCount)} / {bundleFileName}");
         ShowLoadingPanel(loadingTitle);
 
@@ -987,7 +1180,7 @@ public sealed class ExperimentController : MonoBehaviour
         PreparePanel(FullPanelSizeMeters, Vector2.zero, ExperimentPanel.DefaultLayout);
 
         string body =
-            $"{trial.DescribeForParticipant(ExperimentPlan.TrialCount)} を開始できませんでした。\n" +
+            $"{DescribeTrialTitle(trial)} を開始できませんでした。\n" +
             "アプリの設定に問題があり、動画の画面を開けません。\n\n" +
             "この動画はまだ記録していません。\n" +
             "実験者に知らせてください。";
@@ -1009,7 +1202,7 @@ public sealed class ExperimentController : MonoBehaviour
         Debug.LogError($"[Experiment] 読み込み失敗パネル: trial={trial.trialIndex} reason={reason}");
 
         string body =
-            $"{trial.DescribeForParticipant(ExperimentPlan.TrialCount)} を開始できませんでした。\n" +
+            $"{DescribeTrialTitle(trial)} を開始できませんでした。\n" +
             $"理由: {DescribeLoadFailure(reason)}\n\n" +
             "この動画は「中断」として記録しました。\n" +
             "実験者が次を選んでください。";
@@ -1062,6 +1255,14 @@ public sealed class ExperimentController : MonoBehaviour
         // チュートリアル行と混ざる（2026-09-25 の監査 M-3）。待機中は周期 flush が無いので明示する。
         session.RecordOperation("trial_retry", $"trial_index={session.CurrentTrialIndex}");
         session.FlushLogs();
+        // デバッグでは同じ動画・条件をすぐ開き直す（番号は巻き戻さない。EndTrial は番号を動かさないので CurrentTrial は失敗した試行のまま。
+        // RunTrialRoutine は最初の yield の前に Loading にするので二重押しも止まる）。
+        if (debugSession)
+        {
+            StartCoroutine(RunTrialRoutine(session.CurrentTrial));
+            return;
+        }
+
         // 失敗パネルに来る時点で試行は閉じているので、戻り値が false になる経路は無い（防御だけ）。
         if (!session.RetryCurrentTrial())
         {
@@ -1112,7 +1313,8 @@ public sealed class ExperimentController : MonoBehaviour
             cachedPlayer.HumanBoneLengthCorrectionEnabled,
             displayHz,
             cachedPlayer.manualRotationResetAtCut,
-            cachedPlayer.manualScaleResetAtCut);
+            cachedPlayer.manualScaleResetAtCut,
+            cachedPlayer.StereoDepthTrialState);
     }
 
     private void ShowTrialPanel(ExperimentTrial trial)
@@ -1140,7 +1342,7 @@ public sealed class ExperimentController : MonoBehaviour
             ExperimentPanel.ButtonSpec.CreateConfirm("実験者用: 中止", RequestTrialAbortByExperimenter),
         };
 
-        string title = trial.DescribeForParticipant(ExperimentPlan.TrialCount);
+        string title = DescribeTrialTitle(trial);
         if (TryResolvePanelAnchorOutsideScreen(trialPanelSide, trialPanelEffectiveSize, trialPanelGapMeters, Vector2.zero, out Vector3 anchor))
         {
             panel.ShowAnchored(title, string.Empty, specs, anchor);

@@ -72,11 +72,34 @@ public partial class StreamingStereoVideoPlayer
         // モデルを替えたら（ピッカー・実験の Model の切り替え）覚えている scale をこの比で直す（2026-10-24。直さないと、端に掛かった車を
         // 背の高いモデルに替えたとき前のモデルの保持した scale が勝ち、馬車が bbox の 1.57 倍で出た）。0 = まだ測っていない。
         public float scaleUnit;
+        // elseFrameOutKeepEdgeOffset: 見切れていない最後のフレームで測った「bbox の辺 − モデルの投影の辺」（eye px、左・右・上・下）。
+        public bool hasEdgeOffset;
+        public float edgeOffsetL;
+        public float edgeOffsetR;
+        public float edgeOffsetT;
+        public float edgeOffsetB;
+        // frameOutPassByViewer（2026-10-26、既定 OFF、FrameOutPassBy.partial.cs）: 慣性の向きを視聴者の横を通るよう曲げたか。
+        // ホイールのある物は向きも同じ角だけ回す（始めの BodyFrameOutBlendSeconds で lastRotation → coastRotationTarget）。
+        public bool coastPassBy;
+        public bool coastSteers;
+        public Quaternion coastRotationTarget = Quaternion.identity;
+        // frameOutPassByViewer: 端に掛かる前（どの端にも触れていないフレーム）の box の高さの伸び（ln の比の EMA、/ 動画のフレーム。
+        // frameOutPassBySpeedFromApproach の速さ）。
+        public bool hasLoom;
+        public int loomFrame = -1;
+        public float loomBBoxH;
+        public float loomRatePerFrame;
     }
 
     // モデルを替えたら、端の処理が覚えている scale を新しいモデルの単位へ直す（2026-10-24、既定 ON。ElseFrameOutState.scaleUnit）。
     // OFF は直す前の振る舞い（前のモデルの保持した scale が勝つ）。比べる絵を撮るため。
     public bool elseFrameOutRescaleOnModelChange = true;
+
+    // 端に掛かった最初のフレームで、モデルの投影の端を bbox の内側の辺へ「ずれ 0」で合わせ直すと、それまでのずれの分だけ 1 フレームで
+    // 走る向きと逆へ跳ぶ（2026-10-25 の点検: car2 の古典車 vf 179 で 59 px、トゥクトゥク vf 412 で 56 px、ほかの車 19〜26 px）。
+    // ON にすると、見切れる直前のフレームで測ったずれを保ったまま内側の辺に付いていく（端に掛かる前と後で、モデルと box の位置関係が変わらない）。
+    // 既定 OFF（OFF は今の「モデルの端を bbox の端にぴったり合わせる」）。
+    public bool elseFrameOutKeepEdgeOffset = false;
 
     private const float ElseFrameOutVelocitySmoothing = 0.3f;
     private const int ElseFrameOutMaxGapFrames = 3;
@@ -164,6 +187,8 @@ public partial class StreamingStereoVideoPlayer
                     st.motionScale *= r;
                     st.scaleRatePerFrame *= r;
                     st.coastScaleRate *= r;
+                    // ずれは前のモデルの投影で測った値なので捨てる（今の「ずれ 0」の合わせ方に戻る）。
+                    st.hasEdgeOffset = false;
                     Debug.Log($"[FRAMEOUT] f={frame} track={obj.trackId} モデルが替わったので覚えている scale を x{r:F3} に直す " +
                               $"(held={(st.hasHeldScale ? st.heldLocalScale.x.ToString("F4") : "-")} model={instance.name})");
                 }
@@ -182,6 +207,15 @@ public partial class StreamingStereoVideoPlayer
                 st.lastSeenFrame = -1;
                 st.hasMotion = false;
                 st.motionFrame = -1;
+                st.hasEdgeOffset = false;
+                st.hasLoom = false;
+                st.loomFrame = -1;
+            }
+
+            // frameOutPassByViewer（2026-10-26、FrameOutPassBy.partial.cs）: 端に掛かる前（どの端にも触れていないフレーム）の box の高さの伸び。
+            if (frameOutPassByViewer)
+            {
+                UpdateFrameOutLoom(obj, frame, ref st.hasLoom, ref st.loomFrame, ref st.loomBBoxH, ref st.loomRatePerFrame);
             }
 
             Transform root = instance.transform;
@@ -221,6 +255,19 @@ public partial class StreamingStereoVideoPlayer
                     st.motionFrame = frame;
                     st.motionPosition = root.position;
                     st.motionScale = root.localScale.x;
+
+                    // elseFrameOutKeepEdgeOffset: このフレーム（データどおりに置いた後）のモデルの投影の端と bbox の辺のずれ。
+                    // 端に掛かったら、このずれを保って内側の辺に付いていく。Slide でずらしたフレーム（box が出そろったフレームのもの）では測らない。
+                    if (elseFrameOutKeepEdgeOffset && !obj.hasScreenShift &&
+                        TryProjectRendererBoundsToEye(instance, camOrigin, camRotation, fx, fy,
+                            out float offMinU, out float offMaxU, out float offMinV, out float offMaxV))
+                    {
+                        st.edgeOffsetL = obj.bboxX - offMinU;
+                        st.edgeOffsetR = (obj.bboxX + obj.bboxW) - offMaxU;
+                        st.edgeOffsetT = obj.bboxY - offMinV;
+                        st.edgeOffsetB = (obj.bboxY + obj.bboxH) - offMaxV;
+                        st.hasEdgeOffset = true;
+                    }
                 }
             }
             else if (clipVert != 0 && st.hasUnclipped)
@@ -291,6 +338,10 @@ public partial class StreamingStereoVideoPlayer
                 if (TryProjectRendererBoundsToEye(instance, camOrigin, camRotation, fx, fy, out _, out _, out float minV, out float maxV))
                 {
                     float dv = clipVert > 0 ? (obj.bboxY - minV) : ((obj.bboxY + obj.bboxH) - maxV);
+                    if (elseFrameOutKeepEdgeOffset && st.hasEdgeOffset)
+                    {
+                        dv -= clipVert > 0 ? st.edgeOffsetT : st.edgeOffsetB;
+                    }
                     Vector3 camForward = camRotation * Vector3.forward;
                     float z = Vector3.Dot(root.position - camOrigin, camForward);
                     float dy = (dv / manifest.eye_h) * 2f * z / fy;
@@ -351,6 +402,10 @@ public partial class StreamingStereoVideoPlayer
                 if (TryProjectRendererBoundsToEye(instance, camOrigin, camRotation, fx, fy, out float minU, out float maxU, out _, out _))
                 {
                     float du = clipSide > 0 ? (obj.bboxX - minU) : ((obj.bboxX + obj.bboxW) - maxU);
+                    if (elseFrameOutKeepEdgeOffset && st.hasEdgeOffset)
+                    {
+                        du -= clipSide > 0 ? st.edgeOffsetL : st.edgeOffsetR;
+                    }
                     Vector3 camForward = camRotation * Vector3.forward;
                     float z = Vector3.Dot(root.position - camOrigin, camForward);
                     float dx = (du / manifest.eye_w) * 2f * z / fx;
@@ -467,6 +522,9 @@ public partial class StreamingStereoVideoPlayer
                     st.velocityPerFrame += lateralAndDepth;
                     st.coastScaleRate = Mathf.Max(0f, st.scaleRatePerFrame);
                 }
+                // frameOutPassByViewer（2026-10-26、既定 OFF）: 左右の端から出た物は、端に掛かる前の動きを視聴者の横を通る向きへ曲げる
+                // （速さは上で決めたまま。上下の端・OFF・曲げられないときは何もしない）。FrameOutPassBy.partial.cs。
+                ApplyFrameOutPassByToElseCoast(trackId, st, instance, screen, camOrigin, camRotation, frame);
                 st.coastMaxDistance = Mathf.Max(0.01f, st.lastLength) * Mathf.Max(0.1f, elseFrameOutCoastLengths);
             }
 
@@ -484,13 +542,14 @@ public partial class StreamingStereoVideoPlayer
             Vector3 coastScale = st.lastLocalScale + Vector3.one * (st.coastScaleRate * elapsed);
             TrackPlacementWriter.Apply(
                 instance.transform,
-                new TrackPlacementCommand(st.coastStartPosition + delta, st.lastRotation, coastScale));
+                new TrackPlacementCommand(st.coastStartPosition + delta, ResolveElseCoastRotation(st, elapsed), coastScale));
+            LogFrameOutPassByStep("else", trackId, frame, elapsed, instance, camOrigin, camRotation);
 
             // 2026-09-18 ユーザー要望: 「全長 × 1.2 進んだら」ではなく、**視界から映らなくなったら**消す。
             // 置いた後の箱が見ているカメラの視錐台から完全に外れたら（または顔の前 5 cm より近づいたら）非表示。
             // 距離（elseFrameOutCoastLengths、既定 6 倍）と frame 数（180）は安全弁として残す。
             // 頭を動かして追いかければその分だけ長く残る（視界に入っている限り消さない）。
-            if (elapsed >= 2 && !IsCoastingInstanceInView(instance, camOrigin, camRotation))
+            if (elapsed >= 2 && !IsCoastingInstanceInView(instance, camOrigin, camRotation, st.coastPassBy && frameOutPassByKeepsUntilOutOfView))
             {
                 if (logElseChainPlacement)
                 {
@@ -586,7 +645,9 @@ public partial class StreamingStereoVideoPlayer
     // 慣性中のモデルがまだ見えているか。見ているカメラ（実機は HMD の中央目、バッチは撮影カメラ）の視錐台と
     // renderer の world AABB で判定する（AABB は OBB より大きいので「まだ見えている」側に倒れる）。
     // カメラが取れないときは pinhole の基準（板の向き）で代用し、板の下端より 1 画面ぶん下に出たら見えないとみなす。
-    private bool IsCoastingInstanceInView(GameObject instance, Vector3 camOrigin, Quaternion camRotation)
+    // keepWhilePartlyInView: 顔の前 5 cm の判定を飛ばし、箱の 8 角と中心のどれかが視錐台の中にある間は見えている扱いにする
+    // （frameOutPassByKeepsUntilOutOfView。目の横を通る長い車は、箱の中心が目の面に来た時に後ろ半分がまだ視野の中にある）。
+    private bool IsCoastingInstanceInView(GameObject instance, Vector3 camOrigin, Quaternion camRotation, bool keepWhilePartlyInView = false)
     {
         if (!TryGetRendererWorldBounds(instance, out Bounds bounds))
         {
@@ -597,7 +658,7 @@ public partial class StreamingStereoVideoPlayer
         if (cam != null)
         {
             Vector3 toCenter = bounds.center - cam.transform.position;
-            if (Vector3.Dot(toCenter, cam.transform.forward) < 0.05f)
+            if (!keepWhilePartlyInView && Vector3.Dot(toCenter, cam.transform.forward) < 0.05f)
             {
                 return false; // 顔より手前・後ろ
             }

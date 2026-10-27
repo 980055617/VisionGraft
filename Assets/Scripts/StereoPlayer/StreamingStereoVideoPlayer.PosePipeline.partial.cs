@@ -57,6 +57,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (canApplyHumanSmplPose && ShouldUseSmplOnlyPose())
         {
+            stereoDepthPosePath = StereoDepthPosePath.DirectionOnly;   // S（2026-10-16）: 向きだけで決まる経路（記録だけ）
             // SMPL FK path: anchor is the canonical hip position; 44-point skeleton is not used for placement.
             // Smooth root position to suppress anchorZ depth noise (reduces violent forward/backward character movement).
             // Smooth only the scalar depth (anchorZ) along the camera ray.
@@ -111,6 +112,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 }
             }
             // enableKeypointAimAt = false のときは手も FK ループ内で適用済み（純 FK）。
+            // humanLegStanceFromData（既定 OFF、2026-10-26 夜、HumanLegStance.partial.cs）: 足首の左右の間がデータ（脚の長さで縮めた）より狭いモデルだけ、
+            // 太ももを股のまわりに外へ回して足りない分を開く（股の関節を狭く置いた 18_Female_Meshy で足首がくっついて X に見えた）。OFF なら何もしない。
+            ApplyHumanLegStanceFromData(cache, pose.jointsWorld, pose.jointVis, obj.trackId, frame);
+            // humanFootFlatOnStance（既定 OFF、2026-10-27、HumanFootFlat.partial.cs）: 地面についている足の上下の角度を、モデル本来の立ち足の角度へ寄せる
+            // （テレビの女性のつま先が上がって見えた。足首のまわりに足の向きの左右の軸で回すだけ）。OFF なら何もしない。
+            ApplyHumanFootFlatOnStance(cache, instance, obj.trackId, frame);
             // humanFingersFromSmplHand（既定 OFF、2026-10-08、J-12 (b)）: 手が書き終わったここで、指の付け根を SMPL の 22・23 で書く
             // （keypoint の AimAt・SMPL 目標の AimAt・純 FK のどの手の経路でも。HumanFingers.partial.cs）。OFF なら何もしない。
             TryApplyHumanFingersFromSmplHand(cache);
@@ -140,6 +147,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        stereoDepthPosePath = StereoDepthPosePath.AbsoluteTarget;   // S（2026-10-16）: keypoint の配置（:147）と IK（:162）は絶対の目標（記録だけ）
         Vector3 yawAxis = screen != null ? screen.up : instance.transform.up;
         ApplyManualYawToJoints(obj.trackId, frame, pose.jointsWorld, pose.jointVis, skeletonRoot, yawAxis);
 
@@ -340,6 +348,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 既定 ON（2026-10-08、非四足モード。2026-10-09 に採用）: 主スイッチ・名簿・基準姿勢はリグのキャッシュを作るときだけ読まれる。脛・直立は毎 tick（モードで作ったキャッシュだけ）。
         animalPoseApplier.smalNonQuadrupedRig = smalNonQuadrupedRig;
         animalPoseApplier.smalNonQuadrupedRigModels = smalNonQuadrupedRigModels;
+        // 確かめ用（2026-10-23、既定 0 = 触らない）: SMAL の骨のリグの SkinnedMeshRenderer.quality。リグのキャッシュを作るときだけ読まれる。
+        animalPoseApplier.smalNativeSkinQuality = smalNativeSkinQuality;
+        // 既定 ON（2026-10-26 採用）: シーンのインスペクタに旧既定値 false が残っていても確実に ON にする。
+        smalNativeLimbWidthScale = true;
+        smalNativeLookAtHeadFrame = true;
+        smalNativeGestureHeadFrame = true;
+        animalPoseApplier.smalNativeLimbWidthScale = smalNativeLimbWidthScale;
+        animalPoseApplier.smalNativeLookAtHeadFrame = smalNativeLookAtHeadFrame;
+        animalPoseApplier.smalNativeGestureHeadFrame = smalNativeGestureHeadFrame;
         animalPoseApplier.smalNonQuadrupedHock = smalNonQuadrupedHock;
         animalPoseApplier.smalNonQuadrupedReferencePose = smalNonQuadrupedReferencePose;
         animalPoseApplier.smalNonQuadrupedUprightRoot = smalNonQuadrupedUprightRoot;
@@ -384,8 +401,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             freezeAnimalDistal = freezeAnimalDistal,
             enableBoneApply = enableBoneApply,
             hasSmalPose = hasSmalPose,
-            smalPose = smalPose
+            smalPose = smalPose,
+            // S（2026-10-16）: root の位置の平滑の beta を 1/k 倍（目のまわりに k 倍した動きで遮断周波数を S なしと同じにする）。S の状態が無ければ 1。
+            rootFilterBetaScale = ResolveStereoDepthRootFilterBetaScale(obj.trackId)
         });
+        // S（2026-10-16）: この tick の動物の姿勢の経路（記録だけ）。
+        stereoDepthPosePath = !animalPoseApplier.LastApplyPosedBones(instance.transform) ? StereoDepthPosePath.None
+            : animalPoseApplier.LastApplyRanSmalFk(instance.transform) ? StereoDepthPosePath.DirectionOnly : StereoDepthPosePath.AbsoluteTarget;
     }
 
     private void DisableAnimalAnimatorPlayback(Animator animator)

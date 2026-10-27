@@ -116,4 +116,72 @@ public class ElseDrivePathTests
         Assert.That(ElseDrivePath.MinimumDriveDistance(0.01f), Is.EqualTo(0.05f));
         Assert.That(ElseDrivePath.MinimumDriveDistance(0.05f), Is.EqualTo(0.12f).Within(0.0001f));
     }
+
+    // ホイールの無い剛体の往復（elseWheellessFloatStraight、2026-10-25）: 出発点から停止点まで同じ線を行って戻る。横へずれず、停止点より先へ行かない。
+    // 値は review_tail/balloon_p2 の走行（出発点 (-0.105,-0.064,0.931)、視聴者は原点、停止点は視聴者の手前 0.45 m）。
+    [Test]
+    public void FloatPath_GoesStraightToStopAndBack_WithoutSidewaysOffset()
+    {
+        Vector3 origin = new Vector3(-0.105f, -0.064f, 0.931f);
+        Vector3 toViewer = Vector3.ProjectOnPlane(Vector3.zero - origin, Up);
+        Vector3 stop = new Vector3(0f, origin.y, 0f) - toViewer.normalized * 0.45f;
+        ElseDrivePath.Path path = ElseDrivePath.BuildStraightOutAndBack(origin, stop, Up);
+        float oneWay = Vector3.Distance(origin, stop);
+
+        AssertClose(origin, path.Evaluate(0f).position, 0.0001f, "start position");
+        AssertClose(origin, path.Evaluate(path.TotalLength).position, 0.0001f, "end position");
+        AssertClose(stop, path.Evaluate(oneWay).position, 0.0001f, "turning point");
+        Assert.That(path.TotalLength, Is.EqualTo(2f * oneWay).Within(0.0001f), "total = 2 x one way");
+        Vector3 dIn = toViewer.normalized;
+        for (float d = 0f; d <= path.TotalLength; d += 0.005f)
+        {
+            Vector3 p = path.Evaluate(d).position;
+            Vector3 rel = p - origin;
+            float along = Vector3.Dot(rel, dIn);
+            Assert.That((rel - dIn * along).magnitude, Is.LessThan(0.0001f), $"sideways offset at d={d}");
+            Assert.That(along, Is.InRange(-0.0001f, oneWay + 0.0001f), $"stays between origin and stop at d={d}");
+            Assert.That(p.y, Is.EqualTo(origin.y).Within(0.0001f), "keeps height");
+        }
+    }
+
+    // 区間: 行きは drive_in、帰りは drive_back、u_turn は無い（実験ログの drive_in / drive_back の行の距離に使う）。
+    [Test]
+    public void FloatPath_SegmentsAreDriveInThenDriveBack()
+    {
+        Vector3 origin = Vector3.zero;
+        Vector3 stop = Vector3.forward * 0.4f;
+        ElseDrivePath.Path path = ElseDrivePath.BuildStraightOutAndBack(origin, stop, Up);
+        Assert.That(path.segmentLengths[ElseDrivePath.SegmentDriveIn], Is.EqualTo(0.4f).Within(0.0001f));
+        Assert.That(path.segmentLengths[ElseDrivePath.SegmentUTurn], Is.EqualTo(0f));
+        Assert.That(path.segmentLengths[ElseDrivePath.SegmentDriveBack], Is.EqualTo(0.4f).Within(0.0001f));
+        Assert.That(path.Evaluate(0.2f).segment, Is.EqualTo(ElseDrivePath.SegmentDriveIn));
+        Assert.That(path.Evaluate(0.6f).segment, Is.EqualTo(ElseDrivePath.SegmentDriveBack));
+    }
+
+    // 緩急: 0 → 0.5（手前の点）→ 1、単調に進み、出発・手前の点・到着で速さ 0、最大の傾きは π/2（u = 0.25・0.75）。
+    [Test]
+    public void EaseOutAndBack_StopsAtStartTurnAndEnd()
+    {
+        Assert.That(ElseDrivePath.EaseOutAndBack(0f), Is.EqualTo(0f).Within(0.00001f));
+        Assert.That(ElseDrivePath.EaseOutAndBack(0.5f), Is.EqualTo(0.5f).Within(0.00001f));
+        Assert.That(ElseDrivePath.EaseOutAndBack(1f), Is.EqualTo(1f).Within(0.00001f));
+        Assert.That(ElseDrivePath.EaseOutAndBack(-1f), Is.EqualTo(0f).Within(0.00001f), "clamped below");
+        Assert.That(ElseDrivePath.EaseOutAndBack(2f), Is.EqualTo(1f).Within(0.00001f), "clamped above");
+        const float h = 0.001f;
+        float previous = 0f;
+        float maxSlope = 0f;
+        for (float u = h; u <= 1f + 0.5f * h; u += h)
+        {
+            float v = ElseDrivePath.EaseOutAndBack(u);
+            Assert.That(v, Is.GreaterThanOrEqualTo(previous - 0.00001f), $"monotonic at u={u}");
+            maxSlope = Mathf.Max(maxSlope, (v - previous) / h);
+            previous = v;
+        }
+        Assert.That(maxSlope, Is.EqualTo(Mathf.PI * 0.5f).Within(0.01f), "peak slope");
+        foreach (float u in new[] { 0f, 0.5f - h, 1f - h })
+        {
+            float slope = (ElseDrivePath.EaseOutAndBack(u + h) - ElseDrivePath.EaseOutAndBack(u)) / h;
+            Assert.That(slope, Is.LessThan(0.01f), $"speed ~0 near u={u}");
+        }
+    }
 }

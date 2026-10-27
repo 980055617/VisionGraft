@@ -23,6 +23,17 @@ public sealed class RuntimeOneEuroVector3Filter
     }
 
 
+    // S（2026-10-16、StreamingStereoVideoPlayer.stereoDepthMatchVideo）: 速さの項（beta × |平滑した微分|）に掛ける倍率。
+    // 目のまわりに k 倍した入力に 1/k を渡すと遮断周波数が掛ける前と同じになり、出力も厳密に k 倍になる。betaScale = 1 は上の Filter と同じ値。
+    public Vector3 Filter(Vector3 value, float deltaTime, float betaScale)
+    {
+        return new Vector3(
+            x.Filter(value.x, deltaTime, betaScale),
+            y.Filter(value.y, deltaTime, betaScale),
+            z.Filter(value.z, deltaTime, betaScale));
+    }
+
+
     public void Reset(Vector3 value)
     {
         x.Reset(value.x);
@@ -39,6 +50,15 @@ public sealed class RuntimeOneEuroVector3Filter
         x.Shift(delta.x);
         y.Shift(delta.y);
         z.Shift(delta.z);
+    }
+
+
+    // S（2026-10-16）: 状態を origin のまわりに factor 倍し、微分の平滑を factor 倍する（配置を目のまわりに倍率し直したとき）。初期化前なら何もしない。
+    public void ScaleAbout(Vector3 origin, float factor)
+    {
+        x.ScaleAbout(origin.x, factor);
+        y.ScaleAbout(origin.y, factor);
+        z.ScaleAbout(origin.z, factor);
     }
 
 
@@ -91,6 +111,24 @@ public sealed class RuntimeOneEuroVector3Filter
                 previousValue += delta;
             }
         }
+
+
+        public void ScaleAbout(float origin, float factor)
+        {
+            if (initialized)
+            {
+                previousValue = origin + (previousValue - origin) * factor;
+            }
+        }
+
+
+        public void Scale(float factor)
+        {
+            if (initialized)
+            {
+                previousValue *= factor;
+            }
+        }
     }
 
 
@@ -114,6 +152,12 @@ public sealed class RuntimeOneEuroVector3Filter
 
         public float Filter(float value, float deltaTime)
         {
+            return Filter(value, deltaTime, 1f);
+        }
+
+
+        public float Filter(float value, float deltaTime, float betaScale)
+        {
             float dt = Mathf.Max(0.0001f, deltaTime);
             if (!initialized)
             {
@@ -127,7 +171,7 @@ public sealed class RuntimeOneEuroVector3Filter
             float derivative = (value - previousRawValue) / dt;
             previousRawValue = value;
             float filteredDerivative = derivativeFilter.Filter(derivative, ComputeAlpha(derivativeCutoff, dt));
-            float cutoff = minCutoff + beta * Mathf.Abs(filteredDerivative);
+            float cutoff = minCutoff + beta * betaScale * Mathf.Abs(filteredDerivative);
             return valueFilter.Filter(value, ComputeAlpha(cutoff, dt));
         }
 
@@ -150,6 +194,19 @@ public sealed class RuntimeOneEuroVector3Filter
 
             previousRawValue += delta;
             valueFilter.Shift(delta);
+        }
+
+
+        public void ScaleAbout(float origin, float factor)
+        {
+            if (!initialized)
+            {
+                return;
+            }
+
+            previousRawValue = origin + (previousRawValue - origin) * factor;
+            valueFilter.ScaleAbout(origin, factor);
+            derivativeFilter.Scale(factor);
         }
 
 

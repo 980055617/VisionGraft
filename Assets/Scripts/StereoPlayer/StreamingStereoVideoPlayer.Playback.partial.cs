@@ -22,8 +22,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // S（2026-10-16、既定 OFF）: S の設定（主スイッチ・合わせる点・IPD の上書き・視聴距離・画面の幅）が変わったら k を外して状態を捨てる（StereoDepth.partial.cs）。
+        SyncStereoDepthSettings();
+        // V（placementFollowVideoDepth、2026-10-26、既定 OFF、VideoDepthFollow.partial.cs）: 走っている間に主スイッチを切ったら、掛けている f を目のまわりに戻して捨てる
+        // （動作・frame out の続きの最中の track は次に追従で置く tick に戻す。OFF のまま始めた走りでは状態が無いので何もしない）。
+        SyncPlacementFollowVideoDepthSettings();
         RuntimePlaybackTimeline.FrameSnapshot frameSnapshot = GetPlaybackFrameSnapshot();
         int metaFrameUsed = frameSnapshot.displayMetadataFrame;
+        // 周回・巻き戻しで平滑を捨てる（rewindResetsSmoothing、既定 OFF、ShotBoundary.partial.cs）。
+        ResetSmoothingIfRewound(metaFrameUsed);
         if (!TryReadFrameObjects(metaFrameUsed, metaFrameObjects) ||
             metaFrameObjects.Count == 0)
         {
@@ -39,6 +46,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             ApplyElseFrameOutForFrame(metaFrameUsed);
             // 誰も映っていないフレームでも、1 周に 1 回のくじの周の頭・巻き戻りは進める（候補は空なので動かない）。
             ResolveRandomMotionOncePerLoop(metaFrameUsed);
+            // 犬がボールをくわえたまま画面の端から出て歩き続ける間も、口とボールを保つ（AnimalCarry.partial.cs）。
+            ApplyAnimalCarryForFrame(metaFrameUsed);
+            // 男性の口パク（HumanLipSync.partial.cs）。track が無いフレームでも出ているモデルの口は動かす・閉じる。
+            ApplyHumanLipSyncForFrame(metaFrameUsed);
             return;
         }
 
@@ -56,6 +67,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             ApplyElseFrameOutForFrame(frame);
             ApplyElseChainPlacementForFrame(frame);
             ApplyHumanOtherContactCorrectionForFrame();
+            // 犬にボールをくわえさせる（AnimalCarry.partial.cs）。全 track の姿勢とボールの補正の後に口を開け、ボールを口へ付ける。
+            ApplyAnimalCarryForFrame(frame);
+            // 男性の口パク（HumanLipSync.partial.cs）。全 track の姿勢の後にあごを開ける。
+            ApplyHumanLipSyncForFrame(frame);
             LogHumanOtherGapIfEnabled(frame);
             LogBallHeadIfEnabled(frame);
             return;
@@ -75,6 +90,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         ApplyElseFrameOutForFrame(frame);
         ApplyElseChainPlacementForFrame(frame);
         ApplyHumanOtherContactCorrectionForFrame();
+        ApplyAnimalCarryForFrame(frame);
+        ApplyHumanLipSyncForFrame(frame);
         LogHumanOtherGapIfEnabled(frame);
         LogBallHeadIfEnabled(frame);
     }
@@ -184,6 +201,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // 対象の居ない区間へ飛ぶと、モーションが Owned のまま評価されず、動画の一時停止のカウンタが 1 のまま
             // 残って以後 Random が二度と発火しなかった（2026-09-29 の監査）。
             StopRandomInteractiveMotionForAbsentTrack(kv.Key);
+            // bottomFitBorderEdgesAsBounds: 居ないフレームを挟んだら、上下とも切れた tick が保つ高さを持ち越さない。
+            bottomFitHeldReferenceCamYByTrack.Remove(kv.Key);
         }
     }
 
@@ -213,6 +232,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             animalHeadPinFrame = frame;
         }
 
+        // S（2026-10-16、既定 OFF）: この値渡しの複製の anchorZ を S の奥行きにする（骨格の track は popout × k、⑨ が付けていない Else は Zv）。
+        // metaFrameObjects は popout のまま。S が OFF なら何もしない。
+        ApplyStereoDepthAtTickStart(ref target);
         if (!ResolveAnchorToScreen(target.anchorU, out Transform screen, out int uEye, out _))
         {
             return;
@@ -221,6 +243,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // Bundle writer stores anchor/bbox already mapped into eye pixel coordinates.
         float uEyeF = Mathf.Clamp(uEye, 0f, manifest.eye_w - 1f);
         float vEyeF = Mathf.Clamp(target.anchorV, 0f, manifest.eye_h - 1f);
+        // partialAppearanceMode = Slide（既定 Off、PartialAppearance.partial.cs）: 端から入ってくる Else は、出そろったフレームの置き方を box の動きの分だけずらす。
+        // 端の外へ出る値なので clamp の後に足す（目の判定 ResolveAnchorToScreen は、出そろったフレームの anchorU のまま）。
+        if (target.hasScreenShift)
+        {
+            uEyeF += target.screenShiftU;
+            vEyeF += target.screenShiftV;
+        }
 
         float bboxHAdjusted = target.bboxH;
 
@@ -287,6 +316,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // 人の Hips の局所位置を、クリップが触る前の追従の値へ戻す（humanTrackingRestoresHipsLocalPosition、2026-10-25、HumanMotionContinuity.partial.cs）。
+        RestoreHumanHipsTrackLocalPositionIfEnabled(instance, target);
+        // V（placementFollowVideoDepth、2026-10-26、既定 OFF、VideoDepthFollow.partial.cs）: 前の tick の測りで映像の奥行きへの倍率 f を 1 動画フレーム分進め、
+        // この tick の anchorZ と anchorWorld を f 倍する（倍率は ApplyReplaceableModelTransform が f 倍）。目のまわりの一様な拡大なので片目の絵は変わらない。
+        // 状態が無い（OFF・契約が無い・最初の測りの前）なら何もしない。巻き戻り・長い間・ロックの作り直しは f を捨ててこの tick を f なしで置く。
+        // モーション中・frame out の続きの tick は上で戻るので f は止まる。
+        ApplyPlacementFollowVideoDepthBeforePlacement(ref target, instance, screen, uEyeF, vEyeF, ref anchorWorld, rebindingInteractiveMotion);
         float targetHeight = ComputeTargetHeightMeters(bboxHAdjusted, target.anchorZ);
         // 手動倍率は yaw と対で動く値なので、**同じ frame** で評価する。
         float manualScale = EvaluateManualScaleForFrame(target.trackId, frame);
@@ -329,10 +365,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (RefineDepthFromProjectedBones(instance, target, screen, bboxHAdjusted) &&
             !ShouldUseHumanSmplRootPlacement(target, frame))
         {
-            FitDisplayedModelToBBox(instance, target, screen, bboxHAdjusted);
+            FitDisplayedModelToBBox(instance, target, screen, bboxHAdjusted, true);
         }
+        // bottomFitBorderEdgesAsBounds（既定 OFF）: この tick の最後の ⑦ の後の ⑧ の基準点の高さを控える（次の tick の 2 回目の ⑦ が、上下とも縁で切れていれば保つ）。
+        if (bottomFitBorderEdgesAsBounds && !ShouldUseHumanSmplRootPlacement(target, frame))
+        {
+            NoteBottomFitReferenceHeight(instance, target.trackId, screen);
+        }
+        // S（2026-10-16、既定 OFF）: ⑧ と 2 回目の ⑦ の後でロックの k を確定する（合わせる点が Zv に来るよう目のまわりに一様に m 倍、平面の絵は変わらない）。
+        ApplyStereoDepthLockIfSettled(instance, ref target, screen);
+        // V（placementFollowVideoDepth、既定 OFF）: この tick の配置の合わせる点の深さと Zv を測って控えるだけ（f は次の tick の配置の前で進める。transform は書かないので、
+        // この後の動作の起点・frame out の速さ・⑨・犬のボールはこの tick の配置をそのまま読む）。
+        MeasurePlacementFollowVideoDepth(instance, target, screen);
         ObserveInteractiveMotionDisplayedRoot(target.trackId, instance, anchorWorld);
         ObserveBodyFrameOutTracked(target, instance, frame);
+        // 動画が止まってから動き始める（randomMotionStartsAfterVideoPause、既定 OFF）: 待っている動作を、この tick の表示位置から始める。
+        TryStartPendingRandomMotion(target.trackId);
         // 発火の判定はこの tick の配置と表示位置の記録の後（interactiveScheduleAfterPlacement、2026-10-06）。起点・倍率・凍結姿勢が
         // この tick の値になる（前に置くと、再び現れた最初の tick・shot の切れ目の最初の tick で前の出番の値から始まる）。
         if (interactiveScheduleAfterPlacement)
@@ -353,6 +401,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         LogAnimalBoneVsKeypointIfEnabled(target, instance, screen, frame);
         LogBoneVsKeypointIfEnabled(target, instance, screen, frame);
         DumpBoneWorldIfEnabled(target, instance, screen, frame);
+        // S（2026-10-16）: モデルと映像の奥行きの残差（logStereoDepth のときだけ。S が OFF でも k = 1 で出す）。
+        LogStereoDepthIfEnabled(target, instance, screen, frame);
     }
 
 
@@ -727,11 +777,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         float scaleBBoxH = bboxHAdjusted;
         float scaleAnchorZ = obj.anchorZ;
         bool lockingNow = lockScale && !lockedModelLocalScaleByTrack.ContainsKey(obj.trackId);
+        // V（placementFollowVideoDepth、既定 OFF）: この tick の anchorZ に V の f が掛かったままロックを作り直す（動作の途中の Model で f を持ち越した結び直しの tick）ときは、
+        // この tick の値でロックする場合（下の基準がどれも取れないとき）の深さと目標高を f で割り戻す（ロックに f を入れない）。下の基準は meta から引き直すので元から入らない。
+        if (lockingNow)
+        {
+            float lockVideoDepthFactor = ResolveVideoDepthFollowFactor(obj.trackId);
+            if (lockVideoDepthFactor != 1f)
+            {
+                scaleAnchorZ = obj.anchorZ / lockVideoDepthFactor;
+                scaleTargetHeightMeters = ComputeTargetHeightMeters(scaleBBoxH, scaleAnchorZ);
+            }
+        }
+
         int scaleReferenceFrame = GetCurrentPlaybackFrame();
         if (lockScale && TryResolveShotStartScaleReference(obj.trackId, out MetaObj shotStartObj))
         {
             scaleBBoxH = shotStartObj.bboxH;
-            scaleAnchorZ = shotStartObj.anchorZ;
+            // S（2026-10-16）: shot 先頭の anchorZ（meta.bin の popout）も、この tick の複製と同じ k 倍にする。S の状態が無ければ × 1（同じ値）。
+            scaleAnchorZ = shotStartObj.anchorZ * ResolveStereoDepthFactor(obj.trackId);
             scaleTargetHeightMeters = ComputeTargetHeightMeters(scaleBBoxH, scaleAnchorZ);
             scaleReferenceFrame = shotBoundaries.GetStartFrame(lastAppliedShotIndex);
         }
@@ -740,7 +803,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // 被験者実験の Model（既定1 ⇄ 既定2）で作り直した track（2026-10-24、modelPresetToggleKeepsScalePerModel）: shot の途中から現れた
             // track でも、同じ shot で前に倍率を決めた基準フレームで決め直す（押したフレームを基準にしない。ExperimentModelPreset.partial.cs）。
             scaleBBoxH = presetReferenceObj.bboxH;
-            scaleAnchorZ = presetReferenceObj.anchorZ;
+            scaleAnchorZ = presetReferenceObj.anchorZ * ResolveStereoDepthFactor(obj.trackId);
             scaleTargetHeightMeters = ComputeTargetHeightMeters(scaleBBoxH, scaleAnchorZ);
             scaleReferenceFrame = presetReferenceFrame;
         }
@@ -749,7 +812,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // shot の途中から現れた track（scaleReferenceSkipsPartialAppearance、既定 ON、2026-10-23）: 見切れた最初のフレームではなく、
             // bbox が出そろったフレームで倍率を決める（ScaleReference.partial.cs）。
             scaleBBoxH = settledObj.bboxH;
-            scaleAnchorZ = settledObj.anchorZ;
+            scaleAnchorZ = settledObj.anchorZ * ResolveStereoDepthFactor(obj.trackId);
             scaleTargetHeightMeters = ComputeTargetHeightMeters(scaleBBoxH, scaleAnchorZ);
             scaleReferenceFrame = settledFrame;
         }
@@ -790,10 +853,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // C4-T の倍率も手動倍率と同じくロックの外側で掛ける。⑧ は手動倍率だけを割り戻すので、
             // この倍率で伸びたぶんは ⑧ が奥へ押し戻さない（接近を scale で追う狙いどおり）。
             Vector3 lockedOrDesired = lockScale ? GetOrLockModelLocalScale(obj.trackId, desiredScale, model, IsCategoryPerson(obj.categoryId)) : desiredScale;
-            float trendFactor = ResolveAnimalScaleTrendFactor(obj, GetCurrentPlaybackFrame(), lockedOrDesired.x);
+            // V（placementFollowVideoDepth、既定 OFF）: V の f も手動倍率・C4-T と同じくロックの外側で掛ける（anchorZ も同じ f 倍なので目のまわりの一様な拡大になり、⑧ の比は変わらない）。
+            // f があるときは C4-T を掛けない（C4-T が倍率で追う接近を V が奥行きで打ち消し、毎フレーム引っ張り合う）。状態が無ければ f = 1 で、式は今と同じ値になる。
+            float videoDepthFactor = lockScale ? ResolveVideoDepthFollowFactor(obj.trackId) : 1f;
+            float trendFactor = videoDepthFactor == 1f ? ResolveAnimalScaleTrendFactor(obj, GetCurrentPlaybackFrame(), lockedOrDesired.x) : 1f;
             TrackPlacementWriter.ApplyLocalScaleWithGroundAlignment(
                 instance.transform,
-                lockedOrDesired * (userScale * trendFactor),
+                lockedOrDesired * (userScale * trendFactor * videoDepthFactor),
                 model != null && model.anchor == null && model.alignToGround,
                 model != null ? model.baseBottomOffsetLocal : 0f);
             Vector3 lossy = instance.transform.lossyScale;
@@ -809,6 +875,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             {
                 Vector3 up = screen != null ? screen.up : Vector3.up;
                 float vBottom = ResolveReliableBBoxBottomVEye(obj);
+                // partialAppearanceMode = Slide: 下端も同じだけずらす（obj の box は出そろったフレームのもの）。
+                if (obj.hasScreenShift)
+                {
+                    vBottom += obj.screenShiftV;
+                }
                 Vector3 bottomWorld = AnchorUvZToWorldPinhole(screen, uEye, vBottom, obj.anchorZ);
                 bottomWorld += up * ModelBottomExtraOffsetMeters;
                 float modelBottomOffset = model.baseBottomOffsetLocal * lossy.y;
@@ -866,6 +937,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return ratio;
         }
 
+        // S（2026-10-16）: この track が目のまわりに k 倍されているなら、比べる Else の深さ（metaFrameObjects の popout）と許容の幅も同じ k 倍にする
+        // （obj は ApplyMetaTarget の S の複製で anchorZ = popout·k、currentZ も k 倍）。k = 1 なら掛け算は厳密に同じ値。U3 が ON なら上で戻る。
+        // V（placementFollowVideoDepth、既定 OFF）: V の f も同じ目のまわりの倍率なので掛ける（obj.anchorZ も f 倍。状態が無ければ × 1 で同じ値）。
+        float kObj = ResolveStereoDepthFactor(obj.trackId) * ResolveVideoDepthFollowFactor(obj.trackId);
+        eps *= kObj;
+
         float k = Mathf.Max(0.1f, projectedDepthScaleK);
         float upper = float.MaxValue;
         float lower = float.MinValue;
@@ -884,13 +961,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
 
             // z = currentZ * ratio * k なので、深度の許容値を ratio の許容値へ写す。
-            if (other.anchorZ > obj.anchorZ)
+            float otherZ = other.anchorZ * kObj;
+            if (otherZ > obj.anchorZ)
             {
-                upper = Mathf.Min(upper, (other.anchorZ - eps) / (currentZ * k));
+                upper = Mathf.Min(upper, (otherZ - eps) / (currentZ * k));
             }
             else
             {
-                lower = Mathf.Max(lower, (other.anchorZ + eps) / (currentZ * k));
+                lower = Mathf.Max(lower, (otherZ + eps) / (currentZ * k));
             }
         }
 
@@ -1332,6 +1410,34 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             LogExactScaleRefineFollowUp(instance, obj, screen, ratio);
         }
 
+        // A（stereoDepthFollowVideoEveryFrame、既定 OFF、2026-10-20）: S のロックが決まった track は、箱の比の代わりに合わせる点を Zv に置く比を使う。
+        // 箱の比のためのガード・厳密に解く式・projectedDepthScaleK は通さない（どれも箱の高さに合わせるためのもの）。平滑・下限・上限はそのまま。
+        bool followVideo = false;
+        if (stereoDepthFollowVideoEveryFrame && stereoDepthMatchVideo &&
+            TryGetPinholeBasis(screen, out Vector3 followEye, out Quaternion followRotation))
+        {
+            float followBodyZ = (Quaternion.Inverse(followRotation) * (ResolveDepthReferenceWorld(instance) - followEye)).z;
+            if (TryResolveStereoFollowRatio(instance, obj, followEye, followRotation, followBodyZ, out float followRatio))
+            {
+                ratio = followRatio;
+                followVideo = true;
+            }
+        }
+
+        // V の端の Hold（placementFollowVideoDepthAtEdge == Hold、2026-10-26 夜、既定 OFF、VideoDepthFollow.partial.cs）: 箱が画面の端に掛かった tick は、
+        // 見切れた箱の比（外挿で手前へ寄せる）の代わりに、合わせる点を映像の奥行きに置く比を使う。A と同じく箱の比のためのガード・厳密に解く式・
+        // projectedDepthScaleK は通さず、平滑・下限・上限はそのまま。
+        // V の大きさをゆっくり変える形（placementFollowVideoDepthSizeMaxRatePerSecond、既定 0、2026-10-27、VideoDepthFollowStill.partial.cs）の track は
+        // いつもこの比を使う。その tick に箱の比がどこへ置いていたかを、下で V の測りのために控える（箱の比はガードの範囲のときだけ使う）。
+        float boxRatio = ratio;
+        bool noteBoxForSlowSize = false;
+        if (!followVideo && TryResolveVideoDepthFollowEdgeHoldRatio(instance, obj, screen, out float edgeHoldRatio))
+        {
+            ratio = edgeHoldRatio;
+            followVideo = true;
+            noteBoxForSlowSize = IsVideoDepthFollowSlowSizeTrack(obj);
+        }
+
         // 検出が破綻しているフレームでは動かさないためのガード。
         //
         // ただし下限 0.4 は「モデルが bbox の 4 割以下にしか写っていない」ケースを全部
@@ -1343,7 +1449,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 使うのは今と同じ prefab で平滑した比だけ（平滑の値はモデルの差し替え・偽のカットでは消えないので、前のモデルの比で置かないため）。
         // 保持している間も平滑の刻み（動画フレーム）は進め、ガードを抜けた最初の tick が保持した比から 1 フレーム分だけ動くようにする。
         bool heldOnGuard = false;
-        if (ratio < depthRefineMinRatio || ratio > MaxProjectedBoneRatioForScaleRefine)
+        if (!followVideo && (ratio < depthRefineMinRatio || ratio > MaxProjectedBoneRatioForScaleRefine))
         {
             if (!depthRefineHoldOnGuard || !IsCategoryAnimal(obj.categoryId) ||
                 !smoothedProjectedDepthRatioByTrack.TryGetValue(obj.trackId, out float heldRatio) ||
@@ -1403,7 +1509,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // depthRefineExactSolve（既定 OFF、2026-10-13）: 一手の比の代わりに、実際の投影で解いた深度倍率 s を平滑へ渡す。
             // s も「基準点の深さの倍率」なので、順序の丸め（z = 基準点の深さ × 倍率）・平滑・上限・下限は比と同じに扱える（換算は厳密に成り立つ）。
             // 解けない tick（投影できる点が無い等）は今の比のまま。ガード（上）と保持（heldOnGuard）は今の比で判定したまま。
-            if (depthRefineExactSolve)
+            if (depthRefineExactSolve && !followVideo)
             {
                 ratio = ResolveExactDepthMultiplierOrLinear(instance, obj, camOrigin, camRotation, camLocal, targetH * manualScale, ratio);
             }
@@ -1412,6 +1518,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // animal は姿勢で骨格の投影高が急に変わるので、速追従（1 frame で奥行きが飛ぶ）は掛けない（2026-09-18）。
             bool allowFastTrack = depthRefineFastTrackForAnimal || !isAnimal;
             float tauOverride = isAnimal && animalDepthRefineSmoothingSeconds > 0f ? animalDepthRefineSmoothingSeconds : -1f;
+            // V のその場の後の追いつき（placementFollowVideoDepthHoldWhileFeetStill、既定 OFF、2026-10-27、VideoDepthFollowStill.partial.cs）: 足元が動き出して
+            // しばらくは、止めていた間に箱が変わった分をゆっくり追う（時定数を長くし、速追従も切る）。OFF・その場の後でないなら今のまま。
+            if (TryResolveVideoDepthFollowReleaseTau(obj, tauOverride > 0f ? tauOverride : Mathf.Max(0f, projectedDepthSmoothingSeconds), out float releaseTau))
+            {
+                tauOverride = releaseTau;
+                allowFastTrack = false;
+            }
             ratio = SmoothProjectedDepthRatio(obj.trackId, ratio, allowFastTrack, tauOverride);
             if (depthRefineHoldOnGuard && isAnimal)
             {
@@ -1422,7 +1535,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         float beforeZ = camLocal.z;
-        float ratioZ = camLocal.z * ratio * Mathf.Max(0.1f, projectedDepthScaleK);
+        float ratioZ = camLocal.z * ratio * (followVideo ? 1f : Mathf.Max(0.1f, projectedDepthScaleK));
         float screenDist = Mathf.Max(0.001f, screenDistanceMeters);
         // スクリーンより手前に収める制約も**体**に掛ける。root に掛けると root が
         // screenDist で止まるだけで、体はそのぶん奥（3.0m 設定で 5.45m）に残る。
@@ -1465,6 +1578,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         // 下限が上限を超えたときは下限を優先する（Mathf.Clamp は min > max だと値によって勝つ側が変わる）。
         float targetZ = floorOverCeiling ? lowerZ : Mathf.Clamp(ratioZ, lowerZ, upperZ);
+        // V の大きさをゆっくり変える形: 箱の比で置いていたらの基準点の奥行き − 実際に置く奥行き（どの点も同じだけ前後する）。箱の比がガードの外なら NaN（f を動かさない）。
+        if (noteBoxForSlowSize)
+        {
+            bool boxUsable = !(boxRatio < depthRefineMinRatio || boxRatio > MaxProjectedBoneRatioForScaleRefine);
+            float boxDepthRatio = boxUsable && depthRefineExactSolve
+                ? ResolveExactDepthMultiplierOrLinear(instance, obj, camOrigin, camRotation, camLocal, targetH * manualScale, boxRatio)
+                : boxRatio;
+            NoteVideoDepthFollowBoxDepthShift(obj.trackId,
+                boxUsable ? camLocal.z * boxDepthRatio * Mathf.Max(0.1f, projectedDepthScaleK) - targetZ : float.NaN);
+        }
+        // S（2026-10-16）: この tick の ⑧ の結果を控える（記録だけ。clamped = 下限・上限で止まった、Mathf.Clamp は範囲内なら入力をそのまま返す）。
+        // V（placementFollowVideoDepth、2026-10-26）: 下限で止まった（比の深さより奥へ押した）かも控える（記録だけ。V は下限で止まった tick は測り、
+        // 上限で止まった tick は f を小さくする測りだけ控える）。
+        NoteStereoDepthRefineResult(obj.trackId, targetZ != ratioZ, Mathf.Abs(targetZ - camLocal.z) <= 0.0001f, targetZ - camLocal.z, followVideo, targetZ > ratioZ);
 
         if (logDepthRefineStages)
         {
@@ -1796,10 +1923,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     {
                         setup.fitMode = ExactScaleRefineSolver.FitMode.Top;
                         setup.fitTargetV = obj.bboxY;
+                        // bottomFitBorderEdgesAsBounds: ⑦ と同じく、一番下の点を画面の下の縁より上へ持ち上げる移動なら縁へ置く移動にする（低い方）。
+                        if (bottomFitBorderEdgesAsBounds)
+                        {
+                            setup.lowestNotAboveEdge = true;
+                            setup.edgeTargetV = ResolveBBoxBottomVEye(obj);
+                        }
                     }
                 }
                 else
                 {
+                    // 上下とも縁で切れた tick もここ（今の下端合わせ）。倍率の測り直しの後の ⑦ は ⑧ より前なので高さを保たない
+                    // （bottomFitBorderEdgesAsBounds で保つのは ⑧ の後の 2 回目の ⑦ だけ。FitDisplayedModelToBBox の finalFit）。
                     setup.fitMode = ExactScaleRefineSolver.FitMode.Bottom;
                     setup.fitTargetV = ResolveReliableBBoxBottomVEye(obj);
                 }
@@ -1978,6 +2113,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Bottom,
             Top,
             HeadPoint,          // animalBottomClippedHeadPin の ⑦（頭の骨の点を目標の行へ。2026-10-14）
+            HoldReferenceY,     // bottomFitBorderEdgesAsBounds の上下とも切れた tick の ⑦（基準点のカメラ空間の高さを heldReferenceY へ。2026-10-25）
         }
 
         internal struct Setup
@@ -1990,6 +2126,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             public float fitTargetV;            // Bottom: bbox の下端（eye px）、Top: bbox の上端、HeadPoint: 頭の骨の点を置く行
             public Vector3 fitPoint;            // HeadPoint: 頭の骨の点（camera 空間）
             public bool bottomUsesPointDepth;   // Bottom の px → m を一番下の点の深さで換算するか（false なら AABB の中心の深さ。今の ⑦）
+            public bool lowestNotAboveEdge;     // bottomFitBorderEdgesAsBounds: ⑦ の移動を「一番下の点を edgeTargetV へ置く移動」以下にする（Top・HoldReferenceY）
+            public float edgeTargetV;           // 画面の下の縁（ResolveBBoxBottomVEye、eye px）
+            public Vector3 referencePoint;      // HoldReferenceY: ⑧ の基準点（ResolveDepthReferenceWorld、camera 空間、拡大の前）
+            public float heldReferenceY;        // HoldReferenceY: 保つ基準点のカメラ空間の高さ（m）
             public ManifestData manifest;
             public float fx;
             public float fy;
@@ -2049,33 +2189,22 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                         float topV = ((s.cyPixels / eyeH) - (topY * s.fy / center.z) * 0.5f) * eyeH;
                         deltaCamY = -((s.fitTargetV - topV) * 2f / eyeH) * (depth / s.fy);
                     }
-                    else
+                    else if (s.fitMode == FitMode.HoldReferenceY)
                     {
-                        float bottomV = float.MinValue;
-                        float bottomZ = 0f;
-                        bool found = false;
-                        for (int i = 0; i < s.points.Count; i++)
-                        {
-                            Vector3 q = s.pivot + (s.points[i] - s.pivot) * g;
-                            if (!PinholePlacementSpace.TryProjectCamLocalToEyePixel(s.manifest, q, s.fx, s.fy, out Vector2 pixel))
-                            {
-                                continue;
-                            }
+                        // 拡大は中心のまわり。基準点も「中心 + g × (基準点 − 中心)」へ写り、⑦ はその高さを heldReferenceY へ戻す。
+                        Vector3 r = s.pivot + (s.referencePoint - s.pivot) * g;
+                        deltaCamY = s.heldReferenceY - r.y;
+                    }
+                    else if (TryLowestPointShift(s, g, depth, s.fitTargetV, out float bottomShift))
+                    {
+                        deltaCamY = bottomShift;
+                    }
 
-                            if (pixel.y > bottomV)
-                            {
-                                bottomV = pixel.y;
-                                bottomZ = q.z;
-                            }
-
-                            found = true;
-                        }
-
-                        if (found)
-                        {
-                            float conversionDepth = s.bottomUsesPointDepth ? bottomZ : depth;
-                            deltaCamY = -((s.fitTargetV - bottomV) * 2f / eyeH) * (conversionDepth / s.fy);
-                        }
+                    // bottomFitBorderEdgesAsBounds: 一番下の点を画面の下の縁より上へ持ち上げない（⑦ の Mathf.Min と同じ）。
+                    if (s.lowestNotAboveEdge && (s.fitMode == FitMode.Top || s.fitMode == FitMode.HoldReferenceY) &&
+                        TryLowestPointShift(s, g, depth, s.edgeTargetV, out float edgeShift))
+                    {
+                        deltaCamY = Mathf.Min(deltaCamY, edgeShift);
                     }
                 }
             }
@@ -2107,6 +2236,41 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
             float height = maxV - minV;
             return hasAny && height > 0.0001f ? height : -1f;
+        }
+
+        // 倍率 g のとき一番下の投影点（最初に見つけた最大の v）を targetV の行へ置く camera の上下の移動（m）。換算は bottomUsesPointDepth ならその点の深さ、
+        // そうでなければ AABB の中心の深さ（aabbDepth）。今の Bottom の式をそのまま出したもの（2026-10-25、bottomFitBorderEdgesAsBounds の縁の判定と共用）。
+        private static bool TryLowestPointShift(in Setup s, float g, float aabbDepth, float targetV, out float shift)
+        {
+            shift = 0f;
+            float bottomV = float.MinValue;
+            float bottomZ = 0f;
+            bool found = false;
+            for (int i = 0; i < s.points.Count; i++)
+            {
+                Vector3 q = s.pivot + (s.points[i] - s.pivot) * g;
+                if (!PinholePlacementSpace.TryProjectCamLocalToEyePixel(s.manifest, q, s.fx, s.fy, out Vector2 pixel))
+                {
+                    continue;
+                }
+
+                if (pixel.y > bottomV)
+                {
+                    bottomV = pixel.y;
+                    bottomZ = q.z;
+                }
+
+                found = true;
+            }
+
+            if (!found)
+            {
+                return false;
+            }
+
+            float conversionDepth = s.bottomUsesPointDepth ? bottomZ : aabbDepth;
+            shift = -((targetV - bottomV) * 2f / s.manifest.eye_h) * (conversionDepth / s.fy);
+            return true;
         }
 
         // ⑦ を当てた後の広がりが goalPixels になる g を、log g の二分法で求める。拡大の向きは一番近い点の深さが minPointDepth を割らない範囲に限る
@@ -2383,6 +2547,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Vector3 carried = desiredLocalScale * carriedFactor;
             scaleRefinedByTrack.Add(trackId);
             lockedModelLocalScaleByTrack[trackId] = carried;
+            // S（2026-10-16）: 同じ shot の中でロックを作り直した（差し替え・表示し直し）。確定済みの S の状態は kEntry = 今の k で確定し直す（relock）。
+            NoteStereoDepthLockCreated(trackId);
             if (logPlacementMeasurement)
             {
                 Debug.Log($"[SCALEFIX] track={trackId} 補正倍率 x{carriedFactor:F3} を持ち越し（測り直さない）");
@@ -2394,6 +2560,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 倍率が無い = shot 境界を越えた直後。ここで初めて FK 後の実測補正を通す。
         scaleRefinedByTrack.Remove(trackId);
         lockedModelLocalScaleByTrack[trackId] = desiredLocalScale;
+        // S（2026-10-16）: 上と同じ（別の prefab で U1 から測り直すロック）。shot の先頭のロックでは状態がまだ確定していないので何もしない。
+        NoteStereoDepthLockCreated(trackId);
         return desiredLocalScale;
     }
 
@@ -2598,28 +2766,100 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return bboxBottom >= manifest.eye_h - (wasClipped ? leave : enter);
     }
 
-    private void FitDisplayedModelToBBox(GameObject instance, MetaObj obj, Transform screen, float bboxH)
+    // bottomFitBorderEdgesAsBounds（Core.cs、既定 OFF）: ⑦ の後の ⑧ の基準点（ResolveDepthReferenceWorld）のカメラ空間の高さ（m）。
+    // 上端も下端も画面の縁で切れた tick の ⑦ はこの高さを保つ。書くのは tick の最後の ⑦ の後だけ（ApplyMetaTarget。⑧ で奥行きが決まった後の配置）。
+    // 10/25 の撮影と反論役: 1 回目の ⑦（⑧ の前、モデルが約半分の大きさに見える奥）の後にも書いていたので、そこで足を画面の下の縁へ下げた高さが控えられ、
+    // 近づけた後の 2 回目の ⑦ がその高さに戻して、vf 541（上下とも切れた最初のフレーム）に体全体が約 300 px 沈み、その後も下へだけ動いた。
+    // shot の切れ目（ResetPerShotTrackState）と track の欠け（HideUnselectedTrackInstances）で消す。
+    private readonly Dictionary<uint, float> bottomFitHeldReferenceCamYByTrack = new Dictionary<uint, float>();
+    // 保った高さを書いたときのインスタンスと、その基準点が人の腰（Hips）だったか。モデルの差し替え（Model ボタン）で作り直されたモデルには、
+    // 前も今も基準点が腰のときだけ前のモデルの高さを引き継ぐ（腰はどの人のモデルでも同じ体の点）。動物の基準点（root・骨の重心）はモデルごとに
+    // 体の別の所なので引き継がない。10/25 夜の撮影（o6_tv_p1swap_on2）: 引き継がないと、上下とも切れている間に押した 1 コマで新しいモデルが
+    // 今の版の位置（足を下の縁へ）に入り、手が 115〜122 px・腰が 132 px 上へ跳んだ（今の版は体が 11% 大きくなるだけ）。その後は今の版と同じになり、
+    // 直しの良さが無くなった。
+    private readonly Dictionary<uint, int> bottomFitHeldReferenceInstanceIdByTrack = new Dictionary<uint, int>();
+    private readonly Dictionary<uint, bool> bottomFitHeldReferenceIsHipsByTrack = new Dictionary<uint, bool>();
+
+    private bool TryGetBottomFitHeldReferenceY(uint trackId, GameObject instance, out float heldReferenceY)
+    {
+        heldReferenceY = 0f;
+        if (instance == null ||
+            !bottomFitHeldReferenceCamYByTrack.TryGetValue(trackId, out float held) ||
+            !bottomFitHeldReferenceInstanceIdByTrack.TryGetValue(trackId, out int heldInstanceId))
+        {
+            return false;
+        }
+
+        if (heldInstanceId != instance.GetInstanceID() &&
+            !(bottomFitHeldReferenceIsHipsByTrack.TryGetValue(trackId, out bool heldIsHips) && heldIsHips && DepthReferenceIsHumanoidHips(instance)))
+        {
+            return false;
+        }
+
+        heldReferenceY = held;
+        return true;
+    }
+
+    // ResolveDepthReferenceWorld が人の腰（Hips）を返すか（同じ条件）。
+    private bool DepthReferenceIsHumanoidHips(GameObject instance)
+    {
+        if (instance == null)
+        {
+            return false;
+        }
+
+        Animator animator = instance.GetComponentInChildren<Animator>(true);
+        if (animator == null || !animator.isHuman)
+        {
+            return false;
+        }
+
+        HumanoidRigCache cache = GetOrBuildHumanoidCache(animator);
+        return cache != null && cache.ready && cache.bones.TryGetValue(HumanBodyBones.Hips, out Transform hips) && hips != null;
+    }
+
+    // finalFit: ⑧ の後の 2 回目の ⑦（奥行きが決まった後）。上下とも縁で切れた tick に高さを保つ（bottomFitBorderEdgesAsBounds）のはこの ⑦ だけ。
+    // ⑧ より前の ⑦（1 回目・倍率の測り直しの後）は今の下端合わせのまま（⑧ が基準点をその光線の上で動かすので、その前の縦の位置は 2 回目の ⑦ が決め直す）。
+    private void FitDisplayedModelToBBox(GameObject instance, MetaObj obj, Transform screen, float bboxH, bool finalFit = false)
+    {
+        FitDisplayedModelToBBoxCore(instance, obj, screen, bboxH, finalFit);
+    }
+
+    private void NoteBottomFitReferenceHeight(GameObject instance, uint trackId, Transform screen)
+    {
+        if (instance == null || !TryGetPinholeBasis(screen, out Vector3 camOrigin, out Quaternion camRotation))
+        {
+            return;
+        }
+
+        bottomFitHeldReferenceCamYByTrack[trackId] = (Quaternion.Inverse(camRotation) * (ResolveDepthReferenceWorld(instance) - camOrigin)).y;
+        bottomFitHeldReferenceInstanceIdByTrack[trackId] = instance.GetInstanceID();
+        bottomFitHeldReferenceIsHipsByTrack[trackId] = DepthReferenceIsHumanoidHips(instance);
+    }
+
+    // ⑦ の本体。合わせた（モデルを動かした、または頭合わせが置いた）とき true。
+    private bool FitDisplayedModelToBBoxCore(GameObject instance, MetaObj obj, Transform screen, float bboxH, bool allowHold)
     {
         if (instance == null || manifest == null || manifest.eye_w <= 0 || manifest.eye_h <= 0)
         {
-            return;
+            return false;
         }
 
         // 姿勢を持つカテゴリ専用。Else は姿勢で形が変わらないので ApplyReplaceableModelTransform
         // 側の bind pose ベースの下端合わせで足り、ここは通らない。
         if (!IsCategoryPerson(obj.categoryId) && !IsCategoryAnimal(obj.categoryId))
         {
-            return;
+            return false;
         }
 
         if (bboxH <= 0f)
         {
-            return;
+            return false;
         }
 
         if (!TryProjectRendererBoundsToEyeHeight(instance, screen, out float projectedTopV, out float projectedBottomV, out float projectedHeight, out float depthMeters))
         {
-            return;
+            return false;
         }
 
         // 位置合わせの基準はスケールの基準と揃える。スケールは骨格（ReplaceableModel の
@@ -2664,12 +2904,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             if (animalBottomClippedHeadPin && IsCategoryAnimal(obj.categoryId) &&
                 TryApplyAnimalHeadPin(instance, obj, screen, projectedTopV))
             {
-                return;
+                return true;
             }
 
             LogBottomFixDepthIfEnabled(instance, obj, screen, null, projectedTopV, obj.bboxY, depthMeters, true);
+            // bottomFitBorderEdgesAsBounds（既定 OFF）: 上端合わせの移動と、一番下の点を画面の下の縁（ResolveBottomBorderFitShiftY）へ置く移動の低い方。
+            // モデルが bbox より短いと上端合わせは足を画の中へ持ち上げる（下端が縁に着いたフレームで体が跳ね上がる）。長ければ上端合わせのまま。
+            if (bottomFitBorderEdgesAsBounds &&
+                TryGetProjectionIntrinsics(out _, out float fyTop, out _, out _) &&
+                TryGetPinholeBasis(screen, out _, out Quaternion camRotationTop))
+            {
+                float topShift = PinholePlacementSpace.CameraShiftYToPutPointOnRow(manifest.eye_h, fyTop, depthMeters, projectedTopV, obj.bboxY);
+                float edgeShift = ResolveBottomBorderFitShiftY(instance, obj, screen, bottomV, bottomBoneName, depthMeters, fyTop);
+                TrackPlacementWriter.ApplyCameraSpaceOffset(instance.transform, camRotationTop, new Vector3(0f, Mathf.Min(topShift, edgeShift), 0f));
+                return true;
+            }
+
             AlignProjectedModelBottomToBBox(instance.transform, screen, projectedTopV, depthMeters, obj.bboxY);
-            return;
+            return true;
         }
 
         if (animalBottomClippedHeadPin && IsCategoryAnimal(obj.categoryId))
@@ -2677,34 +2929,68 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             NoteAnimalHeadPinBranch(obj, false, "bottomBranch");
         }
 
+        // bottomFitBorderEdgesAsBounds（既定 OFF）: 上端も下端も縁で切れている tick は、どちらの辺も被写体の端ではないので、直前の ⑦ の後の
+        // ⑧ の基準点のカメラ空間の高さを保つ（⑧ が奥行きを変えると像は主点のまわりに伸び縮みする）。一番下の点は下の縁より上へ持ち上げない（低い方）。
+        // 保つ値が無い（両方切れた状態で現れた・shot の頭）ときと、⑧ より前の ⑦（allowHold = false）は下の今の下端合わせ。
+        if (allowHold && bottomFitBorderEdgesAsBounds && alignTopWhenBottomClipped && clippedBottom && clippedTop &&
+            TryGetBottomFitHeldReferenceY(obj.trackId, instance, out float heldReferenceY) &&
+            TryGetProjectionIntrinsics(out _, out float fyHold, out _, out _) &&
+            TryGetPinholeBasis(screen, out Vector3 camOriginHold, out Quaternion camRotationHold))
+        {
+            // 今の下端合わせと同じく控え（lastGoodBottomAlign*）を進める（この tick の後の下端合わせの判断を今と同じにするため。値は使わない）。
+            ResolveReliableBBoxBottomVEye(obj);
+            float referenceY = (Quaternion.Inverse(camRotationHold) * (ResolveDepthReferenceWorld(instance) - camOriginHold)).y;
+            float edgeShift = ResolveBottomBorderFitShiftY(instance, obj, screen, bottomV, bottomBoneName, depthMeters, fyHold);
+            TrackPlacementWriter.ApplyCameraSpaceOffset(instance.transform, camRotationHold, new Vector3(0f, Mathf.Min(heldReferenceY - referenceY, edgeShift), 0f));
+            return true;
+        }
+
         // depthMeters はモデル AABB 中心の深度で、anchorZ とは 3〜4% ずれる。
         // ここは「投影した下端を bbox 下端に一致させる」処理なので、投影に使ったのと同じ
         // 深度（depthMeters）で逆算するのが正しい。anchorZ を混ぜてはいけない。
         float targetBottomV = ResolveReliableBBoxBottomVEye(obj);
         LogBottomFixDepthIfEnabled(instance, obj, screen, bottomBoneName, bottomV, targetBottomV, depthMeters, false);
-        // 既定 OFF（2026-10-09、animalBottomFitUsesBoneDepth、既存の欠陥の直し）: animal は、一番下の骨で合わせるとき px → m の換算をその骨自身の深さで行う。
-        // 骨はその骨の深さで投影している（v = (cy − y·fy/z·0.5)·eye_h、カメラの上方向へ動かしても z は変わらない）ので、AABB の中心の深さで割り戻すと
-        // 移動量が「AABB の深さ ÷ 骨の深さ」倍にずれる。伏せた 31_GrayWolf の鼻先（目から 0.29 m、AABB の中心 0.73 m）で 2.5 倍行き過ぎ、⑧ が奥行きの
-        // 上限で止まって 2 回目の ⑦ が走らない tick では、体が 0.5 m 浮いたまま残る。⑧ に目の前へ寄せられた 06_AmericanMink では唇の骨が目から 3 mm で
-        // 50 倍になり、体が頭の上へ飛ぶ（Docs/tmp/roster_20261009/README.md の 11-4）。骨が取れない（AABB の下端で合わせる）ときは今のまま。
+        float alignDepth = ResolveBottomFitAlignDepth(instance, obj, screen, bottomBoneName, depthMeters);
+        AlignProjectedModelBottomToBBox(instance.transform, screen, bottomV, alignDepth, targetBottomV);
+        return true;
+    }
+
+    // ⑦ の下端合わせの px → m の換算の深さ（FitDisplayedModelToBBoxCore の下端合わせから出しただけ。中身は変えていない）。
+    // 既定 OFF（2026-10-09、animalBottomFitUsesBoneDepth、既存の欠陥の直し）: animal は、一番下の骨で合わせるとき px → m の換算をその骨自身の深さで行う。
+    // 骨はその骨の深さで投影している（v = (cy − y·fy/z·0.5)·eye_h、カメラの上方向へ動かしても z は変わらない）ので、AABB の中心の深さで割り戻すと
+    // 移動量が「AABB の深さ ÷ 骨の深さ」倍にずれる。伏せた 31_GrayWolf の鼻先（目から 0.29 m、AABB の中心 0.73 m）で 2.5 倍行き過ぎ、⑧ が奥行きの
+    // 上限で止まって 2 回目の ⑦ が走らない tick では、体が 0.5 m 浮いたまま残る。⑧ に目の前へ寄せられた 06_AmericanMink では唇の骨が目から 3 mm で
+    // 50 倍になり、体が頭の上へ飛ぶ（Docs/tmp/roster_20261009/README.md の 11-4）。骨が取れない（AABB の下端で合わせる）ときは今のまま。
+    // bottomFitUsesProjectionPointDepth（既定 OFF、2026-10-13、全リグ）: 上の換算を種別によらず行う。exactScaleRefine が ON なら OFF でも行う（測り直しが解く式の ⑦ と
+    // この ⑦ を一致させるため）。下端に使った点そのものの深さを使い、名前で骨を引き直さない（足裏の代理点 Sole* は ResolveProjectionBones に無く、名前で引くと
+    // AABB の深さに落ちる）。骨が投影できず AABB の下端で合わせたときは、点も取れないので今のまま。
+    // この換算の条件は 2 か所に写してある（ExactScaleRefineSolver.EvaluateExtent の bottomUsesPointDepth と、⑧ の厳密解の
+    // ExactDepthSecondFitUsesBottomPointDepth）。ここを変えたら両方も同じに変えること（2026-10-13 の合流）。
+    private float ResolveBottomFitAlignDepth(GameObject instance, MetaObj obj, Transform screen, string bottomBoneName, float depthMeters)
+    {
         float alignDepth = depthMeters;
         if (animalBottomFitUsesBoneDepth && IsCategoryAnimal(obj.categoryId) &&
             TryResolveProjectionBoneDepth(instance, screen, bottomBoneName, out float bottomBoneDepth))
         {
             alignDepth = bottomBoneDepth;
         }
-        // bottomFitUsesProjectionPointDepth（既定 OFF、2026-10-13、全リグ）: 上の換算を種別によらず行う。exactScaleRefine が ON なら OFF でも行う（測り直しが解く式の ⑦ と
-        // この ⑦ を一致させるため）。下端に使った点そのものの深さを使い、名前で骨を引き直さない（足裏の代理点 Sole* は ResolveProjectionBones に無く、名前で引くと
-        // AABB の深さに落ちる）。骨が投影できず AABB の下端で合わせたときは、点も取れないので今のまま。
-        // この換算の条件は 2 か所に写してある（ExactScaleRefineSolver.EvaluateExtent の bottomUsesPointDepth と、⑧ の厳密解の
-        // ExactDepthSecondFitUsesBottomPointDepth）。ここを変えたら両方も同じに変えること（2026-10-13 の合流）。
         else if ((bottomFitUsesProjectionPointDepth || exactScaleRefine) &&
                  TryResolveBottomProjectionPointDepth(instance, screen, out float bottomPointDepth))
         {
             alignDepth = bottomPointDepth;
         }
 
-        AlignProjectedModelBottomToBBox(instance.transform, screen, bottomV, alignDepth, targetBottomV);
+        return alignDepth;
+    }
+
+    // bottomFitBorderEdgesAsBounds: 一番下の投影点（bottomV）を box の下端（ResolveBBoxBottomVEye。呼ぶのは下端が縁で切れた tick だけなので画面の下の縁 eye_h − 1）
+    // へ置くカメラの上下の移動（m）。換算は下端合わせと同じ（AlignProjectedModelBottomToBBox と同じ式・ResolveBottomFitAlignDepth の深さ）。
+    // 目標に ResolveReliableBBoxBottomVEye を使わないのは、その控え（lastGoodBottomAlign*）を今の下端合わせ以外の tick で書き換えないため。
+    private float ResolveBottomBorderFitShiftY(GameObject instance, MetaObj obj, Transform screen, float bottomV, string bottomBoneName, float depthMeters, float fy)
+    {
+        float edgeV = ResolveBBoxBottomVEye(obj);
+        float alignDepth = ResolveBottomFitAlignDepth(instance, obj, screen, bottomBoneName, depthMeters);
+        return PinholePlacementSpace.CameraShiftYToPutPointOnRow(manifest.eye_h, fy, alignDepth, bottomV, edgeV);
     }
 
     // 投影に使う骨（ResolveProjectionBones）のうち、名前が一致する骨のカメラ空間の深さ。投影できる深さ（0.001 m より奥）のときだけ true。
@@ -2917,6 +3203,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     private void TryApplySkeleton(GameObject instance, MetaObj obj, Transform screen, int frame)
     {
+        // S（2026-10-16）: この tick の姿勢の経路を None に戻す（記録だけ。PosePipeline.partial.cs の各経路が書く）。
+        stereoDepthPosePathRoot = instance != null ? instance.transform : null;
+        stereoDepthPosePath = StereoDepthPosePath.None;
+
         if (instance == null || !obj.hasSkeleton || obj.jointsCam == null || obj.jointsVis == null)
         {
             return;
@@ -3132,7 +3422,25 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             {
                 fit.mode = PinholePlacementSpace.SecondFitMode.Top;
                 fit.targetV = obj.bboxY;
+                // bottomFitBorderEdgesAsBounds: 2 回目の ⑦ と同じく、一番下の点を画面の下の縁より上へ持ち上げる移動なら縁へ置く移動にする（低い方）。
+                if (bottomFitBorderEdgesAsBounds)
+                {
+                    fit.lowestNotAboveEdge = true;
+                    fit.edgeTargetV = ResolveBBoxBottomVEye(obj);
+                    fit.bottomUsesPointDepth = ExactDepthSecondFitUsesBottomPointDepth(obj);
+                }
             }
+        }
+        else if (bottomFitBorderEdgesAsBounds && alignTopWhenBottomClipped && clippedBottom && clippedTop &&
+                 TryGetBottomFitHeldReferenceY(obj.trackId, instance, out float heldReferenceY))
+        {
+            // bottomFitBorderEdgesAsBounds: 上下とも縁で切れた tick の 2 回目の ⑦（⑧ の基準点のカメラ空間の高さを保つ）。基準点は ⑧ の光線の基準点と同じ
+            // （ResolveDepthReferenceWorld。EvaluateExtentAfterDepthMove の referenceY がそれ）。一番下の点は縁より上へ上げない。
+            fit.mode = PinholePlacementSpace.SecondFitMode.HoldReferenceY;
+            fit.heldReferenceY = heldReferenceY;
+            fit.lowestNotAboveEdge = true;
+            fit.edgeTargetV = ResolveBBoxBottomVEye(obj);
+            fit.bottomUsesPointDepth = ExactDepthSecondFitUsesBottomPointDepth(obj);
         }
         else
         {

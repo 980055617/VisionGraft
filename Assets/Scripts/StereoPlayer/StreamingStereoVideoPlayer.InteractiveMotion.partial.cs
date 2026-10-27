@@ -21,7 +21,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private enum InteractiveTriggerSource { Random, SystemFrameOut }
     // ToDefault: 既定の姿勢へ混ぜる段（animalEventFromDefaultPose、2026-10-07）。静的・動的どちらのイベントもここから始まる。
     private enum InteractiveDynamicPhase { WalkIn, Gesture, WalkBack, ToDefault }
-    private enum InteractiveEventStage { Inactive, Owned, HandoffBlend }
+    // PendingPause: 音のフェードの間、追従のまま動画が止まるのを待つ（randomMotionStartsAfterVideoPause、2026-10-25、既定 OFF）。
+    private enum InteractiveEventStage { Inactive, Owned, HandoffBlend, PendingPause }
     private enum InteractiveAnimalPreset { FaceViewer, BodyTurnViewer, TailWag, PawWave, DataDrivenClip }
     private enum InteractiveHumanPreset { ClipGesture, FaceViewer }
 
@@ -78,6 +79,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public float walkTurnDuration;
         // 体で測った歩ける距離（animalApproachByNearestPoint、2026-10-06）。負なら従来の root の規則。
         public float approachTravelMeters = -1f;
+        // 動作の長さに掛ける倍率（S の stereoDepthScalesMotionLengths、2026-10-26）。発火の tick に ResolveMotionLengthScale で決め、動作の間は変えない
+        // （S の k は動作の間に確定も外しもしない、StereoDepth.partial.cs）。S が OFF なら 1。
+        public float motionLengthScale = 1f;
         // 既定の姿勢へ戻してから動かすイベントか（animalEventFromDefaultPose、2026-10-07）。to_default の段で重み 0 → 1、その後イベントの終わりまで 1。
         public bool usesDefaultPose;
         public float defaultPoseStartTime;
@@ -108,6 +112,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         public InteractiveAnimalPreset animalPreset;
         public AnimalGesturePose animalGestureClip;
+        // 身ぶりを左右を入れ替えて足すか（animalGestureTurnTowardBodyFront、2026-10-18、既定 OFF）。身ぶりを選ぶたびに BeginGesturePhase が決める。OFF なら常に false。
+        public bool animalGestureMirror;
         public AnimalGesturePose animalWalkClip;
         public bool hasCachedAnimalPose;
         public AnimalPoseWorldData cachedAnimalPose;
@@ -126,11 +132,38 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public float wheelAngleDegrees;
         public readonly List<RigidWheel> rigidWheels = new List<RigidWheel>();
         public bool rigidHandoffLogged;
+        // 経路の接線で向きを回すか（車 = true、elseWheellessKeepsHeading）と、まっすぐ往復するか（elseWheellessFloatStraight）。走り始めに決め、
+        // モデルの差し替えをまたいでも変えない（差し替えで rigidWheels は一度空になるので、毎 tick ホイールの数で決めると差し替えの tick に向きが跳ぶ）。
+        public bool driveSteers = true;
+        public bool driveFloats;
 
         // モデルの差し替え（Model ボタン・ピッカー）をまたいでイベントを続ける（keepInteractiveMotionOnModelChange、2026-10-24）。
         // 差し替えた tick に古いモデルに結び付いた物（人のクリップの再生・車輪）だけ外して rebindPending を立て、新しいモデルが作られた最初の
         // tick に結び直す（FinishInteractiveMotionRebind）。displayedAnchorWorld は displayedPosition を控えた tick の meta の anchor（モデルに
         // よらない映像の中の対象の位置）。モデルの差だけを取り出すのに使う。
+        // 人のクリップの間、体（Hips）を発火した tick の体の位置に合わせる（humanMotionKeepsBodyInPlace、2026-10-25）。差は最初の tick に
+        // 「追従の体 − クリップの体」（水平）と足の高さの差で測り、root の向きの座標で持つ（root を回しても体との関係を保つ）。
+        public bool humanBodyAnchorValid;
+        public Vector3 humanBodyStartHips;
+        public float humanBodyGroundHeight;
+        public bool humanBodyOffsetValid;
+        public Vector3 humanBodyLocalOffset;
+        // 受け渡しの起点の体（Hips の world の位置と向き）。受け渡しでは root を追従のままにし、体だけをここから追従の体へ world で混ぜる。
+        public bool hasHandoffFromHips;
+        public Vector3 handoffFromHipsPosition;
+        public Quaternion handoffFromHipsRotation = Quaternion.identity;
+        // 人のクリップの切り替えの混ぜ（humanClipSwitchBlend、2026-10-25、既定 OFF、HumanMotionContinuity.partial.cs）。切り替えた tick に描いていた
+        // 体（骨の局所の回転と Hips の world）から interactiveHandoffBlendSeconds かけて新しいクリップへ混ぜる（終わりの受け渡しの逆向き）。
+        public bool humanSwitchBlendActive;
+        public float humanSwitchBlendStartTime;
+        public Vector3 humanSwitchFromHipsPosition;
+        public Quaternion humanSwitchFromHipsRotation = Quaternion.identity;
+        public readonly Dictionary<HumanBodyBones, Quaternion> humanSwitchFromBoneLocalRotations = new Dictionary<HumanBodyBones, Quaternion>();
+        // 動画が止まってから始めるイベント（randomMotionStartsAfterVideoPause、既定 OFF）。PendingPause の間だけ使う。
+        public bool pendingIsAnimal;
+        public InteractiveEventKind pendingKind;
+        public float pendingSince;
+
         public bool rebindPending;
         public AnimationClip rebindClip;
         public bool rebindClipLoop;
@@ -381,7 +414,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         bool isAnimal = IsCategoryAnimal(obj.categoryId);
         InteractiveEventKind kind = UnityEngine.Random.value < DynamicEventProbability ? InteractiveEventKind.Dynamic : InteractiveEventKind.Static;
-        StartInteractiveMotion(trackId, isAnimal, kind, now);
+        StartOrDeferInteractiveMotion(trackId, isAnimal, kind, now);
     }
 
     // Editor-only debug entry point (see InteractiveMotionDebugTools) to force-trigger one event
@@ -421,7 +454,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 continue;
             }
 
-            StartInteractiveMotion(trackId, isAnimal, kind, tick.now);
+            StartOrDeferInteractiveMotion(trackId, isAnimal, kind, tick.now);
             Debug.Log($"DebugForceInteractiveMotion: track {trackId} forced into {kind} ({(isAnimal ? "Animal" : "Human")}).");
             return;
         }
@@ -690,9 +723,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             $"clip={clipName} duration_sec={ExperimentCsv.Format(durationSeconds)} distance_m={ExperimentCsv.Format(distanceMeters)}");
     }
 
-    private void StartInteractiveMotion(uint trackId, bool isAnimal, InteractiveEventKind kind, float now)
+    private void StartInteractiveMotion(uint trackId, bool isAnimal, InteractiveEventKind kind, float now, bool pauseAlreadyBegun = false)
     {
         InteractiveMotionState state = GetOrCreateInteractiveMotionState(trackId);
+        state.motionLengthScale = ResolveMotionLengthScale(trackId);
         // ランダムのイベントは今の表示位置から始める（interactiveRandomOriginFromDisplayed）。門つきの livePosition はフレームアウトの起点用（端で崩れた bbox を避ける）。
         // 車の走行（StartRigidDriveMotion）は elseRandomOriginFromDisplayed（2026-10-11 に採用、既定 ON）で別に切り替える。
         bool fromDisplayed = interactiveRandomOriginFromDisplayed && state.hasDisplayedSample;
@@ -713,8 +747,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             approachTravel = ResolveAnimalApproachTravel(trackId, originPosition, originRotation, out string nearestBone, out float nearestNow, out float rootRuleTravel, out string nearestNowBone);
             Debug.Log($"[MOTION] approach track={trackId} travel={approachTravel:F3}m rootRule={rootRuleTravel:F3}m " +
-                      $"stop={animalApproachStopDistanceMeters:F2}m nearest={nearestBone ?? "-"} nearestNow={nearestNow:F3}m nearestNowBone={nearestNowBone ?? "-"}");
-            if (approachTravel < interactiveApproachMinTravelMeters)
+                      $"stop={ResolveAnimalApproachStopDistance(state):F2}m nearest={nearestBone ?? "-"} nearestNow={nearestNow:F3}m nearestNowBone={nearestNowBone ?? "-"}" +
+                      MotionLengthScaleLogSuffix(state));
+            if (approachTravel < interactiveApproachMinTravelMeters * state.motionLengthScale)
             {
                 if (!animalApproachNoRoomFallsBackToStatic)
                 {
@@ -730,6 +765,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
         }
 
+        // 人: 視聴者まで止まる距離より近ければ歩かない（humanApproachNeedsRoom）。BeginWalkInPhase の行き先と同じ式で、起点から視聴者の方へ進める距離を測る。
+        if (kind == InteractiveEventKind.Dynamic && !isAnimal && humanApproachNeedsRoom)
+        {
+            float humanTravel = ResolveHumanApproachTravel(state, originPosition);
+            if (humanTravel < interactiveApproachMinTravelMeters * state.motionLengthScale)
+            {
+                kind = InteractiveEventKind.Static;
+                state.downgradedForClearance = true;
+                downgradeNote = $" downgraded_from=Dynamic reason=clearance travel_m={ExperimentCsv.Format(humanTravel)}";
+                Debug.Log($"[MOTION] walk_in downgraded to static track={trackId} reason=clearance travel={humanTravel:F3}m (person)");
+            }
+        }
+
         state.subject = isAnimal ? InteractiveMotionSubject.Animal : InteractiveMotionSubject.Person;
         state.triggerSource = InteractiveTriggerSource.Random;
         state.kind = kind;
@@ -738,17 +786,44 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.usesDefaultPose = usesDefaultPose;
         state.defaultPoseStartTime = now;
         state.defaultPoseBlendDuration = defaultPoseSeconds;
-        BeginRandomInteractiveMotionVideoPause(trackId);
+        // 動画が止まってから始めた動作（randomMotionStartsAfterVideoPause）は、発火した tick に一時停止（音のフェード）を始めている。
+        if (!pauseAlreadyBegun)
+        {
+            BeginRandomInteractiveMotionVideoPause(trackId);
+        }
         state.originPosition = originPosition;
         state.originRotation = originRotation;
         Debug.Log($"[MOTION] origin track={trackId} source={(fromDisplayed ? "displayed" : "live")} " +
                   $"gap={(state.hasDisplayedSample && state.hasLiveSample ? Vector3.Distance(state.displayedPosition, state.livePosition) : 0f):F3}m " +
-                  $"pos=({originPosition.x:F3},{originPosition.y:F3},{originPosition.z:F3}) frame={GetCurrentPlaybackFrame()} tick={Time.frameCount}");
+                  $"pos=({originPosition.x:F3},{originPosition.y:F3},{originPosition.z:F3}) frame={GetCurrentPlaybackFrame()} tick={Time.frameCount}" +
+                  MotionLengthScaleLogSuffix(state));
 
-        ExperimentLog.Interaction(
-            trackId,
-            $"random_{kind}",
-            $"subject={(isAnimal ? "animal" : "human")}{downgradeNote}");
+        if (!pauseAlreadyBegun)
+        {
+            ExperimentLog.Interaction(
+                trackId,
+                $"random_{kind}",
+                $"subject={(isAnimal ? "animal" : "human")}{downgradeNote}");
+        }
+        else if (state.downgradedForClearance)
+        {
+            // random_ の行は待ち始めた tick に出した（BeginPendingRandomMotion）。歩けずに切り替えたことだけ足す。
+            ExperimentLog.Interaction(trackId, "walk_downgraded", $"to=Static{downgradeNote}");
+        }
+
+        // 人: 今の（追従の）体の位置を控える。クリップに替えた後の体をここへ合わせる（humanMotionKeepsBodyInPlace）。
+        state.humanBodyAnchorValid = false;
+        state.humanBodyOffsetValid = false;
+        if (!isAnimal)
+        {
+            // クリップが Hips に触る前の追従の局所位置を控える（humanTrackingRestoresHipsLocalPosition）。
+            NoteHumanHipsTrackLocalPosition(GetTrackInstanceOrNull(trackId));
+        }
+        if (!isAnimal && humanMotionKeepsBodyInPlace)
+        {
+            state.humanBodyAnchorValid = TryGetHumanBodyAnchor(
+                GetTrackInstanceOrNull(trackId), Vector3.up, out state.humanBodyStartHips, out state.humanBodyGroundHeight);
+        }
 
         if (deferApproach)
         {
@@ -763,6 +838,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         BeginWalkInPhase(state, trackId, isAnimal, now);
+    }
+
+    // 人が起点から視聴者の方へ水平に進める距離（BeginWalkInPhase の行き先: 視聴者から humanApproachStopDistanceMeters 手前）。負なら行き先が起点より遠い。
+    private float ResolveHumanApproachTravel(InteractiveMotionState state, Vector3 originPosition)
+    {
+        Transform viewer = GetViewOrHeadTransform();
+        Vector3 forwardFallback = state.lastScreen != null ? -state.lastScreen.forward : Vector3.forward;
+        Vector3 viewerPosition = viewer != null ? viewer.position : originPosition + forwardFallback;
+        Vector3 toViewer = Vector3.ProjectOnPlane(viewerPosition - originPosition, Vector3.up);
+        return toViewer.magnitude - ScaleMotionStopDistance(humanApproachStopDistanceMeters, state.motionLengthScale);
     }
 
     private float ResolveDefaultPoseBlendSeconds()
@@ -798,6 +883,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.gestureTurnFromRotation = state.originRotation;
         state.gestureTurnDuration = 0f;
         state.animalGestureClip = null;
+        state.animalGestureMirror = false;
         state.phaseStartTime = now;
         state.phaseDuration = state.defaultPoseBlendDuration;
         state.stage = InteractiveEventStage.Owned;
@@ -810,9 +896,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (state.kind == InteractiveEventKind.Dynamic && isAnimal && animalApproachByNearestPoint)
         {
             float travel = ResolveAnimalApproachTravel(trackId, state.originPosition, state.originRotation, out string nearestBone, out float nearestNow, out float rootRuleTravel, out string nearestNowBone);
-            Debug.Log($"[MOTION] approach track={trackId} travel={travel:F3}m rootRule={rootRuleTravel:F3}m stop={animalApproachStopDistanceMeters:F2}m " +
-                      $"nearest={nearestBone ?? "-"} nearestNow={nearestNow:F3}m nearestNowBone={nearestNowBone ?? "-"} (default pose)");
-            if (travel < interactiveApproachMinTravelMeters)
+            Debug.Log($"[MOTION] approach track={trackId} travel={travel:F3}m rootRule={rootRuleTravel:F3}m stop={ResolveAnimalApproachStopDistance(state):F2}m " +
+                      $"nearest={nearestBone ?? "-"} nearestNow={nearestNow:F3}m nearestNowBone={nearestNowBone ?? "-"} (default pose)" + MotionLengthScaleLogSuffix(state));
+            if (travel < interactiveApproachMinTravelMeters * state.motionLengthScale)
             {
                 if (!animalApproachNoRoomFallsBackToStatic)
                 {
@@ -852,7 +938,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 forwardFallback = state.lastScreen != null ? -state.lastScreen.forward : Vector3.forward;
         Vector3 viewerPosition = viewer != null ? viewer.position : state.originPosition + forwardFallback;
         Vector3 toViewer = Vector3.ProjectOnPlane(viewerPosition - state.originPosition, upAxis);
-        float stopDistance = isAnimal ? animalApproachStopDistanceMeters : humanApproachStopDistanceMeters;
+        float stopDistance = ScaleMotionStopDistance(isAnimal ? animalApproachStopDistanceMeters : humanApproachStopDistanceMeters, state.motionLengthScale);
         Vector3 destination = toViewer.sqrMagnitude > 0.000001f
             ? viewerPosition - toViewer.normalized * stopDistance
             : state.originPosition;
@@ -876,7 +962,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.phaseToRotation = destinationRotation;
         state.walkTurnDuration = ResolveAnimalWalkTurnDuration(isAnimal, state.phaseFromRotation, state.phaseToRotation);
 
-        float speed = Mathf.Max(0.05f, isAnimal ? animalWalkSpeedMetersPerSecond : humanWalkSpeedMetersPerSecond);
+        float speed = Mathf.Max(0.05f, isAnimal ? animalWalkSpeedMetersPerSecond : humanWalkSpeedMetersPerSecond) * state.motionLengthScale;
         float distance = Vector3.Distance(state.phaseFromPosition, state.phaseToPosition);
         state.phaseStartTime = now;
         state.phaseDuration = Mathf.Max(MinWalkDurationSeconds, distance / speed);
@@ -889,6 +975,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         else
         {
+            BeginHumanClipSwitch(state, GetTrackInstanceOrNull(trackId), now);
             StartHumanClipPlayback(trackId, GetTrackInstanceOrNull(trackId), PickHumanWalkClip(), true);
         }
     }
@@ -913,7 +1000,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 forwardFallback = state.lastScreen != null ? -state.lastScreen.forward : Vector3.forward;
         Vector3 viewerPosition = viewer != null ? viewer.position : originPosition + forwardFallback;
         Vector3 toViewer = Vector3.ProjectOnPlane(viewerPosition - originPosition, upAxis);
-        float stop = Mathf.Max(0f, animalApproachStopDistanceMeters);
+        float stop = Mathf.Max(0f, ResolveAnimalApproachStopDistance(state));
         rootRuleTravel = toViewer.magnitude - stop;
         GameObject instance = GetTrackInstanceOrNull(trackId);
         if (toViewer.sqrMagnitude <= 0.000001f || instance == null)
@@ -1000,8 +1087,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         if (isAnimal)
         {
-            state.animalPreset = PickAnimalPreset(state.cachedAnimalHasSmalPose, out AnimalGesturePose gestureClip);
+            state.animalPreset = PickAnimalPreset(state.cachedAnimalHasSmalPose, instance, trackId, out AnimalGesturePose gestureClip);
             state.animalGestureClip = gestureClip;
+            state.animalGestureMirror = false;
             state.gestureTurnFromRotation = freezeRotation;
             state.gestureTurnDuration = 0f;
             if (state.animalPreset == InteractiveAnimalPreset.FaceViewer)
@@ -1031,6 +1119,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                     state.gestureTurnDuration = turnDegrees > 0.5f ? Mathf.Clamp(turnDegrees / 120f, 0.4f, 0.6f) : 0f;
                 }
             }
+            // 身ぶりの左右（animalGestureTurnTowardBodyFront、既定 OFF）: 体の向き替え（state.gestureRotation）が決まった後で、このイベントだけ入れ替えるか決める。
+            if (animalGestureTurnTowardBodyFront && gestureClip != null && instance != null)
+            {
+                state.animalGestureMirror = ResolveAnimalGestureMirror(trackId, state, instance, gestureClip, freezeRotation);
+            }
             state.phaseDuration = gestureClip != null
                 ? Mathf.Max(MinGestureDurationSeconds, gestureClip.duration)
                 : Mathf.Max(MinGestureDurationSeconds, staticAnimationDurationSeconds);
@@ -1046,6 +1139,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             state.humanPreset = InteractiveHumanPreset.ClipGesture;
             state.phaseDuration = Mathf.Max(MinGestureDurationSeconds, state.humanClip.length > 0.0001f ? state.humanClip.length : staticAnimationDurationSeconds);
             LogInteractiveMotionPhase(trackId, "gesture", state.humanClip.name, state.phaseDuration, 0f);
+            BeginHumanClipSwitch(state, instance, now);
             StartHumanClipPlayback(trackId, instance, state.humanClip, false);
             return;
         }
@@ -1073,7 +1167,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         state.walkTurnDuration = ResolveAnimalWalkTurnDuration(isAnimal, state.phaseFromRotation, state.phaseToRotation);
-        float speed = Mathf.Max(0.05f, isAnimal ? animalWalkSpeedMetersPerSecond : humanWalkSpeedMetersPerSecond);
+        float speed = Mathf.Max(0.05f, isAnimal ? animalWalkSpeedMetersPerSecond : humanWalkSpeedMetersPerSecond) * state.motionLengthScale;
         float distance = Vector3.Distance(state.phaseFromPosition, state.phaseToPosition);
         state.phaseStartTime = now;
         state.phaseDuration = Mathf.Max(MinWalkDurationSeconds, distance / speed);
@@ -1086,6 +1180,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         else
         {
+            BeginHumanClipSwitch(state, GetTrackInstanceOrNull(trackId), now);
             StartHumanClipPlayback(trackId, GetTrackInstanceOrNull(trackId), PickHumanWalkClip(), true);
         }
     }
@@ -1157,6 +1252,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.subject = isAnimal ? InteractiveMotionSubject.Animal : InteractiveMotionSubject.Person;
         state.triggerSource = InteractiveTriggerSource.SystemFrameOut;
         state.kind = InteractiveEventKind.Dynamic;
+        state.motionLengthScale = 1f;
         state.dynamicPhase = InteractiveDynamicPhase.WalkIn;
         state.originPosition = state.livePosition;
         state.phaseFromPosition = state.livePosition;
@@ -1228,6 +1324,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
         else
         {
+            NoteHumanHipsTrackLocalPosition(instance);
             StartHumanClipPlayback(trackId, instance, PickHumanWalkClip(), true);
         }
     }
@@ -1341,7 +1438,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         float uEyeF = Mathf.Clamp(uEye, 0f, manifest.eye_w - 1f);
         float vEyeF = Mathf.Clamp(obj.anchorV, 0f, manifest.eye_h - 1f);
-        world = AnchorUvZToWorldPinhole(screen, uEyeF, vEyeF, obj.anchorZ);
+        // S（2026-10-16）: 後で現れる先の深さ。S の状態がある間はロックと同じ k 倍、無ければ Zv（S が OFF なら anchorZ のまま）。
+        world = AnchorUvZToWorldPinhole(screen, uEyeF, vEyeF, ResolveStereoDepthFrameInDepth(obj));
         return true;
     }
 
@@ -1414,6 +1512,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 // Same re-pin as the gesture phase: the looping walk clip may have written its
                 // own root motion onto the instance transform during Evaluate().
                 TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(position, rotation, instance.transform.localScale));
+                KeepHumanBodyInPlace(trackId, instance, state, position, rotation);
+                ApplyHumanClipSwitchBlend(instance, state, tick.now);
             }
         }
 
@@ -1584,9 +1684,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.hasHandoffFromScale = instance != null && lockedModelLocalScaleByTrack.ContainsKey(trackId);
         state.handoffFromBoneLocalRotations.Clear();
         state.handoffFromAnimalBoneLocalRotations.Clear();
+        state.hasHandoffFromHips = false;
         if (instance != null && state.subject == InteractiveMotionSubject.Person)
         {
             CaptureHumanoidBoneLocalRotations(instance, state.handoffFromBoneLocalRotations);
+            // 体（Hips）は world で混ぜる（humanMotionKeepsBodyInPlace）。局所の回転の混ぜからは外す。
+            Animator handoffAnimator = humanMotionKeepsBodyInPlace ? instance.GetComponentInChildren<Animator>() : null;
+            Transform handoffHips = handoffAnimator != null && handoffAnimator.isHuman ? handoffAnimator.GetBoneTransform(HumanBodyBones.Hips) : null;
+            if (handoffHips != null)
+            {
+                state.handoffFromHipsPosition = handoffHips.position;
+                state.handoffFromHipsRotation = handoffHips.rotation;
+                state.hasHandoffFromHips = true;
+                state.handoffFromBoneLocalRotations.Remove(HumanBodyBones.Hips);
+            }
         }
         else if (instance != null && state.subject == InteractiveMotionSubject.Animal)
         {
@@ -1623,6 +1734,25 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // The tracked pipeline already wrote this frame's fully-tracked bone pose before this
         // runs; blend the body pose toward it too, not just the root, otherwise the body snaps
         // instantly into the tracked pose while only the root smoothly catches up.
+        if (state.subject == InteractiveMotionSubject.Person && state.hasHandoffFromHips)
+        {
+            // humanMotionKeepsBodyInPlace: root は追従がこの tick に書いた値のまま。体（Hips）だけを、受け渡しの起点の体から追従の体へ world で混ぜる。
+            // root の向き（視聴者向き → 追従の root）と骨の局所の回転を別々に混ぜると、体が半回転して戻っていた。
+            Animator blendAnimator = instance.GetComponentInChildren<Animator>();
+            Transform blendHips = blendAnimator != null && blendAnimator.isHuman ? blendAnimator.GetBoneTransform(HumanBodyBones.Hips) : null;
+            if (blendHips != null)
+            {
+                Vector3 trackedHipsPosition = blendHips.position;
+                Quaternion trackedHipsRotation = blendHips.rotation;
+                BlendHumanoidBoneLocalRotations(instance, state.handoffFromBoneLocalRotations, t);
+                TransformWriter.ApplyPose(blendHips,
+                    Vector3.Lerp(state.handoffFromHipsPosition, trackedHipsPosition, t),
+                    Quaternion.Slerp(state.handoffFromHipsRotation, trackedHipsRotation, t));
+                FinishInteractiveHandoffIfDone(trackId, state, t, tick.now);
+                return;
+            }
+        }
+
         if (state.subject == InteractiveMotionSubject.Person && state.handoffFromBoneLocalRotations.Count > 0)
         {
             BlendHumanoidBoneLocalRotations(instance, state.handoffFromBoneLocalRotations, t);
@@ -1647,11 +1777,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             ? Vector3.Lerp(state.handoffFromScale, instance.transform.localScale, t)
             : instance.transform.localScale;
         TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(blendedPosition, blendedRotation, blendedScale));
+        FinishInteractiveHandoffIfDone(trackId, state, t, tick.now);
+    }
 
+    private void FinishInteractiveHandoffIfDone(uint trackId, InteractiveMotionState state, float t, float now)
+    {
         if (t >= 1f)
         {
             state.stage = InteractiveEventStage.Inactive;
-            state.nextTriggerTime = RuntimeClock.ResolveNextTime(tick.now, RandomInteractiveInterval());
+            state.nextTriggerTime = RuntimeClock.ResolveNextTime(now, RandomInteractiveInterval());
             if (state.triggerSource == InteractiveTriggerSource.Random)
             {
                 EndRandomInteractiveMotionVideoPause(trackId);
@@ -1752,12 +1886,41 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // Clip evaluation may have written its own (incorrect) root motion onto the
             // instance transform; re-pin the frozen gesture pose after evaluating the clip.
             TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(state.gesturePosition, state.gestureRotation, instance.transform.localScale));
+            KeepHumanBodyInPlace(trackId, instance, state, state.gesturePosition, state.gestureRotation);
+            ApplyHumanClipSwitchBlend(instance, state, tick.now);
             return;
         }
 
         Quaternion gestureRotation = ResolveAnimalGestureRotation(state, tick.now);
         TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(state.gesturePosition, gestureRotation, instance.transform.localScale));
         ApplyFrozenAnimalGesture(instance, state, tick, gestureRotation);
+    }
+
+    // 人のクリップの後に root を置き直したところで、体（Hips）を発火した tick の体に合わせる（humanMotionKeepsBodyInPlace）。
+    // 最初の tick に「追従の体 − クリップの体」の差（水平）と足の高さの差を root の向きの座標で控え、以後は root の向きに合わせて同じ差を足す。
+    private void KeepHumanBodyInPlace(uint trackId, GameObject instance, InteractiveMotionState state, Vector3 rootPosition, Quaternion rootRotation)
+    {
+        if (!humanMotionKeepsBodyInPlace || !state.humanBodyAnchorValid || instance == null)
+        {
+            return;
+        }
+
+        if (!state.humanBodyOffsetValid)
+        {
+            if (!TryGetHumanBodyAnchor(instance, Vector3.up, out Vector3 hips, out float feet))
+            {
+                state.humanBodyAnchorValid = false;
+                return;
+            }
+
+            Vector3 world = Vector3.ProjectOnPlane(state.humanBodyStartHips - hips, Vector3.up) + Vector3.up * (state.humanBodyGroundHeight - feet);
+            state.humanBodyLocalOffset = Quaternion.Inverse(rootRotation) * world;
+            state.humanBodyOffsetValid = true;
+            Debug.Log($"[MOTION] human body kept in place track={trackId} offset=({world.x:F3},{world.y:F3},{world.z:F3})m");
+        }
+
+        TrackPlacementWriter.Apply(instance.transform,
+            new TrackPlacementCommand(rootPosition + rootRotation * state.humanBodyLocalOffset, rootRotation, instance.transform.localScale));
     }
 
     // 動物のジェスチャの段の root の向き。FaceViewer の向き替えを gestureTurnDuration かけて smoothstep で回す（0 なら従来どおり最初から gestureRotation）。
@@ -1853,6 +2016,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             TransformWriter.ApplyLocalPose(animatorTransform, animatorLocalPositionBefore, animatorLocalRotationBefore);
         }
+
+        // humanHandRollFixMode（既定 0 = OFF、2026-10-25）: 追従の手と同じ回転をクリップの手にも当てる（OFF なら何もしない）。
+        ApplyHumanHandRollFixAfterClip(playback.animator);
     }
 
     public static bool ShouldRestoreAnimatorLocalTransformSeparately(Transform animatorTransform, Transform instanceTransform)
@@ -1988,6 +2154,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         AnimalGesturePose gestureOverlayClip = null;
         float gestureOverlayNormalizedTime = 0f;
+        bool gestureMirror = false;
         if (!state.cachedAnimalHasSmalPose)
         {
             switch (state.animalPreset)
@@ -2012,10 +2179,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // way the pre-FK presets above do.
             gestureOverlayClip = state.animalGestureClip;
             gestureOverlayNormalizedTime = state.phaseDuration > 0.0001f ? Mathf.Clamp01(elapsed / state.phaseDuration) : 0f;
+            gestureMirror = animalGestureTurnTowardBodyFront && state.animalGestureMirror;
         }
 
         ApplyAnimalPoseRequest(instance, pose, state.cachedAnimalHasSmalPose, state.cachedAnimalSmalPose, state.gesturePosition, gestureRotation, tick, gestureOverlayClip, gestureOverlayNormalizedTime,
-            ResolveAnimalLookAtViewerWeight(state, tick.now), UsesAnimalLookAtViewer(state), ResolveDefaultPoseWeight(state, tick.now));
+            ResolveAnimalLookAtViewerWeight(state, tick.now), UsesAnimalLookAtViewer(state), ResolveDefaultPoseWeight(state, tick.now), gestureMirror);
     }
 
     // 動物の頭を視聴者へ向けるか（animalGestureLookAtViewer、2026-10-04）。ランダムのイベントだけ（システムのフレームアウトは向けない）。
@@ -2097,7 +2265,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             ResolveAnimalLookAtViewerWeight(state, tick.now), UsesAnimalLookAtViewer(state), ResolveDefaultPoseWeight(state, tick.now));
     }
 
-    private void ApplyAnimalPoseRequest(GameObject instance, AnimalPoseWorldData pose, bool hasSmalPose, AnimalSmalPose smalPose, Vector3 targetPosition, Quaternion targetRotation, RuntimeClock.TickContext tick, AnimalGesturePose gestureOverlayClip, float gestureOverlayNormalizedTime, float lookAtViewerWeight = 0f, bool lookAtViewerPath = false, float defaultPoseWeight = 0f)
+    private void ApplyAnimalPoseRequest(GameObject instance, AnimalPoseWorldData pose, bool hasSmalPose, AnimalSmalPose smalPose, Vector3 targetPosition, Quaternion targetRotation, RuntimeClock.TickContext tick, AnimalGesturePose gestureOverlayClip, float gestureOverlayNormalizedTime, float lookAtViewerWeight = 0f, bool lookAtViewerPath = false, float defaultPoseWeight = 0f, bool gestureMirror = false)
     {
         // 頭を視聴者へ向けるイベントでは、ジェスチャを Apply の中ではなく、root を置き直して頭を向けた後に足す
         // （向ける回転は最終の root の位置・向きで計算しないと置き直しでずれ、ジェスチャを先に足すと首振りを打ち消してしまう）。
@@ -2120,6 +2288,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             gestureOverlayNormalizedTime = gestureOverlayNormalizedTime,
             gestureOnCanonicalLimbs = animalGestureOnCanonicalLimbs,
             gestureAnatomicalHeadAxes = animalGestureAnatomicalHeadAxes,
+            gestureMirror = gestureMirror,
             defaultPoseWeight = defaultPoseWeight
         });
 
@@ -2146,7 +2315,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
 
             animalPoseApplier.ApplyGestureOverlayAfterPlacement(instance.transform, gestureOverlayClip, gestureOverlayNormalizedTime, animalGestureOnCanonicalLimbs,
-                animalGestureAnatomicalHeadAxes);
+                animalGestureAnatomicalHeadAxes, gestureMirror);
         }
     }
 
@@ -2220,10 +2389,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         return result;
     }
 
-    private InteractiveAnimalPreset PickAnimalPreset(bool cachedHasSmalPose, out AnimalGesturePose dataDrivenClip)
+    private InteractiveAnimalPreset PickAnimalPreset(bool cachedHasSmalPose, GameObject instance, uint trackId, out AnimalGesturePose dataDrivenClip)
     {
         dataDrivenClip = null;
-        bool hasDataDrivenClips = animalStaticGestureClips != null && animalStaticGestureClips.Length > 0;
+        // 選ぶのは、このモデルに無い骨を要る身ぶりを外した一覧（ResolvePlayableAnimalStaticClips、2026-10-18）。外すものが無ければ animalStaticGestureClips そのもの。
+        AnimalGesturePose[] clips = ResolvePlayableAnimalStaticClips(instance, trackId);
+        bool hasDataDrivenClips = clips != null && clips.Length > 0;
         int value = UnityEngine.Random.Range(0, 100);
 
         if (cachedHasSmalPose)
@@ -2236,7 +2407,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // once, so always combine them instead of picking one.
             if (hasDataDrivenClips)
             {
-                dataDrivenClip = animalStaticGestureClips[UnityEngine.Random.Range(0, animalStaticGestureClips.Length)];
+                dataDrivenClip = clips[UnityEngine.Random.Range(0, clips.Length)];
             }
             return InteractiveAnimalPreset.FaceViewer;
         }
@@ -2256,8 +2427,147 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (value < 44) return InteractiveAnimalPreset.TailWag;
         if (value < 64) return InteractiveAnimalPreset.PawWave;
         if (value < 80) return InteractiveAnimalPreset.BodyTurnViewer;
-        dataDrivenClip = animalStaticGestureClips[UnityEngine.Random.Range(0, animalStaticGestureClips.Length)];
+        dataDrivenClip = clips[UnityEngine.Random.Range(0, clips.Length)];
         return InteractiveAnimalPreset.DataDrivenClip;
+    }
+
+    // このモデルで選べる静的な身ぶりの一覧（2026-10-18、animalGestureSkipClipsMissingJaw、新しい振る舞い・既定 OFF）。顎の点（Jaw）を 0 でない曲線で使う身ぶり（あくび）は、
+    // 顎の骨が無いモデル（00_Dog、AnimalRigCache.gestureJaw が null）では選ばない（足すと口が開かず、鼻を 10° 上げて下ろすだけの 2.5 s になる）。残りから一様に選ぶ。
+    // 顎だけの規則（00_Dog では身震い・前足の胴・肩甲骨の行も骨が無くて効かないが、それらは外さない。外すなら別の切り替えとユーザーの判断が要る）。
+    // OFF、または外すものが無ければ animalStaticGestureClips そのもの（同じ配列）を返すので、乱数の引き方（Random.Range の回数と範囲）は今と同じ。
+    // ON で実際に外したときに変わること（00_Dog のような顎の無いモデルで、一覧に顎の点の身ぶりがあるときだけ）:
+    // - 一覧が n 本から n−k 本になり、同じ乱数でも選ばれる身ぶりが変わる（各身ぶりの確率 1/n → 1/(n−k)）
+    // - 残りが 0 本: SMAL の track では身ぶり無し（視聴者を見るだけ）。SMAL の無い track では PickAnimalPreset が身ぶり無しの表（FaceViewer・TailWag・PawWave・BodyTurnViewer）へ
+    //   移る。2 回目の Random.Range を引かないので、以後の乱数（次のイベントまでの間隔・他の track の選択）がずれる
+    // - 実験の記録（LogInteractiveMotionPhase）の clip= と長さが、外した身ぶりから選ばれた方（残り 0 なら FaceViewer・2.40 s）に変わる
+    // リグのキャッシュがまだ無いモデルは外さない（分からないので今までどおり）。バッチの -forceStaticClip・-gestureAssets はこの一覧を絞るだけなので、絞った身ぶりがここで
+    // 外れると [GESTURE-SKIP] の行が出る（[BATCH] の clips= の行は絞った名前のまま）。
+    private AnimalGesturePose[] ResolvePlayableAnimalStaticClips(GameObject instance, uint trackId)
+    {
+        AnimalGesturePose[] clips = animalStaticGestureClips;
+        if (!animalGestureSkipClipsMissingJaw || clips == null || clips.Length == 0 || instance == null)
+        {
+            return clips;
+        }
+
+        bool anyJaw = false;
+        for (int i = 0; i < clips.Length && !anyJaw; i++)
+        {
+            anyJaw = AnimalGesturePosePlayer.UsesPoint(clips[i], AnimalGesturePoint.Jaw);
+        }
+
+        if (!anyJaw || !animalPoseApplier.TryGetGestureJawPresent(instance.transform, out bool hasJaw) || hasJaw)
+        {
+            return clips;
+        }
+
+        var kept = new List<AnimalGesturePose>(clips.Length);
+        var skipped = new List<string>();
+        for (int i = 0; i < clips.Length; i++)
+        {
+            if (AnimalGesturePosePlayer.UsesPoint(clips[i], AnimalGesturePoint.Jaw))
+            {
+                skipped.Add(clips[i].name);
+            }
+            else
+            {
+                kept.Add(clips[i]);
+            }
+        }
+
+        string message = $"[GESTURE-SKIP] track={trackId} model={instance.name} skipped={string.Join(",", skipped)} reason=no_jaw_bone remaining={kept.Count}/{clips.Length}";
+        if (kept.Count == 0)
+        {
+            Debug.LogWarning(message + " -> no gesture clip (SMAL track: look-at only; other tracks: the presets without a clip)");
+        }
+        else
+        {
+            Debug.Log(message);
+        }
+
+        return kept.ToArray();
+    }
+
+    // 身ぶりの左右（animalGestureTurnTowardBodyFront、2026-10-18、既定 OFF）。資産のとおりに足すと頭が体の前からさらに離れる側へ向くなら、このイベントだけ入れ替える。
+    // - 資産の向き: 頭と首の up の曲線の和の時間平均（AnimalGesturePosePlayer.MeasureHeadYaw、+ = 体の右）。片側の向きと見るのは、平均の大きさが 1° 以上で、かつ |y| の平均の
+    //   半分以上（振りの 3/4 以上が片側）のときだけ。資産 21 本の実測（|平均| / |y| の平均）: 視線をそらす 1.00、首振り 0.05・0.06、首かしげ・前足・身震い・あくびは頭の向きの曲線が 0
+    // - 頭の向き: 身ぶりの間の頭の体の前からの方位（AnimalPoseApplier.TryEstimateGestureHeadYaw、+ = 体の右）。±5° 以内は体の前を向いているとみなし入れ替えない
+    //   （その幅の中では資産のとおりの側を保つ。入れ替えた方が最大の角度が 10° まで小さくなる場合もあるが、体の前なので差は見えない）
+    // - 同じ側なら入れ替える（幅の外では、入れ替えた方が頭の体の前からの角度の最大が小さい）。入れ替えるのは CanMirror が通る資産だけ
+    // 判定は安いものから: 体の軸で読む資産か → 片側の向きか → CanMirror → 頭の向きの見込み（見込みは最後なので、首振りなどではリグを何も読まない）。
+    // どれも資産の形と体の幾何で決まり、動画・モデルごとの値は無い。乱数は使わない（同じ場面なら毎回同じ結果）。体の向き替え（state.gestureRotation）が決まった後、
+    // 身ぶりを選んだとき（頭が回り始める約 0.8 秒前）に 1 回だけ決める。その間に視聴者が動物の正中を横切ると古い側のまま（受け入れる限界）。読むだけ。
+    private const float GestureMirrorMinClipYawDegrees = 1f;
+    private const float GestureMirrorOneSidedShare = 0.5f;
+    private const float GestureMirrorHeadDeadBandDegrees = 5f;
+
+    private bool ResolveAnimalGestureMirror(uint trackId, InteractiveMotionState state, GameObject instance, AnimalGesturePose clip, Quaternion freezeRotation)
+    {
+        float clipYaw = 0f;
+        float clipYawAbs = 0f;
+        if (clip.anatomicalAxes)
+        {
+            AnimalGesturePosePlayer.MeasureHeadYaw(clip, out clipYaw, out clipYawAbs);
+        }
+
+        bool hasHeadYaw = false;
+        float headYaw = 0f;
+        string source = "-";
+        bool mirror = false;
+        string reason;
+        if (!clip.anatomicalAxes)
+        {
+            reason = "not_mirrorable_local_axes";
+        }
+        else if (Mathf.Abs(clipYaw) < GestureMirrorMinClipYawDegrees || Mathf.Abs(clipYaw) < GestureMirrorOneSidedShare * clipYawAbs)
+        {
+            reason = "clip_yaw_not_one_sided";
+        }
+        else if (!animalPoseApplier.CanMirrorGesture(instance.transform, clip, animalGestureOnCanonicalLimbs, out string why))
+        {
+            reason = "not_mirrorable_" + why;
+        }
+        else if (!(hasHeadYaw = TryEstimateAnimalGestureHeadYaw(state, instance, freezeRotation, out headYaw, out source)))
+        {
+            reason = "no_head_yaw";
+        }
+        else if (Mathf.Abs(headYaw) < GestureMirrorHeadDeadBandDegrees)
+        {
+            reason = "head_near_front";
+        }
+        else if (headYaw * clipYaw > 0f)
+        {
+            mirror = true;
+            reason = "same_side";
+        }
+        else
+        {
+            reason = "toward_front";
+        }
+
+        Debug.Log($"[GESTURE-MIRROR] track={trackId} clip={clip.name} mirrored={(mirror ? 1 : 0)} headYaw={(hasHeadYaw ? headYaw.ToString("F1") : "-")}deg source={source} " +
+                  $"clipYaw={clipYaw:F1}deg clipYawAbs={clipYawAbs:F1}deg reason={reason} frame={GetCurrentPlaybackFrame()} tick={Time.frameCount}");
+        return mirror;
+    }
+
+    // 身ぶりの間の頭の向きの見込み（ResolveAnimalGestureMirror の最後の判定だけが呼ぶ。AnimalPoseApplier.TryEstimateGestureHeadYaw）。
+    // 向き替え: 選んだ体の向き（state.gestureRotation）と凍結した向きの差の yaw だけを root まわりに回す（RemapAnimalPoseRigid・FK と同じ +Z の yaw の取り出し方）。
+    private bool TryEstimateAnimalGestureHeadYaw(InteractiveMotionState state, GameObject instance, Quaternion freezeRotation, out float headYaw, out string source)
+    {
+        Transform viewer = GetViewOrHeadTransform();
+        bool lookAt = UsesAnimalLookAtViewer(state) && state.cachedAnimalHasSmalPose && enableBoneApply && viewer != null;
+        Quaternion bodyTurn = ResolveYawOnlyRotation(state.gestureRotation, Vector3.up) * Quaternion.Inverse(ResolveYawOnlyRotation(freezeRotation, Vector3.up));
+        var lookAtSettings = new AnimalPoseApplier.LookAtViewerSettings
+        {
+            bodyRelative = animalLookAtViewerBodyRelative,
+            bodyMaxYawDegrees = animalLookAtViewerBodyMaxYawDegrees,
+            maxPitchDegrees = animalLookAtViewerMaxPitchDegrees,
+            maxDegrees = animalLookAtViewerMaxDegrees,
+            maxYawDegrees = animalLookAtViewerMaxYawDegrees,
+            neckShare = animalLookAtViewerNeckShare
+        };
+        return animalPoseApplier.TryEstimateGestureHeadYaw(instance.transform, bodyTurn, state.gesturePosition,
+            viewer != null ? viewer.position : Vector3.zero, lookAt, lookAtSettings, out headYaw, out source);
     }
 
     private AnimalGesturePose PickAnimalWalkClip()
@@ -2516,7 +2826,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 車にはリグもクリップも無いので、root の移動と yaw だけで作る。経路は ElseDrivePath（純粋な幾何）。
     // 向きは出発時の回転を「経路の接線と出発時の向きの差」だけ yaw で回す（ピッチ・ロールは手動キーの値のまま）。
     // 前後のホイール（FL/FR/RL/RR）から車の前方向を決め、走った距離ぶんホイールを回す。
-    // ホイールが無いモデル（ボール等）は向きを変えずに経路の上を滑る。機関車は Renderer の無い空の子 FL/FR/RL/RR（目印）で前を持つ
+    // ホイールが無いモデル（風船・ボール等）は向きを変えずに経路の上を滑る（elseWheellessKeepsHeading。9/28 からこう書いていたが、2026-10-25 まで
+    // 実装は接線で回していた）。elseWheellessFloatStraight なら U ターンを使わず同じ線を緩急付きで往復する。機関車は Renderer の無い空の子 FL/FR/RL/RR（目印）で前を持つ
     // （2026-10-11、ElseModelImporter.AddDieselLocomotiveWheelMarkers）。
     // 終点は出発位置・出発時の向きなので、ハンドオフで跳ばない（動画は止めているので追従の姿勢も同じ）。
 
@@ -2581,8 +2892,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3 forwardFallback = state.lastScreen != null ? -state.lastScreen.forward : Vector3.forward;
         Vector3 viewerPosition = viewer != null ? viewer.position : originPos + forwardFallback;
         Vector3 toViewer = Vector3.ProjectOnPlane(viewerPosition - originPos, up);
-        float stopDistance = Mathf.Max(0.05f, elseApproachStopDistanceMeters);
-        if (toViewer.magnitude <= stopDistance + 0.01f)
+        // S（stereoDepthScalesMotionLengths、2026-10-26）: 止まる距離・速さ・U ターンの半径の上下限を、目のまわりに広げた倍率と同じだけ伸ばす（片目の絵の
+        // 動きは S なしと同じ）。S が OFF なら 1 で今の式のまま。状態に書くのは走ると決まった後。
+        float lengthScale = ResolveMotionLengthScale(trackId);
+        float stopDistance = ScaleMotionStopDistance(Mathf.Max(0.05f, elseApproachStopDistanceMeters), lengthScale);
+        if (toViewer.magnitude <= stopDistance + 0.01f * lengthScale)
         {
             Debug.Log($"[MOTION] rigid drive skipped track={trackId}: viewer too close ({toViewer.magnitude:F2}m <= stop {stopDistance:F2}m)");
             return false;
@@ -2600,16 +2914,21 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         headingWorld.Normalize();
         Vector3 upLocal = Quaternion.Inverse(originRot) * up;
         state.rigidAxleLocal = hasForward ? Vector3.Cross(upLocal, forwardLocal).normalized : Vector3.right;
+        // ホイールの無いモデル（風船・ボール）は向きを変えない（elseWheellessKeepsHeading）。まっすぐ往復する（elseWheellessFloatStraight）ときも
+        // 変えない（折り返しの点で接線が 1 tick で反転するので、回すと 180° 跳ぶ）。
+        bool floats = !hasForward && elseWheellessFloatStraight;
+        bool steers = hasForward || !(elseWheellessKeepsHeading || floats);
 
         float radius = elseTurnRadiusMeters > 0f
-            ? elseTurnRadiusMeters
-            : Mathf.Clamp(ResolveRigidLengthAlong(instance, headingWorld) * ElseTurnRadiusFromLengthFactor, ElseTurnRadiusMin, ElseTurnRadiusMax);
+            ? elseTurnRadiusMeters * lengthScale
+            : Mathf.Clamp(ResolveRigidLengthAlong(instance, headingWorld) * ElseTurnRadiusFromLengthFactor, ElseTurnRadiusMin * lengthScale, ElseTurnRadiusMax * lengthScale);
         float driveDistance = Vector3.Distance(originPos, stop);
         // 余地が短いときは半径を縮めて収める（下限 ElseTurnRadiusMin）。
-        radius = Mathf.Min(radius, Mathf.Max(ElseTurnRadiusMin, (driveDistance - 0.02f) * 0.5f));
-        if (driveDistance < ElseDrivePath.MinimumDriveDistance(radius))
+        radius = Mathf.Min(radius, Mathf.Max(ElseTurnRadiusMin * lengthScale, (driveDistance - 0.02f * lengthScale) * 0.5f));
+        float minimumDrive = ElseDrivePath.MinimumDriveDistance(radius / lengthScale) * lengthScale;
+        if (driveDistance < minimumDrive)
         {
-            Debug.Log($"[MOTION] rigid drive skipped track={trackId}: drive {driveDistance:F2}m < minimum {ElseDrivePath.MinimumDriveDistance(radius):F2}m (radius {radius:F3}m)");
+            Debug.Log($"[MOTION] rigid drive skipped track={trackId}: drive {driveDistance:F2}m < minimum {minimumDrive:F2}m (radius {radius:F3}m)");
             state.rigidWheels.Clear();
             return false;
         }
@@ -2621,19 +2940,29 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.originPosition = originPos;
         state.originRotation = originRot;
         state.driveHeading = headingWorld;
-        state.drivePath = ElseDrivePath.Build(state.originPosition, headingWorld, stop, up, radius);
-        state.driveSpeed = Mathf.Max(0.05f, elseDriveSpeedMetersPerSecond);
+        state.driveSteers = steers;
+        state.driveFloats = floats;
+        state.drivePath = floats
+            ? ElseDrivePath.BuildStraightOutAndBack(state.originPosition, stop, up)
+            : ElseDrivePath.Build(state.originPosition, headingWorld, stop, up, radius);
+        state.driveSpeed = Mathf.Max(0.05f, elseDriveSpeedMetersPerSecond) * lengthScale;
+        state.motionLengthScale = lengthScale;
         state.driveLastDistance = 0f;
         state.driveSegmentLogged = -1;
         state.wheelAngleDegrees = 0f;
         state.phaseStartTime = now;
-        state.phaseDuration = state.drivePath.TotalLength / state.driveSpeed;
+        // まっすぐの往復は緩急付き（ElseDrivePath.EaseOutAndBack）。最大の速さを driveSpeed に揃える: 時間 = π × 片道 ÷ 速さ。車は一定の速さ。
+        state.phaseDuration = floats
+            ? Mathf.PI * (state.drivePath.TotalLength * 0.5f) / state.driveSpeed
+            : state.drivePath.TotalLength / state.driveSpeed;
         state.stage = InteractiveEventStage.Owned;
         BeginRandomInteractiveMotionVideoPause(trackId);
-        ExperimentLog.Interaction(trackId, "random_Dynamic", $"subject=else wheels={state.rigidWheels.Count} radius_m={ExperimentCsv.Format(radius)}");
+        ExperimentLog.Interaction(trackId, "random_Dynamic", $"subject=else wheels={state.rigidWheels.Count} radius_m={ExperimentCsv.Format(radius)}" +
+                                                             (floats ? " path=float" : string.Empty));
         Debug.Log(
-            $"[MOTION] rigid drive start track={trackId} wheels={state.rigidWheels.Count} hasForward={hasForward} " +
-            $"radius={radius:F3}m drive={driveDistance:F2}m total={state.drivePath.TotalLength:F2}m duration={state.phaseDuration:F2}s");
+            $"[MOTION] rigid drive start track={trackId} wheels={state.rigidWheels.Count} hasForward={hasForward} steers={steers} float={floats} " +
+            $"radius={radius:F3}m drive={driveDistance:F2}m total={state.drivePath.TotalLength:F2}m duration={state.phaseDuration:F2}s" +
+            MotionLengthScaleLogSuffix(state));
         // 人・動物の [MOTION] origin と同じ形（2026-10-11）。gap は門を通さない表示位置と門つきの位置の距離（OFF でも ON でも同じ値）。
         Debug.Log($"[MOTION] origin track={trackId} source={(fromDisplayed ? "displayed" : "live")} " +
                   $"gap={(state.hasDisplayedSample && state.hasLiveSample ? Vector3.Distance(state.displayedPosition, state.livePosition) : 0f):F3}m " +
@@ -2755,12 +3084,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         float elapsed = RuntimeClock.ResolveElapsed(tick.now, state.phaseStartTime);
-        float distance = Mathf.Clamp(elapsed * state.driveSpeed, 0f, state.drivePath.TotalLength);
+        // まっすぐの往復（driveFloats）は時間の割合を緩急に通して距離にする（出発・手前の点・到着で速さ 0）。車は一定の速さ。
+        float distance = state.driveFloats
+            ? state.drivePath.TotalLength * ElseDrivePath.EaseOutAndBack(state.phaseDuration > 0f ? elapsed / state.phaseDuration : 1f)
+            : Mathf.Clamp(elapsed * state.driveSpeed, 0f, state.drivePath.TotalLength);
         ElseDrivePath.Sample sample = state.drivePath.Evaluate(distance);
         LogRigidSegmentIfEntered(trackId, state, sample.segment);
 
-        // 向き: 出発時の回転を、経路の接線と出発時の向きの差だけ yaw で回す。ピッチ・ロールは保つ。
-        float yaw = Vector3.SignedAngle(state.driveHeading, sample.tangent, Vector3.up);
+        // 向き: 出発時の回転を、経路の接線と出発時の向きの差だけ yaw で回す。ピッチ・ロールは保つ。ホイールの無いモデルは回さない（driveSteers）。
+        float yaw = state.driveSteers ? Vector3.SignedAngle(state.driveHeading, sample.tangent, Vector3.up) : 0f;
         Quaternion rotation = Quaternion.AngleAxis(yaw, Vector3.up) * state.originRotation;
         TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(sample.position, rotation, instance.transform.localScale));
 
@@ -2783,7 +3115,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
         }
 
-        if (distance >= state.drivePath.TotalLength)
+        if (distance >= state.drivePath.TotalLength || (state.driveFloats && elapsed >= state.phaseDuration))
         {
             BeginHandoff(trackId, state, tick.now);
         }
@@ -2799,7 +3131,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         state.driveSegmentLogged = segment;
         string phase = segment == ElseDrivePath.SegmentUTurn ? "u_turn" : (segment == ElseDrivePath.SegmentDriveBack ? "drive_back" : "drive_in");
         float length = state.drivePath.segmentLengths[Mathf.Clamp(segment, 0, 2)];
-        LogInteractiveMotionPhase(trackId, phase, "else_drive", length / Mathf.Max(0.05f, state.driveSpeed), length);
+        // まっすぐの往復は行きと帰りが同じ時間（緩急付きなので 長さ ÷ 速さ ではない）。
+        float seconds = state.driveFloats ? state.phaseDuration * 0.5f : length / Mathf.Max(0.05f, state.driveSpeed);
+        LogInteractiveMotionPhase(trackId, phase, "else_drive", seconds, length);
     }
 
     private static void RestoreRigidWheels(InteractiveMotionState state)
@@ -2834,6 +3168,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         RuntimeClock.TickContext tick = GetRuntimeTickContext();
+        if (state.stage == InteractiveEventStage.PendingPause)
+        {
+            // まだ動いていない（動画が止まるのを待っている）: そのまま待ち、新しいモデルの追従の姿勢から始める。
+            Debug.Log($"[MOTION] keep pending across model change track={trackId}");
+            return true;
+        }
+
+        // 切り替えの混ぜの起点は古いモデルの骨（新しいモデルには使えない）。
+        state.humanSwitchBlendActive = false;
         if (state.stage == InteractiveEventStage.HandoffBlend)
         {
             // 追従へ戻す最後の混ぜ（interactiveHandoffBlendSeconds）の途中: 動きはもう終わっているので、ここで終わったことにする
@@ -2900,7 +3243,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (state.rebindHasOldSample && state.hasDisplayedSample)
         {
             delta = (state.displayedPosition - state.displayedAnchorWorld) - (state.rebindOldDisplayedPosition - state.rebindOldAnchorWorld);
-            shifted = delta.magnitude <= MaxInteractiveMotionRebindShiftMeters;
+            // S（stereoDepthScalesMotionLengths）: モデルの差のずれも目のまわりに広げた倍率だけ大きくなるので、上限も同じだけ伸ばす（10/26 の点検:
+            // 猫 → キツネの 0.381 m が k 1.36 倍の 0.520 m になって上限 0.5 m を超え、ずらされずにキツネが目の前 0.2 m に出た）。
+            shifted = delta.magnitude <= MaxInteractiveMotionRebindShiftMeters * state.motionLengthScale;
             if (shifted)
             {
                 ShiftInteractiveMotionPositions(state, delta);
@@ -2910,7 +3255,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (state.subject == InteractiveMotionSubject.Person && state.rebindClip != null)
         {
             // クリップの時刻は phaseStartTime からの経過で決まる（ApplyHumanClipPlayback）ので、新しい Animator で続きから再生される。
+            NoteHumanHipsTrackLocalPosition(instance);
+            // 結び直しでは切り替えの混ぜ（humanClipSwitchBlend、既定 OFF）を始めない。同じクリップの同じ時刻を新しいモデルで続けるだけなので、
+            // 混ぜる元は要らない。10/25 夜の全部 ON の撮影（soccer_swap_m）: この tick に追従で置いた新しいモデルの姿勢（止まった動画の人の
+            // かがんだ姿勢）から混ぜていたので、敬礼の途中で押すと女性がかがんで現れ、0.36 秒かけて立ち上がった。前のモデルの混ぜが途中なら打ち切る
+            // （前のモデルの骨の値は新しいモデルに当てない。動作の始めの 0.45 秒に押したときだけ 1 tick でクリップの姿勢へ移る）。
+            state.humanSwitchBlendActive = false;
+            state.humanSwitchFromBoneLocalRotations.Clear();
             StartHumanClipPlayback(trackId, instance, state.rebindClip, state.rebindClipLoop);
+            // 体の合わせ（humanMotionKeepsBodyInPlace）は新しいモデルで測り直す。その場の動作は、この tick に追従で置いた新しいモデルの体を基準にする。
+            state.humanBodyOffsetValid = false;
+            if (humanMotionKeepsBodyInPlace && state.kind == InteractiveEventKind.Static)
+            {
+                state.humanBodyAnchorValid = TryGetHumanBodyAnchor(instance, Vector3.up, out state.humanBodyStartHips, out state.humanBodyGroundHeight);
+            }
         }
         else if (state.subject == InteractiveMotionSubject.Rigid)
         {
@@ -2923,7 +3281,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         Debug.Log($"[MOTION] rebind track={trackId} model={instance.name} shift=({delta.x:F3},{delta.y:F3},{delta.z:F3}) {(shifted ? "applied" : "skipped")} " +
-                  $"clip={(state.rebindClip != null ? state.rebindClip.name : "-")} wheels={state.rigidWheels.Count} frame={GetCurrentPlaybackFrame()} tick={Time.frameCount}");
+                  $"clip={(state.rebindClip != null ? state.rebindClip.name : "-")} wheels={state.rigidWheels.Count} frame={GetCurrentPlaybackFrame()} tick={Time.frameCount}" +
+                  MotionLengthScaleLogSuffix(state));
         state.rebindClip = null;
     }
 

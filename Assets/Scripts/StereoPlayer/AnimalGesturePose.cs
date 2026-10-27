@@ -37,7 +37,12 @@ public enum AnimalGesturePoint
     LeftEar,
     RightEar,
     FrontLeftScapula,
-    FrontRightScapula
+    FrontRightScapula,
+    // 2026-10-18 追加（あくび。資産は int で保存されるので末尾に足す）: Jaw = 頭の子で名前に jaw を含む最初の骨（上顎（upper）と末端（_end）は除く。
+    // Labrador の Jaw、Lynx の fJaw。AnimalPoseApplier.EnsureGestureAnatomy）。FK が書かない骨（smalDriveJaw が OFF のとき）なので、毎 tick bind の局所へ戻してから足す
+    // （smalDriveJaw が ON のときは、顎の点を持つ身ぶりの間だけ bind の局所を土台に回すので、その間は追従の口の開きを使わない）。
+    // anatomicalAxes の right は − で口が開く（+ は顎先が上 = 閉じる側）。
+    Jaw
 }
 
 [Serializable]
@@ -72,4 +77,8 @@ public class AnimalGesturePose : ScriptableObject
     // up = 体の上まわり（world の上から見て時計回り）、forward = 体の長軸まわり（頭は鼻の軸まわり）。骨ごとの軸は bind の姿勢で決める
     // （AnimalPoseApplier.EnsureGestureAnatomy）。左右の脚の骨の局所軸が鏡映のモデル（Labrador・Lynx など 52 体中 15 体）でも左右で意味がそろう。
     public bool anatomicalAxes;
+    // 2026-10-17 追加（身震い v3）。胴の点（Trunk）を胴の鎖（spine の子から肩甲帯まで）に配る累積の形。x = 鎖の中の位置（spine の子 = 1/n … 肩甲帯 = 1）、
+    // 値 = その骨までに回る割合（肩甲帯で 1 なら、胴の点の曲線の値がそのまま骨盤に対する肩甲帯の回転になる）。キーが 2 つ以上のときだけ使う。
+    // 既定はキー無し = 従来の形（sin(πx) + 0.3x を最大 1 にそろえたもの。鎖 5 本なら肩甲帯に 26.5%）。今の資産（前足 v4b の胴 4° など）の再生は変わらない。
+    public AnimationCurve trunkProfile = new AnimationCurve();
 }

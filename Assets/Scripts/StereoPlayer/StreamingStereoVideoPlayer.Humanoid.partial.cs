@@ -118,6 +118,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 // handler.SetHumanPose(ref savedPose) の前に呼ぶ。
                 ComputeHandBindCorrection(cache, HumanBodyBones.LeftLowerArm,  HumanBodyBones.LeftHand);
                 ComputeHandBindCorrection(cache, HumanBodyBones.RightLowerArm, HumanBodyBones.RightHand);
+                CaptureHandRollAxes(cache);
 
                 handler.SetHumanPose(ref savedPose);
                 sampledTpose = true;
@@ -138,7 +139,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // フォールバック: 現在の pose（T-pose でない可能性あり）で計算するが最善の近似とする。
             ComputeHandBindCorrection(cache, HumanBodyBones.LeftLowerArm,  HumanBodyBones.LeftHand);
             ComputeHandBindCorrection(cache, HumanBodyBones.RightLowerArm, HumanBodyBones.RightHand);
+            CaptureHandRollAxes(cache);
         }
+
+        ResolveHumanHandRoll(animator, cache);
 
         // T ポーズを使うフラグが立っているときだけ採る（既定の経路では avatar.humanDescription を読まない。Quest の IL2CPP で
         // 読めるかは未確認なので、既定の挙動に関わらないようにする）。
@@ -245,6 +249,157 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         Quaternion canonicalTpose = Quaternion.LookRotation(armDir, up);
         cache.handBindCorrection[handBoneId] = Quaternion.Inverse(canonicalTpose) * bindHandWorld;
+    }
+
+    // humanHandRollFixMode 用（2026-10-25）: ComputeHandBindCorrection と同じ時点（muscles=0）の肘→手首の向きを、手と前腕それぞれの局所で控える。
+    // 手の局所の軸は handBindCorrection⁻¹ × canonical の前と同じ（C の左に canonical の前の回りの回転を掛けることと、手の world の右に
+    // この軸の回りの回転を掛けることが等しい。クリップの後に当てるのは後者）。
+    private static void CaptureHandRollAxes(HumanoidRigCache cache)
+    {
+        CaptureHandRollAxis(cache, HumanBodyBones.LeftLowerArm, HumanBodyBones.LeftHand, out cache.leftForearmRollAxisLocal, out cache.leftHandRollAxisLocal);
+        CaptureHandRollAxis(cache, HumanBodyBones.RightLowerArm, HumanBodyBones.RightHand, out cache.rightForearmRollAxisLocal, out cache.rightHandRollAxisLocal);
+    }
+
+    private static void CaptureHandRollAxis(HumanoidRigCache cache, HumanBodyBones elbowBoneId, HumanBodyBones handBoneId,
+        out Vector3 forearmAxisLocal, out Vector3 handAxisLocal)
+    {
+        forearmAxisLocal = Vector3.zero;
+        handAxisLocal = Vector3.zero;
+        if (!cache.bones.TryGetValue(elbowBoneId, out Transform elbowBone) || elbowBone == null) return;
+        if (!cache.bones.TryGetValue(handBoneId, out Transform handBone) || handBone == null) return;
+
+        Vector3 armDir = handBone.position - elbowBone.position;
+        if (armDir.sqrMagnitude < 1e-10f) return;
+        armDir.Normalize();
+        forearmAxisLocal = Quaternion.Inverse(elbowBone.rotation) * armDir;
+        handAxisLocal = Quaternion.Inverse(handBone.rotation) * armDir;
+    }
+
+    // 回す量を表から引く（prefab 名 = ReplaceableModel.sourcePrefabName と完全一致）。表に無いモデル・prefab 名の取れないモデルは 0。
+    // 切り替え（humanHandRollFixMode）は使うときに読むので、ここでは量だけ控える。モデルごとに 1 行ログを出す。
+    private void ResolveHumanHandRoll(Animator animator, HumanoidRigCache cache)
+    {
+        ReplaceableModel model = animator != null ? animator.GetComponentInParent<ReplaceableModel>() : null;
+        cache.sourcePrefabName = model != null ? model.sourcePrefabName : null;
+        cache.leftHandRollDeg = 0f;
+        cache.rightHandRollDeg = 0f;
+        if (!string.IsNullOrEmpty(cache.sourcePrefabName) && !string.IsNullOrEmpty(humanHandRollFixTable))
+        {
+            foreach (string entry in humanHandRollFixTable.Split(','))
+            {
+                string[] p = entry.Trim().Split(':');
+                if (p.Length != 3 || p[0].Trim() != cache.sourcePrefabName)
+                {
+                    continue;
+                }
+
+                if (float.TryParse(p[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float left) &&
+                    float.TryParse(p[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float right))
+                {
+                    cache.leftHandRollDeg = left;
+                    cache.rightHandRollDeg = right;
+                }
+
+                break;
+            }
+        }
+
+        Debug.Log($"[HANDROLL] model={(animator != null ? animator.name : "")} prefab={cache.sourcePrefabName} mode={humanHandRollFixMode} " +
+                  $"left={cache.leftHandRollDeg:F1} right={cache.rightHandRollDeg:F1} axisHandL={cache.leftHandRollAxisLocal:F3} " +
+                  $"axisHandR={cache.rightHandRollAxisLocal:F3} axisForearmL={cache.leftForearmRollAxisLocal:F3} axisForearmR={cache.rightForearmRollAxisLocal:F3}");
+    }
+
+    // Humanoid のクリップ（自分から動く動作・画面の外へ歩く所）を評価した直後に、追従の手の FK と同じ回転を当てる（humanHandRollFixMode）。
+    // クリップは avatar を通るので Meshy の手のひら前向きのまま残り、当てないと動作の始まりに手首がくるっと回り、終わりに戻る（確かめ役 V_H1）。
+    // クリップは毎 tick 全部の骨を書き直すので積み重ならない。前腕を先に回し、手は回す前の world に手の局所の軸の回りの回転を掛けた値で書く。
+    // 受け渡しの混ぜ（始めの 0.3 秒・終わりの 0.45 秒）より前に呼ぶ（混ぜの両端がどちらも回した姿勢になる）。
+    private void ApplyHumanHandRollFixAfterClip(Animator animator)
+    {
+        if (humanHandRollFixMode == 0 || animator == null || !humanoidCaches.TryGetValue(animator, out HumanoidRigCache cache) || cache == null)
+        {
+            return;
+        }
+
+        int mode = HumanHandRollModeFor(cache);
+        if (mode == 0)
+        {
+            return;
+        }
+
+        ApplyHumanHandRollToCurrentPose(cache, HumanBodyBones.LeftHand, mode);
+        ApplyHumanHandRollToCurrentPose(cache, HumanBodyBones.RightHand, mode);
+    }
+
+    // 追従の手とクリップの手を回すかどうかを同じ条件で決める（2026-10-25、コードの点検 2 体の指摘）。追従の手を回すのは
+    // ApplyHandFkWithCanonicalArmDirection だけ（keypoint の AimAt が ON で、handFkFromForearmFrame の T ポーズの経路でないとき）。
+    // 条件がずれると追従の手は回らずクリップの手だけ回り、動作の始まりに手首がひねられ、終わりに戻る（実験の設定では起きない）。
+    private int HumanHandRollModeFor(HumanoidRigCache cache)
+    {
+        if (humanHandRollFixMode == 0 || !EnableHumanSmplMotion || !enableBoneApply || !enableKeypointAimAt ||
+            (handFkFromForearmFrame && cache != null && cache.tposeRotWorld.Count > 0))
+        {
+            return 0;
+        }
+
+        return humanHandRollFixMode;
+    }
+
+    private static void ApplyHumanHandRollToCurrentPose(HumanoidRigCache cache, HumanBodyBones handBoneId, int mode)
+    {
+        float deg = HumanHandRollDeg(cache, handBoneId, mode);
+        if (deg == 0f || !cache.bones.TryGetValue(handBoneId, out Transform hand) || hand == null)
+        {
+            return;
+        }
+
+        Vector3 handAxis = handBoneId == HumanBodyBones.LeftHand ? cache.leftHandRollAxisLocal : cache.rightHandRollAxisLocal;
+        if (handAxis.sqrMagnitude < 1e-8f)
+        {
+            return;
+        }
+
+        Quaternion handWorld = hand.rotation;
+        RollHumanForearmForHandFix(cache, handBoneId, mode, deg);
+        Quaternion rolled = handWorld * Quaternion.AngleAxis(deg, handAxis);
+        if (IsFinite(rolled))
+        {
+            TransformWriter.ApplyWorldRotation(hand, rolled);
+        }
+    }
+
+    // 切り替えが ON で表に載ったモデルなら、その手を回す量（度）。OFF・表に無いモデルは 0。
+    private static float HumanHandRollDeg(HumanoidRigCache cache, HumanBodyBones handBoneId, int mode)
+    {
+        if (mode == 0 || cache == null)
+        {
+            return 0f;
+        }
+
+        return handBoneId == HumanBodyBones.LeftHand ? cache.leftHandRollDeg : handBoneId == HumanBodyBones.RightHand ? cache.rightHandRollDeg : 0f;
+    }
+
+    // 前腕も回す案（2 = 手と同じだけ、3 = 半分）: 前腕をその局所の肘→手首の軸の回りに回す。呼ぶ側は前腕をこの tick に書き直した後
+    // （追従は FK と AimAt、クリップは評価）に 1 回だけ呼ぶので積み重ならない。手は呼ぶ側が後から world で書く。
+    private static void RollHumanForearmForHandFix(HumanoidRigCache cache, HumanBodyBones handBoneId, int mode, float handDeg)
+    {
+        float forearmDeg = mode == 2 ? handDeg : mode == 3 ? 0.5f * handDeg : 0f;
+        if (forearmDeg == 0f)
+        {
+            return;
+        }
+
+        HumanBodyBones forearmId = handBoneId == HumanBodyBones.LeftHand ? HumanBodyBones.LeftLowerArm : HumanBodyBones.RightLowerArm;
+        Vector3 axis = handBoneId == HumanBodyBones.LeftHand ? cache.leftForearmRollAxisLocal : cache.rightForearmRollAxisLocal;
+        if (axis.sqrMagnitude < 1e-8f || !cache.bones.TryGetValue(forearmId, out Transform forearm) || forearm == null)
+        {
+            return;
+        }
+
+        Quaternion rolled = forearm.rotation * Quaternion.AngleAxis(forearmDeg, axis);
+        if (IsFinite(rolled))
+        {
+            TransformWriter.ApplyWorldRotation(forearm, rolled);
+        }
     }
 
 }

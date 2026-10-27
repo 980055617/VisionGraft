@@ -38,6 +38,34 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     //
     // シーク時も shot index の変化として検出される。同一 shot 内へのシークは
     // カメラが連続しているためリセット不要。
+    // 動画の周回・巻き戻しで平滑を捨てる（2026-10-26、新しい振る舞い・既定 OFF）。1 つの shot だけの動画（新しい実験の 30 秒の動画）は、
+    // 周の終わりから頭へ戻っても shot の切れ目を通らないので ResetPerShotTrackState が走らず、動物の root の位置・向き・四肢の目標の平滑
+    // （AnimalMotionFilter）と SMAL の回転の平滑・関節の world 位置の平滑が、周の終わりの値から周の頭の値へ滑る。犬の動画では、左の端から出る直前
+    // （vf 684、目の前 0.29 m）の root の位置の平滑から周の頭（0.92 m）へ約 1 秒かけて滑り、⑧ がそれを追って奥へ行き過ぎ（1.19〜1.27 m）、
+    // 犬が 0.5 秒ほど 3/4 の大きさに見え、戻るまで 1.2 秒かかっていた（10/26 の点検 wf_b39a3f2f-bac の loop-return-pop-and-shrink、
+    // runs_final/dog_p1_s_on_loops.log の周の頭の BOTTOMFIX-DEPTH）。⑧ の比の平滑と人の根の奥行きの平滑は、もともと巻き戻りで今の値へ飛ぶ。
+    // ON なら、表示に使う meta のフレームが RewindResetMinFrames より大きく戻った tick に、shot の切れ目と同じ平滑（動物の root と SMAL の回転・
+    // 関節の位置・人の root の向き）を捨てる。倍率のロック・S の k・下端合わせなど shot ごとの状態は持ち越す（同じ shot の中なので測り直さない）。
+    public bool rewindResetsSmoothing = false;
+    private const int RewindResetMinFrames = 12;
+    private int rewindLastMetaFrame = -1;
+
+    // DisplayModelTick の頭（表示に使う meta のフレームが決まった所）。track の有無によらず毎 tick 呼ぶ。
+    private void ResetSmoothingIfRewound(int frame)
+    {
+        int last = rewindLastMetaFrame;
+        rewindLastMetaFrame = frame;
+        if (!rewindResetsSmoothing || last < 0 || frame >= last - RewindResetMinFrames)
+        {
+            return;
+        }
+
+        animalPoseApplier.ResetMotionState(false);
+        smoothedJointsByTrack.Clear();
+        personRootYawForwardByRoot.Clear();
+        Debug.Log($"[REWIND] meta frame {last} -> {frame}: reset the animal root/SMAL smoothing, the joint smoothing and the person root yaw");
+    }
+
     private void SyncShotBoundaryForFrame(int frame)
     {
         int shotIndex = shotBoundaries.ResolveShotIndex(frame);
@@ -380,6 +408,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // ⑧ の深度補正比率も前 shot の値を引きずらせない。
             smoothedProjectedDepthRatioByTrack.Clear();
             smoothedDepthRatioPrefabByTrack.Clear();
+            // S（2026-10-16）: S の k もロックと同じ寿命（本物のカットで捨て、次の tick に新しいロックで作り直す。偽のカットでは持ち越す）。
+            ClearStereoDepthStatesForRealCut();
+            // V（placementFollowVideoDepth、2026-10-26、既定 OFF）: V の f もロックと一緒に捨てる（偽のカットでは持ち越す。周回・巻き戻りは配置の前で捨てる）。
+            ClearVideoDepthFollowStatesForRealCut();
         }
         // ⑨ の深度差の平滑化も shot をまたがせない。
         otherDepthGapByTrack.Clear();
@@ -397,6 +429,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         lastGoodBottomAlignVEye.Clear();
         // 下端が切れているかのヒステリシスの状態も shot をまたがせない（偽のカットでも消す。bboxBottomClipHysteresis）。
         bboxBottomClippedByTrack.Clear();
+        // bottomFitBorderEdgesAsBounds: 上下とも切れた tick が保つ高さも同じ寿命（偽のカットでも消す）。
+        bottomFitHeldReferenceCamYByTrack.Clear();
         // animalBottomClippedHeadPin: 頭の関節の控えと記録の状態も同じ寿命（偽のカットでも消す）。
         animalHeadPinHeldOffsetByTrack.Clear();
         animalHeadPinActiveByTrack.Clear();

@@ -116,8 +116,8 @@ public sealed class VideoCustomization
 }
 
 
-// persistentDataPath 上の 1 ファイル。研究者が通常利用で仕込んだ「基準」を保持する。
-// 被験者実験中は **読むだけで書かない**（書き込み先はセッション上書き側）。
+// persistentDataPath 上の 1 ファイル。研究者が通常利用と実験者のデバッグで仕込んだ「基準」を保持する。
+// 参加者のセッション中は **読むだけで書かない**（書き込み先はセッション上書き側。決まりは ExperimentSessionOverrides.ResolveWritable）。
 public static class TrackCustomizationStore
 {
     public const string FileName = "model_selection.json";

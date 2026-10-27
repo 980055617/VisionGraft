@@ -18,6 +18,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private void OnDisable()
     {
         UnsubscribeRecenterEvents();
+        // モデルの光を動画に合わせた分を戻す（ExperimentScene の光は試行をまたいで残る。ModelLight.partial.cs）。
+        RestoreModelLight();
+        // 影の距離を品質の asset の値に戻し、測る購読を外す（ModelShadow.partial.cs。asset は Editor で play を抜けても残る）。
+        ShutdownModelShadow();
     }
 
 
@@ -56,6 +60,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         DisposeInteractiveMotion();
         DisposeBodyFrameOut();
         CloseBoneWorldDump();
+        DisposeModelLight();
+        ShutdownModelShadow();
     }
 
 
@@ -588,6 +594,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private void UpdateBundlePickerTick()
     {
         UpdateBundlePickerPlacement();
+        // F2（2026-10-16、既定 OFF）: bundle を選んでいる間は画面の面の枠を消すだけ（StereoFrame.partial.cs）。
+        UpdateStereoFrameOccluder();
     }
 
 
@@ -595,6 +603,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     {
         UpdatePickingTick();
         DisplayModelTick();
+        // F2（2026-10-16、既定 OFF）: モデルを置いた後に画面の面の枠を置き直す（StereoFrame.partial.cs）。
+        UpdateStereoFrameOccluder();
         DetectRuntimeRecenterFallback();
         HandleRuntimePauseInput();
         RefreshRuntimeSettingsPerFrame();
@@ -609,6 +619,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // player.texture の**中身**はイベントに関係なく更新されるので、
         // 参照を当て直すだけでよい。Stop → Prepare の後に差し替わるのも拾える。
         ApplyVideoFrameTexture(vp);
+        // 2026-10-25（既定 OFF）: モデルを照らす光を、表示している動画の下半分の明るさに合わせる（ModelLight.partial.cs）。
+        UpdateModelLightFromVideo();
+        // 2026-10-25（既定 Scene = 今のまま）: 影の距離をミニチュアのモデルの範囲に合わせる（ModelShadow.partial.cs）。
+        UpdateModelShadow();
 
         DetectStalledPlayback();
         ResumeAfterStallIfPending();
@@ -983,6 +997,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Debug.Log($"[Model] Human: {humanPrefabs.Length} prefab, Animal: {animalPrefabs.Length} prefab, Else: {elsePrefabs.Length} prefab");
         Debug.Log($"[LOADTIME] prefab 読み込み {stopwatch.ElapsedMilliseconds}ms（フレームを跨いで）");
         VerifyModelPrefabOrderInBatch();
+        AppendBatchExtraPrefabs();
         // 失敗しても読み込みは止めない（WaitForModelPrefabs が modelPrefabsReady を待っている）。
         try
         {
@@ -1028,6 +1043,38 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         CompareModelPrefabOrder(
             "Animal", animalPrefabs, SortByPriority(LoadPrefabsFromResources("Models/Animal"), AnimalModelPriorityOrder));
         CompareModelPrefabOrder("Else", elsePrefabs, LoadPrefabsFromResources("Models/Else"));
+    }
+
+
+    // batchExtraHumanPrefab / batchExtraAnimalPrefab（バッチ検証の試作）を一覧の末尾に足し、それを既定のモデルにする。
+    // 並びの確かめの後に足す（足した分を「数が違う」と数えないため）。Editor の外では何もしない。
+    private void AppendBatchExtraPrefabs()
+    {
+        if (!Application.isEditor)
+        {
+            return;
+        }
+
+        if (batchExtraHumanPrefab != null)
+        {
+            selectedHumanIndex = humanPrefabs.Length;
+            humanPrefabs = AppendPrefab(humanPrefabs, batchExtraHumanPrefab);
+            Debug.Log($"[Model] batch extra Human[{selectedHumanIndex}] = {batchExtraHumanPrefab.name}");
+        }
+
+        if (batchExtraAnimalPrefab != null)
+        {
+            selectedAnimalIndex = animalPrefabs.Length;
+            animalPrefabs = AppendPrefab(animalPrefabs, batchExtraAnimalPrefab);
+            Debug.Log($"[Model] batch extra Animal[{selectedAnimalIndex}] = {batchExtraAnimalPrefab.name}");
+        }
+    }
+
+
+    private static GameObject[] AppendPrefab(GameObject[] prefabs, GameObject extra)
+    {
+        var list = new List<GameObject>(prefabs) { extra };
+        return list.ToArray();
     }
 
 

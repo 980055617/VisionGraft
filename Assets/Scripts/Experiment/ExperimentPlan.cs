@@ -121,6 +121,50 @@ public static class ExperimentPlan
         return trials;
     }
 
+    // 実験者のデバッグ（2026-10-25、ExperimentController の「デバッグ（動画を選ぶ）」）で 1 本だけ開くための表。
+    // 条件 3 つ × 動画 6 本で、trialIndex = 条件の番号 × TrialsPerBlock + 動画の番号。記録（trials.csv の video・mode 列）が
+    // 開いた動画・条件と一致するように、セッションの試行の表をこれに差し替える（ExperimentSession の trialsOverride）。
+    public static readonly ExperimentDisplayMode[] DebugModes =
+    {
+        ExperimentDisplayMode.ModelReplaced,
+        ExperimentDisplayMode.StereoOnly,
+        ExperimentDisplayMode.Monocular,
+    };
+
+    public static ExperimentTrial[] BuildDebugTrials()
+    {
+        ExperimentTrial[] trials = new ExperimentTrial[DebugModes.Length * TrialsPerBlock];
+        for (int m = 0; m < DebugModes.Length; m++)
+        {
+            for (int v = 0; v < TrialsPerBlock; v++)
+            {
+                int index = m * TrialsPerBlock + v;
+                trials[index] = new ExperimentTrial
+                {
+                    trialIndex = index,
+                    blockIndex = m,
+                    indexInBlock = v,
+                    video = (ExperimentVideo)v,
+                    mode = DebugModes[m],
+                };
+            }
+        }
+
+        return trials;
+    }
+
+    public static int DebugTrialIndex(ExperimentDisplayMode mode, ExperimentVideo video)
+    {
+        int m = System.Array.IndexOf(DebugModes, mode);
+        int v = (int)video;
+        if (m < 0 || v < 0 || v >= TrialsPerBlock)
+        {
+            return -1;
+        }
+
+        return m * TrialsPerBlock + v;
+    }
+
     // 割り付け表の確認用。実験者UIにそのまま出す。
     public static string DescribeAssignment(ExperimentGroup group, int videoOrderPattern)
     {

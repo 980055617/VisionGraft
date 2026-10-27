@@ -461,10 +461,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (!state.smoothingInitialized) return;
         if (TryApplyHandFromForearmFrame(cache)) return;
 
+        int handRollMode = HumanHandRollModeFor(cache);
         ApplyHandFkWithCanonicalParent(cache, state, HumanBodyBones.LeftHand,  smplHandJoint: 20,
-            jointsWorld, jointVis, idxElbow: SmplLeftElbow,  idxWrist: SmplLeftWrist);
+            jointsWorld, jointVis, idxElbow: SmplLeftElbow,  idxWrist: SmplLeftWrist, handRollMode);
         ApplyHandFkWithCanonicalParent(cache, state, HumanBodyBones.RightHand, smplHandJoint: 21,
-            jointsWorld, jointVis, idxElbow: SmplRightElbow, idxWrist: SmplRightWrist);
+            jointsWorld, jointVis, idxElbow: SmplRightElbow, idxWrist: SmplRightWrist, handRollMode);
     }
 
     private static void ApplyHandFkWithCanonicalParent(
@@ -475,13 +476,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Vector3[] jointsWorld,
         byte[] vis,
         int idxElbow,
-        int idxWrist)
+        int idxWrist,
+        int handRollMode)
     {
         if (!TrackedJointPoints.TryGet(jointsWorld, vis, idxElbow, out Vector3 posElbow)) return;
         if (!TrackedJointPoints.TryGet(jointsWorld, vis, idxWrist, out Vector3 posWrist))  return;
 
         // canonical 親フレーム: forward = elbow→wrist、up = worldUp 投影。キャラクター固有値を一切含まない。
-        ApplyHandFkWithCanonicalArmDirection(cache, state, handBoneId, smplHandJoint, posWrist - posElbow);
+        ApplyHandFkWithCanonicalArmDirection(cache, state, handBoneId, smplHandJoint, posWrist - posElbow, handRollMode);
     }
 
     // FK の基準（bindW）。fkReferenceFromAvatarTPose（既定 OFF、2026-10-04、HM の F3 (a) / LM の H-1）なら Avatar の T ポーズ、
@@ -544,7 +546,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         HumanSmplRetargetState state,
         HumanBodyBones handBoneId,
         int smplHandJoint,
-        Vector3 armDir)
+        Vector3 armDir,
+        int handRollMode)
     {
         if (!cache.bones.TryGetValue(handBoneId, out Transform handBone) || handBone == null) return;
 
@@ -567,6 +570,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // キャラクターごとの手ボーンのローカル軸差をこの補正量が吸収する。
         if (!cache.handBindCorrection.TryGetValue(handBoneId, out Quaternion correction))
             correction = Quaternion.identity;
+
+        // humanHandRollFixMode（既定 0 = OFF、2026-10-25）: 表のモデルだけ、C の左に canonical の前（肘→手首）の回りの回転を掛ける（調査役 H1 の式）。
+        // 前腕も回す案（2・3）は、手を書く前に前腕を回す（前腕はこの tick に FK と AimAt が書き直した後なので積み重ならない）。OFF・表に無いモデルは 0 で何もしない。
+        float handRollDeg = HumanHandRollDeg(cache, handBoneId, handRollMode);
+        if (handRollDeg != 0f)
+        {
+            correction = Quaternion.AngleAxis(handRollDeg, Vector3.forward) * correction;
+            RollHumanForearmForHandFix(cache, handBoneId, handRollMode, handRollDeg);
+        }
 
         Quaternion tw = canonicalParent * smplLocal * correction;
         if (!IsFinite(tw)) return;

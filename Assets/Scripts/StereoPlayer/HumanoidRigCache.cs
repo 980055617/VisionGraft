@@ -19,7 +19,21 @@ internal sealed class HumanoidRigCache
     // 手のFK式: canonicalParent * smplLocal * handBindCorrection
     // smplLocal=identity のとき bindRotWorld[hand] に一致し、キャラクター間の軸差を吸収する。
     public readonly Dictionary<HumanBodyBones, Quaternion> handBindCorrection = new Dictionary<HumanBodyBones, Quaternion>();
+    // Meshy の人の手のねじれの直し（2026-10-25、StreamingStereoVideoPlayer.humanHandRollFixMode、既定 0 = OFF）: 前腕の軸の回りに回す量
+    // （度、左は負・右は正 = どちらも手のひらを後ろへ回す回内）と、muscles=0 で採った肘→手首の向き（手・前腕それぞれの局所）。
+    // 表（humanHandRollFixTable）に無いモデルは 0 のまま（何もしない）。
+    public float leftHandRollDeg;
+    public float rightHandRollDeg;
+    public Vector3 leftHandRollAxisLocal;
+    public Vector3 rightHandRollAxisLocal;
+    public Vector3 leftForearmRollAxisLocal;
+    public Vector3 rightForearmRollAxisLocal;
+    public string sourcePrefabName;
     public bool ready;
+    // 追従の Hips の局所位置（2026-10-25、StreamingStereoVideoPlayer.humanTrackingRestoresHipsLocalPosition）。人のクリップ（自分から動く
+    // 動作・画面の外への歩き）が初めて Hips に触る直前の値。追従は Hips の局所位置を書かないので、それまではこの値のまま変わらない。
+    public bool hasHipsTrackLocalPosition;
+    public Vector3 hipsTrackLocalPosition;
 
     // シルエット相当の投影点（2026-10-03、useSilhouetteProjectionExtent）。既定姿勢で一度だけ測る。
     // 頭頂 = Head の位置 + Head の回転 × crownLocalDir × crownDistance × lossyScale。

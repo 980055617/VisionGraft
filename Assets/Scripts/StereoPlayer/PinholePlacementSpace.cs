@@ -152,7 +152,9 @@ public static class PinholePlacementSpace
         // それ以外: 一番下の投影点を bbox の下端へ
         Bottom,
         // animalBottomClippedHeadPin（2026-10-14）: 頭の骨の点を目標の行へ（その点の深さで換算）
-        HeadPoint
+        HeadPoint,
+        // bottomFitBorderEdgesAsBounds（2026-10-25）: 上端も下端も画面の縁で切れた tick。⑧ の基準点のカメラ空間の高さを heldReferenceY へ戻す
+        HoldReferenceY
     }
 
     // 2 回目の ⑦ を写すための値。どれも ⑧ が動かす前（anchor から作った配置）の値。AABB は平行移動でそのまま動き、縦の半幅は変わらない
@@ -173,6 +175,12 @@ public static class PinholePlacementSpace
         // HeadPoint: 頭の骨の点（カメラ空間 y・z、⑧ が動かす前）。targetV はその点を置く行（eye px）
         public float pointY;
         public float pointZ;
+        // HoldReferenceY: 保つ基準点（⑧ の基準点 = referenceY と同じ点）のカメラ空間の高さ（m）
+        public float heldReferenceY;
+        // bottomFitBorderEdgesAsBounds: Top・HoldReferenceY の移動を「一番下の点を edgeTargetV（画面の下の縁、eye px）へ置く移動」以下にする。
+        // その移動の換算は Bottom と同じ（bottomUsesPointDepth）。
+        public bool lowestNotAboveEdge;
+        public float edgeTargetV;
     }
 
     // 数値上の設定（新しい係数ではない。解はこれらに依らず、評価回数と打ち切りの精度だけが変わる）。
@@ -249,27 +257,38 @@ public static class PinholePlacementSpace
         else if (fit.mode != SecondFitMode.None && centerZ > 0.001f)
         {
             float depth = Mathf.Max(0.001f, centerZ);
-            float deltaV;
+            // 一番下の点の移動の換算の深さ（Bottom と縁の判定で共用。今の Bottom と同じ条件）。
+            float lowestDepth = depth;
+            if (fit.bottomUsesPointDepth && pointIsBone[bottomIndex])
+            {
+                float pointDepth = pointZ[bottomIndex] + dz;
+                if (pointDepth > 0.001f)
+                {
+                    lowestDepth = pointDepth;
+                }
+            }
+
             if (fit.mode == SecondFitMode.Top)
             {
                 float topY = fit.aabbCenterY + dy + fit.aabbVerticalExtent;
                 float topV = ((fit.cyPixels / eyeH) - (topY * fy / centerZ) * 0.5f) * eyeH;
-                deltaV = fit.targetV - topV;
+                shiftY = -((fit.targetV - topV) * 2f / eyeH) * (depth / fy);
+            }
+            else if (fit.mode == SecondFitMode.HoldReferenceY)
+            {
+                // ⑧ の平行移動の後の基準点の高さは referenceY + dy。2 回目の ⑦ はそれを heldReferenceY へ戻す。
+                shiftY = fit.heldReferenceY - (referenceY + dy);
             }
             else
             {
-                deltaV = fit.targetV - bottomV;
-                if (fit.bottomUsesPointDepth && pointIsBone[bottomIndex])
-                {
-                    float pointDepth = pointZ[bottomIndex] + dz;
-                    if (pointDepth > 0.001f)
-                    {
-                        depth = pointDepth;
-                    }
-                }
+                shiftY = -((fit.targetV - bottomV) * 2f / eyeH) * (lowestDepth / fy);
             }
 
-            shiftY = -(deltaV * 2f / eyeH) * (depth / fy);
+            // bottomFitBorderEdgesAsBounds: 一番下の点を画面の下の縁より上へ持ち上げない（FitDisplayedModelToBBox の Mathf.Min と同じ）。
+            if (fit.lowestNotAboveEdge && (fit.mode == SecondFitMode.Top || fit.mode == SecondFitMode.HoldReferenceY))
+            {
+                shiftY = Mathf.Min(shiftY, -((fit.edgeTargetV - bottomV) * 2f / eyeH) * (lowestDepth / fy));
+            }
         }
 
         float minV = float.MaxValue;

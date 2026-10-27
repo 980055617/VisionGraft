@@ -299,6 +299,13 @@ public partial class StreamingStereoVideoPlayer
             }
 
             // otherDepthFollowHoldsDuringMotion（2026-10-10、10/11 に採用して既定 ON）: 人がモーション中なら、発火の直前に覚えた人の深さを使う。
+            // S（2026-10-16、stereoDepthMatchVideo）: 付いていく骨格 track の倍率 k（S の状態が無ければ 1）。骨格は目のまわりに k 倍されているので、⑨ の長さ
+            // （bundle の差・保持した深さ・差の平滑）も k 倍にする。保持と平滑の状態は k で割った長さ（S が無いときの長さ）で持つので、k が変わる tick
+            // （ロックの確定・作り直し・外す）にも直す状態が無い。k = 1 は今の式をそのまま通る（ビット単位で同じ）。前後の判定（⑩ :92）と [DEPTH9] の intended は popout のまま。
+            // V（placementFollowVideoDepth、2026-10-26、既定 OFF）: 骨格は V の f でも目のまわりに広がっているので k × f（状態が無ければ × 1 で同じ値）。
+            // 保持と平滑は k で割った長さで持つので f が毎フレーム変わっても成り立つ。f は動作の間は止まるので、動作中の保持の深さも合う。
+            float kSkel = ResolveStereoDepthFactor(skeleton.trackId) * ResolveVideoDepthFollowFactor(skeleton.trackId);
+            bool stereoScaled = kSkel != 1f;
             float skeletonZActual = skeletonCam.z;
             if (otherDepthFollowHoldsDuringMotion)
             {
@@ -306,11 +313,11 @@ public partial class StreamingStereoVideoPlayer
                                         skeletonMotion != null && skeletonMotion.stage != InteractiveEventStage.Inactive;
                 if (!skeletonInMotion)
                 {
-                    heldSkeletonDepthByOther[other.trackId] = (skeleton.trackId, skeletonCam.z);
+                    heldSkeletonDepthByOther[other.trackId] = (skeleton.trackId, stereoScaled ? skeletonCam.z / kSkel : skeletonCam.z);
                 }
                 else if (heldSkeletonDepthByOther.TryGetValue(other.trackId, out var heldSkeleton) && heldSkeleton.skeletonTrack == skeleton.trackId)
                 {
-                    skeletonCam.z = heldSkeleton.z;
+                    skeletonCam.z = stereoScaled ? heldSkeleton.z * kSkel : heldSkeleton.z;
                 }
             }
 
@@ -319,20 +326,24 @@ public partial class StreamingStereoVideoPlayer
             if (useMetricRatioForOtherDepth && TryResolveMetricDepthRatio(skeleton, other, out float ratio))
             {
                 // disparity から実距離の比を復元して使う。配置深度は 1/z が実距離の 1/Z に
-                // 対応するので、比をそのまま掛ければよい。
+                // 対応するので、比をそのまま掛ければよい（比なので S の k は skeletonCam.z からそのまま乗る）。
                 targetZ = skeletonCam.z * ratio;
             }
             else
             {
-                // フォールバック: meta.bin の深度差をそのまま再現する。
-                targetZ = skeletonCam.z - (skeleton.anchorZ - other.anchorZ);
+                // フォールバック: meta.bin の深度差をそのまま再現する（S の骨格に付けるときは差も k 倍）。
+                targetZ = stereoScaled
+                    ? skeletonCam.z - (skeleton.anchorZ - other.anchorZ) * kSkel
+                    : skeletonCam.z - (skeleton.anchorZ - other.anchorZ);
             }
 
             // 骨格 track と Else の深度「差」を時間平滑化する。
             // 個別の深度に掛けてはいけない: 両者は互いに打ち消し合って動いており、
             // 片方だけ平滑化すると相殺が壊れてばらつきが増える（2026-08-25 実測、
             // 人だけ固定で p10-p90 幅 79.5 → 126.5mm、球だけ固定で 101.0mm に悪化）。
-            targetZ = skeletonCam.z - SmoothOtherDepthGap(other.trackId, skeletonCam.z - targetZ);
+            targetZ = stereoScaled
+                ? ResolveStereoFollowTargetZ(other.trackId, skeletonCam.z, targetZ, kSkel)
+                : skeletonCam.z - SmoothOtherDepthGap(other.trackId, skeletonCam.z - targetZ);
 
             // 上限は ⑧ と同じ（allowDepthBehindScreen なら人に付いてスクリーンより奥へも行ける）。
             targetZ = Mathf.Clamp(
@@ -357,11 +368,13 @@ public partial class StreamingStereoVideoPlayer
                     $"bboxH={skeleton.bboxH:F0} otherBboxW={other.bboxW:F0} otherBboxH={other.bboxH:F0} " +
                     $"factor={targetZ / otherCam.z:F4} scaleIn={otherInstance.transform.localScale.x:F5} " +
                     $"matchScale={matchOtherScaleToFollowedDepth}" +
-                    (otherDepthFollowHoldsDuringMotion ? $" skelZActual={skeletonZActual:F4}" : ""));
+                    (otherDepthFollowHoldsDuringMotion ? $" skelZActual={skeletonZActual:F4}" : "") + (stereoScaled ? $" kSkel={kSkel:F6}" : ""));
             }
 
             if (Mathf.Abs(targetZ - otherCam.z) <= 0.0001f)
             {
+                // S（2026-10-16）: ⑨ の後のボールの置き方と映像のボールの残差（logStereoDepth のときだけ）。
+                LogStereoDepthFollowIfEnabled(other, skeleton.trackId, kSkel, otherCam, otherInstance.transform.localScale);
                 continue;
             }
 
@@ -385,6 +398,8 @@ public partial class StreamingStereoVideoPlayer
                     camOrigin + camRotation * moved,
                     otherInstance.transform.rotation,
                     scale));
+            // S（2026-10-16）: 上と同じ（⑨ が動かした後の置き方）。
+            LogStereoDepthFollowIfEnabled(other, skeleton.trackId, kSkel, moved, scale);
         }
     }
 

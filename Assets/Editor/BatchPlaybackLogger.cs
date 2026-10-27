@@ -112,6 +112,10 @@ public static partial class BatchPlaybackLogger
         // 候補のジェスチャ資産を読み込む（2026-10-05。"Assets/.../A.asset;Assets/.../B.asset"。シーンの配列を置き換える。Static/ に置くと OnValidate の自動割り当てに拾われるので候補は別のフォルダに置く）。
         string gestureAssets = null;
         string walkAsset = null;
+        // Resources の外の試作の prefab を一覧の末尾に足して既定のモデルにする（2026-10-24。"Assets/MeshyModels/Pilot/93_....prefab"）。
+        // 試作を Resources から出したので -humanIndex / -animalIndex では選べない。読めなければ exit 3 で止める（黙って既定のモデルで撮らない）。
+        string humanPrefabPath = null;
+        string animalPrefabPath = null;
         bool? elseFrameOutMotion = null;
         bool? animalFastTrack = null;
         bool? keepScaleContinuousShot = null;
@@ -160,6 +164,11 @@ public static partial class BatchPlaybackLogger
         int recordFps = 72;
         int recordWidth = 1280;
         string recordViews = null;
+        // 左右の目の位置からの撮影（2026-10-16、-captureStereo）。BatchPlaybackLogger.Stereo.cs を参照。
+        bool captureStereo = false;
+        float captureStereoIpdMm = 0f;
+        int captureStereoMarginPx = 160;
+        bool captureStereoMarkers = false;
         for (int i = 0; i < args.Length - 1; i++)
         {
             if (args[i] == "-screenDistance") float.TryParse(args[i + 1], out screenDistance);
@@ -243,6 +252,8 @@ public static partial class BatchPlaybackLogger
             if (args[i] == "-trackModels") trackModels = args[i + 1];
             if (args[i] == "-gestureAssets") gestureAssets = args[i + 1];
             if (args[i] == "-walkAsset") walkAsset = args[i + 1];
+            if (args[i] == "-humanPrefab") humanPrefabPath = args[i + 1];
+            if (args[i] == "-animalPrefab") animalPrefabPath = args[i + 1];
             if (args[i] == "-captureMotion") float.TryParse(args[i + 1], out captureMotionEvery);
             if (args[i] == "-captureDir") captureDir = args[i + 1];
             if (args[i] == "-captureWidth") int.TryParse(args[i + 1], out captureWidth);
@@ -253,6 +264,10 @@ public static partial class BatchPlaybackLogger
             if (args[i] == "-recordFps") int.TryParse(args[i + 1], out recordFps);
             if (args[i] == "-recordWidth") int.TryParse(args[i + 1], out recordWidth);
             if (args[i] == "-recordViews") recordViews = args[i + 1];
+            if (args[i] == "-captureStereo" && bool.TryParse(args[i + 1], out bool vCs)) captureStereo = vCs;
+            if (args[i] == "-captureStereoIpdMm") float.TryParse(args[i + 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out captureStereoIpdMm);
+            if (args[i] == "-captureStereoMarginPx") int.TryParse(args[i + 1], out captureStereoMarginPx);
+            if (args[i] == "-captureStereoMarkers" && bool.TryParse(args[i + 1], out bool vCm)) captureStereoMarkers = vCm;
         }
 
         // バックグラウンド実行なので動画の音を鳴らさない（user の常設要望）。
@@ -392,6 +407,8 @@ public static partial class BatchPlaybackLogger
                 if (!string.IsNullOrEmpty(trackModels)) { p.trackModelIndices = ParseTrackModels(trackModels); }
                 if (!string.IsNullOrEmpty(gestureAssets)) { p.animalStaticGestureClips = LoadGestureAssets(gestureAssets); }
                 if (!string.IsNullOrEmpty(walkAsset)) { p.animalWalkClips = LoadGestureAssets(walkAsset); }
+                if (!string.IsNullOrEmpty(humanPrefabPath)) { p.batchExtraHumanPrefab = LoadPilotPrefabOrExit(humanPrefabPath, "-humanPrefab"); }
+                if (!string.IsNullOrEmpty(animalPrefabPath)) { p.batchExtraAnimalPrefab = LoadPilotPrefabOrExit(animalPrefabPath, "-animalPrefab"); }
                 // バッチは測定環境なので、明示的に -remember true と言われない限り OFF。
                 // persistentDataPath に保存済みの選択が残っていると A/B が静かに汚れる。
                 p.rememberTrackCustomization = remember.HasValue && remember.Value;
@@ -546,6 +563,7 @@ public static partial class BatchPlaybackLogger
         SessionState.SetString(KeyCaptureViews, captureViews ?? string.Empty);
         SessionState.SetBool(KeyVideoGameTime, videoGameTime ?? (!string.IsNullOrEmpty(captureFrames) || !string.IsNullOrEmpty(recordFrames)));
         StoreRecordArgs(recordFrames, recordDir, recordFps, recordWidth, recordViews);
+        StoreStereoCaptureArgs(captureStereo, captureStereoIpdMm, captureStereoMarginPx, captureStereoMarkers);
         SessionState.SetFloat(KeyForceMotionAt, forceMotionAt);
         SessionState.SetString(KeyForceMotionKind, forceMotionKind);
         SessionState.SetString(KeyForceStaticClip, forceStaticClip);
@@ -740,7 +758,16 @@ public static partial class BatchPlaybackLogger
             rt.Release();
             UnityEngine.Object.DestroyImmediate(rt);
             captured.Add(want);
-            CaptureAuxViews(cam, dir, want);
+            GameObject stereoMarkers = SpawnStereoCaptureMarkersIfRequested();
+            try
+            {
+                CaptureAuxViews(cam, dir, want);
+            }
+            finally
+            {
+                DestroyStereoCaptureMarkers(stereoMarkers);
+            }
+            CaptureStereoPair(cam, dir, want);
             if (resumeVideo) { vp.Play(); }
             Debug.Log($"[CAPTURE] frame={want} (vp={cur}) -> {path}");
         }
@@ -817,6 +844,9 @@ public static partial class BatchPlaybackLogger
                     if (r.enabled) { r.enabled = false; hidden.Add(r); }
                 }
             }
+            // F2 の枠は視聴者の目から見た窓なので、横・上からの補助カメラでは隠す（2026-10-16）。
+            Renderer stereoFrameOccluder = FindStereoFrameOccluderForCapture();
+            if (stereoFrameOccluder != null && stereoFrameOccluder.enabled) { stereoFrameOccluder.enabled = false; hidden.Add(stereoFrameOccluder); }
 
             var go = new GameObject("CapViewCamera");
             try
@@ -906,6 +936,21 @@ public static partial class BatchPlaybackLogger
 
         Debug.Log($"[BATCH] gesture assets: {string.Join(",", list.ConvertAll(a => a.name))}");
         return list.ToArray();
+    }
+
+    // -humanPrefab / -animalPrefab の prefab を読む。読めなければ exit 3（既定のモデルで撮った走りを候補と取り違えないため）。
+    private static GameObject LoadPilotPrefabOrExit(string path, string flag)
+    {
+        GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path.Trim());
+        if (prefab == null)
+        {
+            Debug.LogError($"[BATCH] {flag}: prefab が読めない '{path}'");
+            EditorApplication.Exit(3);
+            return null;
+        }
+
+        Debug.Log($"[BATCH] {flag}: {path} ({prefab.name})");
+        return prefab;
     }
 
     // target と同じインスタンス（最上位の Track_N か Animator の root）の中から名前の一致する骨を探す。
@@ -999,6 +1044,32 @@ public static partial class BatchPlaybackLogger
     private static double nextMotionCaptureAt;
     private static int motionCaptureCount;
 
+    private static string HumanClipFile(AnimationClip clip)
+    {
+        if (clip == null) { return "null"; }
+        string path = AssetDatabase.GetAssetPath(clip);
+        return string.IsNullOrEmpty(path) ? clip.name : System.IO.Path.GetFileNameWithoutExtension(path);
+    }
+
+    private static AnimationClip[] FilterHumanClipsByFile(AnimationClip[] clips, string filter)
+    {
+        if (clips == null) { return null; }
+        var exact = new List<AnimationClip>();
+        var partial = new List<AnimationClip>();
+        foreach (AnimationClip clip in clips)
+        {
+            if (clip == null) { continue; }
+            string file = HumanClipFile(clip);
+            if (string.Equals(file, filter, StringComparison.Ordinal)) { exact.Add(clip); }
+            else if (file.IndexOf(filter, StringComparison.Ordinal) >= 0) { partial.Add(clip); }
+        }
+
+        if (exact.Count > 0) { return exact.ToArray(); }
+        if (partial.Count > 0) { return partial.ToArray(); }
+        Debug.LogWarning($"[BATCH] human clip filter '{filter}' に合うクリップが無いので絞らない");
+        return clips;
+    }
+
     // -forceMotionAt: 動画時刻が指定秒に達したら 1 回だけ Dynamic を強制発火（Random の抽選を待たない）。
     // -captureMotion: イベント中は指定秒おきにカメラの絵を m00000.png… で撮る（動画は止まっているので
     // フレーム番号では区別できない）。連番を ffmpeg で並べれば動きを確認できる。
@@ -1036,6 +1107,28 @@ public static partial class BatchPlaybackLogger
                     Debug.LogWarning($"[BATCH] -forceStaticClip '{clipFilter}' に合うジェスチャが無いので絞らない");
                 }
             }
+
+            // 人の身ぶり（Humanoid のクリップ）も絞る（2026-10-23、人のリグの確かめ）。Mixamo のクリップは名前がどれも "mixamo.com" なので、
+            // 名前ではなく asset のファイル名で選ぶ（完全一致を先に、無ければ部分一致）。歩きは -forceWalkClip で絞る。
+            if (!string.IsNullOrEmpty(clipFilter))
+            {
+                player.humanStaticGestureClips = FilterHumanClipsByFile(player.humanStaticGestureClips, clipFilter);
+            }
+
+            string walkFilter = null;
+            string[] cmd = Environment.GetCommandLineArgs();
+            for (int i = 0; i < cmd.Length - 1; i++)
+            {
+                if (cmd[i] == "-forceWalkClip") { walkFilter = cmd[i + 1]; }
+            }
+
+            if (!string.IsNullOrEmpty(walkFilter))
+            {
+                player.humanWalkClips = FilterHumanClipsByFile(player.humanWalkClips, walkFilter);
+            }
+
+            Debug.Log($"[BATCH] human clips static={string.Join(",", Array.ConvertAll(player.humanStaticGestureClips ?? new AnimationClip[0], HumanClipFile))}" +
+                $" walk={string.Join(",", Array.ConvertAll(player.humanWalkClips ?? new AnimationClip[0], HumanClipFile))}");
 
             player.DebugForceInteractiveMotion(dynamicKind);
             Debug.Log($"[BATCH] forceMotionAt {forceAt}s → DebugForceInteractiveMotion({(dynamicKind ? "dynamic" : "static")}) at videoTime={vp.time:F2}" +

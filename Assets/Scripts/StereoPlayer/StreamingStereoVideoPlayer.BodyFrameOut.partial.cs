@@ -13,7 +13,8 @@ using UnityEngine.Playables;
 //   1. 測る: 左右に見切れていない・anchor が動いているフレームで、追従で置いた root の速さ（EMA、m/秒）
 //   2. 始める: 左右の端に掛かった track の anchor が止まった（前のフレームと同じ）最初のフレーム。hold の無いまま消えたときは消えた直後
 //   3. 進める: 始めた位置から地面の上を、測った速度で進める（出ていく端の外向きと揃っていなければ端の外向き、速さは表示した身長の
-//      0.3〜2.5 倍/秒に切る）。上下の端は world の上下に使わない。人は歩きのクリップ（humanWalkClips、進む速さに合わせて速さを変える）
+//      0.3〜2.5 倍/秒に切る）。
+//      bodyFrameOutFollowBodyFacing（既定 OFF・試作、2026-10-25）なら、向きは測った速度ではなく端に掛かる前の体の前（フィールドの説明）。上下の端は world の上下に使わない。人は歩きのクリップ（humanWalkClips、進む速さに合わせて速さを変える）
 //      を回して進む向きへ向き直り（始めの 0.3 秒で向きと姿勢を混ぜる）、体の Hips と足の高さを始めの体に合わせる。動物は向きを変えず、
 //      最後の追従の姿勢に歩きのクリップ（animalWalkClips）を重ねる
 //   4. 終える: 視界から映らなくなったら非表示（車と同じ IsCoastingInstanceInView）。安全弁は 180 フレーム・表示した身長の 6 倍
@@ -34,6 +35,27 @@ public partial class StreamingStereoVideoPlayer
     // 端で anchor が止まってから、この秒数のうちに track が消える出口だけで始める（本当に出ていく。実験の 3 つの出口は 5〜13 フレームで消える）。
     [Min(0.1f)] public float bodyFrameOutLeaveWithinSeconds = 1.5f;
     public bool logBodyFrameOut = true;
+    // 2026-10-25（実機のユーザー「テレビ frame out するときは左に今行っているけど，もっとユーザーの隣を通り過ぎるように，まっすぐに歩いてほしい」）:
+    // 進む向きを、測った root の速さの向きではなく、端に掛かる前の体の前（地面の上、速さと同じフレームで EMA）にする。
+    // テレビの女性は視聴者の方へ歩いて左の端から出るが（SMPL の向き -163°、transl の z は f490〜568 で 80 → 34）、端に掛かる前の root の速さは
+    // 横の成分しか無く（10/24 の記録 v = (-0.101, 0, -0.003) m/s）、0.3 秒で 71° 左へ向き直って横へ歩いていた。
+    // 体の点（投影に使う骨）がどれも目から bodyFrameOutClearanceMeters より近くを通らないよう、足りなければ出ていく側へ最小の角だけ回す
+    // （目のまわりの円の接線）。もうその円にいる体（犬の動画の犬）はほぼ横向きのまま。速さ・始める条件・終わり方・人の歩きのクリップ・
+    // 動物の向きは変えない。OFF なら今の向き（測った速さ・端の外向き）。調査役 Q2 の案、確かめ役 V_Q2 の指摘で既定 OFF
+    // （Docs/tmp/survey_20261025/README.md「Q2」）。確かめ役: 進む向きを実際に決めるのは体の向きではなく下の離す距離で、0.25 m では今
+    // （一番近い骨 0.311 m）より近くを通る。離す距離はユーザーの判断（0.20 m 以下 = まっすぐ・一番近い骨 0.21〜0.23 m、0.25 m = 5〜11° 曲がる、
+    // 0.30 m = 22〜32° 曲がる、0.35 m = 今の横歩きに戻る）。
+    public bool bodyFrameOutFollowBodyFacing = false;
+    // 上の目から離す距離（m、地面の上）。既定は ⑧ が体を置く近さの下限 MinDistanceFromHeadMeters と同じ 0.25 m。
+    [Min(0f)] public float bodyFrameOutClearanceMeters = 0.25f;
+    // 2026-10-25（調査役 O3、既定 OFF）: 動物の続きで毎 tick 解き直す姿勢を、最後に追従した tick の姿勢（端で anchor が止まった hold の間の
+    // フレーム）ではなく、速さを測った最後のフレーム（左右に見切れず anchor が動いている = 端に掛かる前。速さと同じフレーム）の追従の姿勢にする。
+    // 犬の動画の犬は出口の直前 f684 の SMAL の根の向きだけが 1 フレーム 142° 跳ね（f683 と f685 の差は 22°）、今の続きはその姿勢を毎 tick FK で
+    // 解き直すので、根の平滑（smalSmoothHalfLifeSec 0.12 s）で体が 0.5 秒で約 130° 回り頭が 26° 上がって、横へ滑りながら跳んでいるように見えた。
+    // root の向き（animal-keep）・進む向き・速さ・始める条件・終わり方は変えない（10/24 に入れなかった「進む向きへ root を回す」案とは別）。
+    // OFF なら今のまま（最後に追従した tick の姿勢）。測ったフレームが無いとき、続きを始めたフレームより bodyFrameOutLeaveWithinSeconds より
+    // 前のとき（長く見切れ・hold が続いた後の古い姿勢。確かめ役 V_O3 の指摘）も今のまま。
+    public bool bodyFrameOutAnimalPoseFromMeasuredFrame = false;
 
     private const float BodyFrameOutVelocitySmoothing = 0.3f;
     private const float BodyFrameOutBlendSeconds = 0.3f;
@@ -56,6 +78,23 @@ public partial class StreamingStereoVideoPlayer
         public Vector3 measurePosition;
         public bool hasVelocity;
         public Vector3 velocity;
+        // 端に掛かる前の体の前（地面の上の単位ベクトル、速さと同じフレームで EMA。bodyFrameOutFollowBodyFacing）
+        public bool hasBodyForward;
+        public Vector3 bodyForward;
+        // 速さを測った最後のフレームの追従の姿勢（動物、bodyFrameOutAnimalPoseFromMeasuredFrame）。InteractiveMotion の控え（cachedAnimalPose）の写し。
+        public bool hasMeasuredAnimalPose;
+        public int measuredAnimalPoseFrame = -1;
+        public AnimalPoseWorldData measuredAnimalPose;
+        public Vector3 measuredAnimalBasePosition;
+        public Quaternion measuredAnimalBaseRotation = Quaternion.identity;
+        public bool measuredAnimalHasSmalPose;
+        public AnimalSmalPose measuredAnimalSmalPose;
+        // 端に掛かる前の box の高さの伸び（frameOutPassByViewer の frameOutPassBySpeedFromApproach。どの端にも触れていない続いたフレームの
+        // ln(高さの比) の EMA、/ 動画のフレーム）
+        public bool hasLoom;
+        public int loomFrame = -1;
+        public float loomBBoxH;
+        public float loomRatePerFrame;
         // 最後に映ったフレーム
         public int lastSeenFrame = -1;
         public int lastClipSide;
@@ -127,7 +166,11 @@ public partial class StreamingStereoVideoPlayer
                 st.ended = false;
                 st.exitDecisionFrame = -1;
                 st.hasVelocity = false;
+                st.hasBodyForward = false;
+                st.hasMeasuredAnimalPose = false;
                 st.measureFrame = -1;
+                st.hasLoom = false;
+                st.loomFrame = -1;
             }
 
             st.heldNow = st.anchorFrame >= 0 && frame == st.anchorFrame + 1 &&
@@ -213,8 +256,66 @@ public partial class StreamingStereoVideoPlayer
             st.hasVelocity = true;
         }
 
+        // frameOutPassByViewer（2026-10-26）も体の前から始めるので、どちらかが ON なら測る。
+        if ((bodyFrameOutFollowBodyFacing || frameOutPassByViewer) && TryResolveBodyForwardOnGround(instance, st.categoryId, out Vector3 bodyForward))
+        {
+            Vector3 f = st.hasBodyForward ? Vector3.Lerp(st.bodyForward, bodyForward, BodyFrameOutVelocitySmoothing) : bodyForward;
+            st.hasBodyForward = f.sqrMagnitude > 0.000001f;
+            st.bodyForward = st.hasBodyForward ? f.normalized : Vector3.zero;
+        }
+
+        // frameOutPassByViewer（2026-10-26）: 端に掛かる前の box の高さの伸び（frameOutPassBySpeedFromApproach の速さ）。
+        if (frameOutPassByViewer)
+        {
+            UpdateFrameOutLoom(target, frame, ref st.hasLoom, ref st.loomFrame, ref st.loomBBoxH, ref st.loomRatePerFrame);
+        }
+
+        // 同じ tick の追従（TryApplyAnimalPosePipeline の CacheLiveAnimalPoseForInteractiveMotion）が控えた姿勢を写す。配列は写す（控えは tick ごとに差し替わる）。
+        if (bodyFrameOutAnimalPoseFromMeasuredFrame && IsCategoryAnimal(st.categoryId) &&
+            interactiveMotionByTrack.TryGetValue(target.trackId, out InteractiveMotionState measuredMotion) && measuredMotion != null &&
+            measuredMotion.hasCachedAnimalPose)
+        {
+            st.hasMeasuredAnimalPose = true;
+            st.measuredAnimalPoseFrame = frame;
+            st.measuredAnimalPose = CopyBodyFrameOutAnimalPose(measuredMotion.cachedAnimalPose);
+            st.measuredAnimalBasePosition = measuredMotion.cachedAnimalBasePosition;
+            st.measuredAnimalBaseRotation = measuredMotion.cachedAnimalBaseRotation;
+            st.measuredAnimalHasSmalPose = measuredMotion.cachedAnimalHasSmalPose;
+            st.measuredAnimalSmalPose = CopyBodyFrameOutSmalPose(measuredMotion.cachedAnimalSmalPose);
+        }
+
         st.measureFrame = frame;
         st.measurePosition = position;
+    }
+
+    private static AnimalPoseWorldData CopyBodyFrameOutAnimalPose(AnimalPoseWorldData pose)
+    {
+        AnimalPoseWorldData copy = pose;
+        copy.jointsWorld = pose.jointsWorld != null ? (Vector3[])pose.jointsWorld.Clone() : null;
+        copy.jointsCam = pose.jointsCam != null ? (Vector3[])pose.jointsCam.Clone() : null;
+        copy.jointVis = pose.jointVis != null ? (byte[])pose.jointVis.Clone() : null;
+        return copy;
+    }
+
+    private static AnimalSmalPose CopyBodyFrameOutSmalPose(AnimalSmalPose pose)
+    {
+        AnimalSmalPose copy = pose;
+        copy.bodyPose = pose.bodyPose != null ? (Quaternion[])pose.bodyPose.Clone() : null;
+        copy.betas = pose.betas != null ? (float[])pose.betas.Clone() : null;
+        return copy;
+    }
+
+    // 測ったフレームの姿勢を使うか（bodyFrameOutAnimalPoseFromMeasuredFrame）。続きを始めたフレームから bodyFrameOutLeaveWithinSeconds より前の姿勢は使わない。
+    private bool UseBodyFrameOutMeasuredAnimalPose(BodyFrameOutState st)
+    {
+        if (!bodyFrameOutAnimalPoseFromMeasuredFrame || !st.hasMeasuredAnimalPose || st.measuredAnimalPoseFrame < 0)
+        {
+            return false;
+        }
+
+        int maxAge = Mathf.Max(1, Mathf.RoundToInt(bodyFrameOutLeaveWithinSeconds * ResolveMetaFps()));
+        int age = st.startFrame - st.measuredAnimalPoseFrame;
+        return age >= 0 && age <= maxAge;
     }
 
     // track が映っていない track の続き（TryApplyAllTracks・TryApplyDisplayedTracks・track が 1 つも無いフレーム）。
@@ -295,6 +396,42 @@ public partial class StreamingStereoVideoPlayer
         Vector3 velocity = measured ? ground : exitDirection * (0.8f * height);
         float speed = Mathf.Clamp(velocity.magnitude, 0.3f * height, 2.5f * height);
         velocity = velocity.normalized * speed;
+        string headingNote = measured ? "measured" : "edge";
+        // frameOutPassByViewer（2026-10-26、既定 OFF、FrameOutPassBy.partial.cs）: 体の前を、視聴者の横を通る向きへ曲げる（速さはそのまま。
+        // frameOutPassBySpeedFromApproach のときだけ、端に掛かる前の box の高さの伸びから決めた速さが今より速ければ上げる）。
+        // 曲げられないとき（回す角が frameOutPassMaxTurnDegrees を超える・体がもう frameOutPassMinMeters より近い）は今の向き（下の 2 つ）。
+        string passByNote = null;
+        bool passByUsed = false;
+        float passByCentreDistance = 0f;
+        if (frameOutPassByViewer && st.hasBodyForward &&
+            TryResolveBodyFrameOutPassByHeading(instance, st.bodyForward, exitDirection, camRotation, up, camOrigin, out Vector3 passByHeading,
+                out passByNote, out passByCentreDistance))
+        {
+            passByUsed = true;
+            if (frameOutPassBySpeedFromApproach &&
+                TryGetFrameOutApproachRate(st.hasLoom, st.loomFrame, st.loomRatePerFrame, frame, ResolveMetaFps(), out float growthPerSecond))
+            {
+                float approach = Mathf.Min(passByCentreDistance * growthPerSecond, 2.5f * height);
+                if (approach > speed)
+                {
+                    passByNote += $" speed {speed:F3}->{approach:F3}m/s (approach, growth {growthPerSecond:F2}/s)";
+                    speed = approach;
+                }
+            }
+
+            velocity = passByHeading * speed;
+            headingNote = passByNote;
+        }
+        else if (bodyFrameOutFollowBodyFacing && st.hasBodyForward &&
+            TryResolveBodyFrameOutPassHeading(instance, st.bodyForward, exitDirection, up, camOrigin, out Vector3 bodyHeading, out string passNote))
+        {
+            velocity = bodyHeading * speed;
+            headingNote = passByNote != null ? passNote + " (" + passByNote + ")" : passNote;
+        }
+        else if (passByNote != null)
+        {
+            headingNote += " (" + passByNote + ")";
+        }
 
         bool isAnimal = IsCategoryAnimal(st.categoryId);
         st.clipRate = Mathf.Clamp(speed / (BodyFrameOutNaturalWalkHeightsPerSecond * height), 0.4f, 1.6f);
@@ -322,8 +459,20 @@ public partial class StreamingStereoVideoPlayer
         }
         else
         {
-            CaptureHumanoidBoneLocalRotations(instance, st.startBoneLocalRotations);
+            NoteHumanHipsTrackLocalPosition(instance);
             st.hasBodyAnchor = TryGetHumanBodyAnchor(instance, Vector3.up, out st.startHips, out st.groundHeight);
+            // frameOutPassByViewer の決まりを使ったときも視聴者の方へ歩く（体の向きが ±180° をまたぐ）ので、同じく root を先に回す
+            // （使わなかったときは今のまま）。
+            if (bodyFrameOutFollowBodyFacing || passByUsed)
+            {
+                // root を最初から進む向きへ回し、Hips の world の回転はそのまま残す（局所を root のぶん逆に回す）。混ぜる 0.3 秒の間に
+                // root（今の向き → 進む向き）と Hips の局所（始めの姿勢 → クリップ）が別々に最短の回転を取ると、体の向きが ±180° を
+                // またぐとき（正面を向いて近づく人）に体が 1 回転するため。混ぜる間の体の回りは「体の向き − 進む向き」だけになる。
+                RotateBodyFrameOutRootKeepingHips(instance, st.facing);
+                st.startRotation = instance.transform.rotation;
+            }
+
+            CaptureHumanoidBoneLocalRotations(instance, st.startBoneLocalRotations);
             StartBodyFrameOutClip(st, instance);
         }
 
@@ -332,7 +481,9 @@ public partial class StreamingStereoVideoPlayer
         if (logBodyFrameOut)
         {
             Debug.Log($"[BODYFRAMEOUT] start f={frame} track={trackId} model={instance.name} reason={reason} side={st.lastClipSide} " +
-                      $"v=({velocity.x:F3},{velocity.y:F3},{velocity.z:F3})m/s speed={speed:F3}m/s ({(measured ? "measured" : "edge")}) " +
+                      $"v=({velocity.x:F3},{velocity.y:F3},{velocity.z:F3})m/s speed={speed:F3}m/s ({headingNote}) " +
+                      $"headingYaw={Mathf.Atan2(velocity.x, velocity.z) * Mathf.Rad2Deg:F1} " +
+                      $"bodyYaw={(st.hasBodyForward ? (Mathf.Atan2(st.bodyForward.x, st.bodyForward.z) * Mathf.Rad2Deg).ToString("F1") : "-")} " +
                       $"height={height:F3}m facing={turnNote} clip={(st.clip != null ? st.clip.name : (st.animalWalkClip != null ? st.animalWalkClip.name : "-"))}");
         }
 
@@ -352,9 +503,16 @@ public partial class StreamingStereoVideoPlayer
         if (IsCategoryAnimal(st.categoryId))
         {
             TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(position, rotation, instance.transform.localScale));
-            if (interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState motion) && motion != null && motion.hasCachedAnimalPose)
+            interactiveMotionByTrack.TryGetValue(trackId, out InteractiveMotionState motion);
+            bool useMeasuredPose = UseBodyFrameOutMeasuredAnimalPose(st);
+            if (useMeasuredPose || (motion != null && motion.hasCachedAnimalPose))
             {
-                AnimalPoseWorldData pose = RemapAnimalPoseRigid(motion.cachedAnimalPose, motion.cachedAnimalBasePosition, motion.cachedAnimalBaseRotation, position, rotation);
+                AnimalPoseWorldData basePose = useMeasuredPose ? st.measuredAnimalPose : motion.cachedAnimalPose;
+                Vector3 basePosition = useMeasuredPose ? st.measuredAnimalBasePosition : motion.cachedAnimalBasePosition;
+                Quaternion baseRotation = useMeasuredPose ? st.measuredAnimalBaseRotation : motion.cachedAnimalBaseRotation;
+                bool baseHasSmal = useMeasuredPose ? st.measuredAnimalHasSmalPose : motion.cachedAnimalHasSmalPose;
+                AnimalSmalPose baseSmal = useMeasuredPose ? st.measuredAnimalSmalPose : motion.cachedAnimalSmalPose;
+                AnimalPoseWorldData pose = RemapAnimalPoseRigid(basePose, basePosition, baseRotation, position, rotation);
                 float loop = 0f;
                 if (st.animalWalkClip != null)
                 {
@@ -362,7 +520,7 @@ public partial class StreamingStereoVideoPlayer
                     loop = (t % duration) / duration;
                 }
 
-                ApplyAnimalPoseRequest(instance, pose, motion.cachedAnimalHasSmalPose, motion.cachedAnimalSmalPose, position, rotation,
+                ApplyAnimalPoseRequest(instance, pose, baseHasSmal, baseSmal, position, rotation,
                     GetRuntimeTickContext(), st.animalWalkClip, loop);
             }
         }
@@ -381,6 +539,10 @@ public partial class StreamingStereoVideoPlayer
                     TransformWriter.ApplyLocalPose(animatorTransform, localPosition, localRotation);
                 }
 
+                // humanHandRollFixMode（既定 0 = OFF、2026-10-25）: 歩きのクリップの手にも追従の手と同じ回転を当てる。混ぜの前に当て、混ぜの両端
+                // （追従の最後の姿勢・クリップの姿勢）をどちらも回した姿勢にする。OFF なら何もしない。
+                ApplyHumanHandRollFixAfterClip(st.animator);
+
                 if (blend < 1f && st.startBoneLocalRotations.Count > 0)
                 {
                     // 始めの 0.3 秒は、追従の最後の姿勢から歩きのクリップの姿勢へ混ぜる。
@@ -398,6 +560,7 @@ public partial class StreamingStereoVideoPlayer
             }
         }
 
+        LogFrameOutPassByStep("body", trackId, frame, t, instance, st.camOrigin, st.camRotation);
         int elapsedFrames = frame - st.startFrame;
         string endReason = null;
         if (elapsedFrames >= 2 && !IsCoastingInstanceInView(instance, st.camOrigin, st.camRotation))
@@ -630,6 +793,184 @@ public partial class StreamingStereoVideoPlayer
         }
 
         feet = lowest;
+        return true;
+    }
+
+    // 体の前（地面の上の単位ベクトル）。人: 左右の太ももの付け根の線に直交する向き Cross(右 − 左, 上)。SMPL の FK では Hips の前
+    // （camRotation × globalOrient の前）と同じ（サッカーの 48 フレームで差の中央 0.0°、p10〜p90 ±0.3°）。動物: 後ろ脚の付け根の中点 →
+    // 前脚の付け根の中点（役の骨。前脚の役が無いリグは尾の付け根 → 首）。
+    private bool TryResolveBodyForwardOnGround(GameObject instance, byte categoryId, out Vector3 forward)
+    {
+        forward = Vector3.zero;
+        if (instance == null)
+        {
+            return false;
+        }
+
+        if (IsCategoryPerson(categoryId))
+        {
+            Animator animator = instance.GetComponentInChildren<Animator>();
+            Transform left = animator != null && animator.isHuman ? animator.GetBoneTransform(HumanBodyBones.LeftUpperLeg) : null;
+            Transform right = animator != null && animator.isHuman ? animator.GetBoneTransform(HumanBodyBones.RightUpperLeg) : null;
+            if (left == null || right == null)
+            {
+                return false;
+            }
+
+            forward = Vector3.Cross(right.position - left.position, Vector3.up);
+        }
+        else if (IsCategoryAnimal(categoryId))
+        {
+            AnimalRigCache cache = animalPoseApplier.PeekAnimalRigCache(instance);
+            if (cache == null)
+            {
+                return false;
+            }
+
+            if (cache.leftFrontUpper != null && cache.rightFrontUpper != null && cache.leftRearUpper != null && cache.rightRearUpper != null)
+            {
+                forward = (cache.leftFrontUpper.position + cache.rightFrontUpper.position - cache.leftRearUpper.position - cache.rightRearUpper.position) * 0.5f;
+            }
+            else if (cache.tailBase != null && cache.neck != null)
+            {
+                forward = cache.neck.position - cache.tailBase.position;
+            }
+            else
+            {
+                return false;
+            }
+        }
+        else
+        {
+            return false;
+        }
+
+        forward = Vector3.ProjectOnPlane(forward, Vector3.up);
+        if (forward.sqrMagnitude <= 0.000001f)
+        {
+            return false;
+        }
+
+        forward.Normalize();
+        return true;
+    }
+
+    // 人の root を rotation へ回し、Hips の world の回転を保つ（Hips の局所を親の回りのぶん逆に回す）。位置は ApplyBodyFrameOutStep が
+    // 毎 tick Hips を「始めの Hips + 進んだ分」へ合わせ直すので、ここでは触らない。
+    private static void RotateBodyFrameOutRootKeepingHips(GameObject instance, Quaternion rotation)
+    {
+        Animator animator = instance != null ? instance.GetComponentInChildren<Animator>() : null;
+        Transform hips = animator != null && animator.isHuman ? animator.GetBoneTransform(HumanBodyBones.Hips) : null;
+        if (hips == null || hips.parent == null)
+        {
+            return;
+        }
+
+        Quaternion hipsWorld = hips.rotation;
+        TrackPlacementWriter.Apply(instance.transform, new TrackPlacementCommand(instance.transform.position, rotation, instance.transform.localScale));
+        // root を回した後に Hips の world を回す前の値へ戻す（局所を逆に回すのと同じ結果。ApplyWorldRotation で書く、確かめ役 V_Q2）
+        TransformWriter.ApplyWorldRotation(hips, hipsWorld);
+    }
+
+    private readonly List<Vector3> bodyFrameOutPassPoints = new List<Vector3>(128);
+
+    // 体の前へまっすぐ進む向き。体の点（⑧ が投影に使う骨。無ければ renderer の箱の中心）がどれも、視聴者の目から地面の上で
+    // bodyFrameOutClearanceMeters より近くを通らないようにする。足りない点があれば、出ていく側へ最小の角だけ回す（点ごとに、目のまわりの
+    // 半径 c の円への接線まで。2 回繰り返す）。使わない（false = 今の向き）: 体の点がもう円の中・目から遠ざかる向きで出ていく側と逆へ向かう・
+    // 回す角が 90° を超える。目は見ているカメラ（実機は HMD、バッチは main カメラ）、取れなければ pinhole の原点。
+    private bool TryResolveBodyFrameOutPassHeading(GameObject instance, Vector3 bodyForward, Vector3 exitDirection, Vector3 up, Vector3 camOrigin,
+        out Vector3 heading, out string note)
+    {
+        heading = Vector3.zero;
+        note = null;
+        Vector3 h = Vector3.ProjectOnPlane(bodyForward, up);
+        Vector3 exit = Vector3.ProjectOnPlane(exitDirection, up);
+        if (instance == null || h.sqrMagnitude <= 0.000001f || exit.sqrMagnitude <= 0.000001f)
+        {
+            return false;
+        }
+
+        h.Normalize();
+        exit.Normalize();
+        Camera cam = GetViewCamera();
+        Vector3 eye = cam != null ? cam.transform.position : camOrigin;
+        float c = Mathf.Max(0f, bodyFrameOutClearanceMeters);
+        List<Vector3> points = bodyFrameOutPassPoints;
+        points.Clear();
+        Animator animator = instance.GetComponentInChildren<Animator>(true);
+        List<KeyValuePair<string, Transform>> bones = ResolveProjectionBones(instance, animator);
+        for (int i = 0; i < bones.Count; i++)
+        {
+            if (bones[i].Value != null)
+            {
+                points.Add(Vector3.ProjectOnPlane(bones[i].Value.position - eye, up));
+            }
+        }
+
+        if (points.Count == 0)
+        {
+            Vector3 center = TryGetRendererWorldBounds(instance, out Bounds bounds) ? bounds.center : instance.transform.position;
+            points.Add(Vector3.ProjectOnPlane(center - eye, up));
+        }
+
+        for (int i = 0; i < points.Count; i++)
+        {
+            if (points[i].magnitude <= c)
+            {
+                note = "inside-clearance";
+                return false;
+            }
+        }
+
+        // 出ていく側へ回す向き: up まわりに +ε 回すと h は Cross(up, h) へ動く。
+        float sign = Vector3.Dot(Vector3.Cross(up, h), exit) >= 0f ? 1f : -1f;
+        float total = 0f;
+        for (int pass = 0; pass < 2; pass++)
+        {
+            bool approaching = false;
+            float need = 0f;
+            for (int i = 0; i < points.Count; i++)
+            {
+                Vector3 p = points[i];
+                if (Vector3.Dot(p, h) >= 0f)
+                {
+                    continue; // この点は目から遠ざかる
+                }
+
+                approaching = true;
+                float d = p.magnitude;
+                float phi = Mathf.Asin(Mathf.Clamp01(c / d)) * Mathf.Rad2Deg;
+                // 目への向きから体の前までの角（出ていく側を +）。phi 以上なら、この点は目から c 以上離れて出ていく側を通る。
+                float angle = Vector3.SignedAngle(-p / d, h, up) * sign;
+                if (angle < phi)
+                {
+                    need = Mathf.Max(need, phi - angle);
+                }
+            }
+
+            if (!approaching && pass == 0 && Vector3.Dot(h, exit) < 0f)
+            {
+                note = "away-wrong-side";
+                return false; // 目から遠ざかりながら、出ていく端と逆へ向かう
+            }
+
+            if (need <= 0f)
+            {
+                break;
+            }
+
+            total += need;
+            h = Quaternion.AngleAxis(sign * need, up) * h;
+        }
+
+        if (total > 90f)
+        {
+            note = $"turn {total:F0}deg > 90";
+            return false;
+        }
+
+        heading = h;
+        note = total > 0f ? $"body+pass {total:F0}deg" : "body";
         return true;
     }
 

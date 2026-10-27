@@ -114,16 +114,16 @@ public class VideoDepthFollowTests
         Assert.That(StreamingStereoVideoPlayer.ClassifyVideoDepthFollowFrameJump(5, -1, RewindFrames, SnapAfter), Is.Null);
     }
 
-    // 既定 OFF。状態が無ければ f を読む所は 1 を掛ける・割るだけで、今と同じ値。端の扱いの既定は NoGrow。
+    // 2026-10-27 から既定 ON・端の扱いの既定は Hold（見る用の版 l の中身）。状態が無ければ f を読む所は 1 を掛ける・割るだけで、今と同じ値。
     [Test]
-    public void OffByDefaultAndTheReadersSeeOne()
+    public void OnByDefaultAndTheReadersSeeOneWithoutState()
     {
         GameObject host = new GameObject("VideoDepthFollowTests");
         try
         {
             StreamingStereoVideoPlayer player = host.AddComponent<StreamingStereoVideoPlayer>();
-            Assert.That(player.placementFollowVideoDepth, Is.False);
-            Assert.That(player.placementFollowVideoDepthAtEdge, Is.EqualTo(StreamingStereoVideoPlayer.VideoDepthFollowEdgeMode.NoGrow));
+            Assert.That(player.placementFollowVideoDepth, Is.True);
+            Assert.That(player.placementFollowVideoDepthAtEdge, Is.EqualTo(StreamingStereoVideoPlayer.VideoDepthFollowEdgeMode.Hold));
             Assert.That(player.placementFollowVideoDepthEdgeEaseSeconds, Is.EqualTo(EdgeTau));
             Assert.That(Invoke(player, "ResolveVideoDepthFollowFactor", 3u), Is.EqualTo(1f));
             Assert.That(Invoke(player, "ResolveStereoDepthRootFilterBetaScale", 3u), Is.EqualTo(1f));
@@ -204,16 +204,17 @@ public class VideoDepthFollowTests
         Assert.That(StreamingStereoVideoPlayer.LimitVideoDepthFollowFactorRate(2f, 4f, 0.08f, 0, 24f), Is.EqualTo(4f));
     }
 
-    // その場の切り替えは既定 OFF（OFF なら表を作らず、配置は今と同じ）。
+    // その場の切り替えは 2026-10-27 から既定 ON（見る用の版 l と同じ。大きさは 1 秒 8% までしか変えない）。
     [Test]
-    public void HoldWhileFeetStillIsOffByDefault()
+    public void HoldWhileFeetStillIsOnByDefault()
     {
         GameObject host = new GameObject("VideoDepthFollowStillTests");
         try
         {
             StreamingStereoVideoPlayer player = host.AddComponent<StreamingStereoVideoPlayer>();
-            Assert.That(player.placementFollowVideoDepthHoldWhileFeetStill, Is.False);
-            // ON にしたときも既定は動物だけ（人に効かせると、止まっては歩くテレビの女性が小さいまま近づいた）。
+            Assert.That(player.placementFollowVideoDepthHoldWhileFeetStill, Is.True);
+            Assert.That(player.placementFollowVideoDepthSizeMaxRatePerSecond, Is.EqualTo(0.08f));
+            // 既定は動物だけ（人に効かせると、止まっては歩くテレビの女性が小さいまま近づいた）。
             Assert.That(player.placementFollowVideoDepthStillAnimalsOnly, Is.True);
         }
         finally

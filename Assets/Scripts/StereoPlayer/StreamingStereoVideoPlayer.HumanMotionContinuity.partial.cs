@@ -39,7 +39,8 @@ public partial class StreamingStereoVideoPlayer
 {
     [Header("Human random motion: continuity (2026-10-25, O2)")]
     public bool humanTrackingRestoresHipsLocalPosition = true;
-    public bool humanClipSwitchBlend = false;
+    // 2026-10-27 から既定 ON（見る用の版 l の中身を既定にした）。上の既定の説明はそれまでの話。
+    public bool humanClipSwitchBlend = true;
     public bool humanClipSwitchReanchorBody = true;
     public bool randomMotionStartsAfterVideoPause = false;
 

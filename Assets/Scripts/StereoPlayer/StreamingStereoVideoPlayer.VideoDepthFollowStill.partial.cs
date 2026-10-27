@@ -21,7 +21,8 @@ using UnityEngine;
 public partial class StreamingStereoVideoPlayer : MonoBehaviour
 {
     // 主スイッチ（既定 OFF、新しい振る舞い）。V（placementFollowVideoDepth）が ON のときだけ効く。OFF なら表を作らず、配置は今とビット単位で同じ。
-    public bool placementFollowVideoDepthHoldWhileFeetStill = false;
+    // 2026-10-27 から既定 ON（見る用の版 l と同じ。犬・猫の大きさはまだ詰めている途中）。上の既定の説明はそれまでの話。
+    public bool placementFollowVideoDepthHoldWhileFeetStill = true;
     // 動物の track だけに効かせる（既定 true）。2026-10-27 の撮影（sizejump/runs/*_still2）: 人に効かせると、止まっては歩くテレビの女性（足元が 1 秒に
     // 箱の高さの 3〜4% しか動かない）の歩きの大半が「その場」になり、遠くにいた始めの大きさのまま近づいて、最後は元の女性の 2/3 ほどに小さく写った
     // （サッカーの男性も今の 0.8 倍）。人のモデルはデータの姿勢（腕を上げる・歩く）をそのまま取るので箱に合わせても姿勢で大きさがずれにくく、ずれるのは
@@ -44,7 +45,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 片目の絵は大きさが追いつくまで箱とずれてよい。その場でも大きさは止めず（上限の速さで追う）、その場の後の追いつき（上の 2 つ）は使わない。
     // 端に掛かった間は今までどおり f を動かさない（端の Hold）。0 なら k2 の形（その場では大きさを止め、歩き出しはゆっくり追いつく）。
     // 試算（sizejump/sim_slew.py、今の版の大きさに上限を掛けた）: 8%/s で猫の 25.2 秒 3.4 倍・29 秒 4.6 倍（今 5.1、k2 2.6）、1 秒の間の変化は 8% 以下。
-    [Min(0f)] public float placementFollowVideoDepthSizeMaxRatePerSecond = 0f;
+    // 2026-10-27 から既定 0.08（見る用の版 l と同じ。犬・猫の大きさはまだ詰めている途中）。上の既定の説明はそれまでの話。
+    [Min(0f)] public float placementFollowVideoDepthSizeMaxRatePerSecond = 0.08f;
     // [VFOLLOW-STILL] を出す（読み込み時の表の要約と、その場に入る・出る tick）。
     public bool logPlacementFollowVideoDepthStill = false;
 

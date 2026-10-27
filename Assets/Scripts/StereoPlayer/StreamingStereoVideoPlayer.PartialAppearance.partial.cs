@@ -31,7 +31,8 @@ public partial class StreamingStereoVideoPlayer
     }
 
     [Header("Partial appearance at a track's start (2026-10-25, default Off)")]
-    public PartialAppearanceMode partialAppearanceMode = PartialAppearanceMode.Off;
+    // 2026-10-27 から既定 Hide（見る用の版 l の中身を既定にした）。上の既定の説明はそれまでの話。
+    public PartialAppearanceMode partialAppearanceMode = PartialAppearanceMode.Hide;
     [Min(0.1f)] public float partialAppearanceMaxSeconds = 2f;
     public bool logPartialAppearance = true;
 

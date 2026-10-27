@@ -34,7 +34,8 @@ public partial class StreamingStereoVideoPlayer
     }
 
     [Header("Model shadow distance (2026-10-25)")]
-    public ModelShadowMode modelShadowMode = ModelShadowMode.Scene;
+    // 2026-10-27 から既定 FitToScreenDistance（見る用の版 l の中身を既定にした）。上の既定の説明はそれまでの話。
+    public ModelShadowMode modelShadowMode = ModelShadowMode.FitToScreenDistance;
     // 2: 全部の影が付くのは画面の距離の 1.6 倍まで（URP は最後の 20% で消していく: cascadeBorder 0.2）。実験の 6 本の
     // モデルは 1.04 m 以内（2026-10-25 の撮影で動物 1.01 m・車の往復 0.2〜0.7 m）。画面の奥 3 倍まで置かれるモデルでも
     // 影を消さないなら 4（texel は 2 倍）。

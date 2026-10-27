@@ -402,7 +402,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // （s20 の 23_EuropeanBadger・31_GrayWolf は 145/145 tick）。前回の値が無い（shot の中で一度も通っていない）か、別の prefab で平滑した値（差し替えの直後。
     // 平滑の値は差し替え・偽のカットでは消えない）のときは今までどおり。保持している間は比を更新せず、平滑の刻み（動画フレーム）だけ進める
     // （抜けた最初の tick が保持した比から 1 フレーム分だけ動く）。2 回目の ⑦ が走る tick が増えるので、C（animalBottomFitUsesBoneDepth）と組で見る。
-    public bool depthRefineHoldOnGuard = false;
+    // 2026-10-27 から既定 ON（見る用の版 l の中身を既定にした）。上の既定の説明はそれまでの話。
+    public bool depthRefineHoldOnGuard = true;
     // ⑧ の奥行きを実際の投影で解く（2026-10-13、U2。Docs/tmp/depthcap_20261013/README.md の「調査」）。**既定 OFF。**
     // 今の ⑧ は「基準点（人は Hips、動物は root）の深さ × 平滑した比」の一手で動かす。投影高 ∝ 1/深さ を基準点 1 点で近似しているので、
     // 基準点が投影の上下を決める骨（耳・足先・牙）の実効深度からずれた分（てこ: 人 1.05、動物 1.5〜3.1、姿勢で動く）だけ行き過ぎ・寄りすぎる。
@@ -466,7 +467,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 調査役 H1 の式 C' = AngleAxis(θ, 前) × C）と、Humanoid のクリップ（自分から動く動作・画面の外へ歩く所）の評価の直後の両方に当てる。
     // 表に無いモデル・OFF は今と全く同じ。純 FK（enableKeypointAimAt OFF）と handFkFromForearmFrame は対象外（実験では使っていない）。
     // 量と原因は Docs/tmp/human_rig_20261023/README.md「人の手のねじれ」（17 男性 42〜45°・19 サッカー 65〜72° は固定、18・20 は絵で決める）。
-    public int humanHandRollFixMode = 0;
+    // 2026-10-27 から既定 2（見る用の版 l の中身を既定にした）。上の既定の説明はそれまでの話。
+    public int humanHandRollFixMode = 2;
     // 回す量の表: 「prefab 名:左の度:右の度」をカンマで区切る（-setFields の区切りの ; と = は使わない）。prefab 名は ReplaceableModel.sourcePrefabName と
     // 完全一致（試作の -humanPrefab は名前が違うので当たらない）。既定は確かめ役の値（17・19 は V_H1 の指の付け根の面、18・20 は V_H2 の手のひら）。
     // リグのキャッシュを作るときに読む（バッチの -setFields は再生前に入るので効く）。
@@ -622,7 +624,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     //   U1・U2 の解く式（TryBuildExactScaleRefineSetup・TryBuildExactDepthSecondFit）も同じ判断を写す。
     //   今ある bundle で (2) が走るのは bundle_tv の人の vf 541〜576 だけ（569 から画面の外の歩きが置くので見えるのは 568 まで）。
     //   (1) は bundle_tv の vf 528〜540 と、頭合わせが置けなかった animal の tick。調査は scratchpad の validate/obvious_inv/O6。
-    public bool bottomFitBorderEdgesAsBounds = false;
+    // 2026-10-27 から既定 ON（見る用の版 l の中身を既定にした）。上の既定の説明はそれまでの話。
+    public bool bottomFitBorderEdgesAsBounds = true;
 
     // animalBottomClippedHeadPin（2026-10-14、新しい振る舞い・既定 OFF・種別を問わない（animal のリグなら全部）・新しい係数なし。
     //   Docs/tmp/headpin_20261014/README.md）: 下端が画面の下で切れて上端が切れていない tick の ⑦（alignTopWhenBottomClipped の上端合わせ）で、
@@ -1399,13 +1402,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // ApplyRigidDrive はホイールの有無によらず経路の接線で yaw を回していた。U ターンの半径は描画 bounds の進行方向の幅 × 0.25 なので、薄い星の風船
     // （25_Balloon_Meshy_Star）は半径 0.021 m・半円 0.066 m を 0.19 s で回り、視聴者の目の前で 180° を 2 回（約 950°/s）回っていた
     // （review_tail/balloon_p2 の t357-371・t482-495）。車は全 16 台に FL/FR/RL/RR があるので変わらない。false（既定）で従来どおり回す。
-    public bool elseWheellessKeepsHeading = false;
+    // 2026-10-27 から既定 ON（見る用の版 l の中身を既定にした）。上の既定の説明はそれまでの話。
+    public bool elseWheellessKeepsHeading = true;
     // ホイールの無い剛体の走行イベントを「視聴者の手前まで同じ線をまっすぐ漂って来て、同じ線を戻る」にする（2026-10-25、既定 OFF、採否はユーザー）。
     // 車の経路（ElseDrivePath.Build）は手前の点の U ターンで横へ 2R ずれ、ずれた線を戻って出発点の奥でもう 1 回半円を描く。向きを止めても、
     // 丸い風船は目の前で横へ 0.084 m（撮影で 181 px）を 0.37 s で跳んでいた（review_tail/balloon_p1 の t209-236）。ON にすると U ターンを使わず、
     // 出発・手前の点・到着の 3 か所で速さ 0 になる緩急（ElseDrivePath.EaseOutAndBack）で往復する。最大の速さは elseDriveSpeedMetersPerSecond、
     // 時間は π × 片道 ÷ 速さ（片道 0.49 m で 4.37 s。車の経路の 3.45 s より長く、動画の一時停止も同じだけ延びる）。ON なら向きも変えない。
-    public bool elseWheellessFloatStraight = false;
+    // 2026-10-27 から既定 ON（見る用の版 l の中身を既定にした）。上の既定の説明はそれまでの話。
+    public bool elseWheellessFloatStraight = true;
     // 車の走行イベントを今の表示位置から始める（2026-10-11、既存の不具合の直し。10/05 の interactiveRandomOriginFromDisplayed の直し漏れ）。**2026-10-11 にユーザーが採用し既定 ON。**
     // StartRigidDriveMotion は出発点・向き・視聴者までの距離・止まる点・前方向に門つきの livePosition / liveRotation を使っていた。門の基準の面積は
     // 戻らないので、car クリップの 2 周目以降、track 1〜4 が奥に小さく再登場した最初の tick（発火が集まる tick）では門が閉じたまま、前の周に画面の下から

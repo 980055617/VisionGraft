@@ -24,7 +24,8 @@ public partial class StreamingStereoVideoPlayer
 {
     [Header("Model light follows the video (2026-10-25)")]
     // false なら何もしない（光はシーンの値のまま）。
-    public bool matchModelLightToVideo = false;
+    // 2026-10-27 から既定 ON（見る用の版 l の中身を既定にした）。上の既定の説明はそれまでの話。
+    public bool matchModelLightToVideo = true;
     // k = 1 になる S（線形の輝度、0〜1）。これより明るい動画は modelLightMaxScale で止まる。
     public float modelLightReferenceLuminance = 0.32f;
     // S の比の何乗で光を変えるか（1 = 灰色の仮定そのまま、0 = 変えない）。

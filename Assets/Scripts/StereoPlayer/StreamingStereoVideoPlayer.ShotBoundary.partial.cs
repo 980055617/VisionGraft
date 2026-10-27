@@ -46,7 +46,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // runs_final/dog_p1_s_on_loops.log の周の頭の BOTTOMFIX-DEPTH）。⑧ の比の平滑と人の根の奥行きの平滑は、もともと巻き戻りで今の値へ飛ぶ。
     // ON なら、表示に使う meta のフレームが RewindResetMinFrames より大きく戻った tick に、shot の切れ目と同じ平滑（動物の root と SMAL の回転・
     // 関節の位置・人の root の向き）を捨てる。倍率のロック・S の k・下端合わせなど shot ごとの状態は持ち越す（同じ shot の中なので測り直さない）。
-    public bool rewindResetsSmoothing = false;
+    // 2026-10-27 から既定 ON（見る用の版 l の中身を既定にした）。上の既定の説明はそれまでの話。
+    public bool rewindResetsSmoothing = true;
     private const int RewindResetMinFrames = 12;
     private int rewindLastMetaFrame = -1;
 

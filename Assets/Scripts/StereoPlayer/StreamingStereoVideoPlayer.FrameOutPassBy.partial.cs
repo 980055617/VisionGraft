@@ -40,7 +40,8 @@ using UnityEngine;
 public partial class StreamingStereoVideoPlayer
 {
     [Header("Frame-out pass-by (2026-10-26)")]
-    public bool frameOutPassByViewer = false;
+    // 2026-10-27 から既定 ON（見る用の版 l の中身を既定にした）。上の既定の説明はそれまでの話。
+    public bool frameOutPassByViewer = true;
     // 目のいちばん近くを通る点（物 = 箱の角、人・動物 = 骨）の距離の帯（m、地面の上）。下より近くは通さない、上より遠いなら目の方へ曲げる。
     // 下 0.15 m: 犬（始めに一番近い骨 0.26 m）が 45° 以内で通れる（0.20 m では 47° 要り、今の向きに戻る）。CenterEyeAnchor の近い面は 0.1 m。
     // 上 0.30 m: 10/26 に Quest で見ていただいた版のテレビの女性の通り方（一番近い骨 0.25 m）が帯に入る値（その通り方の採否は聞いていない）。

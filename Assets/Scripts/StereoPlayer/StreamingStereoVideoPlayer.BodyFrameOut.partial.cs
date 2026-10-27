@@ -45,7 +45,8 @@ public partial class StreamingStereoVideoPlayer
     // （Docs/tmp/survey_20261025/README.md「Q2」）。確かめ役: 進む向きを実際に決めるのは体の向きではなく下の離す距離で、0.25 m では今
     // （一番近い骨 0.311 m）より近くを通る。離す距離はユーザーの判断（0.20 m 以下 = まっすぐ・一番近い骨 0.21〜0.23 m、0.25 m = 5〜11° 曲がる、
     // 0.30 m = 22〜32° 曲がる、0.35 m = 今の横歩きに戻る）。
-    public bool bodyFrameOutFollowBodyFacing = false;
+    // 2026-10-27 から既定 ON（見る用の版 l の中身を既定にした）。上の既定の説明はそれまでの話。
+    public bool bodyFrameOutFollowBodyFacing = true;
     // 上の目から離す距離（m、地面の上）。既定は ⑧ が体を置く近さの下限 MinDistanceFromHeadMeters と同じ 0.25 m。
     [Min(0f)] public float bodyFrameOutClearanceMeters = 0.25f;
     // 2026-10-25（調査役 O3、既定 OFF）: 動物の続きで毎 tick 解き直す姿勢を、最後に追従した tick の姿勢（端で anchor が止まった hold の間の
@@ -55,7 +56,8 @@ public partial class StreamingStereoVideoPlayer
     // root の向き（animal-keep）・進む向き・速さ・始める条件・終わり方は変えない（10/24 に入れなかった「進む向きへ root を回す」案とは別）。
     // OFF なら今のまま（最後に追従した tick の姿勢）。測ったフレームが無いとき、続きを始めたフレームより bodyFrameOutLeaveWithinSeconds より
     // 前のとき（長く見切れ・hold が続いた後の古い姿勢。確かめ役 V_O3 の指摘）も今のまま。
-    public bool bodyFrameOutAnimalPoseFromMeasuredFrame = false;
+    // 2026-10-27 から既定 ON（見る用の版 l の中身を既定にした）。上の既定の説明はそれまでの話。
+    public bool bodyFrameOutAnimalPoseFromMeasuredFrame = true;
 
     private const float BodyFrameOutVelocitySmoothing = 0.3f;
     private const float BodyFrameOutBlendSeconds = 0.3f;

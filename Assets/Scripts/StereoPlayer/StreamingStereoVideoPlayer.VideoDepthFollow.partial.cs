@@ -84,11 +84,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
     // V の主スイッチ（既定 OFF）。OFF なら状態を作らず、配置は今とビット単位で同じ（f を読む所はどれも状態が無ければ 1 を掛ける・割る）。
-    public bool placementFollowVideoDepth = false;
+    // 2026-10-27 から既定 ON（見る用の版 l の中身を既定にした）。上の既定の説明はそれまでの話。
+    public bool placementFollowVideoDepth = true;
     // f の平滑の時定数（秒、動画フレームで刻む）。0 以下なら ⑧ と同じ（animal は animalDepthRefineSmoothingSeconds が正ならそれ、ほかは projectedDepthSmoothingSeconds）。
     [Min(0f)] public float placementFollowVideoDepthSmoothingSeconds = 0f;
     // 画面の端に掛かったフレームの f の扱い（上の説明）。既定 NoGrow: 出口で f が膨らまず、続きは端に掛かる前の倍率で進む。
-    public VideoDepthFollowEdgeMode placementFollowVideoDepthAtEdge = VideoDepthFollowEdgeMode.NoGrow;
+    // 2026-10-27 から既定 Hold（見る用の版 l の中身を既定にした）。上の既定の説明はそれまでの話。
+    public VideoDepthFollowEdgeMode placementFollowVideoDepthAtEdge = VideoDepthFollowEdgeMode.Hold;
     // 合わせる先（上の VideoDepthFollowTarget）。既定は映像の奥行き。
     public VideoDepthFollowTarget placementFollowVideoDepthTarget = VideoDepthFollowTarget.VideoDepth;
     // EaseToLock の寄せる時定数（秒、動画フレームで刻む）。犬の出口は端に掛かってから続きまで 10 フレーム（0.42 s）で、0.25 s なら対数の 81 % 寄る

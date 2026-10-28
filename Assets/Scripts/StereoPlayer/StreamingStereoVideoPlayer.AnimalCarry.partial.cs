@@ -14,6 +14,13 @@ using UnityEngine;
 public partial class StreamingStereoVideoPlayer
 {
     public bool animalCarriesBallHardcoded = true;
+    // くわえている間（holdFrom 以降）にボールの track が映らなくなっても、犬が見えている間は口に付けたままにする（2026-10-29、同じ日に既定 ON。
+    // 見る用の版 r4 を Quest で見たユーザー「（犬がまっすぐ・ボールをくわえたまま）いいと思う」）。
+    // 犬の動画のボールは f681 で画面の下から出て track が消える（犬は口にくわえたまま f698 まで映る）。今はボールが見えている間だけ口に
+    // 付けるので、f681 からボールが消えて口が開いたまま。犬が横を向いて出ていく間は目立たなかったが、端に掛かった所から見る人の方へ来る
+    // （bodyFrameOutStartWhenClipped）と正面を向くので空の口が見える。犬が隠れたら、付けていたボールも隠す。
+    public bool animalCarryKeepsBallWhileTrackLost = true;
+    private readonly HashSet<GameObject> animalCarryKeptBalls = new HashSet<GameObject>();
 
     private sealed class AnimalCarryEntry
     {
@@ -112,6 +119,7 @@ public partial class StreamingStereoVideoPlayer
         GameObject animal = GetTrackInstanceOrNull(entry.animalTrack);
         if (animal == null || !animal.activeInHierarchy)
         {
+            HideAnimalCarryKeptBall(entry);
             return;
         }
 
@@ -149,6 +157,20 @@ public partial class StreamingStereoVideoPlayer
         Vector3 lowerClosed = hinge + s * (entry.lowerAlpha * e1 + entry.lowerBeta * e2);
 
         GameObject ball = GetTrackInstanceOrNull(entry.ballTrack);
+        if (animalCarryKeepsBallWhileTrackLost && ball != null)
+        {
+            if (frame >= entry.holdFrom && !IsTrackInFrame(entry.ballTrack, frame))
+            {
+                // くわえている間にボールの track が映らなくなった（画面の下から出た）。犬が見えている間は出して口に付ける。
+                SceneObjectWriter.ApplyActive(ball, true);
+                animalCarryKeptBalls.Add(ball);
+            }
+            else
+            {
+                animalCarryKeptBalls.Remove(ball);
+            }
+        }
+
         bool ballVisible = ball != null && ball.activeInHierarchy;
         AnimalCarryBall ballInfo = ballVisible ? GetAnimalCarryBall(ball) : null;
         float ballRadius = ballInfo != null ? AnimalCarryBallRadius(ballInfo) : 0f;
@@ -327,6 +349,16 @@ public partial class StreamingStereoVideoPlayer
         Debug.Log($"[CARRY] rig model={animal.name} jaw={jaw.name} nose={nose.name} ears={earLeft.name}/{earRight.name} " +
                   $"s={toNose.magnitude:F4}m openSign={rig.openSign:+0;-0}");
         return rig;
+    }
+
+    // animalCarryKeepsBallWhileTrackLost で出していたボールを、犬が隠れたら一緒に隠す。
+    private void HideAnimalCarryKeptBall(AnimalCarryEntry entry)
+    {
+        GameObject ball = GetTrackInstanceOrNull(entry.ballTrack);
+        if (ball != null && animalCarryKeptBalls.Remove(ball))
+        {
+            SceneObjectWriter.ApplyActive(ball, false);
+        }
     }
 
     private AnimalCarryBall GetAnimalCarryBall(GameObject ball)

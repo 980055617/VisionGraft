@@ -2698,6 +2698,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             vBottom = obj.anchorV;
         }
+        else if (TryGetAnimalSupportBottomCorrection(obj, out float limbReach))
+        {
+            // animalSupportBottomIgnoresLimbReach（2026-10-27、10/28 から既定 ON、AnimalSupportBottom.partial.cs）: 伸ばした手足の分を引いた下端。
+            // ⑦ と、⑦ を写した ⑧ の解く式・2 回目の ⑦ の予測は、どれもこの関数（か ResolveReliableBBoxBottomVEye）を読むので同じ値になる。
+            vBottom -= limbReach;
+        }
 
         return Mathf.Clamp(vBottom, 0f, manifest.eye_h - 1f);
     }

@@ -49,6 +49,29 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     [Min(0f)] public float placementFollowVideoDepthSizeMaxRatePerSecond = 0.08f;
     // [VFOLLOW-STILL] を出す（読み込み時の表の要約と、その場に入る・出る tick）。
     public bool logPlacementFollowVideoDepthStill = false;
+    // その場の判定に体の大きさも使う（2026-10-28、新しい振る舞い・既定 OFF）。ユーザー（10/28、o の動画 sizefit/dog_o_ba.mp4 を見て）「犬の25秒の青い線って
+    // 結局上がってから下がってるじゃん，でも元動画はその場所にいるよね」「猫も20秒くらいではめっちゃ小さくなっているけど，その場から動いていないよね」
+    // 「ちゃんと元動画で動いているかどうか，その時のモデルがどうなったかも考えて直してほしい」。
+    // 起きていたこと（Docs/tmp/survey_20261025/README.md「10/28: o の動画を見た感想」）: 足元の行（箱の下端）だけで決めると、犬が前を低くして前足を前へ出す
+    //   （下端だけ 645 → 687 px、24.2 秒）・横向きから振り向いて座る（633 → 654 px）・寝た猫の下端が 5 px 揺れる（箱の高さ 50 px の 8% = 4 px を超える）・
+    //   伸びをして前足を座面の縁から下へ伸ばす所が「動いた」になり、足元から決める大きさが動く（犬 +28%、猫のソファの上 +14%）。その間、動物の頭の大きさ
+    //   （両耳の間）も AniMer の当てはめの大きさ（5000 ÷ SMAL の transl z）も変わらない（犬 21〜27.75 秒 283〜297）。
+    // しくみ: 読み込み時に、動物の track ごとに AniMer の大きさ log(1 / transl z)（meta.bin の SMAL block。画面の縁で切れたフレームは使わない）を前後
+    //   placementFollowVideoDepthStillBodyScaleMedianFrames フレームの中央値でならし、前後 placementFollowVideoDepthStillWindowSeconds の幅（最大 − 最小）が
+    //   placementFollowVideoDepthStillBodyScaleTolerance 以下のフレームを「体の大きさが動かない」とする（続きが placementFollowVideoDepthStillBodyScaleMinRunSeconds
+    //   より短いものは捨てる。歩いている途中に当てはめが 0.3 秒止まる所がある）。足元の行が動かないフレームと合わせ、その場の区間どうしの切れ目が
+    //   placementFollowVideoDepthStillBridgeSeconds 以下で、両端の足元の行（端の 6 フレームの中央値）の差が箱の高さの placementFollowVideoDepthStillFraction 以内なら
+    //   切れ目もその場にする（寝た猫が頭を上げる・伸びをして前足を下へ伸ばす所）。足元の行は VideoDepthFollowFeet.partial.cs がその場の間止める。
+    //   試算（scratchpad validate/combined/sizefit/sim_inplace2.py、meta.bin だけ）: 犬 0.00〜3.33・6.71〜7.04・8.33〜10.58・11.67〜13.67・14.79〜27.29 秒、
+    //   猫 0.00〜10.83・18.25〜20.25・22.04〜30.00 秒（目で見たその場とそろう。足元の行だけでは犬の 14.79〜16.25・23.75〜24.75 秒、猫のソファの上の 3 か所が抜ける）。
+    // 直らないもの: その場で体ごと少し動く所（AniMer の大きさが ±3% を超え、足元の行も動く）。人の track（SMAL block が無い）。
+    // 2026-10-28 から既定 ON（ユーザー、sizefit/dog_np2_ba.mp4・cat_np2_ba.mp4 を見て「どちらも新しい版の方がいいと思う．そのまま実装して」。
+    // 足元から奥行き・大きさを決める 2 つ（VideoDepthFollowFeet.partial.cs）・animalSupportBottomIgnoresLimbReach と一緒）。上の既定の説明はそれまでの話。
+    public bool placementFollowVideoDepthStillUsesBodyScale = true;
+    [Range(0.005f, 0.5f)] public float placementFollowVideoDepthStillBodyScaleTolerance = 0.06f;
+    [Min(0)] public int placementFollowVideoDepthStillBodyScaleMedianFrames = 3;
+    [Min(0f)] public float placementFollowVideoDepthStillBodyScaleMinRunSeconds = 0.5f;
+    [Min(0f)] public float placementFollowVideoDepthStillBridgeSeconds = 2f;
 
     // (フレーム, track) のうち「その場」のもの。null なら表が無い（OFF、または読み込み前）。
     private HashSet<long> videoDepthFollowStillFrames;
@@ -178,6 +201,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private void ForgetVideoDepthFollowStillHeldDepth(uint trackId)
     {
         videoDepthFollowStillHeldDepthByTrack.Remove(trackId);
+        videoDepthFollowFeetHeldBoxHByTrack.Remove(trackId);   // 足元の位置から作る大きさのその場の H（VideoDepthFollowFeet.partial.cs）
     }
 
     // LoadMeta から呼ぶ（PrecomputePartialAppearanceOnLoad の後）。全フレームの箱を一度だけ読んで表を作る。
@@ -196,6 +220,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var bottomByTrack = new Dictionary<uint, List<Vector3>>();   // (フレーム, 下端, 高さ)。下で切れたフレームは入れない
         var clipState = new Dictionary<uint, bool>();
+        // 体の大きさ（placementFollowVideoDepthStillUsesBodyScale）: (フレーム, log(1 / transl z))。動物だけ、どこかの縁で切れたフレーム・transl が無いフレームは入れない。
+        bool bodyScaleOn = placementFollowVideoDepthStillUsesBodyScale;
+        var bodyByTrack = bodyScaleOn ? new Dictionary<uint, List<Vector2>>() : null;
         var buffer = new List<MetaObj>(16);
         for (int f = 0; f < numFrames; f++)
         {
@@ -217,6 +244,28 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 clipState.TryGetValue(o.trackId, out bool wasClipped);
                 bool clipped = ResolveBBoxBottomClipState(wasClipped, bottom);
                 clipState[o.trackId] = clipped;
+                if (bodyScaleOn && !clipped && IsCategoryAnimal(o.categoryId) && TryGetAnimalSmalPose(f, o.trackId, out AnimalSmalPose smal) && smal.hasTransl)
+                {
+                    float bx = o.bboxX;
+                    if (ResolveAnchorToScreen(o.anchorU, out _, out _, out bool isRightEye) && isRightEye)
+                    {
+                        bx -= manifest.eye_w;
+                    }
+
+                    bool anyCut = o.bboxY <= 0 || bx <= BodyFrameOutEdgeMarginPx || bx + o.bboxW >= manifest.eye_w - 1 - BodyFrameOutEdgeMarginPx;
+                    float tz = Mathf.Abs(smal.transl.z);
+                    if (!anyCut && tz > 1e-4f)
+                    {
+                        if (!bodyByTrack.TryGetValue(o.trackId, out List<Vector2> bodyList))
+                        {
+                            bodyList = new List<Vector2>();
+                            bodyByTrack[o.trackId] = bodyList;
+                        }
+
+                        bodyList.Add(new Vector2(f, -Mathf.Log(tz)));
+                    }
+                }
+
                 if (clipped)
                 {
                     continue;
@@ -241,9 +290,35 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         int releaseFrames = Mathf.Max(0, Mathf.RoundToInt(placementFollowVideoDepthStillReleaseSeconds * fps));
         var table = new HashSet<long>();
         var releaseAge = new Dictionary<long, int>();
+        int bodyMedianHalf = Mathf.Max(0, placementFollowVideoDepthStillBodyScaleMedianFrames);
+        int bodyMinRun = Mathf.Max(1, Mathf.RoundToInt(placementFollowVideoDepthStillBodyScaleMinRunSeconds * fps));
+        int bridgeFrames = Mathf.Max(0, Mathf.RoundToInt(placementFollowVideoDepthStillBridgeSeconds * fps));
         foreach (KeyValuePair<uint, List<Vector3>> kv in bottomByTrack)
         {
             List<int> stillFrames = ClassifyVideoDepthFollowStillFrames(kv.Value, shotBoundaries.ResolveShotIndex, half, placementFollowVideoDepthStillFraction);
+            string bodyText = "";
+            if (bodyScaleOn)
+            {
+                int rowStill = stillFrames.Count;
+                var merged = new HashSet<int>(stillFrames);
+                int bodyStill = 0;
+                if (bodyByTrack.TryGetValue(kv.Key, out List<Vector2> bodySamples))
+                {
+                    List<int> body = ClassifyVideoDepthFollowBodyScaleStillFrames(bodySamples, shotBoundaries.ResolveShotIndex, half, bodyMedianHalf,
+                        placementFollowVideoDepthStillBodyScaleTolerance, bodyMinRun);
+                    bodyStill = body.Count;
+                    for (int i = 0; i < body.Count; i++)
+                    {
+                        merged.Add(body[i]);
+                    }
+                }
+
+                int bridged = BridgeVideoDepthFollowStillGaps(merged, kv.Value, shotBoundaries.ResolveShotIndex, bridgeFrames, 6, placementFollowVideoDepthStillFraction);
+                stillFrames = new List<int>(merged);
+                stillFrames.Sort();
+                bodyText = $" rowStill={rowStill} bodyStill={bodyStill} bodySamples={(bodySamples != null ? bodySamples.Count : 0)} bridged={bridged}";
+            }
+
             for (int i = 0; i < stillFrames.Count; i++)
             {
                 table.Add(VideoDepthFollowStillKey(stillFrames[i], kv.Key));
@@ -274,7 +349,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
             if (logPlacementFollowVideoDepthStill)
             {
-                Debug.Log($"[VFOLLOW-STILL] table track={kv.Key} frames={kv.Value.Count} still={stillFrames.Count} runs={DescribeVideoDepthFollowStillRuns(table, kv.Key, numFrames)}");
+                Debug.Log($"[VFOLLOW-STILL] table track={kv.Key} frames={kv.Value.Count} still={stillFrames.Count} runs={DescribeVideoDepthFollowStillRuns(table, kv.Key, numFrames)}{bodyText}");
             }
         }
 
@@ -285,7 +360,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             Debug.Log($"[VFOLLOW-STILL] precompute tracks={bottomByTrack.Count} stillFrames={table.Count} window=±{half}f fraction={placementFollowVideoDepthStillFraction:F3} " +
                       $"holdsDepth={(placementFollowVideoDepthStillHoldsDepth ? 1 : 0)} release={releaseFrames}f tau={placementFollowVideoDepthStillReleaseTauSeconds:F2} " +
-                      $"releaseFrames={releaseAge.Count} ms={stopwatch.ElapsedMilliseconds}");
+                      $"releaseFrames={releaseAge.Count} bodyScale={(bodyScaleOn ? 1 : 0)} bodyTol={placementFollowVideoDepthStillBodyScaleTolerance:F3} " +
+                      $"bodyMed=±{bodyMedianHalf} bodyMinRun={bodyMinRun}f bridge={bridgeFrames}f ms={stopwatch.ElapsedMilliseconds}");
         }
     }
 
@@ -347,6 +423,225 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         return still;
+    }
+
+    // 体の大きさが動かないフレーム（placementFollowVideoDepthStillUsesBodyScale、純粋な計算、テスト VideoDepthFollowTests）。samples = (フレーム, log(1 / transl z))
+    // をフレームの昇順で（縁で切れた・transl が無いフレームは入れない）。値を同じ shot の前後 medianHalf フレームの samples の中央値でならし、同じ shot の
+    // 前後 half フレームのならした値の幅（最大 − 最小）が tolerance 以下ならその場。窓の samples が max(3, half) より少ないフレームは決めない。
+    // 最後に、続き（隣のフレームとの間が 1 フレーム以内）が minRun フレームより短いものを捨てる。
+    internal static List<int> ClassifyVideoDepthFollowBodyScaleStillFrames(List<Vector2> samples, System.Func<int, int> shotOf, int half, int medianHalf,
+        float tolerance, int minRun)
+    {
+        var still = new List<int>();
+        if (samples == null || samples.Count == 0)
+        {
+            return still;
+        }
+
+        int n = samples.Count;
+        half = Mathf.Max(1, half);
+        medianHalf = Mathf.Max(0, medianHalf);
+        var shot = new int[n];
+        for (int i = 0; i < n; i++)
+        {
+            shot[i] = shotOf != null ? shotOf((int)samples[i].x) : 0;
+        }
+
+        var smooth = new float[n];
+        var window = new List<float>(2 * medianHalf + 1);
+        for (int i = 0; i < n; i++)
+        {
+            window.Clear();
+            for (int j = i; j >= 0 && samples[i].x - samples[j].x <= medianHalf; j--)
+            {
+                if (shot[j] == shot[i])
+                {
+                    window.Add(samples[j].y);
+                }
+            }
+
+            for (int j = i + 1; j < n && samples[j].x - samples[i].x <= medianHalf; j++)
+            {
+                if (shot[j] == shot[i])
+                {
+                    window.Add(samples[j].y);
+                }
+            }
+
+            window.Sort();
+            smooth[i] = window[window.Count / 2];
+        }
+
+        int minCount = Mathf.Max(3, half);
+        var raw = new List<int>();
+        int lo = 0;
+        int hi = 0;
+        for (int i = 0; i < n; i++)
+        {
+            float f = samples[i].x;
+            while (lo < n && samples[lo].x < f - half)
+            {
+                lo++;
+            }
+
+            while (hi < n && samples[hi].x <= f + half)
+            {
+                hi++;
+            }
+
+            float min = float.MaxValue;
+            float max = float.MinValue;
+            int count = 0;
+            for (int j = lo; j < hi; j++)
+            {
+                if (shot[j] != shot[i])
+                {
+                    continue;
+                }
+
+                min = Mathf.Min(min, smooth[j]);
+                max = Mathf.Max(max, smooth[j]);
+                count++;
+            }
+
+            if (count >= minCount && max - min <= tolerance)
+            {
+                raw.Add((int)f);
+            }
+        }
+
+        int runStart = 0;
+        for (int i = 1; i <= raw.Count; i++)
+        {
+            if (i < raw.Count && raw[i] - raw[i - 1] <= 1)
+            {
+                continue;
+            }
+
+            if (i - runStart >= Mathf.Max(1, minRun))
+            {
+                for (int k = runStart; k < i; k++)
+                {
+                    still.Add(raw[k]);
+                }
+            }
+
+            runStart = i;
+        }
+
+        return still;
+    }
+
+    // その場の区間どうしの短い切れ目をつなぐ（placementFollowVideoDepthStillUsesBodyScale、純粋な計算、テスト VideoDepthFollowTests）。still = この track のその場の
+    // フレーム（足していく）、rows = (フレーム, 足元の行 = 箱の下端 px, 箱の高さ px) をフレームの昇順で（下で切れたフレームは入れない）。同じ shot の隣り合う区間の
+    // 切れ目が maxGap フレーム以下で、切れ目の rows が切れ目のフレーム数の 2/3 以上あり、前の区間の最後の endFrames フレーム・後の区間の最初の endFrames フレームの
+    // rows の足元の行の中央値の差が、その rows の箱の高さの中央値 × fraction 以内なら、切れ目のフレームを足す。足したフレームの数を返す。
+    internal static int BridgeVideoDepthFollowStillGaps(HashSet<int> still, List<Vector3> rows, System.Func<int, int> shotOf, int maxGap, int endFrames, float fraction)
+    {
+        if (still == null || still.Count == 0 || rows == null || maxGap <= 0)
+        {
+            return 0;
+        }
+
+        var byFrame = new Dictionary<int, Vector3>(rows.Count);
+        for (int i = 0; i < rows.Count; i++)
+        {
+            byFrame[(int)rows[i].x] = rows[i];
+        }
+
+        var sorted = new List<int>(still);
+        sorted.Sort();
+        var runs = new List<Vector2Int>();
+        int start = sorted[0];
+        for (int i = 1; i <= sorted.Count; i++)
+        {
+            if (i < sorted.Count && sorted[i] - sorted[i - 1] <= 1)
+            {
+                continue;
+            }
+
+            runs.Add(new Vector2Int(start, sorted[i - 1]));
+            if (i < sorted.Count)
+            {
+                start = sorted[i];
+            }
+        }
+
+        int added = 0;
+        endFrames = Mathf.Max(1, endFrames);
+        var bottoms = new List<float>(2 * endFrames);
+        var heights = new List<float>(2 * endFrames);
+        var ends = new List<float>(endFrames);
+        for (int r = 0; r + 1 < runs.Count; r++)
+        {
+            int last = runs[r].y;
+            int next = runs[r + 1].x;
+            int gap = next - last - 1;
+            if (gap <= 0 || gap > maxGap || (shotOf != null && shotOf(last) != shotOf(next)))
+            {
+                continue;
+            }
+
+            int present = 0;
+            for (int f = last + 1; f < next; f++)
+            {
+                if (byFrame.ContainsKey(f))
+                {
+                    present++;
+                }
+            }
+
+            if (present * 3 < gap * 2)
+            {
+                continue;
+            }
+
+            heights.Clear();
+            float before = MedianOfEndRows(byFrame, last - endFrames + 1, last, ends, heights);
+            float after = MedianOfEndRows(byFrame, next, next + endFrames - 1, ends, heights);
+            if (float.IsNaN(before) || float.IsNaN(after) || heights.Count == 0)
+            {
+                continue;
+            }
+
+            heights.Sort();
+            if (Mathf.Abs(before - after) > fraction * heights[heights.Count / 2])
+            {
+                continue;
+            }
+
+            for (int f = last + 1; f < next; f++)
+            {
+                if (still.Add(f))
+                {
+                    added++;
+                }
+            }
+        }
+
+        return added;
+    }
+
+    // BridgeVideoDepthFollowStillGaps の端の足元の行の中央値（rows に無いフレームは飛ばす。無ければ NaN）。箱の高さは heights へ足す。
+    private static float MedianOfEndRows(Dictionary<int, Vector3> byFrame, int from, int to, List<float> scratch, List<float> heights)
+    {
+        scratch.Clear();
+        for (int f = from; f <= to; f++)
+        {
+            if (byFrame.TryGetValue(f, out Vector3 s))
+            {
+                scratch.Add(s.y);
+                heights.Add(s.z);
+            }
+        }
+
+        if (scratch.Count == 0)
+        {
+            return float.NaN;
+        }
+
+        scratch.Sort();
+        return scratch[scratch.Count / 2];
     }
 
     // 記録用: その場のフレームの続き（"a-b,c-d"）。

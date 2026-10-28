@@ -128,6 +128,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         public bool measureAtEdge;        // 測ったフレームで箱が画面の端に掛かっていた
         public bool measureStill;         // 測ったフレームで足元が動いていない（placementFollowVideoDepthHoldWhileFeetStill、VideoDepthFollowStill.partial.cs）
         public bool measureSlow;          // 大きさをゆっくり変える形で測った（placementFollowVideoDepthSizeMaxRatePerSecond > 0、VideoDepthFollowStill.partial.cs）
+        public bool measureFeetSize;      // 測りの目標を足元の位置から作った（placementFollowVideoDepthSizeFromFeet、VideoDepthFollowFeet.partial.cs）
+        public float feetSizeC = float.NaN;   // 足元の位置から作る大きさのモデルの定数 c̄（最初の測りの前は NaN）
+        public List<float> feetSizeSamples;   // c̄ の見積もりに入れたフレームの c（昇順）
+        public int feetSizeUpdateFrame = -1;  // c̄ を最後に進めた測りの動画フレーム
+        public int stopSegment = int.MinValue; // 止まった所で形を合わせる形（placementFollowVideoDepthSizeMatchesBox）の今の区切り（動いている間は −1）
+        public int stopEntryFrame = -1;        // その区切りに入った測りの動画フレーム
+        public float stopFactor = float.NaN;   // 形の高さが区切りの箱の高さになる f（測る前は NaN）
         public bool measureCeiling;       // 測ったフレームで ⑧ が上限で止まっていた（小さくする測りだけ控える）
         public float measureZv;           // 記録用
         public float measureMatchZ;       // 記録用（測った tick の配置の合わせる点の深さ）
@@ -316,6 +323,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // 動作の途中の Model（結び直しの tick）: 新しいインスタンスにも同じ f を掛ける。新しいロックは ApplyReplaceableModelTransform が f で割り戻した深さで作る。
             st.instanceId = instanceId;
             st.hasMeasure = false;
+            // 足元の位置から作る大きさのモデルの定数はモデルごと（VideoDepthFollowFeet.partial.cs）: 次の測りで新しいモデルから始め直す。
+            st.feetSizeC = float.NaN;
+            st.feetSizeSamples = null;
+            st.feetSizeUpdateFrame = -1;
+            st.stopSegment = int.MinValue;
+            st.stopEntryFrame = -1;
+            st.stopFactor = float.NaN;
             if (logPlacementFollowVideoDepth)
             {
                 Debug.Log($"[VFOLLOW-CARRY] track={target.trackId} f={frameNow} fv={st.f:F4} model={instance.name} reason=rebind");
@@ -364,9 +378,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         st.lastPlacedFrame = frameNow;
-        if (st.f != 1f)
+        // placementFollowVideoDepthFromFeet（2026-10-27、10/28 から既定 ON、VideoDepthFollowFeet.partial.cs）: 最初に置く奥行きも足元から決めた z01 に置き直す
+        // （bundle の深さとの比を掛けるので、ほかの倍率はそのまま）。bundle の目印の深さのまま置くと、⑧ が合わせる先へ寄せる比の平滑の遅れの分だけ、
+        // 流れる深さが置いた奥行きに漏れる（犬の 26〜27 秒: 置く前の深さ 1.50 → 2.15 m、合わせる先 0.852 m のまま、置いた奥行き 0.83 → 0.99 m）。
+        // 箱に合わせた大きさの目標（⑧ の箱の比 × 置く前の深さ）は置く前の深さに依らないので変わらない。
+        float feetRebase = 1f;
+        if (TryGetVideoDepthFollowFeetZ01(target, out float feetZ01))
         {
-            target.anchorZ *= st.f;
+            float bundleDepth = DecodeAnchorDepthMetersFromBundle(target.anchorZ01);
+            float feetDepth = DecodeAnchorDepthMetersFromBundle(feetZ01);
+            if (bundleDepth > 0.0001f && feetDepth > 0.0001f)
+            {
+                feetRebase = feetDepth / bundleDepth;
+            }
+        }
+
+        if (st.f != 1f || feetRebase != 1f)
+        {
+            target.anchorZ *= st.f * feetRebase;
             anchorWorld = AnchorUvZToWorldPinhole(screen, uEye, vEye, target.anchorZ);
         }
     }
@@ -395,7 +424,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         // 1 tick でまとめて進めると 3.7% 跳んだ（2026-10-27 の撮影 sizejump/runs/cat_slowchk、21.5 秒）。溜まった分は次のフレームから上限の速さで追う。
         if (st.measureSlow && !snapped)
         {
-            next = LimitVideoDepthFollowFactorRate(st.f, next, placementFollowVideoDepthSizeMaxRatePerSecond, Mathf.Min(advanced, 1), fps);
+            // 足元の位置から作った目標（VideoDepthFollowFeet.partial.cs）は近づく・離れる速さで変わるので、上限は安全のための値にする。
+            float rate = st.measureFeetSize ? placementFollowVideoDepthFeetSizeMaxRatePerSecond : placementFollowVideoDepthSizeMaxRatePerSecond;
+            next = LimitVideoDepthFollowFactorRate(st.f, next, rate, Mathf.Min(advanced, 1), fps);
         }
         if (first)
         {
@@ -522,6 +553,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         bool atEdge = false;
         bool still = false;
         bool slow = IsVideoDepthFollowSlowSizeTrack(target);
+        bool feetSize = false;
+        VideoDepthFollowFeetSizeTick feetTick = default;
+        float boxRawForLog = -1f;
         Vector3 eye = Vector3.zero;
         Quaternion camRotation = Quaternion.identity;
         StereoDepthMatchPoint used = stereoDepthMatchPoint;
@@ -574,9 +608,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // f の目標は「⑧ が箱の比で置いていたら」の合わせる点を、合わせる先（その場では止めた奥行き、ほかは Zv）へ置く倍率（箱に合わせた大きさ）。
             float aimDepth = zv;
             float matchForRaw = match;
+            bool boxRawOk = false;
             if (slow && TryGetVideoDepthFollowBoxDepthShiftThisTick(target.trackId, out float boxShift))
             {
                 matchForRaw = float.IsNaN(boxShift) ? -1f : match + boxShift;
+                boxRawOk = !float.IsNaN(boxShift);
                 if (videoDepthFollowStillHeldDepthByTrack.TryGetValue(target.trackId, out float heldAim))
                 {
                     aimDepth = heldAim;
@@ -584,6 +620,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             }
 
             raw = matchForRaw > 0f ? fApplied * aimDepth / Mathf.Max(0.001f, matchForRaw) : -1f;
+            // 3D の大きさを足元の位置から決める（placementFollowVideoDepthSizeFromFeet、10/28 から既定 ON、VideoDepthFollowFeet.partial.cs）: 箱に合わせた目標から
+            // モデルの定数だけを取り出し、目標をその床の位置での箱の高さから作り直す（座る・頭を上げる・前を低くするで目標が動かない）。
+            if (boxRawOk && raw > 0f && TryResolveVideoDepthFollowFeetSizeRaw(target, st, frame, aimDepth, raw, instance, screen, !measuredThisFrame,
+                    out float feetRaw, out feetTick))
+            {
+                boxRawForLog = raw;
+                raw = feetRaw;
+                feetSize = true;
+            }
+
             if (matchForRaw <= 0f)
             {
                 hold = "noBox";
@@ -646,6 +692,11 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             // 大きさをゆっくり変える形では、その場でも大きさを止めない（上限の速さで追う。奥行きは ⑧ が止めた奥行きに置く）。
             st.measureStill = still && !slow;
             st.measureSlow = slow;
+            st.measureFeetSize = feetSize;
+            if (feetSize)
+            {
+                CommitVideoDepthFollowFeetSize(st, feetTick, frame);
+            }
             st.measureCeiling = ceiling8;
             st.measureZv = zv;
             st.measureMatchZ = match;
@@ -687,7 +738,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                   $"e8={(refined8 ? 1 : 0)} cl8={(clamped8 ? 1 : 0)} fl8={(floored8 ? 1 : 0)} d8Mm={(refined8 ? (move8 * 1000f).ToString("+0.0;-0.0") : "na")} " +
                   $"edge={(atEdge ? 1 : 0)} still={(still ? 1 : 0)} slow={(slow ? 1 : 0)} rel={ResolveVideoDepthFollowReleaseAgeForLog(target)} edgeMode={placementFollowVideoDepthAtEdge} " +
                   $"scale={instance.transform.localScale.x:F5} lock={locked.x:F5} " +
-                  $"engaged={(st != null && st.engaged ? 1 : 0)} holdTicks={(st != null ? st.holdTicks : 0)}");
+                  $"engaged={(st != null && st.engaged ? 1 : 0)} holdTicks={(st != null ? st.holdTicks : 0)}" +
+                  (TryGetVideoDepthFollowFeetZ01(target, out float feetZ01Log) ? $" z01Feet={feetZ01Log:F4}" : "") +
+                  (feetSize ? $" feetSize=1 boxRaw={boxRawForLog:F4} cNow={feetTick.cNow:F6} cBar={feetTick.cBar:F6} boxHExp={feetTick.boxH:F1} " +
+                              $"boxH={target.bboxH} elig={(feetTick.eligible ? 1 : 0)} stop={(feetTick.stop ? 1 : 0)} seg={feetTick.segment}" : ""));
     }
     // 合わせる先の奥行きが使えるか。画面の面なら映像の契約は要らない（契約の名前は記録に出すだけ）。
     private bool IsPlacementFollowDepthAvailable(out string contract)
@@ -697,6 +751,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
     // 合わせる先の奥行き（m、目から）。画面の面は screenDistanceMeters（ピンホールの原点から画面までの距離、⑧ の上限と同じ D）。
+    // placementFollowVideoDepthFromFeet（2026-10-27、10/28 から既定 ON、VideoDepthFollowFeet.partial.cs）: 動物は z01 の代わりに足元の行から決めた z01 を使う
+    // （その場の奥行きの止め ResolveVideoDepthFollowStillTargetDepth もこの値を控える）。目印の深さそのもの（anchorZ01・anchorZ）は変えない。
     private bool TryResolvePlacementFollowTargetDepth(MetaObj target, bool isAnimal, out float depth)
     {
         if (placementFollowVideoDepthTarget == VideoDepthFollowTarget.ScreenPlane)
@@ -705,7 +761,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return true;
         }
 
-        return TryResolveVideoDepthMeters(target.anchorZ01, isAnimal, out depth, out _, out _, out _);
+        float z01 = TryGetVideoDepthFollowFeetZ01(target, out float feetZ01) ? feetZ01 : target.anchorZ01;
+        return TryResolveVideoDepthMeters(z01, isAnimal, out depth, out _, out _, out _);
     }
 
     // Hold（placementFollowVideoDepthAtEdge）: ⑧（RefineDepthFromProjectedBones）が箱の比の前に呼ぶ。このロックで f を測り始めた track の箱が画面の端に

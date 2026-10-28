@@ -155,6 +155,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 PrecomputePartialAppearanceOnLoad();
                 // V のその場の表（placementFollowVideoDepthHoldWhileFeetStill、既定 OFF、2026-10-27、VideoDepthFollowStill.partial.cs）。
                 PrecomputeVideoDepthFollowStillOnLoad();
+                // V の合わせる先の奥行きを足元から決める表（placementFollowVideoDepthFromFeet、2026-10-27、10/28 から既定 ON、VideoDepthFollowFeet.partial.cs）。
+                PrecomputeVideoDepthFollowFeetOnLoad();
                 // C4-T / B1 の先読みの表をここで作る（どちらかのフラグが ON のときだけ）。遅延で作ると再生中の最初のフレームで 265〜320 ms 止まる。
                 // 止まりは読み込み中へ移るだけで、消えてはいない（実機の時間は [BUNDLETIME] meta.bin で測る）。
                 PrecomputeAnimalScaleTrendTableOnLoad();

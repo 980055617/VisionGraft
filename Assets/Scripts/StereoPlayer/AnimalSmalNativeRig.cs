@@ -260,6 +260,18 @@ public sealed partial class AnimalPoseApplier
         return Mathf.Atan2(-s.z, s.x) * Mathf.Rad2Deg;
     }
 
+    // 伏せを作り直した形（2026-10-28 夜、StreamingStereoVideoPlayer.AnimalLying.partial.cs）が区間の向きから関節の回転を解くための、
+    // SMAL の基準の骨格（betas = 0）の区間（joint → child）と親の関節。
+    internal static Vector3 SmalNativeRestSegment(int joint, int child)
+    {
+        return SmalNativeRestJoints[child] - SmalNativeRestJoints[joint];
+    }
+
+    internal static int SmalJointParent(int joint)
+    {
+        return SmalJointParentArray[joint];
+    }
+
     // 関節 joint の区間が脚なら、その脚の横の寄せの倍率と横の軸の元の関節（前脚 = 胸の 6、後脚 = 根の 0）。脚でなければ false。
     private static bool TryGetSmalNativeLimbLateral(SmalNativeRig rig, int joint, out float scale, out int axisJoint)
     {
@@ -350,9 +362,13 @@ public sealed partial class AnimalPoseApplier
     }
 
     // TryApplyAnimalSmalFk から（worldFk0 と root の書き込みの後）。平滑・既定の姿勢への混ぜ・尾の縮めは主ループと同じ。
+    // neckKeep: 体を起こしたとき（AnimalSmalPose.rootUprightWeight）に首（関節 15）の積んだ回転へ左から掛ける回転（起こす前の world の向きを保つ）。
     private void ApplySmalNativeRigFk(AnimalRigCache cache, SmalNativeRig rig, AnimalSmalPose pose, AnimalSmalRetargetState state,
-        Quaternion worldFk0, Quaternion kMap, float bodySmoothAlpha, float defaultPoseWeight, Quaternion[] tw, Quaternion[] smalAccum)
+        Quaternion worldFk0, Quaternion kMap, float bodySmoothAlpha, float defaultPoseWeight, Quaternion[] tw, Quaternion[] smalAccum,
+        Quaternion neckKeep)
     {
+        bool keepNeck = Quaternion.Angle(Quaternion.identity, neckKeep) > 1e-4f;
+        float tailOverrideWeight = pose.tailOverrideLocal != null && pose.tailOverrideLocal.Length >= 7 ? Mathf.Clamp01(pose.tailOverrideWeight) : 0f;
         Vector3 tailSmoothOmega = Vector3.zero;
         bool useSmoothTail = smalNativeSmoothTail && pose.bodyPose != null && pose.bodyPose.Length >= 31;
         if (useSmoothTail)
@@ -394,16 +410,28 @@ public sealed partial class AnimalPoseApplier
                 rawLocal = Quaternion.Slerp(Quaternion.identity, rawLocal, TailBodyPoseScale);
             }
 
+            // 伏せを作り直した形の尾（2026-10-28 夜）: ならしの後の尾から決めた尾へ。重みが 0 へ戻ると今の尾に続く。
+            if (tailOverrideWeight > 0f && joint >= 25 && joint <= 31 && IsFiniteQ(pose.tailOverrideLocal[joint - 25]))
+            {
+                rawLocal = Quaternion.Slerp(rawLocal, pose.tailOverrideLocal[joint - 25], tailOverrideWeight);
+            }
+
             if (defaultPoseWeight > 0f)
             {
                 rawLocal = Quaternion.Slerp(rawLocal, Quaternion.identity, defaultPoseWeight);
             }
 
-            Quaternion smalLocal = state.smoothingInitialized
+            bool skipSmooth = (pose.skipSmoothingMask & (1UL << joint)) != 0;
+            Quaternion smalLocal = state.smoothingInitialized && !skipSmooth
                 ? Quaternion.Slerp(state.smoothedLocal[joint], rawLocal, bodySmoothAlpha)
                 : rawLocal;
             state.smoothedLocal[joint] = smalLocal;
             smalAccum[joint] = smalAccum[parentJoint] * smalLocal;
+            if (keepNeck && joint == 15)
+            {
+                // 体を起こしても首から先（頭・口・耳）は起こす前の world の向き（TryApplyAnimalSmalFk の smalNeckKeep）
+                smalAccum[joint] = neckKeep * smalAccum[joint];
+            }
 
             Transform bone = rig.bones[joint];
             Quaternion accum = smalAccum[joint];

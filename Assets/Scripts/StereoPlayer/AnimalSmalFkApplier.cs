@@ -595,6 +595,22 @@ public sealed partial class AnimalPoseApplier
             : rawWorldFk0;
         state.smoothedLocal[0] = worldFk0;
 
+        // 伏せを作り直した形（2026-10-28 夜、StreamingStereoVideoPlayer.AnimalLying.partial.cs の animalLyingPoseRemade）: 体を起こす。
+        // 平滑した根（状態に残すのはこちら）を、上下まわりだけの根へ重みで寄せる。首（関節 15）は寄せる前の world の向きを保つので、頭は
+        // 動画の猫の向きのまま（データは寝ている猫を 9〜40° 横倒しに当てはめ、頭だけが傾きを打ち消している。Docs/tmp/survey_20261025/README.md）。
+        // 首を保つ回転（SMAL の座標）: W'·K⁻¹·mirX(C·A15)·K = W·K⁻¹·mirX(A15)·K から C = mirX(K·W'⁻¹·W·K⁻¹)（W = 寄せる前、W' = 寄せた後）。
+        // 平滑の後で寄せるので、データの根の 24 fps の揺れは今までどおり平滑されたまま首の戻しに入る（その tick で正確）。SMAL の骨のリグだけ。
+        Quaternion smalNeckKeep = Quaternion.identity;
+        float rootUprightWeight = Mathf.Clamp01(pose.rootUprightWeight);
+        if (rootUprightWeight > 0f && TryGetSmalNativeRig(cache, out _))
+        {
+            Quaternion uprightRoot = Quaternion.Slerp(worldFk0, ResolveDefaultPoseRoot(cache, worldFk0, instanceRootYaw), rootUprightWeight);
+            Quaternion kNeck = SmalDataAxisCorrection * state.rootYawFix * modelOrientFix;
+            Quaternion c = kNeck * Quaternion.Inverse(uprightRoot) * worldFk0 * Quaternion.Inverse(kNeck);
+            smalNeckKeep = new Quaternion(c.x, -c.y, -c.z, c.w);
+            worldFk0 = uprightRoot;
+        }
+
         state.debugFrameCount++;
         // Log first frame + every 30 frames to sample orientation across the full video.
         bool debugLog = !state.smoothingInitialized || state.debugFrameCount % 30 == 0;
@@ -645,7 +661,7 @@ public sealed partial class AnimalPoseApplier
         if (TryGetSmalNativeRig(cache, out SmalNativeRig nativeRig))
         {
             ApplySmalNativeRigFk(cache, nativeRig, pose, state, worldFk0, SmalDataAxisCorrection * state.rootYawFix * modelOrientFix,
-                bodySmoothAlpha, defaultPoseWeight, tw, smalAccum);
+                bodySmoothAlpha, defaultPoseWeight, tw, smalAccum, smalNeckKeep);
             state.smoothingInitialized = true;
             cache.smalFkWrittenFrame = Time.frameCount;
             return;
@@ -679,7 +695,8 @@ public sealed partial class AnimalPoseApplier
                 rawLocal = Quaternion.Slerp(rawLocal, Quaternion.identity, defaultPoseWeight);
             }
 
-            Quaternion smalLocal = state.smoothingInitialized
+            bool skipSmooth = (pose.skipSmoothingMask & (1UL << joint)) != 0;
+            Quaternion smalLocal = state.smoothingInitialized && !skipSmooth
                 ? Quaternion.Slerp(state.smoothedLocal[joint], rawLocal, bodySmoothAlpha)
                 : rawLocal;
             state.smoothedLocal[joint] = smalLocal;

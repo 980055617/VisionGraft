@@ -284,6 +284,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             smalPose = InterpolateSmalPose(obj.trackId, interpA, interpB, interpW, smalPose);
         }
 
+        // 10/28 夜から既定 ON（2026-10-28、AnimalLying.partial.cs、作り直した形 animalLyingPoseRemade）: 寝ている動物の脚と尾を決めた形へ寄せる（猫の動画の 0〜5 秒だけの決め打ち）。
+        // FK に渡す前の写した body_pose を変えるので、⑦ はたたんだ骨で一番下を決める。表のキャッシュの回転は書き換えない。
+        // その track の大きさの測り（shot の先頭の測り直し・V の最初の測り・足元の大きさの定数）が今のインスタンスで済むまではたたまない（animalLyingWaitsForSizeMeasure）。
+        if (hasSmalPose)
+        {
+            smalPose = ApplyAnimalLyingPoseIfAny(obj, instance, frame, smalPose);
+        }
+
         if (enableJointSmoothing)
         {
             SmoothJointsWorld(obj.trackId, pose.jointsWorld, pose.jointVis, Mathf.Clamp01(jointSmoothingAlpha));

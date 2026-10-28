@@ -415,8 +415,15 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             tau = releaseTau;
         }
         float fps = manifest != null && manifest.fps > 0.01f ? (float)manifest.fps : 30f;
+        // 縮める向きの遊び（placementFollowVideoDepthFeetSizeShrinkBand、10/28 夜から既定 0.15、VideoDepthFollowFeet.partial.cs）: 足元の位置から作った目標が少し小さいだけなら f のまま。
+        float raw = st.measureRaw;
+        if (!first && st.measureFeetSize && placementFollowVideoDepthFeetSizeShrinkBand > 0f)
+        {
+            raw = ResolveVideoDepthFollowShrinkBandGoal(st.f, raw, placementFollowVideoDepthFeetSizeShrinkBand);
+        }
+
         // その場（足元が動いていない）のフレームは、端の Hold と同じく f を動かさない（VideoDepthFollowStill.partial.cs）。
-        float next = StepVideoDepthFollowFactorMath(st.f, st.measureRaw, first, advanced, st.measureAtEdge || st.measureStill,
+        float next = StepVideoDepthFollowFactorMath(st.f, raw, first, advanced, st.measureAtEdge || st.measureStill,
             st.measureStill ? VideoDepthFollowEdgeMode.Hold : placementFollowVideoDepthAtEdge, st.fLock,
             fps, tau, placementFollowVideoDepthEdgeEaseSeconds, placementFollowVideoDepthSnapAfterFrames, out bool snapped);
         // 大きさをゆっくり変える形（VideoDepthFollowStill.partial.cs）: 平滑の後に、1 動画フレームあたりの変わり方を上限で丸める（動作で動画が止まる間は進まない）。
@@ -447,6 +454,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         return next;
+    }
+
+    // 縮める向きの遊び（純粋な計算、テスト VideoDepthFollowFeetTests）: 目標が今の f 以上なら目標のまま。小さいときは、今の f が目標の (1 + band) 倍以下なら
+    // 今の f（縮めない）、それより大きければ目標の (1 + band) 倍（帯の端まで縮める）。band ≤ 0 なら目標のまま。
+    internal static float ResolveVideoDepthFollowShrinkBandGoal(float current, float raw, float band)
+    {
+        if (!(band > 0f) || !(current > 0f) || !(raw > 0f) || raw >= current)
+        {
+            return raw;
+        }
+
+        return Mathf.Max(raw, Mathf.Min(current, raw * (1f + band)));
     }
 
     // f の 1 回の進め方（純粋な計算）。advanced = 測りの動画フレーム − 前に進めたときの測りの動画フレーム。
@@ -796,6 +815,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         targetDepth = ResolveVideoDepthFollowStillTargetDepth(obj, still, targetDepth);
+        // 縮める向きの遊び（placementFollowVideoDepthFeetSizeShrinkBand、10/28 夜から既定 0.15、VideoDepthFollowFeet.partial.cs）: f を目標より大きいまま止めている分
+        // （f ÷ 目標、1 + 帯まで）だけ合わせる先を奥へずらす。⑧ は合わせる点をここへ置くので、片目の絵は箱のまま、立体の大きさは変えずにモデルが下がる
+        // （これが無いと、同じ奥行きのまま絵の中で f ÷ 目標だけ大きくなった。2026-10-28 夕の 1 回目の撮影 sizefit/runs_fix/*_band）。
+        if (placementFollowVideoDepthFeetSizeShrinkBand > 0f && st.measureFeetSize && st.measureRaw > 0f && st.f > st.measureRaw)
+        {
+            targetDepth *= Mathf.Min(st.f / st.measureRaw, 1f + placementFollowVideoDepthFeetSizeShrinkBand);
+        }
 
         float bodyZ = (Quaternion.Inverse(camRotation) * (ResolveDepthReferenceWorld(instance) - eye)).z;
         StereoDepthMatchPoint used = stereoDepthMatchPoint;

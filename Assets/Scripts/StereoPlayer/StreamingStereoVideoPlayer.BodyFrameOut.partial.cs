@@ -58,6 +58,22 @@ public partial class StreamingStereoVideoPlayer
     // 前のとき（長く見切れ・hold が続いた後の古い姿勢。確かめ役 V_O3 の指摘）も今のまま。
     // 2026-10-27 から既定 ON（見る用の版 l の中身を既定にした）。上の既定の説明はそれまでの話。
     public bool bodyFrameOutAnimalPoseFromMeasuredFrame = true;
+    // 端に掛かって出ていくと分かった所から続きを始める（2026-10-29、新しい振る舞い。車の elseFrameOutCoastFromEdge と同じ考え）。
+    // ユーザー（10/29、Quest で見て）「女性と犬のframeout時車みたいにすぐに向かってくるようにできる？現在だと少しそこで歩くよね」。
+    // 起きていたこと（Docs/tmp/survey_20261025/README.md「10/29: 女性と犬のフレームアウト」、scratchpad validate/combined/frameout/）: 今は
+    //   「左右の端に掛かり、anchor が止まった」最初のフレームで始める。その前、箱が端（上下も）に掛かっている間は奥行きの f を止める（Hold）ので、
+    //   テレビの女性は f554〜568 の 0.6 秒、見る人との距離がほぼ変わらず（1 フレーム 0.1〜0.5 cm）左へ 0.9〜2.0 cm ずつ真横へ滑り、f569 で
+    //   見る人の方へ向く。犬は下の端に掛かった f675 から f682 まで左へ 0.5〜2.1 cm ずつ滑り、anchor が止まった f682〜684 は左の端に
+    //   掛かっていないので始まらず（f684 に右へ 3.3 cm 跳ね戻る）、f685 に始まる。
+    // しくみ: 箱が端（上・下の見切れ・左右、⑧ の奥行きの Hold と同じ IsVideoDepthFollowBoxAtEdge）に掛かっていて、meta を先読みして本当に出ていく
+    //   （ShouldStartBodyFrameOut と同じ）と分かったフレームで、今と同じ続き（速さ・体の前・見る人の横を通る曲げ）を始める。出ていく側は、
+    //   左右の端に掛かっていればその側、まだなら先読みで最後に映るフレームの左右の端、それも無ければ箱の真ん中が画面のどちら側か。始めた後は
+    //   anchor が動いていても続きの式で置き（追従へ戻さない）、視界から外れたら、track が映っている間も隠したまま。いったん消えてまた映った
+    //   （BodyFrameOutMaxGapFrames より長く空いた）ら追従へ戻す。全部の動画の始まり（validate/combined/frameout/scan_starts.py）:
+    //   テレビの女性 f569 → f543、犬の動画の犬 f685 → f675、旧実験の動物 track 0 は今は始まらない所で f1100 に始まる。ほかは変わらない。
+    // 2026-10-29 から既定 ON（見る用の版 r4 を Quest で見たユーザー「いいですねいまの」「いいと思う」「（2 周目も）うん」）。OFF なら前のまま
+    // （anchor が止まった所から）。
+    public bool bodyFrameOutStartWhenClipped = true;
 
     private const float BodyFrameOutVelocitySmoothing = 0.3f;
     private const float BodyFrameOutBlendSeconds = 0.3f;
@@ -103,6 +119,10 @@ public partial class StreamingStereoVideoPlayer
         // 続き
         public bool active;
         public bool ended;
+        // bodyFrameOutStartWhenClipped: 端に掛かっている間に始めた続き（anchor が動いていても追従へ戻さない）と、それが終わった後か
+        // （track が映っている間も隠したまま。消えてまた映ったら追従へ戻す）。
+        public bool earlyStart;
+        public bool endedEarly;
         // この出口で始めてよいか（ShouldStartBodyFrameOut の先読み、動画のフレームごとに 1 回）。
         public int exitDecisionFrame = -1;
         public bool exitAllowed;
@@ -159,6 +179,8 @@ public partial class StreamingStereoVideoPlayer
         }
 
         st.categoryId = target.categoryId;
+        // bodyFrameOutStartWhenClipped: いったん消えてまた映った（入ってきた）か。下の lastSeenFrame を書き替える前に見る。
+        bool reappeared = st.lastSeenFrame >= 0 && frame - st.lastSeenFrame > BodyFrameOutMaxGapFrames;
         if (frame != st.anchorFrame)
         {
             if (st.anchorFrame >= 0 && frame < st.anchorFrame)
@@ -166,6 +188,7 @@ public partial class StreamingStereoVideoPlayer
                 // 周回・シークで戻った。覚えていた動きと続きを捨てる。
                 EndBodyFrameOut(target.trackId, st, false, "frame went back");
                 st.ended = false;
+                st.endedEarly = false;
                 st.exitDecisionFrame = -1;
                 st.hasVelocity = false;
                 st.hasBodyForward = false;
@@ -196,7 +219,16 @@ public partial class StreamingStereoVideoPlayer
                 return false;
             }
 
-            if (!st.heldNow)
+            if (st.earlyStart && reappeared)
+            {
+                // 端に掛かっている間に始めた続きの途中で、いったん消えた track がまた映った（入ってきた）。続きを捨てて追従へ。
+                EndBodyFrameOut(target.trackId, st, false, "came back in");
+                st.ended = false;
+                st.endedEarly = false;
+                return false;
+            }
+
+            if (!st.heldNow && !st.earlyStart)
             {
                 // anchor がまた動いた（入ってきた・hold が解けた）= 本物の追従のデータ。続きを捨てて追従へ（混ぜない）。
                 EndBodyFrameOut(target.trackId, st, false, "anchor moves again");
@@ -210,9 +242,21 @@ public partial class StreamingStereoVideoPlayer
 
         if (st.ended)
         {
-            if (!st.heldNow)
+            if (st.endedEarly && !reappeared)
+            {
+                // 端に掛かっている間に始めた続きが視界の外まで進んで終わった。track はまだ映っている（出ていく途中）ので出さない。
+                if (instance != null)
+                {
+                    SceneObjectWriter.ApplyActive(instance, false);
+                }
+
+                return true;
+            }
+
+            if (!st.heldNow || st.endedEarly)
             {
                 st.ended = false;
+                st.endedEarly = false;
                 return false;
             }
 
@@ -225,6 +269,25 @@ public partial class StreamingStereoVideoPlayer
             return true;
         }
 
+        // bodyFrameOutStartWhenClipped（2026-10-29 から既定 ON）: 箱が端（上下も）に掛かっていて、本当に出ていくなら、anchor が止まる前でもここから始める。
+        if (bodyFrameOutStartWhenClipped && instance != null && st.hasVelocity && IsInteractiveMotionInactive(target.trackId) &&
+            IsVideoDepthFollowBoxAtEdge(target) && ShouldStartBodyFrameOut(target.trackId, st, frame))
+        {
+            int exitSide = clipSide != 0 ? clipSide : ResolveBodyFrameOutExitSide(target.trackId, target, frame);
+            if (exitSide != 0)
+            {
+                st.lastClipSide = exitSide;
+                if (StartBodyFrameOut(target.trackId, st, instance, frame, clipSide != 0 ? "clipped at the side edge" : "clipped at the top/bottom edge"))
+                {
+                    st.earlyStart = true;
+                    ApplyBodyFrameOutStep(target.trackId, st, instance, frame);
+                    return true;
+                }
+
+                st.lastClipSide = clipSide;
+            }
+        }
+
         if (instance != null && clipSide != 0 && st.heldNow && st.hasVelocity && IsInteractiveMotionInactive(target.trackId) &&
             ShouldStartBodyFrameOut(target.trackId, st, frame) &&
             StartBodyFrameOut(target.trackId, st, instance, frame, "anchor hold at the edge"))
@@ -234,6 +297,64 @@ public partial class StreamingStereoVideoPlayer
         }
 
         return false;
+    }
+
+    // 箱の真ん中が画面の左右どちら側か（純粋な計算、テスト BodyFrameOutStartWhenClippedTests）: 左半分なら −1、右半分なら +1、ちょうど真ん中なら 0。
+    internal static int ResolveBodyFrameOutSideFromCenter(float boxCenterX, float eyeWidth)
+    {
+        if (!(eyeWidth > 0f))
+        {
+            return 0;
+        }
+
+        float half = 0.5f * eyeWidth;
+        return boxCenterX < half ? -1 : (boxCenterX > half ? 1 : 0);
+    }
+
+    // 出ていく側（bodyFrameOutStartWhenClipped で、まだ左右の端に掛かっていないとき）: 先読みで最後に映るフレームから戻って最初に左右の端に
+    // 掛かっている側。無ければ（下や上から出ていく）今の箱の真ん中が画面のどちら側か。
+    private int ResolveBodyFrameOutExitSide(uint trackId, MetaObj current, int frame)
+    {
+        int numFrames = (int)metaHeader.numFrames;
+        int leaveWindow = Mathf.Max(1, Mathf.RoundToInt(bodyFrameOutLeaveWithinSeconds * Mathf.Max(1f, ResolveMetaFps())));
+        int lastPresent = -1;
+        for (int f = frame + 1; f < numFrames && f - frame <= leaveWindow + 1; f++)
+        {
+            if (!IsTrackInFrame(trackId, f))
+            {
+                break;
+            }
+
+            lastPresent = f;
+        }
+
+        for (int f = lastPresent; f > frame; f--)
+        {
+            if (!TryReadFrameObjects(f, bodyFrameOutScanObjects))
+            {
+                continue;
+            }
+
+            for (int i = 0; i < bodyFrameOutScanObjects.Count; i++)
+            {
+                if (bodyFrameOutScanObjects[i].trackId == trackId)
+                {
+                    int side = ResolveBodyFrameOutClipSide(bodyFrameOutScanObjects[i]);
+                    if (side != 0)
+                    {
+                        return side;
+                    }
+                }
+            }
+        }
+
+        float bx = current.bboxX;
+        if (manifest != null && ResolveAnchorToScreen(current.anchorU, out _, out _, out bool isRightEye) && isRightEye)
+        {
+            bx -= manifest.eye_w;
+        }
+
+        return manifest != null ? ResolveBodyFrameOutSideFromCenter(bx + 0.5f * current.bboxW, manifest.eye_w) : 0;
     }
 
     // ApplyMetaTarget の追従の配置の後（ObserveInteractiveMotionDisplayedRoot と同じ所）。端に掛かる前の動きを測る。
@@ -344,6 +465,7 @@ public partial class StreamingStereoVideoPlayer
             {
                 EndBodyFrameOut(trackId, st, true, "frame went back");
                 st.ended = false;
+                st.endedEarly = false;
                 continue;
             }
 
@@ -480,6 +602,9 @@ public partial class StreamingStereoVideoPlayer
 
         st.active = true;
         st.ended = false;
+        // 端に掛かっている間に始めた印は呼ぶ側（bodyFrameOutStartWhenClipped）が付ける。
+        st.earlyStart = false;
+        st.endedEarly = false;
         if (logBodyFrameOut)
         {
             Debug.Log($"[BODYFRAMEOUT] start f={frame} track={trackId} model={instance.name} reason={reason} side={st.lastClipSide} " +
@@ -643,6 +768,8 @@ public partial class StreamingStereoVideoPlayer
 
         st.active = false;
         st.ended = true;
+        st.endedEarly = st.earlyStart;
+        st.earlyStart = false;
         st.instance = null;
         st.clip = null;
         st.animator = null;

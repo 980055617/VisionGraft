@@ -89,6 +89,15 @@ public partial class StreamingStereoVideoPlayer
         public int loomFrame = -1;
         public float loomBBoxH;
         public float loomRatePerFrame;
+        // elseFrameOutCoastFromEdge（2026-10-28 夕、10/28 夜から既定 ON）: 左右の端に掛かっている間に続きを始めた（映像の track はまだ見えている）。
+        // 出ていくかの先読みは動画のフレームごとに 1 回（earlyCoastDecisionFrame）。
+        public bool earlyCoast;
+        public int earlyCoastDecisionFrame = -1;
+        public bool earlyCoastAllowed;
+        // 端に掛かっている間に始めた続きの速さの上げ方: 始めの coastRampFrames は、速さが coastRampStartRatio 倍（出る前の近づく速さ）から 1 倍
+        // （出口の手前の速さ）へまっすぐ上がる（ResolveElseCoastTravelFrames）。消えた所で始める続きは 0（今の一定の速さ）。
+        public int coastRampFrames;
+        public float coastRampStartRatio = 1f;
     }
 
     // モデルを替えたら、端の処理が覚えている scale を新しいモデルの単位へ直す（2026-10-24、既定 ON。ElseFrameOutState.scaleUnit）。
@@ -100,6 +109,19 @@ public partial class StreamingStereoVideoPlayer
     // ON にすると、見切れる直前のフレームで測ったずれを保ったまま内側の辺に付いていく（端に掛かる前と後で、モデルと box の位置関係が変わらない）。
     // 既定 OFF（OFF は今の「モデルの端を bbox の端にぴったり合わせる」）。
     public bool elseFrameOutKeepEdgeOffset = false;
+
+    // 左右の端に掛かっている間から、視聴者の横を通る続きを始める（2026-10-28 夕、新しい振る舞い。10/28 夜に既定 ON、ユーザーが r3 を Quest で見て
+    // 「今のでいい気がする．いったん現状を完成版にしたい」。frameOutPassByViewer が ON のときだけ効く）。
+    // ユーザー（10/28 夕、p 版を Quest で見て）「車について，frameout時一回左に行ってから，ユーザーに向かってくると思うけどそれも直せる？」。
+    // 起きていたこと（Docs/tmp/survey_20261025/README.md「10/28 夕: p 版を見た感想 4 点」、真上から sizefit/look/car2_exit1_top.jpg）: 箱が左右の端に
+    //   掛かっている間（car2 の 1 台目 8.3〜9.1 秒）は大きさを止め、映像の内側の端にモデルの同じ側の端を、今の奥行きのまま横へずらして合わせるので、
+    //   同じ奥行きで真横へ滑る。視聴者の横を通る向き（FrameOutPassBy.partial.cs）は映像から消えた所で始まるので、いったん横へ行ってから向かってくる。
+    // しくみ: 端に掛かっている間に、(1) 内側の端が外へ動く速さが測れていて（消えた所で続きを始めるときと同じ判定）、(2) meta を先読みして本当に出ていく
+    //   （bodyFrameOutLeaveWithinSeconds のうちに映らなくなり、消えてから bodyFrameOutReturnSkipSeconds のうちに戻らない。人・動物の続きと同じ）と
+    //   分かったフレームで、消えた所と同じ続き（速さは内側の端の px の速さを今の奥行きで world に直した今の式、向きは視聴者の横を通るよう曲げる）を始める。
+    //   その後は端に合わせて横へずらす処理と速さの測り直しをせず、続きの式で置く。映像から消えたらそのまま同じ続き。上下の端（car の 5 台・風船・犬の
+    //   動画のボール）は変えない。
+    public bool elseFrameOutCoastFromEdge = true;
 
     private const float ElseFrameOutVelocitySmoothing = 0.3f;
     private const int ElseFrameOutMaxGapFrames = 3;
@@ -210,6 +232,17 @@ public partial class StreamingStereoVideoPlayer
                 st.hasEdgeOffset = false;
                 st.hasLoom = false;
                 st.loomFrame = -1;
+                st.earlyCoast = false;
+                st.earlyCoastDecisionFrame = -1;
+                st.coastRampFrames = 0;
+                st.coastRampStartRatio = 1f;
+            }
+
+            // elseFrameOutCoastFromEdge: 端に掛かっている間に始めた続きは、映像の track が見えていても続きの式で置く（横へずらす処理・速さの測り直しはしない）。
+            if (st.earlyCoast && st.coasting)
+            {
+                ApplyElseEarlyCoastStep(obj, st, instance, camOrigin, camRotation, frame);
+                continue;
             }
 
             // frameOutPassByViewer（2026-10-26、FrameOutPassBy.partial.cs）: 端に掛かる前（どの端にも触れていないフレーム）の box の高さの伸び。
@@ -444,6 +477,14 @@ public partial class StreamingStereoVideoPlayer
                     $"bboxT={obj.bboxY} bboxH={obj.bboxH} u={obj.anchorU} v={obj.anchorV} " +
                     $"edgeRate={st.innerEdgeRatePx:F1}px/f scale={root.localScale.x:F4}");
             }
+
+            // elseFrameOutCoastFromEdge（10/28 夜から既定 ON）: 左右の端に掛かっていて、内側の端が外へ動いていて（消えた所で続きを始めるときと同じ判定）、
+            // 本当に出ていくなら、このフレームの位置から続きを始める。
+            if (elseFrameOutCoastFromEdge && frameOutPassByViewer && clipSide != 0 && st.hasUnclipped && !st.coasting && !st.innerEdgeVertical &&
+                st.hasInnerEdgeRate && st.innerEdgeRatePx * clipSide > 0.5f && ShouldStartElseCoastFromEdge(obj.trackId, st, frame))
+            {
+                StartElseCoastFromEdge(obj.trackId, st, instance, screen, camOrigin, camRotation, fx, frame);
+            }
         }
 
         // 2. 消えた track を進ませる。
@@ -505,6 +546,8 @@ public partial class StreamingStereoVideoPlayer
                 st.coasting = true;
                 st.coastStartFrame = st.lastSeenFrame;
                 st.coastStartPosition = st.lastPosition;
+                st.coastRampFrames = 0;
+                st.coastRampStartRatio = 1f;
                 // 慣性の速さ: 内側の端の px 速度を、最後の深度で world に直し、画面の横（縦）方向へ。
                 // 縦は eye の v が下向き正なので、正の速度は画面の下方向。
                 Vector3 camForward = camRotation * Vector3.forward;
@@ -529,7 +572,7 @@ public partial class StreamingStereoVideoPlayer
             }
 
             int elapsed = frame - st.coastStartFrame;
-            Vector3 delta = st.velocityPerFrame * elapsed;
+            Vector3 delta = st.velocityPerFrame * ResolveElseCoastTravelFrames(elapsed, st.coastRampFrames, st.coastRampStartRatio);
             if (elapsed > ElseFrameOutMaxCoastFrames || delta.magnitude > st.coastMaxDistance)
             {
                 SceneObjectWriter.ApplyActive(instance, false);
@@ -575,6 +618,213 @@ public partial class StreamingStereoVideoPlayer
         }
     }
 
+
+    // elseFrameOutCoastFromEdge の始まり。消えた所で始めるとき（上の 2.）と同じ式で、始まりの位置・向き・大きさ・長さはこのフレームの配置
+    // （呼ぶ前に last* をこのフレームの値にしてある）。向きは視聴者の横を通るよう曲げる。
+    // 速さ: 消えた所で始めるときの速さ（内側の端の px の速さを今の奥行きで world の横へ直したもの）を、出口の手前の内側の端から作る（meta を先読み、
+    // TryResolveElseExitInnerEdgeRate）。端に掛かった直後の内側の端はまだ遅い（car2 の 1 台目 f181 で 0.6 px/f、出口の手前は約 55 px/f）ので、そのまま使うと
+    // 0.010 m/s で這った（10/28 夕の 1 回目 sizefit/runs_fix/car2_edge）。始めから出口の速さで走らせると近づき方から急に走り出すので、出口までの
+    // フレームのあいだは、出る前の近づく速さ（同じ絵になる大きさの変わらない物の動き、横を通る向きを決めるのと同じ）から出口の速さへまっすぐ上げる。
+    private void StartElseCoastFromEdge(uint trackId, ElseFrameOutState st, GameObject instance, Transform screen, Vector3 camOrigin,
+        Quaternion camRotation, float fx, int frame)
+    {
+        st.coasting = true;
+        st.earlyCoast = true;
+        st.coastStartFrame = frame;
+        st.coastStartPosition = st.lastPosition;
+        float edgeRate = st.innerEdgeRatePx;
+        int rampFrames = 0;
+        if (TryResolveElseExitInnerEdgeRate(trackId, st.clipSide, frame, out float exitRate, out int lastPresent))
+        {
+            edgeRate = exitRate;
+            rampFrames = Mathf.Max(0, lastPresent - frame);
+        }
+
+        Vector3 camForward = camRotation * Vector3.forward;
+        float zLast = Mathf.Max(0.05f, Vector3.Dot(st.lastPosition - camOrigin, camForward));
+        st.velocityPerFrame = (camRotation * Vector3.right) * ((edgeRate / manifest.eye_w) * 2f * zLast / fx);
+        st.coastScaleRate = 0f;
+        ApplyFrameOutPassByToElseCoast(trackId, st, instance, screen, camOrigin, camRotation, frame);
+        st.coastMaxDistance = Mathf.Max(0.01f, st.lastLength) * Mathf.Max(0.1f, elseFrameOutCoastLengths);
+        float exitSpeed = st.velocityPerFrame.magnitude;
+        float approachSpeed = 0f;
+        if (st.hasMotion && st.motionScale > 1e-6f)
+        {
+            Vector3 up = screen != null && screen.up.sqrMagnitude > 0.000001f ? screen.up.normalized : Vector3.up;
+            Vector3 equivalent = st.velocity3D - (st.motionPosition - camOrigin) * (st.scaleRatePerFrame / st.motionScale);
+            approachSpeed = Vector3.ProjectOnPlane(equivalent, up).magnitude;
+        }
+
+        st.coastRampFrames = rampFrames;
+        st.coastRampStartRatio = exitSpeed > 1e-6f ? Mathf.Clamp(approachSpeed / exitSpeed, 0f, 1f) : 1f;
+        if (logElseChainPlacement || logFrameOutPassBy)
+        {
+            float fpsLog = Mathf.Max(1f, ResolveMetaFps());
+            Debug.Log($"[FRAMEOUT] f={frame} track={trackId} early coast start side={st.clipSide} edgeRateNow={st.innerEdgeRatePx:F1}px/f " +
+                      $"edgeRateExit={edgeRate:F1}px/f lastPresent=f{lastPresent} speed {approachSpeed * fpsLog:F3}->{exitSpeed * fpsLog:F3}m/s over {rampFrames}f " +
+                      $"v=({st.velocityPerFrame.x * 1000f:F1},{st.velocityPerFrame.y * 1000f:F1},{st.velocityPerFrame.z * 1000f:F1})mm/f " +
+                      $"passBy={(st.coastPassBy ? 1 : 0)} model={instance.name}");
+        }
+    }
+
+    // 続きの進んだ距離（1 動画フレームの速さ velocityPerFrame の何倍か、純粋な計算、テスト ElseCoastFromEdgeTests）。rampFrames ≤ 0 か startRatio ≥ 1 なら
+    // elapsed（今の一定の速さ）。それ以外は、始めの rampFrames のあいだ速さが startRatio 倍から 1 倍へまっすぐ上がり、その後は 1 倍。
+    internal static float ResolveElseCoastTravelFrames(int elapsed, int rampFrames, float startRatio)
+    {
+        if (elapsed <= 0)
+        {
+            return 0f;
+        }
+
+        if (rampFrames <= 0 || startRatio >= 1f)
+        {
+            return elapsed;
+        }
+
+        float r = Mathf.Clamp01(startRatio);
+        float t = Mathf.Min(elapsed, rampFrames);
+        return r * t + (1f - r) * t * t / (2f * rampFrames) + Mathf.Max(0, elapsed - rampFrames);
+    }
+
+    // 出口の手前の内側の端の速さ（px / 動画フレーム、meta を先読み）: frame の後で最後に映るフレーム L と、その 3 フレーム前の内側の端の差 ÷ 3
+    // （消えた所で始めるときの、端に掛かっている間の EMA の最後とほぼ同じ）。外へ動いていない・読めなければ false。
+    private bool TryResolveElseExitInnerEdgeRate(uint trackId, int clipSide, int frame, out float ratePx, out int lastPresent)
+    {
+        ratePx = 0f;
+        lastPresent = frame;
+        int numFrames = (int)metaHeader.numFrames;
+        for (int f = frame + 1; f < numFrames; f++)
+        {
+            if (!TryReadElseInnerEdge(trackId, clipSide, f, out _))
+            {
+                break;
+            }
+
+            lastPresent = f;
+        }
+
+        if (lastPresent - 3 < 0 ||
+            !TryReadElseInnerEdge(trackId, clipSide, lastPresent, out float edgeLast) ||
+            !TryReadElseInnerEdge(trackId, clipSide, lastPresent - 3, out float edgePrev))
+        {
+            return false;
+        }
+
+        ratePx = (edgeLast - edgePrev) / 3f;
+        return ratePx * clipSide > 0.5f;
+    }
+
+    private readonly List<MetaObj> elseFrameOutScanObjects = new List<MetaObj>(16);
+
+    // そのフレームの track の内側の端（左へ出るなら bbox の右端、右へ出るなら左端、px）。映っていなければ false。
+    private bool TryReadElseInnerEdge(uint trackId, int clipSide, int frame, out float edge)
+    {
+        edge = 0f;
+        if (!TryReadFrameObjects(frame, elseFrameOutScanObjects))
+        {
+            return false;
+        }
+
+        for (int i = 0; i < elseFrameOutScanObjects.Count; i++)
+        {
+            MetaObj o = elseFrameOutScanObjects[i];
+            if (o.trackId == trackId)
+            {
+                edge = clipSide > 0 ? o.bboxX : (o.bboxX + o.bboxW);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // 端に掛かっている間に始めた続きの 1 tick（映像の track はまだ見えている）。消えた後の続き（上の 2.）と同じ式で置き、視界から外れた・安全弁を
+    // 越えたら隠す（このフレームの配置で表示に戻されても、ここで隠し直す）。映像から消えたら 2. がそのまま同じ続きを進める。
+    private void ApplyElseEarlyCoastStep(MetaObj obj, ElseFrameOutState st, GameObject instance, Vector3 camOrigin, Quaternion camRotation, int frame)
+    {
+        int elapsed = frame - st.coastStartFrame;
+        Vector3 delta = st.velocityPerFrame * ResolveElseCoastTravelFrames(elapsed, st.coastRampFrames, st.coastRampStartRatio);
+        elseFrameOutFrozenYawTracks.Add(obj.trackId);
+        Vector3 coastScale = st.lastLocalScale + Vector3.one * (st.coastScaleRate * elapsed);
+        TrackPlacementWriter.Apply(
+            instance.transform,
+            new TrackPlacementCommand(st.coastStartPosition + delta, ResolveElseCoastRotation(st, elapsed), coastScale));
+        LogFrameOutPassByStep("else", obj.trackId, frame, elapsed, instance, camOrigin, camRotation);
+        if (frame != st.lastSeenFrame)
+        {
+            st.lastSeenFrame = frame;
+            st.lastObj = obj;
+        }
+
+        bool outOfView = elapsed >= 2 && !IsCoastingInstanceInView(instance, camOrigin, camRotation, st.coastPassBy && frameOutPassByKeepsUntilOutOfView);
+        if (outOfView || elapsed > ElseFrameOutMaxCoastFrames || delta.magnitude > st.coastMaxDistance)
+        {
+            SceneObjectWriter.ApplyActive(instance, false);
+        }
+
+        if (logElseChainPlacement)
+        {
+            Debug.Log($"[FRAMEOUT] f={frame} track={obj.trackId} early coasting elapsed={elapsed} dist={delta.magnitude * 1000f:F0}mm/" +
+                      $"{st.coastMaxDistance * 1000f:F0}mm bboxL={obj.bboxX} bboxW={obj.bboxW} out={(outOfView ? 1 : 0)}");
+        }
+    }
+
+    // 端に掛かった物が本当に出ていくか（meta を先読み、動画のフレームごとに 1 回。人・動物の続き ShouldStartBodyFrameOut と同じ秒数）。
+    private bool ShouldStartElseCoastFromEdge(uint trackId, ElseFrameOutState st, int frame)
+    {
+        if (st.earlyCoastDecisionFrame == frame)
+        {
+            return st.earlyCoastAllowed;
+        }
+
+        st.earlyCoastDecisionFrame = frame;
+        float fps = Mathf.Max(1f, ResolveMetaFps());
+        int leaveWindow = Mathf.Max(1, Mathf.RoundToInt(bodyFrameOutLeaveWithinSeconds * fps));
+        int returnWindow = Mathf.RoundToInt(bodyFrameOutReturnSkipSeconds * fps);
+        st.earlyCoastAllowed = ResolveFrameOutLeavesSoon(f => IsTrackInFrame(trackId, f), frame, (int)metaHeader.numFrames, leaveWindow, returnWindow);
+        return st.earlyCoastAllowed;
+    }
+
+    // 出口の先読み（純粋な計算、テスト FrameOutPassByTests）: frame の後 leaveWindow フレームのうちに映らなくなり、消えてから returnWindow フレームの
+    // うちに戻らないなら true。動画の終わりで打ち切る（終わりまで映り続けるなら false、消えた後に終わりまで戻らなければ true）。
+    internal static bool ResolveFrameOutLeavesSoon(System.Func<int, bool> present, int frame, int numFrames, int leaveWindow, int returnWindow)
+    {
+        if (present == null || numFrames <= 0)
+        {
+            return false;
+        }
+
+        int exitFrame = -1;
+        for (int f = frame + 1; f < numFrames; f++)
+        {
+            bool isPresent = present(f);
+            if (exitFrame < 0)
+            {
+                if (!isPresent)
+                {
+                    exitFrame = f;
+                }
+                else if (f - frame > leaveWindow)
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (isPresent)
+            {
+                return false;
+            }
+
+            if (f - exitFrame > returnWindow)
+            {
+                break;
+            }
+        }
+
+        return exitFrame >= 0;
+    }
 
     // Renderer の world AABB の 8 頂点を eye 画素へ投影し、U と V の範囲を返す（[HPOS] と同じ計算）。
     // frame out の基準: anchor の u が属する板と、その pinhole 基底・焦点距離。

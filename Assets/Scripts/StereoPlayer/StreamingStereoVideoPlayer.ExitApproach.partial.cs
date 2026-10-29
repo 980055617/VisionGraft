@@ -23,8 +23,9 @@ using UnityEngine;
 // どちらも OFF なら今と全く同じ。
 public partial class StreamingStereoVideoPlayer
 {
-    public bool placementFollowVideoDepthEdgeFollowsSmplDepth = false;
-    public bool bodyFrameOutLeaveViewWithTrack = false;
+    // 2026-10-29 から 2 つとも既定 ON（見る用の版 r5 を Quest で見たユーザー「みたよ，いいと思う」）。上の既定の説明はそれまでの話。
+    public bool placementFollowVideoDepthEdgeFollowsSmplDepth = true;
+    public bool bodyFrameOutLeaveViewWithTrack = true;
 
     private sealed class VideoDepthEdgeApproachRef
     {

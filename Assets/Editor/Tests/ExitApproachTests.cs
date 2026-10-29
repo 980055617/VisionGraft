@@ -1,18 +1,18 @@
 using NUnit.Framework;
 using UnityEngine;
 
-// 出口で近づく人・動物の直し（placementFollowVideoDepthEdgeFollowsSmplDepth・bodyFrameOutLeaveViewWithTrack、2026-10-29、既定 OFF、ExitApproach.partial.cs）。
+// 出口で近づく人・動物の直し（placementFollowVideoDepthEdgeFollowsSmplDepth・bodyFrameOutLeaveViewWithTrack、2026-10-29、同じ日に既定 ON、ExitApproach.partial.cs）。
 public class ExitApproachTests
 {
     [Test]
-    public void OffByDefault()
+    public void OnByDefault()
     {
         GameObject host = new GameObject("ExitApproachTests");
         try
         {
             StreamingStereoVideoPlayer player = host.AddComponent<StreamingStereoVideoPlayer>();
-            Assert.That(player.placementFollowVideoDepthEdgeFollowsSmplDepth, Is.False);
-            Assert.That(player.bodyFrameOutLeaveViewWithTrack, Is.False);
+            Assert.That(player.placementFollowVideoDepthEdgeFollowsSmplDepth, Is.True);
+            Assert.That(player.bodyFrameOutLeaveViewWithTrack, Is.True);
         }
         finally
         {

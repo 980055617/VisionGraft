@@ -387,6 +387,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             SmplAimSegment seg = SmplAimSegments[s];
             Vector3 targetDir = state.lastWorldGlobalOrient * (state.smplFk[seg.joint] * restDirs[s]);
+            if (seg.prox == HumanBodyBones.LeftUpperLeg || seg.prox == HumanBodyBones.RightUpperLeg)
+            {
+                // humanThighSpreadFix（既定 OFF、2026-10-29、HumanThighSpread.partial.cs）: 表のモデルだけ太ももの目標を外へ回す（股の狭いリグ）。
+                targetDir = ApplyHumanThighSpread(cache, seg.prox, targetDir);
+            }
+
             if (IsFootSegment(seg.prox))
             {
                 ApplyFootSegmentDirection(cache, seg.prox, seg.dist, targetDir);

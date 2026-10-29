@@ -196,6 +196,79 @@ public static class SmalRigPilotTools
         AssetDatabase.SaveAssets();
     }
 
+    // 狼の口を実験の狼（Assets の wolf_c4k.fbx = Blender の c4k3）へ移した版（2026-10-29、全体の洗い出しで「狼だけボールが口に入らず背中・脇腹に
+    // 刺さって見える」。10/25 の口は古い c4c の狼の上の試作で、10/27 に c4k へ替えたときに引き継がれていなかった）。唇の切れ目は 10/25 と同じ辺、
+    // 顎の重みと口の中は今の狼の形で計算し直した（scratchpad rig/r5/build_wolf_c4k3_mouth3.sh、記録 Docs/tmp/survey_20261025/README.md「狼のボール」）。
+    // 口の外は今の狼と同じ（頂点の位置 差 0・重み 差 1e-5 以下）。FBX の取り込みの設定は wolf_c4k.fbx.meta の写し（GUID だけ新しい）。
+    // prefab は Resources の 54_MeshyWolf と同じ作り（FBX の prefab に材質の枠 0 = 元の wolf_body を当てる）＋ 枠 1 = 口の中の暗い赤。
+    // バッチ: -executeMethod SmalRigPilotTools.CreateWolfC4kMouthPrefab（-quit 付き）
+    private const string WolfC4kMouthFbx = "Assets/MeshyModels/SmalRig/wolf_c4k_mouth.fbx";
+    private const string WolfC4kMouthPrefab = PilotFolder + "/54_MeshyWolf_c4k_mouth.prefab";
+    private const string ShippedWolfPrefab = "Assets/Resources/Models/Animal/54_MeshyWolf.prefab";
+
+    [MenuItem("Tools/VisionGraft/SMAL Rig Pilot/Create Wolf c4k Mouth Prefab")]
+    public static void CreateWolfC4kMouthPrefab()
+    {
+        GameObject model = AssetDatabase.LoadAssetAtPath<GameObject>(WolfC4kMouthFbx);
+        SkinnedMeshRenderer importedSmr = model != null ? model.GetComponentInChildren<SkinnedMeshRenderer>(true) : null;
+        GameObject shipped = AssetDatabase.LoadAssetAtPath<GameObject>(ShippedWolfPrefab);
+        SkinnedMeshRenderer shippedSmr = shipped != null ? shipped.GetComponentInChildren<SkinnedMeshRenderer>(true) : null;
+        if (importedSmr == null || shippedSmr == null)
+        {
+            Debug.LogError($"{LogTag} wolf c4k mouth: {WolfC4kMouthFbx} か {ShippedWolfPrefab} に SkinnedMeshRenderer が無い");
+            return;
+        }
+
+        Debug.Log($"{LogTag} wolf c4k mouth: FBX subMeshes={importedSmr.sharedMesh.subMeshCount} vertices={importedSmr.sharedMesh.vertexCount} " +
+                  $"bones={importedSmr.bones.Length} | shipped vertices={shippedSmr.sharedMesh.vertexCount} bones={shippedSmr.bones.Length} " +
+                  $"materials={string.Join(",", shippedSmr.sharedMaterials.Select(m => m != null ? m.name : "null"))}");
+        Material inner = AssetDatabase.LoadAssetAtPath<Material>(WolfMouthInnerMaterial);
+        if (inner == null)
+        {
+            inner = new Material(Shader.Find("Universal Render Pipeline/Lit")) { name = "MeshyWolf_MouthInner" };
+            inner.SetColor("_BaseColor", new Color(45f / 255f, 18f / 255f, 18f / 255f, 1f));
+            inner.SetFloat("_Smoothness", 0f);
+            AssetDatabase.CreateAsset(inner, WolfMouthInnerMaterial);
+        }
+
+        GameObject instance = (GameObject)PrefabUtility.InstantiatePrefab(model);
+        try
+        {
+            instance.name = "54_MeshyWolf_c4k_mouth";
+            instance.transform.localPosition = shipped.transform.localPosition;
+            instance.transform.localRotation = shipped.transform.localRotation;
+            instance.transform.localScale = shipped.transform.localScale;
+            foreach (Animator animator in instance.GetComponentsInChildren<Animator>(true))
+            {
+                animator.runtimeAnimatorController = null;
+                animator.applyRootMotion = false;
+            }
+
+            foreach (SkinnedMeshRenderer smr in instance.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                int subMeshes = smr.sharedMesh != null ? smr.sharedMesh.subMeshCount : 0;
+                var materials = new Material[Mathf.Max(1, subMeshes)];
+                materials[0] = shippedSmr.sharedMaterials[0];
+                for (int i = 1; i < materials.Length; i++)
+                {
+                    materials[i] = inner;
+                }
+
+                smr.sharedMaterials = materials;
+                Debug.Log($"{LogTag} wolf c4k mouth: {smr.name} subMeshes={subMeshes} materials={string.Join(",", materials.Select(m => m != null ? m.name : "null"))}");
+            }
+
+            PrefabUtility.SaveAsPrefabAsset(instance, WolfC4kMouthPrefab, out bool ok);
+            Debug.Log($"{LogTag} wolf c4k mouth prefab {(ok ? "saved" : "FAILED")} {WolfC4kMouthPrefab}");
+        }
+        finally
+        {
+            Object.DestroyImmediate(instance);
+        }
+
+        AssetDatabase.SaveAssets();
+    }
+
     // バッチ: -executeMethod SmalRigPilotTools.CreateC4cPrefabs（-quit 付き）
     [MenuItem("Tools/VisionGraft/SMAL Rig Pilot/Create c4c Prefabs")]
     public static void CreateC4cPrefabs()

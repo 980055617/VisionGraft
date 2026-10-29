@@ -349,6 +349,33 @@ public static class HumanRigPilotTools
         CreateMouthPrefabs(MaleMouthJobs);
     }
 
+    // 2026-10-29: 男性 17 の脇の直し案（ユーザーの総点検で「両腕を真上に上げると脇の布が深い V 字に開く」）。今の 17（man_mouth.fbx）の .blend の
+    // 袖の下側〜上腕の付け根の 5,752 頂点だけ、重みを鎖骨から上腕へ寄せた FBX（scratchpad validate/combined/armpit17/、作り方 tools/build_armpit17.sh、
+    // 取り込みの設定は man_mouth.fbx.meta の写し・GUID だけ新しい）。手のねじれ・口パク・太ももの表は prefab 名で引くので、名前は 17_Male_Meshy のまま
+    // サブフォルダに置く（-humanPrefab で読む試作）。
+    private static readonly Job[] MaleArmpitJobs =
+    {
+        new Job
+        {
+            fbx = "Assets/MeshyModels/HumanRig/man_mouth_armpit17.fbx",
+            originalFbx = "Assets/MeshyModels/Models/man/Meshy_AI_Open_Stance_biped_Character_output.fbx",
+            originalPrefab = "Assets/Resources/Models/Human/17_Male_Meshy.prefab",
+            outPrefab = PilotFolder + "/armpit17/17_Male_Meshy.prefab",
+            name = "17_Male_Meshy",
+        },
+    };
+
+    // バッチ: -executeMethod HumanRigPilotTools.CreateMaleArmpitPrefab（-quit 付き）
+    public static void CreateMaleArmpitPrefab()
+    {
+        if (!AssetDatabase.IsValidFolder(PilotFolder + "/armpit17"))
+        {
+            AssetDatabase.CreateFolder(PilotFolder, "armpit17");
+        }
+
+        CreateMouthPrefabs(MaleArmpitJobs);
+    }
+
     private static void CreateMouthPrefabs(Job[] jobs)
     {
         if (!AssetDatabase.IsValidFolder(PilotFolder))

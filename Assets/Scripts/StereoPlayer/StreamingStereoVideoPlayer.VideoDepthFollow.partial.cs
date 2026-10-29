@@ -708,6 +708,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             st.measureFrame = frame;
             st.measureRaw = raw;
             st.measureAtEdge = atEdge;
+            // placementFollowVideoDepthEdgeFollowsSmplDepth（既定 OFF、2026-10-29、ExitApproach.partial.cs）: 端に掛かっていない人のフレームの合わせる点と SMPL の tz を控える。
+            NoteVideoDepthEdgeApproachRef(st, target, frame, atEdge, match);
             // 大きさをゆっくり変える形では、その場でも大きさを止めない（上限の速さで追う。奥行きは ⑧ が止めた奥行きに置く）。
             st.measureStill = still && !slow;
             st.measureSlow = slow;
@@ -815,6 +817,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         targetDepth = ResolveVideoDepthFollowStillTargetDepth(obj, still, targetDepth);
+        // placementFollowVideoDepthEdgeFollowsSmplDepth（既定 OFF、2026-10-29、ExitApproach.partial.cs）: Hold の端の間、人は SMPL の tz の比で手前へ（近づく分だけ）。
+        targetDepth = ApplyVideoDepthEdgeApproach(st, obj, targetDepth, edgeHold && !still && !slow);
         // 縮める向きの遊び（placementFollowVideoDepthFeetSizeShrinkBand、10/28 夜から既定 0.15、VideoDepthFollowFeet.partial.cs）: f を目標より大きいまま止めている分
         // （f ÷ 目標、1 + 帯まで）だけ合わせる先を奥へずらす。⑧ は合わせる点をここへ置くので、片目の絵は箱のまま、立体の大きさは変えずにモデルが下がる
         // （これが無いと、同じ奥行きのまま絵の中で f ÷ 目標だけ大きくなった。2026-10-28 夕の 1 回目の撮影 sizefit/runs_fix/*_band）。

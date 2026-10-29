@@ -126,6 +126,8 @@ public partial class StreamingStereoVideoPlayer
         // この出口で始めてよいか（ShouldStartBodyFrameOut の先読み、動画のフレームごとに 1 回）。
         public int exitDecisionFrame = -1;
         public bool exitAllowed;
+        // その先読みで分かった、track が映らなくなる最初のフレーム（無ければ −1）。bodyFrameOutLeaveViewWithTrack（ExitApproach.partial.cs）が使う。
+        public int exitFrame = -1;
         public GameObject instance;
         public int startFrame;
         public double startVideoTime;
@@ -557,6 +559,21 @@ public partial class StreamingStereoVideoPlayer
             headingNote += " (" + passByNote + ")";
         }
 
+        // bodyFrameOutLeaveViewWithTrack（既定 OFF、2026-10-29、ExitApproach.partial.cs）: 元の track が消えるフレームで、モデルの後ろの端が動画の枠を越える速さへ上げる
+        // （向きはそのまま、今より遅くはしない）。
+        if (bodyFrameOutLeaveViewWithTrack && st.exitFrame > frame &&
+            TryResolveBodyFrameOutLeaveViewDistance(instance, velocity, camOrigin, camRotation, out float leaveDistance))
+        {
+            float seconds = (st.exitFrame - frame) / Mathf.Max(1f, ResolveMetaFps());
+            float leaveSpeed = ResolveBodyFrameOutLeaveViewSpeed(speed, leaveDistance, seconds, height);
+            if (leaveSpeed > speed)
+            {
+                headingNote += $" leave-view {speed:F3}->{leaveSpeed:F3}m/s by f{st.exitFrame} ({leaveDistance:F3}m in {seconds:F2}s)";
+                speed = leaveSpeed;
+                velocity = velocity.normalized * speed;
+            }
+        }
+
         bool isAnimal = IsCategoryAnimal(st.categoryId);
         st.clipRate = Mathf.Clamp(speed / (BodyFrameOutNaturalWalkHeightsPerSecond * height), 0.4f, 1.6f);
         st.instance = instance;
@@ -817,6 +834,7 @@ public partial class StreamingStereoVideoPlayer
 
         st.exitDecisionFrame = frame;
         st.exitAllowed = false;
+        st.exitFrame = -1;
         int numFrames = (int)metaHeader.numFrames;
         float fps = Mathf.Max(1f, ResolveMetaFps());
         int leaveWindow = Mathf.Max(1, Mathf.RoundToInt(bodyFrameOutLeaveWithinSeconds * fps));
@@ -866,6 +884,7 @@ public partial class StreamingStereoVideoPlayer
         }
 
         // 動画の終わりまで映り続けるなら、出ていかない。
+        st.exitFrame = exitFrame;
         st.exitAllowed = exitFrame >= 0 || frame + 1 >= numFrames;
         return st.exitAllowed;
     }

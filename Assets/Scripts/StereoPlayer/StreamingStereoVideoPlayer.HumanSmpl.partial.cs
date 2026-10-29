@@ -356,6 +356,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 if (!TryGetHumanFkBindWorld(cache, boneId, out Quaternion bindW))
                     continue;
 
+                // humanClavicleRestRaiseDeg（既定 0 = OFF、2026-10-29、HumanClavicle.partial.cs）: 13・14 の基準を上げる（なで肩の直し）。
+                bindW = ApplyHumanClavicleRestRaise(cache, boneId, bone, bindW);
+
                 Quaternion targetWorld = ResolveHumanSmplTargetWorldRotation(worldGlobalOrient, bodyFk[joint], bindW);
 
                 if (!IsFinite(targetWorld))

@@ -241,8 +241,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         float lossy = Mathf.Abs(animator.transform.lossyScale.y);
-        points.Add(new KeyValuePair<string, Vector3>(
-            "Crown", head.position + head.rotation * cache.silhouetteCrownLocalDir * (cache.silhouetteCrownDistance * lossy)));
+        Vector3 crown = head.position + head.rotation * cache.silhouetteCrownLocalDir * (cache.silhouetteCrownDistance * lossy);
+        points.Add(new KeyValuePair<string, Vector3>("Crown", crown));
         for (int i = 0; i < cache.silhouetteSoles.Count; i++)
         {
             SilhouetteSolePoint sole = cache.silhouetteSoles[i];
@@ -255,6 +255,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
                 "Sole" + sole.bone, bone.position + bone.rotation * sole.localDir * (sole.distance * lossy)));
         }
 
+        // silhouetteHandTipPoints（既定 OFF、2026-10-29、HandTipSilhouette.partial.cs）: 手先の点（指の骨の無いリグで腕を上げると手首が上端になる）。
+        // 頭頂より上にあるときだけ（上端にだけ効かせる）。
+        AddSilhouetteHandTipPoints(cache, points, crown, animator.transform.up);
         return true;
     }
 }

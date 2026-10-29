@@ -12,7 +12,8 @@ using UnityEngine;
 // 0 なら今のまま。
 public partial class StreamingStereoVideoPlayer
 {
-    [Min(0f)] public float humanClavicleRestRaiseDeg = 0f;
+    // 2026-10-29 から既定 20（見る用の版 r5 を Quest で見たユーザー「みたよ，いいと思う」）。上の既定の説明はそれまでの話。
+    [Min(0f)] public float humanClavicleRestRaiseDeg = 20f;
 
     // 鎖骨の基準 bindW を、外の端（上腕の付け根の向き）が真上へ deg 度近づくように回したもの（純粋な計算、テスト HumanClavicleRestRaiseTests）。
     // 外の端がもう真上に近い（残りの角が deg 未満）ときは真上で止まる（RotateTowards）。

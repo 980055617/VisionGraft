@@ -1,17 +1,17 @@
 using NUnit.Framework;
 using UnityEngine;
 
-// 人の鎖骨の基準を上げる（humanClavicleRestRaiseDeg、2026-10-29、既定 0 = OFF、HumanClavicle.partial.cs）。
+// 人の鎖骨の基準を上げる（humanClavicleRestRaiseDeg、2026-10-29、同じ日に既定 20、HumanClavicle.partial.cs）。
 public class HumanClavicleRestRaiseTests
 {
     [Test]
-    public void OffByDefault()
+    public void OnByDefault()
     {
         GameObject host = new GameObject("HumanClavicleRestRaiseTests");
         try
         {
             StreamingStereoVideoPlayer player = host.AddComponent<StreamingStereoVideoPlayer>();
-            Assert.That(player.humanClavicleRestRaiseDeg, Is.EqualTo(0f));
+            Assert.That(player.humanClavicleRestRaiseDeg, Is.EqualTo(20f));
         }
         finally
         {

@@ -1,17 +1,18 @@
 using NUnit.Framework;
 using UnityEngine;
 
-// 人の太ももの向きの目標を外へ回す（humanThighSpreadFix、2026-10-29、既定 OFF、HumanThighSpread.partial.cs）。
+// 人の太ももの向きの目標を外へ回す（humanThighSpreadFix、2026-10-29、同じ日に既定 ON・表の 18 は 5°、HumanThighSpread.partial.cs）。
 public class HumanThighSpreadTests
 {
     [Test]
-    public void OffByDefault()
+    public void OnByDefault()
     {
         GameObject host = new GameObject("HumanThighSpreadTests");
         try
         {
             StreamingStereoVideoPlayer player = host.AddComponent<StreamingStereoVideoPlayer>();
-            Assert.That(player.humanThighSpreadFix, Is.False);
+            Assert.That(player.humanThighSpreadFix, Is.True);
+            Assert.That(player.humanThighSpreadTable, Is.EqualTo("18_Female_Meshy:5,17_Male_Meshy:5"));
         }
         finally
         {

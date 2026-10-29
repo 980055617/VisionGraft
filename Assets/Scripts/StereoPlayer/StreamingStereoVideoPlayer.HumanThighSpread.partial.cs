@@ -17,10 +17,11 @@ using UnityEngine;
 // 表に無いモデル・OFF は今と全く同じ。
 public partial class StreamingStereoVideoPlayer
 {
-    public bool humanThighSpreadFix = false;
+    // 2026-10-29 から既定 ON（見る用の版 r5 を Quest で見たユーザー「みたよ，いいと思う」）。上の既定の説明はそれまでの話。
+    public bool humanThighSpreadFix = true;
     // 回す量の表: 「prefab 名:度」をカンマで区切る（-setFields の区切りの ; と = は使わない）。prefab 名は ReplaceableModel.sourcePrefabName と完全一致。
-    // 正の値は外へ、負の値は内へ。
-    public string humanThighSpreadTable = "18_Female_Meshy:7,17_Male_Meshy:5";
+    // 正の値は外へ、負の値は内へ。2026-10-29 から 18 は 7 → 5（7 は裾が釣鐘のように広がる。r5 の値）。
+    public string humanThighSpreadTable = "18_Female_Meshy:5,17_Male_Meshy:5";
 
     private string humanThighSpreadParsedTable;
     private readonly Dictionary<string, float> humanThighSpreadByPrefab = new Dictionary<string, float>();

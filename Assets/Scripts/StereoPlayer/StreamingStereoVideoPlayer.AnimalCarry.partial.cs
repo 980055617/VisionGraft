@@ -49,6 +49,10 @@ public partial class StreamingStereoVideoPlayer
     // - 狼（54_MeshyWolf_mouth、2026-10-25 の Workflow wolf-mouth-build の wA）: 唇は閉じた形で上下が同じ点なので U = L = (0.7817, 0.2144)
     //   （前の唇の中心線の点を 1 cm 奥へ。唇の先だとボールが唇の先に載った）。ボールは野球（半径 3.65 cm）で 0.2001 × s（s 0.1824 m）。
     //   作る人の見積もりのくわえる開き 26.3°（押しつぶし 0.92）。今の 54_MeshyWolf・54_MeshyWolf_c4c は顎の骨が無いので何もしない
+    //   2026-10-29: その口を実験の狼（c4k3）へ移した 54_MeshyWolf_c4k_mouth（試作、Pilot/）の値へ替えた: U = L = (0.7819, 0.2365)、
+    //   ボールの半径 0.2003 × s（s 0.1822 m）、くわえる開き 26.07°（scratchpad rig/r5/wolf_c4k3_mouth3/landmarks.json）。c4c の口の値
+    //   (0.7817, 0.2144)・0.2001 だと 4 mm 上にずれる。2026-10-29 から Resources の 54_MeshyWolf もこの FBX（wolf_c4k_mouth.fbx、見る用の版 r5 に入れた。
+    //   r5 を見たユーザーは「いいと思う」、ただし端末の記録では狼を出していない）
     private static readonly AnimalCarryEntry[] AnimalCarryEntries =
     {
         new AnimalCarryEntry
@@ -59,7 +63,7 @@ public partial class StreamingStereoVideoPlayer
         new AnimalCarryEntry
         {
             bundle = "bundle_dog.svb", animalTrack = 0, ballTrack = 1, openFrom = 136, grabAt = 150, holdFrom = 160, modelNameContains = "MeshyWolf",
-            upperAlpha = 0.7817f, upperBeta = 0.2144f, lowerAlpha = 0.7817f, lowerBeta = 0.2144f, ballRadiusPerS = 0.2001f,
+            upperAlpha = 0.7819f, upperBeta = 0.2365f, lowerAlpha = 0.7819f, lowerBeta = 0.2365f, ballRadiusPerS = 0.2003f,
         },
     };
 

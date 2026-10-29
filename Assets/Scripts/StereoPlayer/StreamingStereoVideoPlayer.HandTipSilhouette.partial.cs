@@ -18,7 +18,8 @@ using UnityEngine;
 // OFF なら今と全く同じ。
 public partial class StreamingStereoVideoPlayer
 {
-    public bool silhouetteHandTipPoints = false;
+    // 2026-10-29 から既定 ON（見る用の版 r5 を Quest で見たユーザー「みたよ，いいと思う」）。上の既定の説明はそれまでの話。
+    public bool silhouetteHandTipPoints = true;
 
     private readonly Dictionary<HumanoidRigCache, Transform[]> silhouetteHandTipsByCache = new Dictionary<HumanoidRigCache, Transform[]>();
 

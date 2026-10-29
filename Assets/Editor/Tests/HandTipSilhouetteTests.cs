@@ -1,17 +1,17 @@
 using NUnit.Framework;
 using UnityEngine;
 
-// 投影の上端・下端に手先の点を足す（silhouetteHandTipPoints、2026-10-29、既定 OFF、HandTipSilhouette.partial.cs）。
+// 投影の上端・下端に手先の点を足す（silhouetteHandTipPoints、2026-10-29、同じ日に既定 ON、HandTipSilhouette.partial.cs）。
 public class HandTipSilhouetteTests
 {
     [Test]
-    public void OffByDefault()
+    public void OnByDefault()
     {
         GameObject host = new GameObject("HandTipSilhouetteTests");
         try
         {
             StreamingStereoVideoPlayer player = host.AddComponent<StreamingStereoVideoPlayer>();
-            Assert.That(player.silhouetteHandTipPoints, Is.False);
+            Assert.That(player.silhouetteHandTipPoints, Is.True);
         }
         finally
         {

@@ -70,7 +70,7 @@ public class ExperimentModelPresetsTests
         Assert.That(tutorial.Body, Does.Contain("もう一度押すと戻ります"));
 
         tutorial.RecordOperation("change_model", "via=toggle preset=1 tracks=0:00_Female_A_01|1:36_LabradorDog now=0|1");
-        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ToggleMotion));
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.GrabRotate));
     }
 
     private static List<string> ReadSceneBundleNames()

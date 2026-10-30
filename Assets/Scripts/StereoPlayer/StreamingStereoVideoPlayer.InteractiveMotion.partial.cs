@@ -281,6 +281,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // 練習で例を見た後は新しく動かさない（2026-10-30、HoldRandomInteractiveMotionForTutorial）。走っている動きは無い時点で入る。
+        if (experimentTutorialRandomMotionHeld)
+        {
+            return;
+        }
+
         InteractiveMotionState state = GetOrCreateInteractiveMotionState(trackId);
         if (state.stage != InteractiveEventStage.Inactive)
         {

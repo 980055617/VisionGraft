@@ -146,10 +146,10 @@ public class ExperimentTrialHandoffTests
         Assert.That(tutorialReplaced.InteractiveMotionEnabled, Is.True);
     }
 
-    // 置換あり条件だけ被験者が Settings の Motion で切り替えられる（2026-09-25 のユーザー指示で
-    // 同日午前の「全条件で固定」を取り消した）。単眼・ステレオはモデルが出ないので固定のまま。
+    // 2026-10-30 から全条件で固定（実験では Settings を出さない。ユーザー「settingはもう使わないので，チュートリアルから外し，
+    // 実験でも表示しない」）。それまでは置換ありだけ被験者が Settings の Motion で切り替えられた（2026-09-25）。
     [Test]
-    public void LockInteractiveMotion_IsFalseOnlyForModelReplaced()
+    public void LockInteractiveMotion_IsTrueForEveryCondition()
     {
         ExperimentTrialRequest monocular = new ExperimentTrialRequest(
             "bundle_human.svb", ExperimentDisplayMode.Monocular, 0, ExperimentVideo.Video1);
@@ -162,8 +162,8 @@ public class ExperimentTrialHandoffTests
 
         Assert.That(monocular.LockInteractiveMotion, Is.True);
         Assert.That(stereoOnly.LockInteractiveMotion, Is.True);
-        Assert.That(modelReplaced.LockInteractiveMotion, Is.False);
-        Assert.That(tutorialReplaced.LockInteractiveMotion, Is.False);
+        Assert.That(modelReplaced.LockInteractiveMotion, Is.True);
+        Assert.That(tutorialReplaced.LockInteractiveMotion, Is.True);
     }
 
     // 練習で必ず 1 回は自発的な動きを見せたいので、置換ありのチュートリアルだけ発火間隔を短くする。

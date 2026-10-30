@@ -53,12 +53,12 @@ public class ExperimentTutorialTests
         Assert.That(tutorial.Body, Does.Contain("立体"));
     }
 
-    // 置換ありは「自分から動く例を見る → モデルを替える → Motion を切り替える → 掴んで回す」の 4 段階。
+    // 置換ありは「自分から動く例を見る → モデルを替える → 掴んで回す」の 3 段階（2026-10-30 に Motion の切り替えを外した）。
     // WatchMotion が先頭なのは、後ろに置くと（練習の発火間隔は 3〜6 秒）モデルを選んでいる最中に
-    // 先に発火して説明が一度も出ないため（2026-09-25 の監査 F1）。掴んで回すは 2026-10-01 に追加し、
-    // Motion を切った後に置く（掴もうとしている最中に発火して邪魔しないため）。
+    // 先に発火して説明が一度も出ないため（2026-09-25 の監査 F1）。掴んで回すは 2026-10-01 に追加。
+    // 例を見た後は練習の中で新しく動かさない（ExperimentController.HoldTutorialMotionAfterExample）。
     [Test]
-    public void ModelReplaced_SequenceIsWatchMotionChangeModelToggleMotionGrabRotate()
+    public void ModelReplaced_SequenceIsWatchMotionChangeModelGrabRotate()
     {
         ExperimentTutorial.Step[] steps = ExperimentTutorial.ResolveSequence(ExperimentDisplayMode.ModelReplaced);
 
@@ -66,13 +66,12 @@ public class ExperimentTutorialTests
         {
             ExperimentTutorial.Step.WatchMotion,
             ExperimentTutorial.Step.ChangeModel,
-            ExperimentTutorial.Step.ToggleMotion,
             ExperimentTutorial.Step.GrabRotate,
             ExperimentTutorial.Step.Done,
         }));
 
         ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
-        Assert.That(tutorial.StepCount, Is.EqualTo(4));
+        Assert.That(tutorial.StepCount, Is.EqualTo(3));
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion));
         Assert.That(tutorial.Body, Does.Contain("自分から"));
 
@@ -88,10 +87,6 @@ public class ExperimentTutorialTests
         Assert.That(tutorial.Body, Does.Contain("Model"));
 
         tutorial.RecordOperation("change_model", "track=1 prefab=x");
-        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ToggleMotion));
-        Assert.That(tutorial.Body, Does.Contain("Settings"));
-
-        tutorial.RecordOperation("motion_toggle", "value=0");
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.GrabRotate));
         Assert.That(tutorial.Body, Does.Contain("トリガー"));
 
@@ -108,12 +103,11 @@ public class ExperimentTutorialTests
     {
         ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
 
-        // 1 段階目の最中にうっかり掴んで回しても、4 段階目は済ませない。
+        // 1 段階目の最中にうっかり掴んで回しても、3 段階目は済ませない。
         tutorial.RecordOperation("change_rotation", "track=1 op=grab yaw=10 pitch=0 roll=0 frame=30");
         tutorial.RecordInteraction(1, "random_Static", null);
         tutorial.RecordInteraction(1, "motion_end", "reason=completed");
         tutorial.RecordOperation("change_model", "track=1 prefab=x");
-        tutorial.RecordOperation("motion_toggle", "value=0");
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.GrabRotate));
 
         // 掴み以外の向きの変更では進まない。
@@ -125,7 +119,7 @@ public class ExperimentTutorialTests
         Assert.That(tutorial.IsDone, Is.True);
     }
 
-    // 4/4 は左右（yaw）に回したときだけ数える。体は yaw にしか付いて回らないので、手首をひねる（roll）だけでは済ませない
+    // 掴んで回す段は左右（yaw）に回したときだけ数える。体は yaw にしか付いて回らないので、手首をひねる（roll）だけでは済ませない
     // （2026-10-10）。dyaw の無い記録（10/09 以前の形）は今までどおり数える。
     [Test]
     public void ModelReplaced_GrabRotate_NeedsAHorizontalTurn()
@@ -134,7 +128,6 @@ public class ExperimentTutorialTests
         tutorial.RecordInteraction(1, "random_Static", null);
         tutorial.RecordInteraction(1, "motion_end", "reason=completed");
         tutorial.RecordOperation("change_model", "track=1 prefab=x");
-        tutorial.RecordOperation("motion_toggle", "value=0");
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.GrabRotate));
         Assert.That(tutorial.Body, Does.Contain("左右に回して"));
 
@@ -145,9 +138,9 @@ public class ExperimentTutorialTests
         Assert.That(tutorial.IsDone, Is.True);
     }
 
-    // 2/4 は「表示しない」では済ませない。3/4 は表示中の切り替えだけ数える（2026-10-10）。
+    // 2/3 は「表示しない」では済ませない（2026-10-10）。
     [Test]
-    public void ModelReplaced_HideDoesNotCountAsChange_AndToggleCountsOnlyWhileShown()
+    public void ModelReplaced_HideDoesNotCountAsChange()
     {
         ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
         tutorial.RecordOperation("model_assigned", "track=1 category=person prefab=01_Female");
@@ -156,19 +149,11 @@ public class ExperimentTutorialTests
         tutorial.RecordInteraction(1, "motion_end", "reason=completed");
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ChangeModel));
 
-        // 2/4 の最中に Motion を切り替えても 3/4 は済ませない（説明がまだ出ていない）。
-        tutorial.RecordOperation("motion_toggle", "value=0");
-        tutorial.RecordOperation("motion_toggle", "value=1");
-        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ChangeModel));
-
-        // 1 体を「表示しない」にしても 2/4 は済まない。
+        // 1 体を「表示しない」にしても 2/3 は済まない。
         tutorial.RecordOperation("change_model", "track=1 category=person index=-1 prefab=(none)");
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ChangeModel));
 
         tutorial.RecordOperation("change_model", "track=2 category=animal index=3 prefab=37_Lioness");
-        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ToggleMotion));
-
-        tutorial.RecordOperation("motion_toggle", "value=0");
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.GrabRotate));
     }
 
@@ -181,7 +166,6 @@ public class ExperimentTutorialTests
         tutorial.RecordInteraction(1, "random_Static", null);
         tutorial.RecordInteraction(1, "motion_end", "reason=completed");
         tutorial.RecordOperation("change_model", "track=1 category=human index=2 prefab=02_Female");
-        tutorial.RecordOperation("motion_toggle", "value=0");
         Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.GrabRotate));
 
         int changed = 0;
@@ -196,26 +180,56 @@ public class ExperimentTutorialTests
         Assert.That(changed, Is.EqualTo(2));
     }
 
-    // Motion がどういう機能か（自分から動く・OFF なら動画どおりに動くだけ）を練習の文面で説明する。
-    // 終わりの画面は、置換ありでできること 3 つ（替える・回す・切り替える）をまとめて言う（2026-10-01）。
+    // 実験では Settings を出さない（2026-10-30）ので、どの段階の文面にも Settings・Motion の切り替えを書かない。
+    // 終わりの画面は、置換ありでできること 2 つ（切り替える・回す）をまとめて言う。
     [Test]
-    public void ModelReplaced_ToggleMotionAndDone_ExplainWhatEachFunctionDoes()
+    public void ModelReplaced_NoStepMentionsSettings_AndDoneListsWhatCanBeDone()
     {
         ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
+        tutorial.RecordOperation("model_assigned", "track=1 category=person prefab=01_Female");
+        Assert.That(tutorial.Body, Does.Not.Contain("Settings"));
+
+        tutorial.RecordOperation("pause", null);
+        Assert.That(tutorial.Body, Does.Not.Contain("Settings"));
+        tutorial.RecordOperation("resume", null);
+
         tutorial.RecordInteraction(1, "random_Static", null);
+        Assert.That(tutorial.Body, Does.Not.Contain("Settings"));
         tutorial.RecordInteraction(1, "motion_end", "reason=completed");
+        Assert.That(tutorial.Body, Does.Not.Contain("Settings"));
+
         tutorial.RecordOperation("change_model", "track=1 prefab=x");
+        Assert.That(tutorial.Body, Does.Not.Contain("Settings"));
 
-        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ToggleMotion));
-        Assert.That(tutorial.Body, Does.Contain("自分から動く"));
-        Assert.That(tutorial.Body, Does.Contain("OFF にすると"));
-        Assert.That(tutorial.Body, Does.Contain("Screen Dist"));
-
-        tutorial.RecordOperation("motion_toggle", "value=0");
         tutorial.RecordOperation("change_rotation", "track=1 op=grab yaw=35 pitch=0 roll=0 frame=120");
         Assert.That(tutorial.IsDone, Is.True);
+        Assert.That(tutorial.Body, Does.Contain("切り替え"));
         Assert.That(tutorial.Body, Does.Contain("掴んで回す"));
-        Assert.That(tutorial.Body, Does.Contain("Motion"));
+        Assert.That(tutorial.Body, Does.Not.Contain("Motion"));
+        Assert.That(tutorial.Body, Does.Not.Contain("Settings"));
+    }
+
+    // 例を最後まで見たか。練習ではこれが立ったところで新しい動きを止める（ExperimentController.HoldTutorialMotionAfterExample）。
+    // 途中で止まった動きでは立たない（例を見たことにしない）。単眼の練習では立たない。
+    [Test]
+    public void MotionExampleSeen_OnlyAfterTheExampleRunsToTheEnd()
+    {
+        ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
+        Assert.That(tutorial.MotionExampleSeen, Is.False);
+
+        tutorial.RecordInteraction(1, "random_Static", null);
+        Assert.That(tutorial.MotionExampleSeen, Is.False, "動いている最中はまだ");
+        tutorial.RecordInteraction(1, "motion_end", "reason=stopped");
+        Assert.That(tutorial.MotionExampleSeen, Is.False, "途中で止まった");
+
+        tutorial.RecordInteraction(1, "random_Dynamic", null);
+        tutorial.RecordInteraction(1, "motion_end", "reason=completed");
+        Assert.That(tutorial.MotionExampleSeen, Is.True);
+
+        ExperimentTutorial monocular = new ExperimentTutorial(null, ExperimentDisplayMode.Monocular);
+        monocular.RecordInteraction(1, "random_Static", null);
+        monocular.RecordInteraction(1, "motion_end", "reason=completed");
+        Assert.That(monocular.MotionExampleSeen, Is.False);
     }
 
     // **その段階を表示している間の発火だけ数える。** 先回りで済ませると説明が出ないまま次へ進む。
@@ -232,39 +246,7 @@ public class ExperimentTutorialTests
         // ChangeModel の最中にもう一度発火しても、後ろの段階を勝手に済ませない。
         tutorial.RecordInteraction(1, "random_Dynamic", null);
         tutorial.RecordOperation("change_model", "track=1 prefab=x");
-        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ToggleMotion));
-        Assert.That(tutorial.IsDone, Is.False);
-    }
-
-    // Motion の切り替えは**例を見た後**だけ数える。戻し方の案内（ON に戻す）で 3 段階目を
-    // 消費してしまうと、切り替えの練習が一度も出ない（同監査 F3）。
-    [Test]
-    public void ModelReplaced_MotionTurnedOffBeforeTheExample_TellsHowToTurnItBackOnWithoutConsumingTheStep()
-    {
-        ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
-        int changed = 0;
-        tutorial.Changed += () => changed++;
-
-        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion));
-
-        changed = 0;
-        tutorial.RecordOperation("motion_toggle", "value=0");
-
-        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion));
-        Assert.That(tutorial.Body, Does.Contain("ON に戻して"));
-        Assert.That(changed, Is.EqualTo(1), "文面が変わるのでパネルを作り直す");
-
-        // ON に戻すと元の待ちの文面へ。ここまでの切り替えは 3 段階目には数えない。
-        tutorial.RecordOperation("motion_toggle", "value=1");
-        Assert.That(tutorial.Body, Does.Contain("自分から"));
-
-        tutorial.RecordInteraction(1, "random_Dynamic", "subject=human");
-        tutorial.RecordInteraction(1, "motion_end", "reason=completed");
-        tutorial.RecordOperation("change_model", "track=1 prefab=x");
-        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.ToggleMotion), "切り替えの練習は残っている");
-
-        tutorial.RecordOperation("motion_toggle", "value=0");
-        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.GrabRotate), "切り替えの段階が済んで、掴んで回すへ");
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.GrabRotate));
         Assert.That(tutorial.IsDone, Is.False);
     }
 
@@ -519,7 +501,6 @@ public class ExperimentTutorialTests
             tutorial.RecordInteraction(1, "random_Static", null);
             tutorial.RecordInteraction(1, "motion_end", "reason=completed");
             tutorial.RecordOperation("change_model", "track=1 prefab=x");
-            tutorial.RecordOperation("motion_toggle", "value=0");
             Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.GrabRotate));
             Assert.That(tutorial.Body, reset ? Does.Contain("場面が切り替わると元に戻ります") : Does.Contain("そのまま残ります"));
             Assert.That(tutorial.Body, reset ? Does.Not.Contain("そのまま残ります") : Does.Not.Contain("場面が切り替わる"));

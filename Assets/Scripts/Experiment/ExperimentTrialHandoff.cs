@@ -95,13 +95,12 @@ public sealed class ExperimentTrialRequest
         get { return mode == ExperimentDisplayMode.ModelReplaced; }
     }
 
-    // Settings の Motion トグルを出さずに固定するか。
-    // **置換あり条件では被験者が切り替えられる**（2026-09-25 のユーザー指示。同日午前に論文側の依頼で
-    // 全条件を固定にしたが、置換ありだけ取り消した。切り替えは operations.csv の `motion_toggle` に残る）。
-    // 単眼・ステレオはモデルが出ないので固定のまま（トグルを出さない）。
+    // Settings の Motion トグルを出さずに固定するか。**2026-10-30 から全条件で固定**（ユーザー「settingはもう使わないので，
+    // チュートリアルから外し，実験でも表示しない」。実験では Settings 自体を出さない）。置換ありは常に ON、単眼・ステレオは OFF。
+    // それまでは置換ありだけ被験者が切り替えられた（2026-09-25 のユーザー指示。切り替えは operations.csv の `motion_toggle`）。
     public bool LockInteractiveMotion
     {
-        get { return mode != ExperimentDisplayMode.ModelReplaced; }
+        get { return true; }
     }
 
     // 置換ありブロックの**チュートリアルだけ**発火間隔を短くする。本番は 12 / 24 秒なので、

@@ -573,30 +573,33 @@ public class ExperimentTrialParticipantDescribeTests
 
 public class ExperimentTutorialAuditTests
 {
-    // 置換ありの見出しは 4 段階（2026-10-01 に掴んで回すを追加）。実験者用のボタンで途中終了したときの記録には段階名が残る。
+    // 置換ありの見出しは 3 段階（2026-10-01 に掴んで回すを足して 4 段階、2026-10-30 に Motion の切り替えを外した）。
+    // 実験者用のボタンで途中終了したときの記録には段階名が残る。
     [Test]
     public void ModelReplaced_TitleAndResultCarryTheStep()
     {
         ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
 
-        Assert.That(tutorial.Title, Is.EqualTo("練習 1/4"));
+        Assert.That(tutorial.Title, Is.EqualTo("練習 1/3"));
         Assert.That(tutorial.DescribeResult(), Is.EqualTo("completed=0 step=WatchMotion mode=ModelReplaced"));
 
         tutorial.RecordInteraction(1, "random_Static", null);
         tutorial.RecordInteraction(1, "motion_end", "reason=completed");
-        Assert.That(tutorial.Title, Is.EqualTo("練習 2/4"));
+        Assert.That(tutorial.Title, Is.EqualTo("練習 2/3"));
         Assert.That(tutorial.DescribeResult(), Is.EqualTo("completed=0 step=ChangeModel mode=ModelReplaced"));
     }
 
-    // motion_toggle の detail が無いときは ON 扱い（文面が OFF の案内にならない）。
+    // Motion の切り替え（motion_toggle）は 2026-10-30 から実験に出ない（Settings を出さない）。もし来ても
+    // 段階も文面も変えない（「ON に戻して」の案内はもう無い）。
     [Test]
-    public void MotionToggleWithoutDetail_IsTreatedAsOn()
+    public void MotionToggle_NoLongerChangesTheTutorial()
     {
         ExperimentTutorial tutorial = new ExperimentTutorial(null, ExperimentDisplayMode.ModelReplaced);
-        tutorial.RecordOperation("motion_toggle", null);
+        tutorial.RecordOperation("motion_toggle", "value=0");
 
+        Assert.That(tutorial.CurrentStep, Is.EqualTo(ExperimentTutorial.Step.WatchMotion));
         Assert.That(tutorial.Body, Does.Contain("自分から"));
-        Assert.That(tutorial.Body, Does.Not.Contain("ON に戻して"));
+        Assert.That(tutorial.Body, Does.Not.Contain("Settings"));
     }
 
     // 全部非表示 → 1 体戻す、で文面が変わるたびに Changed が出る（パネルを作り直す合図）。

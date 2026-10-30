@@ -138,6 +138,8 @@ public sealed class ExperimentController : MonoBehaviour
     private ExperimentTutorial tutorial;
     private bool tutorialEndRequested;
     private bool tutorialPanelDirty;
+    // 練習で例を見た後、新しい自発的な動きを止めるようプレイヤーに頼んだか（HoldTutorialMotionAfterExample）。
+    private bool tutorialMotionHeld;
 
     // 試行中の「視聴を終了」を押せるようになる時刻と、押せるようにしたかどうか。
     private float trialEndAllowedAtRealtime;
@@ -1754,7 +1756,8 @@ public sealed class ExperimentController : MonoBehaviour
             default:
                 // 2026-09-25 に 1 段階から 3 段階に増えたので文面も合わせる（監査で指摘）。
                 // 2026-10-01 に 4 段階目（掴んで回す）を足した（ExperimentTutorial.Step.GrabRotate）。
-                return "モデルが自分から動く例を見る / Model でモデルを替える / Settings で動きの切り替え / モデルを掴んで回す";
+                // 2026-10-30 に Settings の動きの切り替えを外して 3 段階（ExperimentTutorial.ResolveSequence）。
+                return "モデルが自分から動く例を見る / Model でモデルを切り替える / モデルを掴んで回す";
         }
     }
 
@@ -1802,6 +1805,7 @@ public sealed class ExperimentController : MonoBehaviour
         phase = Phase.Loading;
         tutorialEndRequested = false;
         tutorialPanelDirty = false;
+        tutorialMotionHeld = false;
         loadCancelRequested = false;
 
         // ボタンのクリックハンドラから始まるので、パネルの作り直しはハンドラを抜けてから。
@@ -1842,7 +1846,7 @@ public sealed class ExperimentController : MonoBehaviour
 
         session.BeginTutorial(bundleFileName, beforeBlock, tutorialMode);
         tutorial = new ExperimentTutorial(session, tutorialMode);
-        // 2026-10-12: manualRotationResetAtCut が ON なら、練習 4/4 の最後の行を「場面が切り替わると元に戻る」にする（練習と試行は同じ TrialScene）。
+        // 2026-10-12: manualRotationResetAtCut が ON なら、掴んで回す段の最後の行を「場面が切り替わると元に戻る」にする（練習と試行は同じ TrialScene）。
         tutorial.ManualRotationResetsAtCut = cachedPlayer != null && cachedPlayer.manualRotationResetAtCut;
         tutorial.Changed += MarkTutorialPanelDirty;
         // プレイヤーの操作ログを横取りして段階を進める。セッションへはそのまま転送される。
@@ -2045,6 +2049,25 @@ public sealed class ExperimentController : MonoBehaviour
     private void MarkTutorialPanelDirty()
     {
         tutorialPanelDirty = true;
+        HoldTutorialMotionAfterExample();
+    }
+
+    // 置換ありの練習で、自分から動く例を最後まで見たら、その後は新しく動かさない（2026-10-30）。
+    // Settings を外して Motion を切る段が無くなった（ユーザー「settingはもう使わないので，チュートリアルから外し，実験でも表示しない」）。
+    // 前はその段で参加者が Motion を切ってから掴んで回していたので、掴む練習はいつも動きの無い状態だった。
+    // 練習の発火は 3〜6 秒おきなので、止めないと掴もうとしている最中にモデルが動き出し動画も止まる。本番の試行は変えない。
+    // 例が済むのは動きが終わった時点（motion_end reason=completed）で、自発的な動きは同時に 1 つしか走らないので、
+    // 走っている動きを途中で止めることはない。記録は motion_toggle ではなく別の行（参加者の操作として数えないため）。
+    private void HoldTutorialMotionAfterExample()
+    {
+        if (tutorialMotionHeld || tutorial == null || !tutorial.MotionExampleSeen || cachedPlayer == null)
+        {
+            return;
+        }
+
+        tutorialMotionHeld = true;
+        cachedPlayer.HoldRandomInteractiveMotionForTutorial();
+        session?.RecordOperation("tutorial_motion_hold", $"after={ExperimentTutorial.Step.WatchMotion}");
     }
 
     // 段階が進んだらパネルを作り直す。ボタンのクリックハンドラの中で作り直すと

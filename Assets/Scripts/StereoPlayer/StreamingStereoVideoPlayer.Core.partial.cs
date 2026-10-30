@@ -200,9 +200,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // Screens.cs の SetupScreensAndMaterials / PlaceScreens。startInNormalMode と組で使う（Monocular は normal mode の一種）。
     [System.NonSerialized] private bool experimentMonocular;
 
-    // Settings パネルの Motion トグルを出さずに固定するか。単眼・ステレオ（モデルが出ない）は固定、
-    // 置換ありは被験者が切り替えられる（2026-09-25 のユーザー指示。ExperimentTrialRequest.LockInteractiveMotion）。
+    // Settings パネルの Motion トグルを出さずに固定するか。2026-10-30 から全条件で固定（実験では Settings 自体を出さない。
+    // ExperimentTrialRequest.LockInteractiveMotion）。それまでは置換ありだけ被験者が切り替えられた（2026-09-25 のユーザー指示）。
     [System.NonSerialized] private bool experimentLockInteractiveMotion;
+
+    // 練習（置換あり）で、自分から動く例を見た後は新しく動かさない（2026-10-30、ExperimentController.HoldTutorialMotionAfterExample）。
+    // 試行シーンは練習・試行のたびに読み直すので、次へは持ち越さない。
+    [System.NonSerialized] private bool experimentTutorialRandomMotionHeld;
+
+    public void HoldRandomInteractiveMotionForTutorial()
+    {
+        if (experimentTutorialRandomMotionHeld)
+        {
+            return;
+        }
+
+        experimentTutorialRandomMotionHeld = true;
+        Debug.Log("[Experiment] 練習: 自分から動く例を見たので、この後は新しく動かさない");
+    }
 
 
     private bool IsCategoryExcludedByExperiment(byte categoryId)
@@ -347,8 +362,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         // モーションは条件で決める（置換あり = ON、それ以外 = OFF）。シーンの serialize 値
         // （TrialScene は 0）より優先する（2026-09-25）。
-        // **置換あり条件だけ、被験者が Settings の Motion で切り替えられる**（同日のユーザー指示で
-        // 固定を取り消した）。単眼・ステレオはモデルが出ないので固定のまま（トグルを出さない）。
+        // 2026-10-30 から全条件で固定（実験では Settings を出さない。ShowsSettingsButton）。それまでは置換ありだけ
+        // 被験者が Settings の Motion で切り替えられた（2026-09-25 のユーザー指示）。
         enableInteractiveMotion = request.InteractiveMotionEnabled;
         experimentLockInteractiveMotion = request.LockInteractiveMotion;
 

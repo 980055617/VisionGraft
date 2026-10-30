@@ -277,9 +277,6 @@ public static class ExperimentPanelCapture
             case ExperimentTutorial.Step.ChangeModel:
                 tutorial.RecordOperation("change_model", "track=0 category=human index=15 prefab=16_Male_Eric");
                 break;
-            case ExperimentTutorial.Step.ToggleMotion:
-                tutorial.RecordOperation("motion_toggle", "value=0");
-                break;
             default:
                 // 掴んで回す。列挙子を名指ししないのは、段階を足す前のコードでも同じ撮り方ができるようにするため。
                 tutorial.RecordOperation("change_rotation", "track=1 op=grab yaw=35 pitch=0 roll=0 frame=120");

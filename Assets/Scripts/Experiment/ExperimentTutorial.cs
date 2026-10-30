@@ -8,19 +8,20 @@ using System.Collections.Generic;
 //                           → 画面の上に出る「視聴を終了」を押す（次の動画に移るときの操作をここで覚える）
 //   B StereoOnly           : 立体で見える説明だけ。操作は同じ。「視聴を終了」を押して終わる
 //   C ModelReplaced        : モデルが自分から動く例を見る → Model ボタンでモデルを替える
-//                           → Settings の Motion で ON/OFF を切り替える（機能の説明つき）
 //                           → モデルを掴んで回す → 「視聴を終了」
 //                           （2026-09-25 指示「インタラクションモードの切り替えもできて、
 //                           そのモードの説明の例も見せたい」。並びは 2026-09-28 に入れ替えた。
-//                           掴んで回すは 2026-10-01 に追加（ユーザー「使ってもらうのでチュートリアルをつけたい」）。ResolveSequence）
+//                           掴んで回すは 2026-10-01 に追加（ユーザー「使ってもらうのでチュートリアルをつけたい」）。
+//                           Settings の Motion の切り替えは 2026-10-30 に外した（ユーザー「settingはもう使わないので，
+//                           チュートリアルから外し，実験でも表示しない」）。ResolveSequence）
 //
 // 検出は ExperimentLog の sink を横取りして行う（プレイヤー側には手を入れない）。
 // 受け取った操作は内側の sink（セッション）へそのまま流すので、チュートリアル中の
 // 操作も operations.csv に残る（trial_index = -1）。
 //
 // 各段階は「済んだかどうか」で持ち、現在の段階はその列の最初の未完了項目。
-// 順番どおりでなくても済んだ操作は数える。resume だけは pause の後でないと数えない。置換ありの 1/4〜4/4 は
-// その段階を表示している間の操作だけ数える（説明が一度も出ないまま進まないように。3/4 は 2026-10-10 に揃えた）。
+// 順番どおりでなくても済んだ操作は数える。resume だけは pause の後でないと数えない。置換ありの 1/3〜3/3 は
+// その段階を表示している間の操作だけ数える（説明が一度も出ないまま進まないように）。
 // 段階を個別に飛ばす手段は置かない（実際に操作しないと進めない）。練習全体は実験者用のボタンで
 // いつでも終えられる（ExperimentController が出す。completed=0 と段階名が記録に残る）。
 public sealed class ExperimentTutorial : IExperimentLogSink
@@ -33,7 +34,6 @@ public sealed class ExperimentTutorial : IExperimentLogSink
         Seek,
         ChangeModel,
         WatchMotion,
-        ToggleMotion,
         GrabRotate,
         Done,
     }
@@ -42,10 +42,6 @@ public sealed class ExperimentTutorial : IExperimentLogSink
     private readonly ExperimentDisplayMode mode;
     private readonly Step[] sequence;
     private readonly HashSet<Step> completed = new HashSet<Step>();
-
-    // Motion（インタラクティブモーション）が ON か。置換ありの練習は ON で始まる
-    // （ExperimentTrialRequest.InteractiveMotionEnabled）。被験者が切ったら文面を変える。
-    private bool motionEnabled = true;
 
     // モデルが出ている track。model_assigned と change_model の detail から拾う。
     // 全部「表示しない」にされると、その track は配置もモーションのスケジュールも走らないので
@@ -56,7 +52,7 @@ public sealed class ExperimentTutorial : IExperimentLogSink
     // 「表示しない」を選んだときに detail へ入る prefab 名（StreamingStereoVideoPlayer.HiddenModelName）。
     private const string HiddenPrefabToken = "prefab=(none)";
 
-    // 4/4 を済ませる左右の回転の最小量（度）。体が回ったと目で分かる量。記録のノイズの閾値（0.5°、EndGrabRotate）とは別。
+    // 掴んで回す段を済ませる左右の回転の最小量（度）。体が回ったと目で分かる量。記録のノイズの閾値（0.5°、EndGrabRotate）とは別。
     private const float GrabRotateMinYawDegrees = 10f;
 
     // "key=value" の並び（空白区切り）から数値を 1 つ読む。無い・読めないなら false。
@@ -86,7 +82,7 @@ public sealed class ExperimentTutorial : IExperimentLogSink
     // 例を見ない（2026-09-29 の 3 回目の監査）。
     private bool motionExampleRunning;
 
-    // manualRotationResetAtCut（2026-10-12、同日夜にユーザーが採用し既定 ON）が ON のとき、4/4 の最後の行を「場面が切り替わると元に戻る」にする。ExperimentController が試行シーンのプレイヤーから写す。
+    // manualRotationResetAtCut（2026-10-12、同日夜にユーザーが採用し既定 ON）が ON のとき、掴んで回す段の最後の行を「場面が切り替わると元に戻る」にする。ExperimentController が試行シーンのプレイヤーから写す。
     public bool ManualRotationResetsAtCut { get; set; }
 
     public ExperimentTutorial(IExperimentLogSink inner, ExperimentDisplayMode mode)
@@ -107,9 +103,11 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                 // WatchMotion を先頭に置く。後ろに置くと、モデルを選んでいる最中（練習の発火間隔は 3〜6 秒）に
                 // 先に発火して段階が済んでしまい、**「モデルが自分から動く」の説明が一度も出ないまま**
                 // 動画だけが不意に止まる（2026-09-25 の監査 F1）。先頭なら説明を読んでいる間に例が出る。
-                // GrabRotate は ToggleMotion の**後ろ**。前に置くと、掴もうとしている最中に練習の発火
-                // （3〜6 秒おき）が来て、モデルが動き出し動画も止まる。Motion を切った後なら邪魔が入らない。
-                return new[] { Step.WatchMotion, Step.ChangeModel, Step.ToggleMotion, Step.GrabRotate, Step.Done };
+                // Motion の切り替え（Settings）の段は 2026-10-30 に外した。前は GrabRotate をその段の後ろに置き、
+                // 参加者が Motion を切ってから掴ませていた（掴もうとしている最中に練習の発火（3〜6 秒おき）が来て、
+                // モデルが動き出し動画も止まるため）。今は例を見た後は練習の中で新しく動かさない
+                // （ExperimentController.HoldTutorialMotionAfterExample）。
+                return new[] { Step.WatchMotion, Step.ChangeModel, Step.GrabRotate, Step.Done };
             default:
                 return new[] { Step.Done };
         }
@@ -149,6 +147,12 @@ public sealed class ExperimentTutorial : IExperimentLogSink
     public bool IsDone
     {
         get { return CurrentStep == Step.Done; }
+    }
+
+    // 自分から動く例を最後まで見たか（置換ありの 1/3 が済んだ）。練習ではこの後、新しく動かさない（ExperimentController）。
+    public bool MotionExampleSeen
+    {
+        get { return completed.Contains(Step.WatchMotion); }
     }
 
     // 「次へ」ボタン。ボタンを押せたこと自体が課題なので、押されたら済みにする。
@@ -224,15 +228,6 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                         return AllModelsHiddenBody;
                     }
 
-                    // 先に Motion を切られていると待っても出ない。その場合は戻し方を出す。
-                    if (!motionEnabled)
-                    {
-                        return
-                            "モデルの動きが OFF になっています。\n" +
-                            "下のバーの「Settings」を開き、\n" +
-                            "Motion を ON に戻してください。";
-                    }
-
                     // 止めたままでは出ない。
                     if (videoPausedByParticipant)
                     {
@@ -256,23 +251,6 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                         "3D モデルに置き換わり、ときどき自分から\n" +
                         "動きます。動くあいだ動画は止まります。\n" +
                         "1 回動くまで見ていてください。";
-                case Step.ToggleMotion:
-                    // **Motion がどういう機能かを書く**（2026-10-01 ユーザー「Settings の Toggle が何か
-                    // 全然わからないとのこと。どういう機能か説明をつけてほしい」）。画面のラベルは英語の
-                    // 「Motion」「Toggle」だけなので、1/4 で見た「自分から動く」とここで結びつける。
-                    // OFF でもモデルは消えず、動画の人や動物の姿勢をなぞり続ける（姿勢追従は止まらない）。
-                    // Settings には Screen Dist（動画の画面までの距離）も並んでいる。動かされると
-                    // 見かけの大きさと両眼視差が変わって条件が崩れるので、触らないよう明示する
-                    // （記録は残るが統制はできない。2026-09-30 の 5 回目の監査）。
-                    // 6 行。本文の枠（280px）は 5 行半で、はみ出しは下へ出る（VerticalWrapMode.Overflow）。
-                    // 6 行目の下端はボタン列の上端より上に収まる（2026-10-01 にパネルを撮って確認）。
-                    return
-                        "いま見た「自分から動く」機能が「Motion」で、\n" +
-                        "ON / OFF を切り替えられます。OFF にすると\n" +
-                        "モデルは動画どおりに動くだけになります。\n" +
-                        "下のバーの「Settings」を開き、「Motion」の\n" +
-                        "「Toggle」を押してください。\n" +
-                        "（「Screen Dist」は触らないで）";
                 case Step.GrabRotate:
                     // 掴んで回す（GrabRotate.partial.cs）。置換ありの試行で使えるが、2026-10-01 まで練習に
                     // 一度も出てこず、偶然トリガーを引いた人だけが気づく状態だった（ユーザー「使ってもらうので
@@ -311,8 +289,8 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                     "押すと練習が終わります。";
             case ExperimentDisplayMode.StereoOnly:
                 // **「操作はこれまでと同じです」と書かない。**群 B ではこの直前が置換ありで、
-                // 立体のみのブロックでは「Model」ボタンも Settings の Motion の切り替えも消える
-                // （2026-09-30 の 5 回目の監査）。両群で真になる書き方にする。
+                // 立体のみのブロックでは「Model」ボタンが消える（2026-09-30 の 5 回目の監査）。
+                // 両群で真になる書き方にする。
                 return
                     $"次の {ExperimentPlan.TrialsPerBlock} 本は立体（奥行きあり）で\n" +
                     "見えます。\n" +
@@ -320,12 +298,12 @@ public sealed class ExperimentTutorial : IExperimentLogSink
                     "見終わったら画面の上の\n" +
                     "「視聴を終了」を押してください。";
             default:
-                // 置換ありでできること 3 つ（替える・回す・切り替える）をまとめて言う。「次の 6 本」（1 ブロックの本数）と書くのは、
-                // 群 B では置換ありの後に立体のみが来て、そこでは Model も Motion も無いため（WatchMotion の
-                // 「次の 6 本では…」と同じ言い方）。
+                // 置換ありでできること 2 つ（切り替える・回す）をまとめて言う（Motion の切り替えは 2026-10-30 に外した）。
+                // 「次の 6 本」（1 ブロックの本数）と書くのは、群 B では置換ありの後に立体のみが来て、そこでは
+                // Model も掴む対象も無いため（WatchMotion の「次の 6 本では…」と同じ言い方）。
                 return
                     $"操作は以上です。次の {ExperimentPlan.TrialsPerBlock} 本では、モデルの\n" +
-                    "交換・掴んで回す・Motion の切り替えが\n" +
+                    "切り替えと、掴んで回すことが\n" +
                     "いつでもできます。\n" +
                     "見終わったら画面の上の\n" +
                     "「視聴を終了」を押してください。";
@@ -397,30 +375,6 @@ public sealed class ExperimentTutorial : IExperimentLogSink
             case "model_assigned":
                 // 試行（練習）の最初にどの track にモデルが出たか。段階は進めない。
                 NoteModelVisibility(detail);
-                break;
-            case "motion_toggle":
-                // detail は "value=1" / "value=0"。切り替えたこと自体が課題なので、OFF にしたときも済みにする。
-                // ただし**例を見た後の切り替えだけ**数える（resume が pause の後だけなのと同じ）。
-                // 例を見る前に OFF にされたときは「ON に戻してください」と案内するので、その操作で
-                // 切り替えの段階まで済ませてしまうと、3/3 の練習が一度も出ない（2026-09-25 の監査 F3）。
-                bool enabled = detail == null || detail.Contains("value=1");
-                bool hintChanges = enabled != motionEnabled && CurrentStep == Step.WatchMotion;
-                motionEnabled = enabled;
-                if (!enabled)
-                {
-                    // OFF にすると走っていたモーションも止まる（StopAllInteractiveMotion）。「動いています」を残さない。
-                    motionExampleRunning = false;
-                }
-                // **3/4 を表示している間の切り替えだけ数える**（2026-10-10、1/4・4/4 と同じ）。2/4 の最中に Settings を開いて
-                // 押すと、10/01 に足した Motion の説明が一度も出ないまま 3/4 が済んでいた。
-                if (completed.Contains(Step.WatchMotion) && CurrentStep == Step.ToggleMotion)
-                {
-                    SetDone(Step.ToggleMotion);
-                }
-                if (hintChanges)
-                {
-                    Changed?.Invoke();
-                }
                 break;
             case "change_rotation":
                 // 掴んで回して放した（GrabRotate.partial.cs が op=grab で出す。0.5° 未満しか回していない掴みは出ない）。
@@ -504,7 +458,7 @@ public sealed class ExperimentTutorial : IExperimentLogSink
 
         videoPausedByParticipant = paused;
         // 文面が変わるのは WatchMotion を表示している間だけ（他の段階では A ボタンの案内は出さない）。
-        if (CurrentStep == Step.WatchMotion && motionEnabled && !AllModelsHidden)
+        if (CurrentStep == Step.WatchMotion && !AllModelsHidden)
         {
             Changed?.Invoke();
         }

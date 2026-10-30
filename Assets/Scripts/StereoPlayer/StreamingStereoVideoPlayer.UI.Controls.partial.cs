@@ -72,9 +72,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         runtimePauseButtonText = GetButtonText(pauseButton);
         BindRuntimeButton(pauseButton, TogglePausePlayback);
 
-        Button settingsButton = CreateBarButton(panelObj.transform, "SettingsButton", new Vector2(210f, -100f));
-        runtimeSettingsButtonText = GetButtonText(settingsButton);
-        BindRuntimeButton(settingsButton, ToggleRuntimeSettingsPanel);
+        if (ShowsSettingsButton)
+        {
+            Button settingsButton = CreateBarButton(panelObj.transform, "SettingsButton", new Vector2(210f, -100f));
+            runtimeSettingsButtonText = GetButtonText(settingsButton);
+            BindRuntimeButton(settingsButton, ToggleRuntimeSettingsPanel);
+        }
 
         // 入口へ戻る。動画を開いたら戻れなかったので追加（2026-08-28 の要望）。
         //
@@ -276,9 +279,19 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
+    // **実験中（参加者の試行・練習・実験者のデバッグ）は Settings を出さない**（2026-10-30 ユーザー「settingはもう使わないので，
+    // チュートリアルから外し，実験でも表示しない」）。中身の Motion（置換ありの切り替え）と Screen Dist（画面までの距離）は
+    // どちらも参加者に触らせない。Display / Home と同じく、作らず、prefab 由来のボタンは BindRuntimeControlsUi で非アクティブにする。
+    // 自由に見るとき（TestScene・Home の「自由に見る」）は今までどおり出す。
+    private bool ShowsSettingsButton
+    {
+        get { return !startedAsExperimentTrial; }
+    }
+
+
     private void EnsureSettingsButtonExists(GameObject root)
     {
-        if (root == null)
+        if (root == null || !ShowsSettingsButton)
         {
             return;
         }
@@ -380,8 +393,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Button settingsButton = FindButton(root, "setting");
         if (settingsButton != null)
         {
-            BindRuntimeButton(settingsButton, ToggleRuntimeSettingsPanel);
-            runtimeSettingsButtonText = GetButtonText(settingsButton);
+            if (ShowsSettingsButton)
+            {
+                BindRuntimeButton(settingsButton, ToggleRuntimeSettingsPanel);
+                runtimeSettingsButtonText = GetButtonText(settingsButton);
+            }
+            else
+            {
+                // runtimeControlsPrefab が Settings ボタンを持っている場合（TrialScene はこちら）。Display と同じく非アクティブにする。
+                SceneObjectWriter.ApplyActive(settingsButton.gameObject, false);
+            }
         }
 
         Button modeButton = FindButton(root, "mode");

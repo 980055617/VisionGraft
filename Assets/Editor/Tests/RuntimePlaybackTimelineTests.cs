@@ -29,6 +29,28 @@ public class RuntimePlaybackTimelineTests
     }
 
 
+    // 2026-10-30: 開発用 Quest の記録の本当の周の終わり（30 秒の動画で 29.958 秒・練習 9.61 秒）は数え、
+    // 動作の後に動画を戻した直後の誤った合図（3.17・14.29・14.67 秒）は数えない。
+    [Test]
+    public void IsLoopPointMidClip_TrueOnlyAwayFromBothEnds()
+    {
+        Assert.That(RuntimePlaybackTimeline.IsLoopPointMidClip(29.958d, 30d, 1d), Is.False);
+        Assert.That(RuntimePlaybackTimeline.IsLoopPointMidClip(0.02d, 30d, 1d), Is.False);
+        Assert.That(RuntimePlaybackTimeline.IsLoopPointMidClip(9.61d, 9.65d, 1d), Is.False);
+        Assert.That(RuntimePlaybackTimeline.IsLoopPointMidClip(14.6664d, 30d, 1d), Is.True);
+        Assert.That(RuntimePlaybackTimeline.IsLoopPointMidClip(3.1666d, 30d, 1d), Is.True);
+    }
+
+
+    [Test]
+    public void IsLoopPointMidClip_FalseWhenLengthIsUnknownOrTooShort()
+    {
+        Assert.That(RuntimePlaybackTimeline.IsLoopPointMidClip(14.6d, 0d, 1d), Is.False);
+        Assert.That(RuntimePlaybackTimeline.IsLoopPointMidClip(double.NaN, 30d, 1d), Is.False);
+        Assert.That(RuntimePlaybackTimeline.IsLoopPointMidClip(0.9d, 1.5d, 1d), Is.False);
+    }
+
+
     [Test]
     public void ResolveTargetFrameClampsAndRoundsToFrameRange()
     {

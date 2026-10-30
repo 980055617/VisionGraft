@@ -639,6 +639,9 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         }
 
         motionAudioFade.BeginFadeIn(seconds);
+        // 戻す直前の再生位置（2026-10-30）。まれにこの Play() の直後に周の途中の loopPointReached が来てフレームが止まる
+        // （[LOOP]・[STALL]）。根本原因を logcat で追うときの手がかり。
+        Debug.Log($"[MOTION] video resume track={trackId} time={vp.time:F3}s frame={vp.frame} prepared={vp.isPrepared}");
         RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Play);
         UpdatePauseButtonLabel();
         if (!pausedByMotion)

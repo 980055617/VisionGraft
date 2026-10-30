@@ -121,6 +121,19 @@ public static class RuntimePlaybackTimeline
     }
 
 
+    // loopPointReached が周の途中で来たか（2026-10-30）。本当の周の終わりでは再生位置は終わりか頭のすぐ近くにある。
+    // 頭からも終わりからも edgeSeconds より離れていれば途中。長さが分からないときは途中と言わない（今までどおり数える）。
+    public static bool IsLoopPointMidClip(double videoTime, double totalDuration, double edgeSeconds)
+    {
+        if (totalDuration <= 0.0001d || double.IsNaN(videoTime) || double.IsInfinity(videoTime))
+        {
+            return false;
+        }
+
+        return videoTime > edgeSeconds && videoTime < totalDuration - edgeSeconds;
+    }
+
+
     public static float ResolveNormalized(double videoTime, double totalDuration, int currentFrame, long totalFrames)
     {
         if (totalDuration > 0.0001d)

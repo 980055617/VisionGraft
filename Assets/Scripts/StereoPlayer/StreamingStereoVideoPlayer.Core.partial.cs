@@ -450,10 +450,36 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
+    // 周の途中の誤った合図と見なす、再生位置と周の頭・終わりとの間（秒）。本当の周の終わりの合図は終わりのすぐ手前で来る
+    // （開発用 Quest の記録の video_loop は 30 秒の動画で 29.96 秒、練習の動画で 9.61 秒）。
+    private const double MidClipLoopPointEdgeSeconds = 1.0;
+
     // isLooping = true なので動画は最後まで再生すると先頭に戻って再生し続ける
     // （被験者が納得するまで何周でも見られる設計）。実験ログには何周見たかを残す。
+    //
+    // **周の途中で来た合図は、周回数にも自分から動く周の数えにも入れない**（2026-10-30、ユーザー「１，３でいいよ」）。
+    // 自分から動く動作の後に Play() で動画を戻すと、まれにその 1〜2 ms 後に周の途中で来る（開発用 Quest の記録で 78 回中 3 回、
+    // 10/30 のテレビは 14.67 秒）。続いてフレームが進まなくなり DetectStalledPlayback が作り直す（根本原因は未特定、
+    // Docs/model-selection-persistence.md の 9/4 の節）。数えると trials.csv の loop_count と video_loop の行が 1 つ多くなり、
+    // 自分から動く周も始め直されて、くじの時刻が後ろならその周にもう 1 回動きうる。起きたことは video_loop_ignored に残す。
     private void OnVideoLoopPointReached(VideoPlayer source)
     {
+        if (vp != null)
+        {
+            double time = vp.time;
+            double length = ResolveTotalPlaybackDuration(ResolveSeekFpsForKeyNavigation());
+            if (RuntimePlaybackTimeline.IsLoopPointMidClip(time, length, MidClipLoopPointEdgeSeconds))
+            {
+                Debug.LogWarning(
+                    $"[LOOP] 周の途中で loopPointReached が来た time={time:F3}s / {length:F2}s frame={vp.frame} " +
+                    $"playing={vp.isPlaying} prepared={vp.isPrepared}。周回数にも自分から動く周にも数えない");
+                ExperimentLog.Operation(
+                    "video_loop_ignored",
+                    $"time={ExperimentCsv.Format(time)} length={ExperimentCsv.Format(length)} frame={ExperimentCsv.Format(vp.frame)}");
+                return;
+            }
+        }
+
         ExperimentLog.VideoLooped();
         NoteRandomMotionLoopEnded();
     }

@@ -245,9 +245,16 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         normalModePlaybackVideoPath = hasNormalModeVideo ? extractedNormalModeVideoPath.Replace("\\", "/") : null;
         isNormalMode = ResolveInitialNormalMode();
 
+        // この動画で最初に要るモデル（＋実験の既定1・既定2）だけを読んでから再生する（ModelSlots.partial.cs、2026-11-02）。
+        // 預けた名前・既定の組・normal mode が決まった後でないと、どれが要るか決まらないのでここ。normal mode は何も読まない。
+        yield return LoadModelPrefabsNeededForBundle();
+
         vp.url = isNormalMode ? normalModePlaybackVideoPath : modelModePlaybackVideoPath;
 
         RuntimePlaybackController.Apply(vp, RuntimePlaybackController.Command.Prepare);
+
+        // 自由に見るときだけ、再生が始まってから残りのモデルを裏で読む（Model の窓のため）。
+        StartModelPrefabBackgroundLoadIfNeeded();
     }
 
     // 起動時点のモードを決める。startInNormalMode は実験の StereoOnly 条件で使う。

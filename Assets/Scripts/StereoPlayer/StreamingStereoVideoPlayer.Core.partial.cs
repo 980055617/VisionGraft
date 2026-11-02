@@ -18,6 +18,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private void OnDisable()
     {
         UnsubscribeRecenterEvents();
+        // 裏のモデル読み込みの途中で止まったら、全体の読み込みの優先度を戻す（ModelSlots.partial.cs）。
+        RestoreModelBackgroundLoadPriority();
         // モデルの光を動画に合わせた分を戻す（ExperimentScene の光は試行をまたいで残る。ModelLight.partial.cs）。
         RestoreModelLight();
         // 影の距離を品質の asset の値に戻し、測る購読を外す（ModelShadow.partial.cs。asset は Editor で play を抜けても残る）。
@@ -70,10 +72,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         Debug.Log($"[LOADTIME] シーン開始（起動から {Time.realtimeSinceStartup:F2} 秒）");
         ApplyPendingExperimentTrialRequest();
 
-        // **ピッカーを先に出して、読み込みはその裏で進める。**
-        // bundle を選ぶのに人は数秒使うので、その間に終わる。
-        // 待つのは実際に prefab が要る直前（bundle を開くところ）だけ。
-        StartCoroutine(LoadModelPrefabsAsync());
+        // モデルは名前と空の枠だけ先に作り、中身は要るものから読む（ModelSlots.partial.cs、2026-11-02）。
+        // バッチだけは従来どおり全部読んでから bundle を開く（**ピッカーを先に出して、読み込みはその裏で進める**。
+        // 待つのは実際に prefab が要る直前（bundle を開くところ）だけ）。
+        BuildModelPrefabSlots();
+        if (LoadsAllModelPrefabsUpFront)
+        {
+            StartCoroutine(LoadModelPrefabsAsync());
+        }
+        else
+        {
+            FinishLazyModelPrefabSlots();
+        }
 
         vp = GetComponent<VideoPlayer>();
         if (vp == null)
@@ -229,7 +239,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // animal の既定モデルを prefab 名で決める。一覧がまだ無ければ次回に持ち越す。
     private void ApplyExperimentPreferredAnimalModelOnce()
     {
-        if (string.IsNullOrEmpty(experimentPreferredAnimalModelName) || animalPrefabs == null || animalPrefabs.Length == 0)
+        if (string.IsNullOrEmpty(experimentPreferredAnimalModelName) || animalPrefabNames == null || animalPrefabNames.Length == 0)
         {
             return;
         }
@@ -237,15 +247,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         string wanted = experimentPreferredAnimalModelName;
         experimentPreferredAnimalModelName = null;
 
-        for (int i = 0; i < animalPrefabs.Length; i++)
+        // 名前の一覧で探す（中身はまだ読んでいないことがある。ModelSlots.partial.cs）。
+        int index = IndexOfModelName(animalPrefabNames, wanted, true);
+        if (index >= 0)
         {
-            GameObject prefab = animalPrefabs[i];
-            if (prefab != null && string.Equals(prefab.name, wanted, System.StringComparison.OrdinalIgnoreCase))
-            {
-                selectedAnimalIndex = i;
-                Debug.Log($"[Experiment] animal の既定モデル = {prefab.name}（index {i}）");
-                return;
-            }
+            selectedAnimalIndex = index;
+            Debug.Log($"[Experiment] animal の既定モデル = {animalPrefabNames[index]}（index {index}）");
+            return;
         }
 
         Debug.LogWarning($"[Experiment] animal モデル '{wanted}' が一覧に無いので selectedAnimalIndex={selectedAnimalIndex} のまま");
@@ -969,108 +977,24 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     // 1 つずつ Resources.LoadAsync すればフレームを跨げるが、そのためには
     // 読む前に名前を知っている必要がある。Resources に一覧 API は無いので、
     // ModelResourceIndexGenerator がビルド前に一覧を作っている。
+    //
+    // 2026-11-02 から、全部読むのはバッチだけ（LoadsAllModelPrefabsUpFront）。実機・Editor の再生は要るものから読む
+    // （ModelSlots.partial.cs。枠と名前は BuildModelPrefabSlots が先に作っている）。
     private IEnumerator LoadModelPrefabsAsync()
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-
-        var human = new List<GameObject>();
-        var animal = new List<GameObject>();
-        var other = new List<GameObject>();
-
-        TextAsset index = Resources.Load<TextAsset>(ModelIndexResourcePath);
-        if (index == null || string.IsNullOrEmpty(index.text))
-        {
-            // 一覧が無いときは従来どおり同期で読む。遅いが壊れはしない。
-            Debug.LogWarning(
-                $"[Model] {ModelIndexResourcePath} が無いので同期読み込みに落ちます。" +
-                "Tools/VisionGraft/モデル一覧を作り直す で作れます。");
-            humanPrefabs  = LoadPrefabsFromResources("Models/Human");
-            animalPrefabs = SortByPriority(LoadPrefabsFromResources("Models/Animal"), AnimalModelPriorityOrder);
-            elsePrefabs   = LoadPrefabsFromResources("Models/Else");
-        }
-        else
-        {
-            string[] paths = index.text.Split(ModelIndexLineSeparators, System.StringSplitOptions.RemoveEmptyEntries);
-            for (int i = 0; i < paths.Length; i++)
-            {
-                string path = paths[i].Trim();
-                if (path.Length == 0)
-                {
-                    continue;
-                }
-
-                ResourceRequest request = Resources.LoadAsync<GameObject>(path);
-                while (!request.isDone)
-                {
-                    yield return null;
-                }
-
-                if (!(request.asset is GameObject prefab))
-                {
-                    Debug.LogWarning($"[Model] 読めません: {path}");
-                    continue;
-                }
-
-                if (path.StartsWith("Models/Human", System.StringComparison.Ordinal))
-                {
-                    human.Add(prefab);
-                }
-                else if (path.StartsWith("Models/Animal", System.StringComparison.Ordinal))
-                {
-                    animal.Add(prefab);
-                }
-                else
-                {
-                    other.Add(prefab);
-                }
-            }
-
-            // 並びは従来と同じにする。ずれると selectedHumanIndex や
-            // trackModelIndices が指すモデルが変わってしまう。
-            human.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
-            other.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
-            animal.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
-            humanPrefabs = human.ToArray();
-            elsePrefabs = other.ToArray();
-            animalPrefabs = SortByPriority(animal.ToArray(), AnimalModelPriorityOrder);
-        }
+        yield return LoadModelPrefabSlotsAsync(CollectAllModelPrefabSlots(), null);
 
         Debug.Log($"[Model] Human: {humanPrefabs.Length} prefab, Animal: {animalPrefabs.Length} prefab, Else: {elsePrefabs.Length} prefab");
         Debug.Log($"[LOADTIME] prefab 読み込み {stopwatch.ElapsedMilliseconds}ms（フレームを跨いで）");
+        Debug.Log($"[CUTOUTALPHA] changed={cutoutAlphaChangedCount} isEditor={Application.isEditor}");
         VerifyModelPrefabOrderInBatch();
         AppendBatchExtraPrefabs();
-        // 失敗しても読み込みは止めない（WaitForModelPrefabs が modelPrefabsReady を待っている）。
-        try
-        {
-            ApplyCutoutAlphaForPassthrough();
-        }
-        catch (System.Exception ex)
-        {
-            Debug.LogException(ex);
-        }
-
         modelPrefabsReady = true;
     }
 
 
-    // 実機の MSAA 4x で、cutout（毛・ヒゲのカード、人の髪・服）からパススルーの部屋が透けるのを防ぐ（PassthroughCutoutAlpha）。
-    // 書き換えるのは実機だけ（Editor では 0 件）。カテゴリを外すときは、その行を消す。
-    private void ApplyCutoutAlphaForPassthrough()
-    {
-        if (!cutoutAlphaForPassthrough)
-        {
-            return;
-        }
-
-        var done = new HashSet<Material>();
-        int changed = PassthroughCutoutAlpha.ApplyToPrefabs(animalPrefabs, "Animal", done)
-                      + PassthroughCutoutAlpha.ApplyToPrefabs(humanPrefabs, "Human", done)
-                      + PassthroughCutoutAlpha.ApplyToPrefabs(elsePrefabs, "Else", done);
-        Debug.Log($"[CUTOUTALPHA] changed={changed} isEditor={Application.isEditor}");
-    }
-
-
-    // 一覧経由で読んだ並びが、従来の Resources.LoadAll と同じかを確かめる。
+    // 一覧経由の並び（名前の一覧）が、従来の Resources.LoadAll と同じかを確かめる。
     // **並びがずれると trackModelIndices や selectedHumanIndex が別のモデルを指す。**
     // 静かに壊れるので、batchmode でだけ突き合わせる（実機では走らせない）。
     private void VerifyModelPrefabOrderInBatch()
@@ -1080,10 +1004,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        CompareModelPrefabOrder("Human", humanPrefabs, LoadPrefabsFromResources("Models/Human"));
+        CompareModelPrefabOrder("Human", humanPrefabNames, LoadPrefabsFromResources("Models/Human"));
         CompareModelPrefabOrder(
-            "Animal", animalPrefabs, SortByPriority(LoadPrefabsFromResources("Models/Animal"), AnimalModelPriorityOrder));
-        CompareModelPrefabOrder("Else", elsePrefabs, LoadPrefabsFromResources("Models/Else"));
+            "Animal", animalPrefabNames, SortByPriority(LoadPrefabsFromResources("Models/Animal"), AnimalModelPriorityOrder));
+        CompareModelPrefabOrder("Else", elsePrefabNames, LoadPrefabsFromResources("Models/Else"));
     }
 
 
@@ -1096,10 +1020,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // 名前の一覧も同じ位置に足す（名前で引くところが見つけられるように）。パスは足さない（読み済みなので要らない）。
         if (batchExtraHumanPrefab != null)
         {
             selectedHumanIndex = humanPrefabs.Length;
             humanPrefabs = AppendPrefab(humanPrefabs, batchExtraHumanPrefab);
+            humanPrefabNames = AppendName(humanPrefabNames, batchExtraHumanPrefab.name);
             Debug.Log($"[Model] batch extra Human[{selectedHumanIndex}] = {batchExtraHumanPrefab.name}");
         }
 
@@ -1107,6 +1033,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             selectedAnimalIndex = animalPrefabs.Length;
             animalPrefabs = AppendPrefab(animalPrefabs, batchExtraAnimalPrefab);
+            animalPrefabNames = AppendName(animalPrefabNames, batchExtraAnimalPrefab.name);
             Debug.Log($"[Model] batch extra Animal[{selectedAnimalIndex}] = {batchExtraAnimalPrefab.name}");
         }
     }
@@ -1119,7 +1046,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     }
 
 
-    private static void CompareModelPrefabOrder(string label, GameObject[] actual, GameObject[] expected)
+    private static string[] AppendName(string[] names, string extra)
+    {
+        var list = new List<string>(names) { extra };
+        return list.ToArray();
+    }
+
+
+    private static void CompareModelPrefabOrder(string label, string[] actual, GameObject[] expected)
     {
         if (actual.Length != expected.Length)
         {
@@ -1129,10 +1063,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
         for (int i = 0; i < actual.Length; i++)
         {
-            if (actual[i] == null || expected[i] == null || actual[i].name != expected[i].name)
+            if (actual[i] == null || expected[i] == null || actual[i] != expected[i].name)
             {
                 Debug.LogError(
-                    $"[ORDERCHECK] {label} [{i}] が違う 一覧={(actual[i] != null ? actual[i].name : "null")} " +
+                    $"[ORDERCHECK] {label} [{i}] が違う 一覧={actual[i] ?? "null"} " +
                     $"LoadAll={(expected[i] != null ? expected[i].name : "null")}");
                 return;
             }
@@ -1196,17 +1130,20 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private static GameObject[] SortByPriority(GameObject[] prefabs, string[] priorityOrder)
     {
         var sorted = new List<GameObject>(prefabs);
-        sorted.Sort((a, b) =>
-        {
-            int indexA = System.Array.IndexOf(priorityOrder, a.name);
-            int indexB = System.Array.IndexOf(priorityOrder, b.name);
-            if (indexA < 0) indexA = priorityOrder.Length;
-            if (indexB < 0) indexB = priorityOrder.Length;
-            return indexA != indexB
-                ? indexA.CompareTo(indexB)
-                : string.Compare(a.name, b.name, System.StringComparison.Ordinal);
-        });
+        sorted.Sort((a, b) => CompareByPriority(a.name, b.name, priorityOrder));
         return sorted.ToArray();
+    }
+
+    // SortByPriority と、名前の一覧を作る BuildModelPrefabSlots の共通の比べ方。
+    private static int CompareByPriority(string nameA, string nameB, string[] priorityOrder)
+    {
+        int indexA = System.Array.IndexOf(priorityOrder, nameA);
+        int indexB = System.Array.IndexOf(priorityOrder, nameB);
+        if (indexA < 0) indexA = priorityOrder.Length;
+        if (indexB < 0) indexB = priorityOrder.Length;
+        return indexA != indexB
+            ? indexA.CompareTo(indexB)
+            : string.Compare(nameA, nameB, System.StringComparison.Ordinal);
     }
 }
 

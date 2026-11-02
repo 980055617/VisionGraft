@@ -316,7 +316,7 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         if (!nowHidden && prefabs != null)
         {
             int idx = Mathf.Clamp(selectedModelIndexByTrack[trackId], 0, prefabs.Length - 1);
-            persisted = prefabs[idx] != null ? prefabs[idx].name : null;
+            persisted = ModelNameAt(ResolvePrefabNamesForCategory(categoryId), idx);
         }
         PersistModelSelection(trackId, persisted);
 
@@ -748,10 +748,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             // 番号とページも出す。一覧は 6 件ずつなので、今のモデルが別ページにあるとき
             // 「何番のどこにあるか」が分からない（2026-09-11 実機指摘）。
+            // 名前は名前の一覧から（中身をまだ読んでいない枠でも出せる。ModelSlots.partial.cs）。
+            string selectedModelName = hidden ? null : ModelNameAt(ResolvePrefabNamesForCategory(categoryId), selectedIndex);
             string selectedName = hidden
                 ? "表示しない"
-                : (prefabs[selectedIndex] != null
-                    ? $"{selectedIndex + 1}. {CleanModelDisplayName(prefabs[selectedIndex].name)} (p.{selectedIndex / RuntimeModelPickerEntriesPerPage + 1})"
+                : (selectedModelName != null
+                    ? $"{selectedIndex + 1}. {CleanModelDisplayName(selectedModelName)} (p.{selectedIndex / RuntimeModelPickerEntriesPerPage + 1})"
                     : "missing");
             List<uint> targets = availableTracks;
             int pos = targets != null ? targets.IndexOf(trackId) + 1 : 0;
@@ -807,6 +809,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private int previewBuiltTrackId = -1;
     private byte previewBuiltCategoryId = 255;
     private int previewBuiltPrefabCount = -1;
+    // ページのうち中身を読み終えた枠の数。裏の読み込みで増えたら作り直す（ModelSlots.partial.cs。枠の数は読み込みで変わらない）。
+    private int previewBuiltLoadedCount = -1;
 
     private void InvalidateRuntimeModelPickerPreviews()
     {
@@ -817,12 +821,14 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private void UpdateRuntimeModelPickerEntryButtons(GameObject[] prefabs, int selectedIndex, byte categoryId)
     {
         int currentTrackId = runtimeModelPickerTrackId;
+        int loadedOnPage = CountLoadedModelPrefabsOnPage(prefabs, runtimeModelPickerPageIndex, RuntimeModelPickerEntriesPerPage);
         bool previewsAreCurrent =
             previewBuiltPage == runtimeModelPickerPageIndex &&
             previewBuiltSelectedIndex == selectedIndex &&
             previewBuiltTrackId == currentTrackId &&
             previewBuiltCategoryId == categoryId &&
             previewBuiltPrefabCount == prefabs.Length &&
+            previewBuiltLoadedCount == loadedOnPage &&
             runtimeModelPickerPreviewInstances.Count > 0;
 
         if (!previewsAreCurrent)
@@ -833,7 +839,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             previewBuiltTrackId = currentTrackId;
             previewBuiltCategoryId = categoryId;
             previewBuiltPrefabCount = prefabs.Length;
+            previewBuiltLoadedCount = loadedOnPage;
         }
+
+        string[] names = ResolvePrefabNamesForCategory(categoryId);
 
         int startIndex = runtimeModelPickerPageIndex * RuntimeModelPickerEntriesPerPage;
         Transform previewParent = runtimeModelPickerRoot != null ? runtimeModelPickerRoot.transform.Find("Panel") : null;
@@ -851,8 +860,10 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             Outline outline = i < runtimeModelPickerEntryOutlines.Count ? runtimeModelPickerEntryOutlines[i] : null;
             if (modelIndex < prefabs.Length)
             {
+                // 中身をまだ読んでいない枠は名前だけ出し、プレビューは読み終えてから作る（previewBuiltLoadedCount）。
                 GameObject prefab = prefabs[modelIndex];
-                string modelName = prefab != null ? CleanModelDisplayName(prefab.name) : "missing";
+                string rawName = ModelNameAt(names, modelIndex);
+                string modelName = rawName != null ? CleanModelDisplayName(rawName) : "missing";
                 bool isCurrent = modelIndex == selectedIndex;
                 if (label != null)
                 {
@@ -923,17 +934,18 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
+        // まだ読んでいないモデルなら、作り直し（ResolveTrackPrefab）でその 1 個を同期で読む（ModelSlots.partial.cs）。
         selectedModelIndexByTrack[trackId] = modelIndex;
         RecreateTrackInstanceForModelSelection(trackId);
-        PersistModelSelection(trackId, prefabs[modelIndex] != null ? prefabs[modelIndex].name : null);
+        string selectedName = ModelNameAt(ResolvePrefabNamesForCategory(categoryId), modelIndex);
+        PersistModelSelection(trackId, selectedName);
 
         // どの試行でどのモデルを見ていたかは分析時の交絡要因になり得るので、
         // prefab 名まで残す（Docs/experiment-flow.md「操作の統制」参照）。
-        GameObject selectedPrefab = prefabs[modelIndex];
         ExperimentLog.Operation(
             "change_model",
             $"track={trackId} category={ResolveRuntimeModelPickerCategoryLabel(categoryId).ToLowerInvariant()} " +
-            $"index={modelIndex} prefab={(selectedPrefab != null ? selectedPrefab.name : "null")}");
+            $"index={modelIndex} prefab={selectedName ?? "null"}");
 
         UpdateRuntimeModelPickerUiState();
     }

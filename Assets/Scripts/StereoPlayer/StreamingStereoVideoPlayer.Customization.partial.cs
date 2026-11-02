@@ -197,7 +197,8 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
 
     // 復元した prefab 名を index に直す。カテゴリが確定する ResolveTrackPrefab から呼ぶ。
     // 名前が見つからなければ何もしない（＝既定のまま）。1 track につき 1 回だけ試す。
-    private void ResolvePendingModelSelection(uint trackId, GameObject[] prefabs)
+    // 名前の一覧で探す（中身の prefab はまだ読んでいないことがある。ModelSlots.partial.cs）。
+    private void ResolvePendingModelSelection(uint trackId, string[] prefabNames)
     {
         if (pendingModelNameByTrack.Count == 0 ||
             !pendingModelNameByTrack.TryGetValue(trackId, out string prefabName))
@@ -219,19 +220,17 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return;
         }
 
-        if (prefabs == null)
+        if (prefabNames == null)
         {
             return;
         }
 
-        for (int i = 0; i < prefabs.Length; i++)
+        int index = IndexOfModelName(prefabNames, prefabName, false);
+        if (index >= 0)
         {
-            if (prefabs[i] != null && prefabs[i].name == prefabName)
-            {
-                selectedModelIndexByTrack[trackId] = i;
-                Debug.Log($"[Customization] applied track={trackId} model={prefabName} index={i}");
-                return;
-            }
+            selectedModelIndexByTrack[trackId] = index;
+            Debug.Log($"[Customization] applied track={trackId} model={prefabName} index={index}");
+            return;
         }
 
         // モデルの追加・削除・改名で名前が消えることがある。既定に戻して知らせる。

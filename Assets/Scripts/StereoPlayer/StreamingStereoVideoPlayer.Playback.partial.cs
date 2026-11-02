@@ -12,6 +12,12 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
         {
             return;
         }
+        // この動画のモデルを先に読んでいる間（meta は読み終わり、再生の準備はまだ）は置かない。UseFrameReadySync が false なので
+        // 準備前でもフレーム 0 として track を置きに行き、読み終えていない枠を同期で読んでしまう（ModelSlots.partial.cs）。
+        if (modelPrefabsNeededLoading)
+        {
+            return;
+        }
         if (!HasAnyDisplayPrefabConfigured())
         {
             return;
@@ -572,24 +578,27 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
     private GameObject ResolveTrackPrefab(uint trackId, byte categoryId)
     {
         // 永続化から復元した prefab 名は、ここで初めてカテゴリが確定するので index に直す。
-        ResolvePendingModelSelection(trackId, ResolvePrefabsForCategory(categoryId));
+        ResolvePendingModelSelection(trackId, ResolvePrefabNamesForCategory(categoryId));
 
+        // 決め方を変えたら ModelSlots.partial.cs の PredictTrackModelIndex（先に読むモデルを選ぶ）も合わせる。
+        string category = ResolveRuntimeModelPickerCategoryLabel(categoryId);
         if (IsCategoryAnimal(categoryId))
         {
             // 実験の指示（チュートリアルは犬）があれば、ここで初めて index に解決する。
             ApplyExperimentPreferredAnimalModelOnce();
-            return ResolvePrefabFromSelection(trackId, animalPrefabs, selectedAnimalIndex);
+            return ResolvePrefabFromSelection(trackId, category, selectedAnimalIndex);
         }
         if (IsCategoryOther(categoryId))
         {
-            return ResolvePrefabFromSelection(trackId, elsePrefabs, selectedElseIndex);
+            return ResolvePrefabFromSelection(trackId, category, selectedElseIndex);
         }
-        return ResolvePrefabFromSelection(trackId, humanPrefabs, selectedHumanIndex);
+        return ResolvePrefabFromSelection(trackId, category, selectedHumanIndex);
     }
 
 
     // 「置かない」なら null を返す。Clamp より前に見ること（-1 は 0 に丸められてしまう）。
-    private GameObject ResolvePrefabFromSelection(uint trackId, GameObject[] prefabs, int defaultIndex)
+    // 枠がまだ空なら、その 1 個を同期で読む（GetOrLoadModelPrefab）。
+    private GameObject ResolvePrefabFromSelection(uint trackId, string category, int defaultIndex)
     {
         int index = ResolveSelectedModelIndex(trackId, defaultIndex);
         if (IsHiddenModelIndex(index))
@@ -597,12 +606,13 @@ public partial class StreamingStereoVideoPlayer : MonoBehaviour
             return null;
         }
 
+        GameObject[] prefabs = ResolvePrefabsForModelCategory(category);
         if (prefabs == null || prefabs.Length == 0)
         {
             return null;
         }
 
-        return prefabs[Mathf.Clamp(index, 0, prefabs.Length - 1)];
+        return GetOrLoadModelPrefab(category, Mathf.Clamp(index, 0, prefabs.Length - 1), $"track {trackId}");
     }
 
 

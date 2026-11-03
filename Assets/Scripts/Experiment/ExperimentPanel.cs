@@ -17,7 +17,7 @@ public sealed class ExperimentPanel
         public string label;
         public Action onClick;
         public bool interactable;
-        // 2 度押しで初めて実行する（ConfirmWindowSeconds 以内）。取り返しのつかない実験者用の操作
+        // 押すと確認の窓を出し、「はい」で初めて実行する（OpenConfirmDialog）。取り返しのつかない実験者用の操作
         // （セッション中断・練習を飛ばす・練習を途中で終える・読み込みの中止）に付ける。
         // 練習の途中の段階は「実験者用: 終了」しかボタンが無く、被験者が「次へ」のつもりで押すと
         // その練習が丸ごと終わっていた（2026-09-29 の 3 回目の監査）。
@@ -34,15 +34,41 @@ public sealed class ExperimentPanel
         }
     }
 
-    // 2 度押しの猶予。2 度目は 1 度目から ConfirmMinGapSeconds 以上あとでないと数えない
-    // （トリガーの二重発火は数十 ms なので、それを「確認した」と取らないため）。
-    public const float ConfirmWindowSeconds = 3f;
-    public const float ConfirmMinGapSeconds = 0.4f;
-    // **1 度目で文言を「もう一度押す」に変えてはいけない。**被験者が見るパネル（練習の各段階・読み込み中）にも
-    // 実験者用のボタンが乗っているので、指示文に読めるものを出すと被験者がその通りに押して練習が終わる
-    // （2026-09-29 の 4 回目の監査）。文言は変えず、1 度目のあいだだけ色を変えて実験者に知らせる。
-    private static readonly Color ConfirmArmedNormalColor = new Color(0.62f, 0.38f, 0.12f, 0.98f);
-    private static readonly Color ConfirmArmedHighlightedColor = new Color(0.80f, 0.52f, 0.18f, 1f);
+    // ── 実験者用のボタンの確認の窓（2026-11-03 ユーザー指示） ──
+    // 以前は 2 度押し（1 度目で橙色になり、3 秒以内の 2 度目で実行）で、被験者が続けて 2 回押すとそのまま通った
+    // （ユーザー「一回押されると黄色になり二回目でそのまま通してしまう」）。今は押すと窓が出て、
+    // 実験者用の操作であること・被験者は「いいえ」を押して実験者に声をかけることを書き、「はい」で初めて実行する
+    // （ユーザー「本当に進めますか はい いいえ」、窓は 1 枚）。
+    // 窓は別の板（このクラスのもう 1 つのインスタンス）で、開いている間は元のパネルを隠す（後ろのボタンを押させない）。
+    // 元のパネルへの SetBody / SetButtonState / Reanchor と keepPlacement の Show は隠れたパネルに入り、
+    // 「いいえ」で戻したときには反映済み。keepPlacement でない Show（局面が進んだ）が来たら、
+    // 窓の操作は古くなったので実行せずに閉じる。
+    public const string ConfirmDialogTitle = "実験者用の操作です";
+    public const string ConfirmDialogNoLabel = "いいえ";
+    public const string ConfirmDialogYesLabel = "はい";
+    // 窓の寸法は 1.2 m 先で 0.8×0.6 m（DefaultLayout の canvas 1200×900 と同じ 4:3）。元のパネルが画面より手前へ
+    // 寄せてあるとき（試行中・練習・読み込み中）は同じ距離に置き、見かけが変わらないよう距離の比で縮める。
+    // 窓は正面に出るので動画の画面と角度が重なるが、画面より手前なのでレイは窓に当たる（PullPanelInFrontOfScreen と同じ考え）。
+    private const float ConfirmDialogReferenceDistanceMeters = 1.2f;
+    private static readonly Vector2 ConfirmDialogSizeMeters = new Vector2(0.8f, 0.6f);
+
+    // 窓をこれより遠くに置かない（null = 元のパネルと同じ距離）。動画の画面があるときに呼び出し側が入れる
+    // （ExperimentController.PullPanelInFrontOfScreen）。窓は正面に出るので、画面より手前に飛び出したモデルや、
+    // 近づく動作で寄ってきたモデル（止まる距離は人 0.6 m・動物 0.5 m・その他 0.45 m）に隠れうる。
+    public float? ConfirmDialogNearDistanceMeters;
+
+    // 確認の窓の記録の書き先。ExperimentLog.Sink は試行中と練習中しか立たないので、待機画面や音の確認で押された分が
+    // 落ちる。呼び出し側がセッションへ直接書く口を渡す（無ければ ExperimentLog へ）。
+    public Action<string, string> OperationLogger;
+
+    public static string BuildConfirmDialogBody(string buttonLabel)
+    {
+        return $"「{buttonLabel}」が押されました。\n" +
+               "この操作は実験者だけが行います。\n" +
+               $"被験者の方は「{ConfirmDialogNoLabel}」を押して、\n" +
+               "実験者に声をかけてください。\n\n" +
+               "本当に進めますか？";
+    }
 
     // ボタンの地色。**Image は白にして色はここに置く。**ColorTint は Image の色に掛け算されるので、
     // 両方に同じ色を入れると二乗されてほぼ黒になり、押せない状態（disabled）と見分けが付かなくなる
@@ -98,10 +124,15 @@ public sealed class ExperimentPanel
     // ボタンごとの「本来押せるか」。作り直した直後は全部押せなくしておき、少し経ってからこの値に戻す。
     private readonly List<bool> buttonDesiredInteractable = new List<bool>();
     private float buttonsArmAtRealtime = -1f;
-    // 2 度押しのボタン: 本来の文言と、1 度目を押した時刻（負 = 押していない）。
+    // ボタンの本来の文言（確認の窓に「〜が押されました」と出す）。
     private readonly List<string> buttonLabels = new List<string>();
-    private readonly List<float> buttonConfirmArmedAt = new List<float>();
     private bool placementLocked;
+
+    // 確認の窓（OpenConfirmDialog）。開いている間は元のパネルの root を隠す。
+    private ExperimentPanel confirmDialog;
+    private bool confirmDialogOpen;
+    private Action confirmDialogAction;
+    private string confirmDialogLabel;
 
     // **作り直した直後のボタンはこの秒数だけ押せない。**
     // 同じフレームの 2 発目はレイの仕組み上届かない（ClearButtons が旧ボタンを非アクティブにし、
@@ -142,7 +173,15 @@ public sealed class ExperimentPanel
     // （チュートリアルの段階送り。段階ごとに置き直すと読んでいる最中に飛ぶ）。
     public void Show(string title, string body, IList<ButtonSpec> buttonSpecs, bool keepPlacement = false)
     {
-        bool wasVisible = IsVisible;
+        // 確認の窓が開いている間に中身が替わった。keepPlacement（練習の段階送りなど同じ画面の書き換え）は
+        // 隠れたまま中身だけ替えて窓は残す。それ以外は局面が進んだので、窓の操作は実行せずに閉じる。
+        bool updateBehindDialog = confirmDialogOpen && keepPlacement && root != null;
+        if (confirmDialogOpen && !updateBehindDialog)
+        {
+            DismissConfirmDialog();
+        }
+
+        bool wasVisible = IsVisible || updateBehindDialog;
         EnsureRoot();
         if (!(keepPlacement && wasVisible))
         {
@@ -158,6 +197,12 @@ public sealed class ExperimentPanel
         UiComponentWriter.ApplyTextContent(titleText, title);
         UiComponentWriter.ApplyTextContent(bodyText, body);
         RebuildButtons(buttonSpecs);
+
+        if (updateBehindDialog)
+        {
+            // 隠したまま。戻すのは窓を閉じたとき（RestoreAfterConfirmDialog）。
+            return;
+        }
 
         SceneObjectWriter.ApplyActive(root, true);
         SetLayerRecursively(root, UiLayer);
@@ -182,6 +227,12 @@ public sealed class ExperimentPanel
         // 呼び出し側が SizeMeters / DistanceMeters を取り直していることがある（読み込み中パネルは
         // 画面より手前に寄せた距離の比で寸法も縮める）。距離だけ反映して寸法が前のままだと見かけが変わる。
         ApplyPanelScale();
+        if (confirmDialogOpen && confirmDialog != null)
+        {
+            // 画面が動いた（Screen Dist）。窓も新しい距離で置き直し、画面より手前を保つ。
+            ApplyConfirmDialogPlacement();
+            confirmDialog.Reanchor(null);
+        }
     }
 
     public void SetBody(string body)
@@ -200,12 +251,6 @@ public sealed class ExperimentPanel
         Button button = buttons[index];
         buttonDesiredInteractable[index] = interactable;
         buttonLabels[index] = label;
-        // 文言を変えるなら 2 度押しの待ちも解く（見た目と状態が食い違わないように）。
-        if (buttonConfirmArmedAt[index] >= 0f)
-        {
-            buttonConfirmArmedAt[index] = -1f;
-            ApplyConfirmArmedTint(button, false);
-        }
         // 作り直し直後の抑止中なら、抑止が明けたときに反映される。
         if (buttonsArmAtRealtime < 0f)
         {
@@ -232,66 +277,150 @@ public sealed class ExperimentPanel
         }
     }
 
-    // 2 度押しのボタン: 1 度目から猶予が過ぎたら文言を戻す。毎フレーム呼ぶ。
-    private void ExpireConfirmIfDue()
+    // 実験者用のボタンが押された。確認の窓を出し、元のパネルは隠す（窓を閉じるまで後ろのボタンは押せない）。
+    private void OpenConfirmDialog(int index, Action onClick)
     {
-        float now = Time.realtimeSinceStartup;
-        for (int i = 0; i < buttons.Count && i < buttonConfirmArmedAt.Count; i++)
+        if (confirmDialogOpen || root == null || index < 0 || index >= buttonLabels.Count)
         {
-            if (buttonConfirmArmedAt[i] < 0f || now - buttonConfirmArmedAt[i] <= ConfirmWindowSeconds)
-            {
-                continue;
-            }
+            return;
+        }
 
-            buttonConfirmArmedAt[i] = -1f;
-            ApplyConfirmArmedTint(buttons[i], false);
+        confirmDialogOpen = true;
+        confirmDialogAction = onClick;
+        confirmDialogLabel = buttonLabels[index];
+        if (confirmDialog == null)
+        {
+            confirmDialog = new ExperimentPanel(prefab, cameraProvider);
+        }
+        ApplyConfirmDialogPlacement();
+
+        SceneObjectWriter.ApplyActive(root, false);
+        confirmDialog.Show(
+            ConfirmDialogTitle,
+            BuildConfirmDialogBody(confirmDialogLabel),
+            new List<ButtonSpec>
+            {
+                ButtonSpec.Create(ConfirmDialogNoLabel, () => CloseConfirmDialog(false)),
+                ButtonSpec.Create(ConfirmDialogYesLabel, () => CloseConfirmDialog(true)),
+            });
+        Debug.Log($"[Experiment] 実験者用のボタン（{confirmDialogLabel}）が押されたので確認の窓を出します");
+        LogOperation("experimenter_confirm_open", $"button={LogLabel(confirmDialogLabel)}");
+    }
+
+    // 窓の距離と寸法。元のパネルと同じ距離（画面より手前へ寄せてあればその距離、ConfirmDialogNearDistanceMeters が
+    // あればそれより近く）で、見かけは 1.2 m 先の 0.8×0.6 m。
+    private void ApplyConfirmDialogPlacement()
+    {
+        if (confirmDialog == null)
+        {
+            return;
+        }
+
+        float distance = Mathf.Max(0.2f, DistanceMeters);
+        if (ConfirmDialogNearDistanceMeters.HasValue)
+        {
+            distance = Mathf.Min(distance, Mathf.Max(0.2f, ConfirmDialogNearDistanceMeters.Value));
+        }
+        confirmDialog.DistanceMeters = distance;
+        confirmDialog.SizeMeters = ConfirmDialogSizeMeters * (distance / ConfirmDialogReferenceDistanceMeters);
+        confirmDialog.OffsetMeters = Vector2.zero;
+        confirmDialog.FlipHorizontal = FlipHorizontal;
+        confirmDialog.CurrentLayout = DefaultLayout;
+    }
+
+    // 「はい」「いいえ」。記録を先に書いてから実行する（「中止して Home へ」はセッションを閉じるので、後だと残らない）。
+    private void CloseConfirmDialog(bool accepted)
+    {
+        if (!confirmDialogOpen)
+        {
+            return;
+        }
+
+        Action action = confirmDialogAction;
+        string label = confirmDialogLabel;
+        HideConfirmDialog();
+        RestoreAfterConfirmDialog();
+        Debug.Log($"[Experiment] 確認の窓（{label}）: {(accepted ? ConfirmDialogYesLabel : ConfirmDialogNoLabel)}");
+        LogOperation(accepted ? "experimenter_confirm_yes" : "experimenter_confirm_no", $"button={LogLabel(label)}");
+        if (accepted)
+        {
+            action?.Invoke();
         }
     }
 
-    // 2 度押しのボタンが押された。1 度目は色を変えて待つ、猶予内（最短間隔より後）の 2 度目で実行する。
-    private void HandleConfirmClick(int index, Action onClick)
+    // 窓が開いたまま局面が進んだ（keepPlacement でない Show・Destroy）。操作は実行しない。
+    private void DismissConfirmDialog()
     {
-        if (index < 0 || index >= buttons.Count || buttons[index] == null)
+        if (!confirmDialogOpen)
         {
             return;
         }
 
-        float now = Time.realtimeSinceStartup;
-        float armedAt = buttonConfirmArmedAt[index];
-        if (armedAt >= 0f && now - armedAt <= ConfirmWindowSeconds)
-        {
-            if (now - armedAt < ConfirmMinGapSeconds)
-            {
-                // 二重発火。1 度目のまま待つ。
-                return;
-            }
-
-            buttonConfirmArmedAt[index] = -1f;
-            ApplyConfirmArmedTint(buttons[index], false);
-            onClick?.Invoke();
-            return;
-        }
-
-        buttonConfirmArmedAt[index] = now;
-        ApplyConfirmArmedTint(buttons[index], true);
-        Debug.Log($"[Experiment] 実験者用のボタン（{buttonLabels[index]}）の 1 度目。{ConfirmWindowSeconds:0} 秒以内にもう一度押すと実行します");
+        string label = confirmDialogLabel;
+        HideConfirmDialog();
+        Debug.Log($"[Experiment] 確認の窓（{label}）は画面が替わったので実行せずに閉じました");
+        LogOperation("experimenter_confirm_dismissed", $"button={LogLabel(label)}");
     }
 
-    // 2 度押しの 1 度目のあいだだけボタンの地を橙色にする。**Image の色を染めるのでは足りない**
-    // （ColorTint は Image の色に掛け算するだけなので、暗い地色より明るくはできない。Color32 で 1.0 に丸められる）。
-    // ColorBlock 側を差し替える。
-    private static void ApplyConfirmArmedTint(Button button, bool armed)
+    private void HideConfirmDialog()
     {
-        if (button == null)
+        confirmDialogOpen = false;
+        confirmDialogAction = null;
+        confirmDialogLabel = null;
+        confirmDialog?.HideRoot();
+    }
+
+    // 元のパネルを戻す。ボタンは作り直した直後と同じく少しのあいだ押せなくする。窓が元のパネルと同じ正面に
+    // 出ている画面（待機・練習の待機）では、「いいえ」の数フレーム遅れた 2 発目が後ろのボタンに当たりうる。
+    private void RestoreAfterConfirmDialog()
+    {
+        if (root == null)
         {
             return;
         }
 
-        ColorBlock colors = button.colors;
-        colors.normalColor = armed ? ConfirmArmedNormalColor : ButtonNormalColor;
-        colors.highlightedColor = armed ? ConfirmArmedHighlightedColor : ButtonHighlightedColor;
-        colors.selectedColor = colors.highlightedColor;
-        UiComponentWriter.ApplySelectableColors(button, colors);
+        SceneObjectWriter.ApplyActive(root, true);
+        ActiveRoot = root;
+        buttonsArmAtRealtime = Time.realtimeSinceStartup + ButtonArmDelaySeconds;
+        for (int i = 0; i < buttons.Count; i++)
+        {
+            if (buttons[i] != null)
+            {
+                ApplyButtonInteractable(buttons[i], false);
+            }
+        }
+    }
+
+    private void HideRoot()
+    {
+        if (root == null)
+        {
+            return;
+        }
+
+        SceneObjectWriter.ApplyActive(root, false);
+        if (ReferenceEquals(ActiveRoot, root))
+        {
+            ActiveRoot = null;
+        }
+    }
+
+    private void LogOperation(string action, string detail)
+    {
+        if (OperationLogger != null)
+        {
+            OperationLogger(action, detail);
+        }
+        else
+        {
+            ExperimentLog.Operation(action, detail);
+        }
+    }
+
+    // operations.csv の detail は空白区切りの key=value なので、ボタンの文言の空白は _ にする。
+    private static string LogLabel(string label)
+    {
+        return string.IsNullOrEmpty(label) ? "-" : label.Replace(' ', '_');
     }
 
     // 押せないボタンは文字も落とす。ColorTint は背景（targetGraphic）にしか掛からず、白い文字が
@@ -336,13 +465,17 @@ public sealed class ExperimentPanel
     // WorldAnchor があるとき（画面の上など）はそちらが優先で、frontForward は向きの逃げにだけ使う。
     public void UpdatePlacement(Transform head, Vector3 frontForward)
     {
+        if (confirmDialogOpen && confirmDialog != null)
+        {
+            confirmDialog.UpdatePlacement(head, frontForward);
+        }
+
         if (root == null || !root.activeSelf)
         {
             return;
         }
 
         ArmButtonsIfDue();
-        ExpireConfirmIfDue();
         if (placementLocked || head == null)
         {
             return;
@@ -395,6 +528,12 @@ public sealed class ExperimentPanel
 
     public void Destroy()
     {
+        DismissConfirmDialog();
+        if (confirmDialog != null)
+        {
+            confirmDialog.Destroy();
+            confirmDialog = null;
+        }
         ClearButtons();
         if (ReferenceEquals(ActiveRoot, root))
         {
@@ -504,7 +643,6 @@ public sealed class ExperimentPanel
         ClearButtons();
         buttonDesiredInteractable.Clear();
         buttonLabels.Clear();
-        buttonConfirmArmedAt.Clear();
         buttonsArmAtRealtime = -1f;
         if (specs == null || specs.Count == 0)
         {
@@ -543,7 +681,7 @@ public sealed class ExperimentPanel
             {
                 int index = i;
                 Action confirmed = spec.onClick;
-                onClick = () => HandleConfirmClick(index, confirmed);
+                onClick = () => OpenConfirmDialog(index, confirmed);
             }
             Button button = CreateButton(buttonRow, $"Button_{i}", spec.label, new Vector2(x, y),
                 new Vector2(buttonWidth, buttonHeight), onClick, CurrentLayout.buttonFontSize);
@@ -552,7 +690,6 @@ public sealed class ExperimentPanel
             buttons.Add(button);
             buttonDesiredInteractable.Add(spec.interactable);
             buttonLabels.Add(spec.label);
-            buttonConfirmArmedAt.Add(-1f);
         }
 
         SetLayerRecursively(root, UiLayer);

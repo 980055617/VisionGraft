@@ -43,6 +43,10 @@ public static class ExperimentPanelCapture
         CaptureTrialBar(cam, outDir);
         // 待機画面（Default レイアウト、押せる 2 個）。
         CaptureWaitingPanel(cam, outDir);
+        // 音の確認（2026-11-03、セッション開始の直後）。
+        CaptureAudioCheck(cam, outDir);
+        // 確認の窓を閉じた後（いいえ・はい・画面が替わる・同じ画面の書き換え）の状態を、実際のハンドラで確かめてログに出す。
+        VerifyConfirmDialogFlow(cam, outDir);
 
         Debug.Log($"[PanelCapture] 出力: {Path.GetFullPath(outDir)}");
         EditorSceneManager.MarkSceneDirty(scene);
@@ -67,16 +71,16 @@ public static class ExperimentPanelCapture
         Place(panel, cam);
 
         // (1) 70 秒前: 「視聴を終了」が押せない / 中止は押せる
-        ApplyStates(new[] { false, true }, armConfirmIndex: -1);
+        ApplyStates(new[] { false, true });
         Render(cam, Path.Combine(outDir, "trialbar_1_before70s.png"));
 
         // (2) 70 秒後: 両方押せる
-        ApplyStates(new[] { true, true }, armConfirmIndex: -1);
+        ApplyStates(new[] { true, true });
         Render(cam, Path.Combine(outDir, "trialbar_2_after70s.png"));
 
-        // (3) 「実験者用: 中止」を 1 回押した後（2 度押しの 1 度目。色だけ変わる）
-        ApplyStates(new[] { true, true }, armConfirmIndex: 1);
-        Render(cam, Path.Combine(outDir, "trialbar_3_confirm_armed.png"));
+        // (3) 「実験者用: 中止」を押した後の確認の窓（2026-11-03 まではここで色が変わるだけの 2 度押しだった）
+        OpenConfirmDialogForCapture(panel, cam, 1);
+        Render(cam, Path.Combine(outDir, "trialbar_3_confirm_dialog.png"));
 
         panel.Destroy();
     }
@@ -104,16 +108,16 @@ public static class ExperimentPanelCapture
         Place(panel, cam);
 
         // (4) 作り直した直後の 0.4 秒（全部押せない）
-        ApplyStates(new[] { false, false }, armConfirmIndex: -1);
+        ApplyStates(new[] { false, false });
         Render(cam, Path.Combine(outDir, "waiting_1_armdelay.png"));
 
         // (5) 通常
-        ApplyStates(new[] { true, true }, armConfirmIndex: -1);
+        ApplyStates(new[] { true, true });
         Render(cam, Path.Combine(outDir, "waiting_2_normal.png"));
 
-        // (6) 「中止して Home へ」の 1 度目
-        ApplyStates(new[] { true, true }, armConfirmIndex: 1);
-        Render(cam, Path.Combine(outDir, "waiting_3_confirm_armed.png"));
+        // (6) 「中止して Home へ」を押した後の確認の窓
+        OpenConfirmDialogForCapture(panel, cam, 1);
+        Render(cam, Path.Combine(outDir, "waiting_3_confirm_dialog.png"));
 
         panel.Destroy();
     }
@@ -166,7 +170,7 @@ public static class ExperimentPanelCapture
             {
                 interactable[b] = true;
             }
-            ApplyStates(interactable, armConfirmIndex: -1);
+            ApplyStates(interactable);
             Render(cam, Path.Combine(outDir, $"tutorialC_{i + 1}_{tutorial.CurrentStep}.png"));
             panel.Destroy();
 
@@ -231,7 +235,7 @@ public static class ExperimentPanelCapture
         };
         panel.Show("待機中", $"参加者 ID: P01\n{nextLine}\n\n{instruction}", specs);
         Place(panel, cam);
-        ApplyStates(new[] { true, true }, armConfirmIndex: -1);
+        ApplyStates(new[] { true, true });
         Render(cam, path);
         panel.Destroy();
     }
@@ -260,7 +264,7 @@ public static class ExperimentPanelCapture
             "\n（光線を合わせて人差し指のトリガーを引くと押せます）";
         panel.Show("練習", body, specs);
         Place(panel, cam);
-        ApplyStates(new[] { true, true, true }, armConfirmIndex: -1);
+        ApplyStates(new[] { true, true, true });
         Render(cam, path);
         panel.Destroy();
     }
@@ -289,8 +293,131 @@ public static class ExperimentPanelCapture
         panel.UpdatePlacement(cam.transform, ExperimentPanel.ResolveFrontForward(cam.transform));
     }
 
-    // interactable と 2 度押しの色を、実際のコード経路を通して反映させる。
-    private static void ApplyStates(bool[] interactable, int armConfirmIndex)
+    // ExperimentController の音の確認（AudioCheck.cs）と同じ組み立てで、段階ごとに撮る。
+    private static void CaptureAudioCheck(Camera cam, string outDir)
+    {
+        ExperimentPanel.ButtonSpec abort = ExperimentPanel.ButtonSpec.CreateConfirm("中止して Home へ", null);
+        RenderAudioCheck(cam, Path.Combine(outDir, "audio_1_ready.png"), ExperimentController.AudioCheckStage.Ready,
+            new List<ExperimentPanel.ButtonSpec> { ExperimentPanel.ButtonSpec.Create(ExperimentController.AudioCheckPlayLabel, null), abort },
+            new[] { true, true });
+        // 鳴り始めて 1 秒たつまで「聞こえた」は押せない。
+        RenderAudioCheck(cam, Path.Combine(outDir, "audio_2_playing_wait.png"), ExperimentController.AudioCheckStage.Playing,
+            new List<ExperimentPanel.ButtonSpec> { ExperimentPanel.ButtonSpec.Create(ExperimentController.AudioCheckHeardLabel, null, false), abort },
+            new[] { false, true });
+        RenderAudioCheck(cam, Path.Combine(outDir, "audio_3_playing.png"), ExperimentController.AudioCheckStage.Playing,
+            new List<ExperimentPanel.ButtonSpec> { ExperimentPanel.ButtonSpec.Create(ExperimentController.AudioCheckHeardLabel, null), abort },
+            new[] { true, true });
+        RenderAudioCheck(cam, Path.Combine(outDir, "audio_4_failed.png"), ExperimentController.AudioCheckStage.Failed,
+            new List<ExperimentPanel.ButtonSpec>
+            {
+                ExperimentPanel.ButtonSpec.Create(ExperimentController.AudioCheckRetryLabel, null),
+                ExperimentPanel.ButtonSpec.CreateConfirm(ExperimentController.AudioCheckSkipLabel, null),
+                abort,
+            },
+            new[] { true, true, true });
+    }
+
+    private static void RenderAudioCheck(Camera cam, string path, ExperimentController.AudioCheckStage stage,
+        List<ExperimentPanel.ButtonSpec> specs, bool[] interactable)
+    {
+        ExperimentPanel panel = new ExperimentPanel(null, () => cam)
+        {
+            DistanceMeters = 1.2f,
+            SizeMeters = new Vector2(1.05f, 0.82f),
+            CurrentLayout = ExperimentPanel.DefaultLayout,
+        };
+        panel.Show(ExperimentController.AudioCheckTitle, ExperimentController.BuildAudioCheckBody(stage), specs);
+        Place(panel, cam);
+        ApplyStates(interactable);
+        Render(cam, path);
+        panel.Destroy();
+    }
+
+    // 確認の窓の 4 つの閉じ方。結果は [PanelCapture] confirm ... の行（OK / NG）に出す。
+    private static void VerifyConfirmDialogFlow(Camera cam, string outDir)
+    {
+        int actionRuns = 0;
+        List<string> logged = new List<string>();
+        List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
+        {
+            ExperimentPanel.ButtonSpec.Create("この動画を開始", null),
+            ExperimentPanel.ButtonSpec.CreateConfirm("中止して Home へ", () => actionRuns++),
+        };
+        ExperimentPanel panel = new ExperimentPanel(null, () => cam)
+        {
+            DistanceMeters = 1.2f,
+            SizeMeters = new Vector2(1.05f, 0.82f),
+            CurrentLayout = ExperimentPanel.DefaultLayout,
+            OperationLogger = (action, detail) => logged.Add($"{action} {detail}"),
+        };
+        panel.Show("待機中", "確かめ用", specs);
+        Place(panel, cam);
+        GameObject mainRoot = ExperimentPanel.ActiveRoot;
+
+        // (a) いいえ: 実行しない・元のパネルが戻る
+        OpenConfirmDialogForCapture(panel, cam, 1);
+        bool openedHidesMain = mainRoot != null && !mainRoot.activeSelf && ExperimentPanel.ActiveRoot != mainRoot;
+        ClickDialogButton(0);
+        Place(panel, cam);
+        bool noOk = openedHidesMain && actionRuns == 0 && mainRoot.activeSelf && ExperimentPanel.ActiveRoot == mainRoot;
+        Debug.Log($"[PanelCapture] confirm no: {(noOk ? "OK" : "NG")} hidMain={openedHidesMain} runs={actionRuns} mainActive={mainRoot.activeSelf} activeIsMain={ExperimentPanel.ActiveRoot == mainRoot}");
+        ApplyStates(new[] { true, true });
+        Render(cam, Path.Combine(outDir, "waiting_4_after_no.png"));
+
+        // (b) はい: 1 回だけ実行・元のパネルが戻る
+        OpenConfirmDialogForCapture(panel, cam, 1);
+        ClickDialogButton(1);
+        bool yesOk = actionRuns == 1 && mainRoot.activeSelf && ExperimentPanel.ActiveRoot == mainRoot;
+        Debug.Log($"[PanelCapture] confirm yes: {(yesOk ? "OK" : "NG")} runs={actionRuns} mainActive={mainRoot.activeSelf}");
+
+        // (c) 同じ画面の書き換え（keepPlacement）: 窓は残り、元のパネルは隠れたまま。その後のいいえで戻る
+        OpenConfirmDialogForCapture(panel, cam, 1);
+        GameObject dialogRoot = ExperimentPanel.ActiveRoot;
+        panel.Show("待機中", "書き換えた本文", specs, true);
+        bool keepOk = ExperimentPanel.ActiveRoot == dialogRoot && dialogRoot != null && dialogRoot.activeSelf && !mainRoot.activeSelf;
+        ClickDialogButton(0);
+        keepOk = keepOk && mainRoot.activeSelf && actionRuns == 1;
+        Debug.Log($"[PanelCapture] confirm keepPlacement: {(keepOk ? "OK" : "NG")} runs={actionRuns} mainActive={mainRoot.activeSelf}");
+
+        // (d) 画面が替わった（keepPlacement でない Show）: 窓は実行せずに閉じ、新しい中身が出る
+        OpenConfirmDialogForCapture(panel, cam, 1);
+        dialogRoot = ExperimentPanel.ActiveRoot;
+        panel.Show("次の画面", "替わった", specs);
+        bool dismissOk = actionRuns == 1 && mainRoot.activeSelf && ExperimentPanel.ActiveRoot == mainRoot && dialogRoot != null && !dialogRoot.activeSelf;
+        Debug.Log($"[PanelCapture] confirm dismiss: {(dismissOk ? "OK" : "NG")} runs={actionRuns} mainActive={mainRoot.activeSelf} dialogActive={(dialogRoot != null && dialogRoot.activeSelf)}");
+
+        Debug.Log($"[PanelCapture] confirm log: {string.Join(" | ", logged)}");
+        panel.Destroy();
+    }
+
+    // 表示中の確認の窓のボタンを実際のハンドラで押す（0 = いいえ、1 = はい）。
+    private static void ClickDialogButton(int index)
+    {
+        GameObject root = ExperimentPanel.ActiveRoot;
+        Button[] buttons = root != null ? root.GetComponentsInChildren<Button>(true) : new Button[0];
+        if (index >= 0 && index < buttons.Length)
+        {
+            buttons[index].onClick.Invoke();
+        }
+    }
+
+    // 実験者用のボタンを実際のハンドラで押し、出た確認の窓（ExperimentPanel.OpenConfirmDialog）を置いて押せる状態にする。
+    private static void OpenConfirmDialogForCapture(ExperimentPanel panel, Camera cam, int buttonIndex)
+    {
+        GameObject root = ExperimentPanel.ActiveRoot;
+        Button[] buttons = root != null ? root.GetComponentsInChildren<Button>(true) : new Button[0];
+        if (buttonIndex >= 0 && buttonIndex < buttons.Length)
+        {
+            buttons[buttonIndex].onClick.Invoke();
+        }
+
+        // 窓は元のパネルの UpdatePlacement から置かれる。「いいえ」「はい」は作った直後は押せないので、押せる状態で撮る。
+        Place(panel, cam);
+        ApplyStates(new[] { true, true });
+    }
+
+    // interactable を、実際のコード経路を通して反映させる。
+    private static void ApplyStates(bool[] interactable)
     {
         GameObject root = ExperimentPanel.ActiveRoot;
         if (root == null)
@@ -316,12 +443,6 @@ public static class ExperimentPanelCapture
                     // ApplyButtonInteractable と同じ扱い（押せないときは文字も灰色）。
                     label.color = interactable[i] ? Color.white : new Color(0.55f, 0.55f, 0.55f, 1f);
                 }
-            }
-
-            if (i == armConfirmIndex)
-            {
-                // 実際のハンドラ（HandleConfirmClick）を通して 1 度目の状態にする。
-                button.onClick.Invoke();
             }
 
             // Editor では interactable の変更が色に反映されないので、状態遷移を明示的に走らせる。

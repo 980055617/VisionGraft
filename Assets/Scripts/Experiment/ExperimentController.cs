@@ -25,11 +25,13 @@ using UnityEngine.SceneManagement;
 // 置き直す（ReanchorPanelIfScreenMoved）。置き直す手段が無いと、再センタリングで画面だけが動いて
 // パネルが画面の裏に取り残され、「視聴を終了」が押せなくなる（2026-09-29 の監査）。
 [DisallowMultipleComponent]
-public sealed class ExperimentController : MonoBehaviour
+public sealed partial class ExperimentController : MonoBehaviour
 {
     private enum Phase
     {
         Setup,
+        // セッション開始の直後の音の確認（ExperimentController.AudioCheck.cs、2026-11-03）。
+        AudioCheck,
         Waiting,
         Loading,
         Trial,
@@ -125,7 +127,7 @@ public sealed class ExperimentController : MonoBehaviour
     private float nextHeadPoseSampleTime;
     private float nextLogFlushTime;
     private bool trialEndRequested;
-    // 実験者が試行中に「実験者用: 中止」を 2 度押しした。最短視聴時間の待ちに関係なく効く。
+    // 実験者が試行中に「実験者用: 中止」を押し、確認の窓で「はい」を選んだ。最短視聴時間の待ちに関係なく効く。
     // 以前は試行中に押せるボタンが「視聴を終了」（最短視聴時間までは押せない）だけで、被験者が体調を崩しても
     // ヘッドセットを外すかアプリを落とすしかなく、その試行は trials.csv に行が残らなかった
     // （2026-09-29 の 4 回目の監査）。
@@ -209,6 +211,10 @@ public sealed class ExperimentController : MonoBehaviour
     private const float LoadingPanelInFrontOfScreenMarginMeters = 0.10f;
     // 読み込み中パネルをどこまで近づけるか。
     private const float LoadingPanelMinDistanceMeters = 0.35f;
+    // 動画の画面があるときの確認の窓の距離（2026-11-03）。画面より手前のモデルや、近づく動作の止まる距離
+    // （人 0.6 m・動物 0.5 m・その他 0.45 m、StreamingStereoVideoPlayer の *ApproachStopDistanceMeters）より手前に置く。
+    // その他（0.45 m）までは寄せない。コントローラの先（顔の前 0.3 m ほど）より奥に置かないとレイが窓に当たらない。
+    private const float ConfirmDialogDistanceWithScreenMeters = 0.5f;
     // 展開のワーカースレッドを待つ上限（秒）。
     private const float BundleIoWaitSeconds = 30f;
 
@@ -218,6 +224,8 @@ public sealed class ExperimentController : MonoBehaviour
         panel = new ExperimentPanel(panelCanvasWithInteractionRayPrefab, ResolveCamera)
         {
             DistanceMeters = panelDistanceMeters,
+            // 確認の窓の記録はセッションへ直接書く（ExperimentLog.Sink は試行中と練習中しか立たない）。
+            OperationLogger = (action, detail) => session?.RecordOperation(action, detail),
         };
     }
 
@@ -232,6 +240,7 @@ public sealed class ExperimentController : MonoBehaviour
 
     private void OnDestroy()
     {
+        StopAudioCheck();
         FinishSessionIfRunning(true, "controller_destroyed");
         // セッションが無いまま抜けるとき（セットアップ画面で終了・終了画面のまま終了）も閉じる。
         // 閉じないと、同じプロセスで自由視聴に入ったときにモデルの調整が基準ファイルへ保存されない
@@ -389,6 +398,8 @@ public sealed class ExperimentController : MonoBehaviour
         panel.CurrentLayout = layout;
         // 読み込み中パネルが画面より手前へ寄せた距離を、次の局面で元に戻す。
         panel.DistanceMeters = panelDistanceMeters;
+        // 確認の窓の距離の上限も戻す（画面があるときだけ PullPanelInFrontOfScreen が入れる）。
+        panel.ConfirmDialogNearDistanceMeters = null;
     }
 
     // 読み込み中だけ、パネルを**画面より手前**に置く。既定の 1.2 m は画面（試行シーンでは 1.0 m）より
@@ -420,6 +431,9 @@ public sealed class ExperimentController : MonoBehaviour
         {
             return sizeMeters;
         }
+
+        // 画面がある（モデルもいうる）。確認の窓は正面に出るので、モデルより手前に置く（ExperimentPanel.ConfirmDialogNearDistanceMeters）。
+        panel.ConfirmDialogNearDistanceMeters = ConfirmDialogDistanceWithScreenMeters;
 
         float screenDistance = Vector3.Distance(head.position, center);
         float wanted = screenDistance - LoadingPanelInFrontOfScreenMarginMeters;
@@ -767,7 +781,15 @@ public sealed class ExperimentController : MonoBehaviour
             $"min_viewing_sec={ExperimentCsv.Format(sessionMinimumViewingSeconds)}");
         session.FlushLogs();
 
-        ShowWaitingPanel();
+        // 最初の練習の前に音の確認（ユーザー「開始時だけ」）。
+        if (audioCheckAtSessionStart)
+        {
+            ShowAudioCheckPanel();
+        }
+        else
+        {
+            ShowWaitingPanel();
+        }
     }
 
     // ログの保存先を作れなかった。セッションは始まっていないので、押せる道を残して実験者に知らせる。
@@ -836,7 +858,7 @@ public sealed class ExperimentController : MonoBehaviour
         List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
         {
             ExperimentPanel.ButtonSpec.Create("この動画を開始", BeginNextTrial),
-            // 設定を間違えたまま始めたとき用。ここまでのログは残して閉じる。2 度押しで実行。
+            // 設定を間違えたまま始めたとき用。ここまでのログは残して閉じる。確認の窓の「はい」で実行。
             ExperimentPanel.ButtonSpec.CreateConfirm("中止して Home へ", ReturnToHome),
         };
 
@@ -1127,13 +1149,13 @@ public sealed class ExperimentController : MonoBehaviour
         PrepareLoadingPanelPlacement();
         List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
         {
-            // 実験者用。2 度押しで実行（被験者が待ちきれずに押しても 1 回では効かない）。
+            // 実験者用。確認の窓の「はい」で実行（被験者が待ちきれずに押しても窓が出るだけ）。
             ExperimentPanel.ButtonSpec.CreateConfirm("中止", RequestLoadCancel),
         };
         panel.Show(
             "読み込み中",
-            // **「中止を 2 回押す」と書かない。**被験者が読む面なので、待たされた人がそのとおり押して
-            // 試行が中断しうる（2026-09-30 の 5 回目の監査）。実験者の手順は手順書側に置く。
+            // **「中止」の押し方を書かない。**被験者が読む面なので、待たされた人がそのとおり押して
+            // 試行が中断しうる（2026-09-30 の 5 回目の監査。当時は 2 度押し）。実験者の手順は手順書側に置く。
             $"{title}\n\n動画を読み込んでいます。\n何も押さずにお待ちください。\n（十数秒かかります）",
             specs);
     }
@@ -1340,7 +1362,7 @@ public sealed class ExperimentController : MonoBehaviour
         List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
         {
             ExperimentPanel.ButtonSpec.Create(TrialEndButtonLabel, RequestTrialEnd, allowedNow),
-            // 実験者用。2 度押しで効く（1 度目は色が変わるだけ）。最短視聴時間の待ちには縛られない。
+            // 実験者用。確認の窓の「はい」で効く。最短視聴時間の待ちには縛られない。
             ExperimentPanel.ButtonSpec.CreateConfirm("実験者用: 中止", RequestTrialAbortByExperimenter),
         };
 
@@ -1708,7 +1730,7 @@ public sealed class ExperimentController : MonoBehaviour
         // その練習が丸ごと飛んだ（群 B ならモデルの説明抜きで本番に入る。2026-09-30 の 5 回目の監査）。
         List<ExperimentPanel.ButtonSpec> specs = new List<ExperimentPanel.ButtonSpec>
         {
-            // 実験者用。2 度押しで実行（1 度目は色が変わるだけ）。
+            // 実験者用。確認の窓の「はい」で実行。
             ExperimentPanel.ButtonSpec.CreateConfirm("練習を飛ばす", SkipTutorialFromWaiting),
             ExperimentPanel.ButtonSpec.Create("練習を開始", BeginTutorial),
             ExperimentPanel.ButtonSpec.CreateConfirm("中止して Home へ", ReturnToHome),
@@ -2032,8 +2054,8 @@ public sealed class ExperimentController : MonoBehaviour
         // 実験者用と明記して出す。押されたことは tutorial_end の detail に completed=0 と段階名で残る。
         // 文言はボタン幅（330 px、40 px フォント）に 1 行で収まる長さにする。長いと 2 行になり、
         // 日本語のフォールバックフォントの行高では 2 行目が切れうる（2026-09-29 の監査）。
-        // 2 度押しで実行。途中の段階はこのボタンしか無いので、被験者が「次へ」のつもりで 1 回押しても効かない
-        // （2026-09-29 の 3 回目の監査）。押し切ったときはその練習を「済み」にせず待機画面へ戻す（RunTutorialRoutine）。
+        // 確認の窓の「はい」で実行。途中の段階はこのボタンしか無いので、被験者が「次へ」のつもりで押しても窓が出るだけ
+        // （2026-09-29 の 3 回目の監査。当時は 2 度押し）。押し切ったときはその練習を「済み」にせず待機画面へ戻す（RunTutorialRoutine）。
         // **最終段階でも出す。**出さないと練習の「視聴を終了」だけが中央に来て、本番（試行バーは
         // 「視聴を終了」＋「実験者用: 中止」の 2 個）では左にずれる。練習で覚えた位置に本番では
         // 別のボタンがあることになり、被験者が覚えた場所を押す → 反応しない（最短視聴時間までは灰色）→
@@ -2175,6 +2197,7 @@ public sealed class ExperimentController : MonoBehaviour
         }
 
         returningToHome = true;
+        StopAudioCheck();
         bool hadSession = session != null;
         FinishSessionIfRunning(true, "session_abort_by_experimenter");
         if (!hadSession)
